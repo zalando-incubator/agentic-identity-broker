@@ -14,6 +14,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -23,14 +24,23 @@ import (
 
 // mockApprovalRepo implements ports.ToolApprovalRepository for testing.
 type mockApprovalRepo struct {
-	approvals   map[id.ApprovalID]*storage.ToolApproval
-	approveFunc func(context.Context, id.ApprovalID, storage.ApprovalDecision, time.Time) (*storage.ToolApproval, error)
-	denyFunc    func(context.Context, id.ApprovalID, *storage.ApprovalPersistence, time.Time) (*storage.ToolApproval, error)
-	consumeFunc func(context.Context, id.ApprovalID, time.Time) (*storage.ToolApproval, error)
+	approvals             map[id.ApprovalID]*storage.ToolApproval
+	expirationRecordedFor map[id.ApprovalID]time.Time
+	approveFunc           func(context.Context, id.ApprovalID, storage.ApprovalDecision, time.Time) (*storage.ToolApproval, error)
+	denyFunc              func(context.Context, id.ApprovalID, *storage.ApprovalPersistence, time.Time) (*storage.ToolApproval, error)
+	consumeFunc           func(context.Context, id.ApprovalID, time.Time) (*storage.ToolApproval, error)
 }
 
 func newMockApprovalRepo() *mockApprovalRepo {
-	return &mockApprovalRepo{approvals: make(map[id.ApprovalID]*storage.ToolApproval)}
+	return &mockApprovalRepo{approvals: make(map[id.ApprovalID]*storage.ToolApproval), expirationRecordedFor: make(map[id.ApprovalID]time.Time)}
+}
+
+func (m *mockApprovalRepo) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+	return (&ledgerApprovalExpirations{repo: m, markers: m.expirationRecordedFor}).ListUnrecordedExpiredForPrincipal(ctx, principal, at, limit)
+}
+
+func (m *mockApprovalRepo) RecordExpiration(ctx context.Context, approvalID id.ApprovalID, expiry time.Time) (bool, error) {
+	return (&ledgerApprovalExpirations{repo: m, markers: m.expirationRecordedFor}).RecordExpiration(ctx, approvalID, expiry)
 }
 
 func (m *mockApprovalRepo) Create(_ context.Context, a *storage.ToolApproval) (*storage.ToolApproval, error) {
@@ -42,6 +52,10 @@ func (m *mockApprovalRepo) Create(_ context.Context, a *storage.ToolApproval) (*
 			existing.ArgumentsHash == a.ArgumentsHash &&
 			existing.Status == storage.ApprovalStatusPending &&
 			!existing.Consumed {
+			if existing.IsExpired(time.Now()) && m.expirationRecordedFor[existing.ID].Equal(existing.ExpiresAt) {
+				existing.Consumed = true
+				continue
+			}
 			copy := *existing
 			return &copy, nil
 		}
@@ -122,8 +136,10 @@ func (m *mockApprovalRepo) Consume(ctx context.Context, approvalID id.ApprovalID
 
 func (m *mockApprovalRepo) ListAllActive(_ context.Context, principalFilter *id.Principal, _ []string) ([]*storage.ToolApproval, error) {
 	var approvals []*storage.ToolApproval
+	now := time.Now()
 	for _, approval := range m.approvals {
-		if principalFilter == nil || approval.Principal == *principalFilter {
+		if (principalFilter == nil || approval.Principal == *principalFilter) && !approval.Consumed &&
+			(approval.Status != storage.ApprovalStatusPending || !approval.IsExpired(now)) {
 			approvals = append(approvals, approval)
 		}
 	}
@@ -186,6 +202,7 @@ func newTestService(repo *mockApprovalRepo) *Service {
 		10*time.Minute,
 		"https://broker.example.com",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ledgerfixture.NewRecorder(),
 	)
 }
 
@@ -413,7 +430,7 @@ func TestService_ApproveApproval(t *testing.T) {
 	t.Run("increments sync version after approval", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		syncRepo := &mockSyncStateRepo{}
-		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
@@ -555,7 +572,7 @@ func TestService_DenyApproval(t *testing.T) {
 	t.Run("increments sync version after deny", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		syncRepo := &mockSyncStateRepo{}
-		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
@@ -710,16 +727,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 
 	t.Run("returns existing approval without charging rate limit", func(t *testing.T) {
 		repo := newMockApprovalRepo()
-		svc := NewService(
-			repo, repo, nil,
-			&mockSyncStateRepo{},
-			nil,
-			NewApprovalRateLimiter(10, 1),
-			NewApprovalSyncBroadcaster(0),
-			10*time.Minute,
-			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
-		)
+		svc := NewService(repo, repo, nil, &mockSyncStateRepo{}, nil, NewApprovalRateLimiter(10, 1), NewApprovalSyncBroadcaster(0), 10*time.Minute, "https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 
 		req := makeRequest()
 		first, err := svc.CreatePendingApproval(context.Background(), req)
@@ -740,7 +748,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		queries := &mockQueryRepo{}
 		svc := NewService(repo, queries, nil, &mockSyncStateRepo{}, nil,
 			NewApprovalRateLimiter(1, 1), NewApprovalSyncBroadcaster(0), 10*time.Minute,
-			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 		req := makeRequest()
 		first := makePendingApproval(principal, agentID)
 		first.ToolName = req.ToolName
@@ -762,7 +770,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		repo := newMockApprovalRepo()
 		svc := NewService(repo, repo, repo, &mockSyncStateRepo{}, nil,
 			NewApprovalRateLimiter(1, 10), NewApprovalSyncBroadcaster(0), 10*time.Minute,
-			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 		req := makeRequest()
 		first, err := svc.CreatePendingApproval(context.Background(), req)
 		require.NoError(t, err)
@@ -780,16 +788,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 	t.Run("returns a duplicate found after rate limit exhaustion", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		queries := &mockQueryRepo{}
-		svc := NewService(
-			repo, queries, nil,
-			&mockSyncStateRepo{},
-			nil,
-			NewApprovalRateLimiter(10, 1),
-			NewApprovalSyncBroadcaster(0),
-			10*time.Minute,
-			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
-		)
+		svc := NewService(repo, queries, nil, &mockSyncStateRepo{}, nil, NewApprovalRateLimiter(10, 1), NewApprovalSyncBroadcaster(0), 10*time.Minute, "https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 
 		req := makeRequest()
 		first, err := svc.CreatePendingApproval(context.Background(), req)
@@ -839,6 +838,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			10*time.Minute,
 			"https://broker.example.com",
 			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			ledgerfixture.NewRecorder(),
 		)
 
 		// First request should succeed
@@ -860,16 +860,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 	t.Run("increments sync version for new approval only", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		syncRepo := &mockSyncStateRepo{}
-		svc := NewService(
-			repo, nil, nil,
-			syncRepo,
-			nil,
-			NewApprovalRateLimiter(50, 10),
-			NewApprovalSyncBroadcaster(0),
-			10*time.Minute,
-			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
-		)
+		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), NewApprovalSyncBroadcaster(0), 10*time.Minute, "https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 
 		req := makeRequest()
 		_, err := svc.CreatePendingApproval(context.Background(), req)
@@ -1021,6 +1012,7 @@ func newTestServiceWithQueries(repo *mockApprovalRepo, queries *mockQueryRepo, s
 		10*time.Minute,
 		"https://broker.example.com",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ledgerfixture.NewRecorder(),
 	)
 }
 

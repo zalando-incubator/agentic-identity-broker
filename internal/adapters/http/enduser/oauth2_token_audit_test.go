@@ -24,9 +24,11 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type handlerJWKSProvider struct{ set jwk.Set }
@@ -91,9 +93,9 @@ func newImpersonationHeaderHandler(t *testing.T) (*OAuth2TokenHandler, *handlerI
 		}},
 	}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return handlerJWKSProvider{}, nil
-	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 	require.NoError(t, err)
-	return &OAuth2TokenHandler{Impersonation: service}, issuer, target
+	return &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), Impersonation: service}, issuer, target
 }
 
 func newScopedImpersonationHandler(t *testing.T) (*OAuth2TokenHandler, *handlerIssuer, *storage.Agent, jwk.Key) {
@@ -126,9 +128,9 @@ func newScopedImpersonationHandler(t *testing.T) (*OAuth2TokenHandler, *handlerI
 		}},
 	}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return handlerJWKSProvider{set: keySet}, nil
-	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 	require.NoError(t, err)
-	return &OAuth2TokenHandler{Impersonation: service}, issuer, target, signingKey
+	return &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), Impersonation: service}, issuer, target, signingKey
 }
 
 func signedImpersonationForm(t *testing.T, target *storage.Agent, signingKey jwk.Key, scope string) url.Values {
@@ -206,7 +208,7 @@ func TestHandleImpersonation_TargetScopes(t *testing.T) {
 // and MUST correlate with the request ID set by the audit middleware.
 func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 	var buf bytes.Buffer
-	handler := &OAuth2TokenHandler{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
 
 	ctx := httpctx.WithRequestID(context.Background(), "req-123")
 	handler.logImpersonationDecision(ctx, impersonation.AuditRecord{
@@ -237,7 +239,7 @@ func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 
 func TestLogImpersonationDecision_FailureOmitsUnavailableIdentities(t *testing.T) {
 	var buf bytes.Buffer
-	handler := &OAuth2TokenHandler{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
 
 	handler.logImpersonationDecision(context.Background(), impersonation.AuditRecord{
 		Outcome:        "invalid_client",
@@ -295,7 +297,7 @@ func TestHandleTokenExchange_RejectsInvalidTargets(t *testing.T) {
 					Rules:          []ports.ImpersonationRuleConfig{{Name: "rule", Roles: map[string]ports.ImpersonationRoleConfig{"client_assertion": {ExpectedAudience: "aud", PrincipalExpression: "client_assertion.sub"}, "actor": {ExpectedAudience: "aud", PrincipalExpression: "actor_token.sub"}, "subject": {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"}}, TrustedIssuers: []ports.TrustedTokenIssuerConfig{{IssuerURI: "https://issuer.example.com", AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"}}}, Authorization: ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}}}},
 				}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 					return handlerJWKSProvider{}, nil
-				}, handlerAgentRepository{}, &handlerIssuer{}, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+				}, handlerAgentRepository{}, &handlerIssuer{}, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 				require.NotNil(t, handler.Impersonation)
 			}
 			form := url.Values{"grant_type": {tokenexchange.TokenExchangeGrantType}, "audience": {tc.audience}}

@@ -47,8 +47,18 @@ func NewEngine(repository ports.SigningKeyRepository, bootstrapCoordinator ports
 	return &Engine{repository: repository, bootstrapCoordinator: bootstrapCoordinator, encryption: encryptor, branchKeyManager: branchKeyManager, logger: logger}
 }
 
-// GenerateAndStore encrypts and persists one ES256 key under a fixed policy.
-func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm string, isCurrent bool, activatesAt time.Time) (*storage.SigningKey, error) {
+// PreparedKey contains encrypted material but has not selected or persisted a key.
+type PreparedKey struct {
+	key             storage.SigningKey
+	branchKeyID     string
+	activationGrace time.Duration
+}
+
+// PrepareKey generates, provisions, and encrypts without holding storage gates.
+func (e *Engine) PrepareKey(ctx context.Context, policy Policy, algorithm string) (*PreparedKey, error) {
+	if _, active := ports.StorageTransactionEffectsFromContext(ctx); active {
+		return nil, errors.New("key preparation must precede the storage transaction")
+	}
 	if err := policy.Domain.Validate(); err != nil {
 		return nil, err
 	}
@@ -93,47 +103,74 @@ func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm 
 		e.warnOrphanedBranchKey("orphaned branch key after encryption failure; manual cleanup required", kid, branchKeyID)
 		return nil, fmt.Errorf("encrypt private key: %w", err)
 	}
+	return &PreparedKey{
+		key: storage.SigningKey{
+			ID:                  id.NewSigningKeyID(),
+			KID:                 kid,
+			KeyDomain:           policy.Domain,
+			Algorithm:           algorithm,
+			PrivateKeyEncrypted: ciphertext,
+			PublicJWK:           publicJWK,
+		},
+		branchKeyID:     branchKeyID,
+		activationGrace: policy.ActivationGrace,
+	}, nil
+}
+
+// PersistPreparedKey stores only prepared material; callers own selection and commit.
+func (e *Engine) PersistPreparedKey(ctx context.Context, prepared *PreparedKey, isCurrent bool, activatesAt time.Time) (*storage.SigningKey, error) {
+	key := prepared.key
+	key.IsCurrent = isCurrent
+	key.CreatedAt = time.Now().UTC()
 	if activatesAt.IsZero() {
-		activatesAt = time.Now().UTC()
+		activatesAt = key.CreatedAt
 		if isCurrent {
-			activatesAt = activatesAt.Add(policy.ActivationGrace)
+			activatesAt = activatesAt.Add(prepared.activationGrace)
 		}
 	}
-	key := &storage.SigningKey{
-		ID:                  id.NewSigningKeyID(),
-		KID:                 kid,
-		KeyDomain:           policy.Domain,
-		Algorithm:           algorithm,
-		PrivateKeyEncrypted: ciphertext,
-		PublicJWK:           publicJWK,
-		IsCurrent:           isCurrent,
-		ActivatesAt:         activatesAt,
-		CreatedAt:           time.Now().UTC(),
-	}
+	key.ActivatesAt = activatesAt
+	var err error
 	if isCurrent {
-		err = e.repository.CreateAndSetCurrent(ctx, key)
+		err = e.repository.CreateAndSetCurrent(ctx, &key)
 	} else {
-		err = e.repository.Create(ctx, key)
+		err = e.repository.Create(ctx, &key)
 	}
 	if err != nil {
-		e.warnOrphanedBranchKey("orphaned branch key after storage failure; manual cleanup required", kid, branchKeyID)
+		e.warnOrphanedBranchKey("orphaned branch key after storage failure; manual cleanup required", key.KID, prepared.branchKeyID)
 		return nil, fmt.Errorf("store signing key: %w", err)
 	}
-	return key, nil
+	return &key, nil
+}
+
+// DiscardPreparedKey reports branch material left by a losing bootstrap candidate.
+func (e *Engine) DiscardPreparedKey(prepared *PreparedKey) {
+	e.warnOrphanedBranchKey("orphaned branch key after concurrent bootstrap; manual cleanup required", prepared.key.KID, prepared.branchKeyID)
 }
 
 // EnsureInitialKey creates one key under the bootstrap lock when its domain is empty.
 func (e *Engine) EnsureInitialKey(ctx context.Context, policy Policy, activatesAt time.Time) (*storage.SigningKey, bool, error) {
+	count, err := e.repository.CountActiveInDomain(ctx, policy.Domain)
+	if err != nil {
+		return nil, false, fmt.Errorf("count active keys: %w", err)
+	}
+	if count > 0 {
+		return nil, false, nil
+	}
+	prepared, err := e.PrepareKey(ctx, policy, "ES256")
+	if err != nil {
+		return nil, false, err
+	}
 	var created *storage.SigningKey
-	err := e.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
+	err = e.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
 		count, err := e.repository.CountActiveInDomain(lockCtx, policy.Domain)
 		if err != nil {
 			return fmt.Errorf("count active keys: %w", err)
 		}
 		if count > 0 {
+			e.DiscardPreparedKey(prepared)
 			return nil
 		}
-		created, err = e.GenerateAndStore(lockCtx, policy, "ES256", true, activatesAt)
+		created, err = e.PersistPreparedKey(lockCtx, prepared, true, activatesAt)
 		return err
 	})
 	if err != nil {
@@ -155,8 +192,12 @@ func (e *Engine) EnsureInitialKey(ctx context.Context, policy Policy, activatesA
 // GenerateWithInitialActivation serializes count-and-create so concurrent first-key
 // requests cannot create two immediately usable keys.
 func (e *Engine) GenerateWithInitialActivation(ctx context.Context, policy Policy, firstActivatesAt, laterActivatesAt time.Time) (*storage.SigningKey, error) {
+	prepared, err := e.PrepareKey(ctx, policy, "ES256")
+	if err != nil {
+		return nil, err
+	}
 	var key *storage.SigningKey
-	err := e.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
+	err = e.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
 		count, err := e.repository.CountActiveInDomain(lockCtx, policy.Domain)
 		if err != nil {
 			return fmt.Errorf("count active keys: %w", err)
@@ -165,7 +206,7 @@ func (e *Engine) GenerateWithInitialActivation(ctx context.Context, policy Polic
 		if count > 0 {
 			activatesAt = laterActivatesAt
 		}
-		key, err = e.GenerateAndStore(lockCtx, policy, "ES256", true, activatesAt)
+		key, err = e.PersistPreparedKey(lockCtx, prepared, true, activatesAt)
 		return err
 	})
 	if err != nil {

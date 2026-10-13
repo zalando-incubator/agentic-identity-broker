@@ -54,6 +54,9 @@ go test -tags=integration -v ./tests/integration/storage/infra/...
 ```
 
 The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
+
+Grant `Create` and `Update` copy persisted metadata, including a defensive `ValidUntil`, back to the input grant. When renewing a fixture, assign its new expiry to `grant.ValidUntil` before each write; changing the original time variable alone no longer changes the grant.
+
 Run them against PostgreSQL with:
 
 ```bash
@@ -66,6 +69,8 @@ Tests:
 - `TestPostgresAdapter_CreateUser_ValidationErrors` - Input validation
 - `TestPostgresAdapter_ContextCancellation` - Context cancellation handling
 - `TestPostgresAdapter_FullLifecycle_Integration` - Full lifecycle with real PostgreSQL container
+- `TestConsentLedgerConcurrentIdenticalFirstGrantRecordsOnlyWinner` - Two first-time consent requests wait on the PostgreSQL agent row and return the same grant ID. They retain one creation fact and no update fact.
+- `TestConsentLedgerRevocationTransactions` - Absent revocation preserves refresh cleanup without a ledger fact. Revocation and expired renewal leave grants unlocked while waiting for the agent, then commit refresh invalidation with their grant transition.
 
 ## Container Runtime
 

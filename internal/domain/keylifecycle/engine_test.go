@@ -67,12 +67,61 @@ func TestEngine_GenerateWithInitialActivationSerializesConcurrentFirstGeneration
 	assert.Contains(t, activations, laterActivation)
 }
 
+func TestEnginePreparationPrecedesBootstrapPersistence(t *testing.T) {
+	for _, operation := range []string{"bootstrap", "generation"} {
+		t.Run(operation, func(t *testing.T) {
+			repository := &lifecycleTestRepository{}
+			encryptor := &lifecyclePreparationProbe{t: t}
+			engine := NewEngine(repository, &lifecycleTestCoordinator{}, encryptor, encryptor, nil)
+			policy := Policy{
+				Domain: storage.KeyDomainCIMDClientAuthentication,
+				NewKID: func() id.KeyID { return UUIDKID(domainencryption.CIMDClientAuthenticationKeyIDPrefix) },
+				NewSubject: func(kid id.KeyID) (domainencryption.BranchKeySubject, error) {
+					return domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(kid), nil
+				},
+			}
+			now := time.Now().UTC()
+			if operation == "bootstrap" {
+				_, created, err := engine.EnsureInitialKey(context.Background(), policy, now)
+				require.NoError(t, err)
+				require.True(t, created)
+			} else {
+				_, err := engine.GenerateWithInitialActivation(context.Background(), policy, now, now.Add(time.Minute))
+				require.NoError(t, err)
+			}
+			require.Equal(t, 1, encryptor.provisions)
+			require.Equal(t, 1, encryptor.encryptions)
+		})
+	}
+}
+
+type lifecycleBootstrapContextKey struct{}
+
+type lifecyclePreparationProbe struct {
+	lifecycleTestEncryption
+	t           *testing.T
+	provisions  int
+	encryptions int
+}
+
+func (p *lifecyclePreparationProbe) Create(ctx context.Context, _ domainencryption.BranchKeySubject) (string, error) {
+	require.Nil(p.t, ctx.Value(lifecycleBootstrapContextKey{}), "branch provisioning must precede bootstrap persistence")
+	p.provisions++
+	return "", nil
+}
+
+func (p *lifecyclePreparationProbe) Encrypt(ctx context.Context, plaintext []byte, aad map[string]string) ([]byte, error) {
+	require.Nil(p.t, ctx.Value(lifecycleBootstrapContextKey{}), "encryption must precede bootstrap persistence")
+	p.encryptions++
+	return p.lifecycleTestEncryption.Encrypt(ctx, plaintext, aad)
+}
+
 type lifecycleTestCoordinator struct{ mu sync.Mutex }
 
-func (c *lifecycleTestCoordinator) WithBootstrapLock(_ context.Context, fn func(context.Context) error) error {
+func (c *lifecycleTestCoordinator) WithBootstrapLock(ctx context.Context, fn func(context.Context) error) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return fn(context.Background())
+	return fn(context.WithValue(ctx, lifecycleBootstrapContextKey{}, true))
 }
 
 type lifecycleTestRepository struct {

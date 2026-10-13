@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestResolveTarget(t *testing.T) {
@@ -56,7 +57,7 @@ func TestResolveTarget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, err := NewService(testImpersonationConfig(), func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return stubJWKSProvider{}, nil
-			}, stubAgentRepository{get: tc.lookup, getCanonical: tc.canonicalLookup}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{get: tc.lookup, getCanonical: tc.canonicalLookup}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 			require.NoError(t, err)
 
 			target, activated, err := svc.ResolveTarget(context.Background(), tc.audiences)

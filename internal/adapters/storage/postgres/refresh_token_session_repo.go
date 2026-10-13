@@ -63,7 +63,7 @@ func (r *RefreshTokenSessionRepo) FindBySignature(ctx context.Context, signature
 	defer cancel()
 
 	var session storage.RefreshTokenSession
-	err := r.adapter.db.GetContext(queryCtx, &session,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &session,
 		`SELECT signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name, grant_id
 		 FROM refresh_token_sessions WHERE signature = $1`, signature)
 	if err != nil {
@@ -142,6 +142,9 @@ func (r *RefreshTokenSessionRepo) revokeByAgent(ctx context.Context, agentID id.
 	var locked int
 	err = sqlx.GetContext(txCtx, r.adapter.storageExecutor(txCtx), &locked, `SELECT 1 FROM agents WHERE id = $1 FOR UPDATE`, agentID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := r.adapter.Commit(txCtx); err != nil {
+			return 0, err
+		}
 		return 0, nil
 	}
 	if err != nil {
@@ -172,8 +175,7 @@ func (r *RefreshTokenSessionRepo) DeleteExpired(ctx context.Context) (int, error
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.db.ExecContext(execCtx,
-		`DELETE FROM refresh_token_sessions WHERE expires_at < $1`, now)
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM refresh_token_sessions WHERE expires_at < $1`, now)
 	if err != nil {
 		return 0, storage.NewStorageError("RefreshTokenSessionRepo.DeleteExpired", storage.ErrorKindUnknown, err, "failed to delete expired refresh token sessions")
 	}

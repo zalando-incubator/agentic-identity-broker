@@ -11,7 +11,7 @@ import (
 )
 
 func TestPermissionSetRepository_Delete(t *testing.T) {
-	repo := NewPermissionSetRepository()
+	repo := NewPermissionSetRepository(NewTransactionManager())
 	ctx := context.Background()
 	ps := &storage.PermissionSet{
 		ID:            id.NewPermissionSetID(),
@@ -32,7 +32,7 @@ func TestPermissionSetRepository_Delete(t *testing.T) {
 }
 
 func TestPermissionSetRepository_Delete_Concurrent(t *testing.T) {
-	repo := NewPermissionSetRepository()
+	repo := NewPermissionSetRepository(NewTransactionManager())
 	ctx := context.Background()
 	canonicalID := "deleted-permission-set"
 	ps := &storage.PermissionSet{

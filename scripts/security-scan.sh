@@ -2,12 +2,17 @@
 
 set -euo pipefail
 
-if (( $# > 1 )); then
-    echo "usage: $0 [scan-root]" >&2
+if (( $# > 2 )); then
+    echo "usage: $0 [scan-root] [repository|broker]" >&2
     exit 2
 fi
 
 scan_root_input="${1:-.}"
+scan_scope="${2:-repository}"
+case "$scan_scope" in
+    repository|broker) ;;
+    *) echo "scan scope must be repository or broker" >&2; exit 2 ;;
+esac
 if [[ ! -d "$scan_root_input" ]]; then
     echo "scan root must be an existing directory: $scan_root_input" >&2
     exit 2
@@ -25,6 +30,31 @@ cd "$trusted_root"
 GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 # govulncheck v1.8.0: proxy VCS commit 709015412431dd2b5b28a53c06c70bc02d49074c; module Go 1.26.0.
 GOTOOLCHAIN=local GOBIN="$tool_gobin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+if [[ "$scan_scope" == broker ]]; then
+    cd "$scan_root"
+    module_path="$(GOTOOLCHAIN=local GOFLAGS=-mod=readonly go list -m -f '{{.Path}}')"
+    package_list="$(GOTOOLCHAIN=local GOFLAGS=-mod=readonly go list -deps \
+        -f "{{with .Module}}{{if eq .Path \"$module_path\"}}{{\$.Dir}}{{end}}{{end}}" \
+        ./cmd/agentic-identity-broker)"
+    packages=()
+    while IFS= read -r package; do
+        if [[ -n "$package" ]]; then
+            packages+=("$package")
+        fi
+    done <<< "$package_list"
+    if (( ${#packages[@]} == 0 )); then
+        echo "production broker import closure is empty" >&2
+        exit 1
+    fi
+    echo "==> gosec: ${#packages[@]} first-party production broker packages"
+    GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/gosec" \
+        -nosec-require-rules -nosec-require-justification "${packages[@]}"
+    echo "==> govulncheck: production broker and reachable dependencies"
+    GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/govulncheck" ./cmd/agentic-identity-broker
+    exit 0
+fi
+
 # OSV-Scanner v2.5.1: proxy VCS commit c84fa4568f2526d0333e9a914ea8a0a5f74ad68; module Go 1.26.5.
 GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.5.1
 

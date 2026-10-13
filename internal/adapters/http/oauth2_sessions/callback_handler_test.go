@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	eventschemas "github.com/agentic-identity-broker/agentic-identity-broker/api/events"
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -35,14 +37,18 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	encryption := testutil.NewTestEncryptionAdapter(t)
+	transactions := memory.NewTransactionManager()
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	require.NoError(t, err)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(), encryption,
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions), encryption,
 		&encryptionnoop.BranchKeyManager{}, nil, false, logger,
 	)
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(transactions)
 	service := oauth2session.NewOAuth2SessionService(
-		providerService, sessionRepo, sessionRepo, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
+		providerService, sessionRepo, sessionRepo, memory.NewUserGrantRepository(transactions), memory.NewAgentRepository(transactions),
 		encryption, &http.Client{}, domjwe.New(key), oauth2session.DefaultConfig(), logger,
+		ledger.NewService(registry, memory.NewBusinessEventRepository(transactions, registry), nil, transactions, false), transactions,
 	)
 	handler := NewHandler(service)
 	handler.logger = logger

@@ -11,12 +11,14 @@ import (
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,11 +41,11 @@ func newTestSessionTokenService() *sessiontoken.Service {
 }
 
 func newTestAuthorizationService(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 }
 
 func newTestAuthorizationServiceWithSessions(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, sessionRepo ports.UserSessionRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, sessionRepo, NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), sessionRepo, NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 }
 
 type MockAgentRepository struct {
@@ -131,6 +133,7 @@ func (m *MockAgentRepository) ExistsOtherWithClientID(_ context.Context, _ id.Cl
 // MockGrantRepository is a test double for UserGrantRepository
 type MockGrantRepository struct {
 	grants map[id.GrantID]*storage.UserGrant
+	ledgerfixture.GrantExpiryMarkers
 }
 
 func NewMockGrantRepository() *MockGrantRepository {
@@ -714,11 +717,11 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	authReq := &ports.AuthorizationRequest{
 		ClientID:            id.ClientID(agentID.String()),
@@ -820,12 +823,12 @@ func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 			tt.setupAgent(agentRepo)
 			tt.setupGrant(grantRepo)
 
-			svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+			svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 				PublicURL:                 "https://broker.example.com",
 				ModeStrategy:              NewProxyModeStrategy(),
 				SupportedResponseTypes:    []string{"code"},
-			}, nil, newTestSessionTokenService())
+			}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 			req := &ports.AuthorizationRequest{
 				ClientID:     tt.clientID,
@@ -877,11 +880,11 @@ func TestService_HandleAuthorization_UUIDResolution_UpstreamClientID(t *testing.
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -916,7 +919,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	tests := []struct {
 		name string
@@ -994,7 +997,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 
 	t.Run("param injected when multi_agent_client enabled", func(t *testing.T) {
 		agentRepo, grantRepo := makeRepos()
-		svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+		svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 			PublicURL:                 "https://broker.example.com",
 			ModeStrategy:              NewProxyModeStrategy(),
@@ -1003,7 +1006,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 				AgentIDParamName: "x_agent_id",
 				AgentIDClaimName: "x_agent_id",
 			},
-		}, nil, newTestSessionTokenService())
+		}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -1014,12 +1017,12 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 
 	t.Run("param absent when multi_agent_client disabled", func(t *testing.T) {
 		agentRepo, grantRepo := makeRepos()
-		svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+		svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 			PublicURL:                 "https://broker.example.com",
 			ModeStrategy:              NewProxyModeStrategy(),
 			MultiAgentClient:          ports.MultiAgentClientConfig{Enabled: false},
-		}, nil, newTestSessionTokenService())
+		}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -1247,7 +1250,7 @@ func TestService_GenerateMetadata_RFC8414Compliance(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 	metadata, err := svc.GenerateMetadata(context.Background())
 
 	require.NoError(t, err)
@@ -1298,10 +1301,10 @@ func TestService_HandleAuthorization_GrantLookupError(t *testing.T) {
 		findErr:             connErr,
 	}
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		PublicURL:    "https://broker.example.com",
 		ModeStrategy: NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1516,11 +1519,11 @@ func TestService_HandleAuthorization_InvalidUpstreamAuthorizeURL(t *testing.T) {
 		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{},
 	}))
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "%",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1561,11 +1564,11 @@ func TestService_HandleAuthorization_LocalClientInHybridMode(t *testing.T) {
 	}))
 
 	// Hybrid mode: UpstreamAuthorizeEndpoint set for proxy agents; local agents must not be blocked.
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1611,11 +1614,11 @@ func TestService_HandleAuthorization_CIMDClientInHybridMode(t *testing.T) {
 	cimdFetch := &ports.CIMDFetchResult{Body: []byte(cimdBody), CacheControl: "max-age=300"}
 	cimdSvc := cimdServiceForTest(t, cimdFetch, nil)
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, nil), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, nil), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID("https://cimd.example.com/agent.json"),
@@ -1885,14 +1888,7 @@ func TestService_HandleAuthorization_ModeBoundary(t *testing.T) {
 func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	agentID := id.NewAgentID()
 
-	svc := NewAuthorizationService(
-		NewMockGrantRepository(),
-		NewMockSessionRepository(),
-		NewAgentClientResolver(NewMockAgentRepository(), nil),
-		&OAuth2Config{PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy()},
-		nil,
-		newTestSessionTokenService(),
-	)
+	svc := NewAuthorizationService(consent.NewService(nil, nil, NewMockGrantRepository(), nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), NewAgentClientResolver(NewMockAgentRepository(), nil), &OAuth2Config{PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy()}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),

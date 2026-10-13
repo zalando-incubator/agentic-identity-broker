@@ -1181,6 +1181,21 @@
             }
           }
         },
+        "businessEvents": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Business event ledger configuration",
+          "properties": {
+            "retention": {
+              "type": "string",
+              "description": "Recorded-time retention as a positive Go duration, rounded upward to microseconds"
+            },
+            "telemetryCopyEnabled": {
+              "type": "boolean",
+              "description": "Enable additional ledger telemetry copies. Also requires telemetry.enabled and telemetry.logs.enabled."
+            }
+          }
+        },
         "telemetry": {
           "type": "object",
           "additionalProperties": false,

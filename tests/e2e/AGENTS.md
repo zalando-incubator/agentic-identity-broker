@@ -120,18 +120,23 @@ Create both server instances for tests that need both route types.
 ## Running E2E Tests
 
 ```bash
-just test-e2e-backend          # Backend E2E suite only
+just test-e2e-backend          # Backend E2E suite, integration tag by default
 just test-e2e-backend-coverage # Backend E2E suite with coverage report
 just test-e2e-backend-watch    # Backend E2E watch mode for TDD
 just test-e2e                  # Run backend, ExtProc, and frontend suites
-ginkgo -v --label-filter="!performance" --focus="pattern" ./tests/e2e/    # Focused backend run
+ginkgo -v --tags=integration --label-filter="!performance" --focus="pattern" ./tests/e2e/    # Focused backend run
 ```
 
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
 `test-e2e-performance` runs the warmed local-mode, signed-subject 100-request SC-001 measurement with one Ginkgo worker. Its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` line is recorded in PR #464.
 
+Select ledger scenarios with the `business-event-ledger` label.
+`just test-e2e-backend 'business-event-ledger && !performance'` exercises memory and PostgreSQL with the default `integration` tag.
+For memory only, run `just test-e2e-backend 'business-event-ledger && !performance' ''`.
+Read `specs/048-business-event-ledger/quickstart.md` for ledger commands and required infrastructure.
+
 ### Parallelism expectations
 
-- Backend E2E runs with `GINKGO_PROCS`. To make parallel execution safe, keep specs isolated.
+- Backend E2E uses `GINKGO_BACKEND_PROCS`, which defaults to `GINKGO_PROCS`. Keep specs isolated. Use `Serial` for process-global cases.
 - ExtProc E2E runs in parallel. Some agentgateway scenarios share a Docker container and use `Ordered`.
 - Frontend E2E uses a separate suite. Read `frontend/AGENTS.md` for its screenshot rules.

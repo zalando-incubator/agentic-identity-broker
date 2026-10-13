@@ -16,9 +16,9 @@ Local refresh authority ends with user consent. Hybrid mode applies this rule on
 - Memory successor creation atomically rejects a missing or revoked predecessor. Lifecycle revocation also marks consumed ancestors, including when expired-grant renewal retains the grant ID. Expiry cleanup removes their revocation state with the rows.
 - Agent deletion retains its existing database cascade. Rotation remains strict single use.
 - PostgreSQL lock order is agent first, refresh rows second. The first rotation-transaction statement locks the agent `FOR KEY SHARE`. Revocation locks it `FOR UPDATE` before one matching-row update.
-- Grant and credential deletes on main do not honor transaction context. Delete first, then revoke, and propagate revocation errors. Deletion cannot roll back after a revocation error.
+- Delete first, then revoke, and propagate revocation errors. After integration with the business-event ledger, grant and credential repositories join the owning transaction; a revocation error rolls back deletion and its business fact.
 - Log each consent denial with `grant_missing`, `grant_expired`, or `grant_mismatch`. Log each lifecycle revocation with its trigger and affected-row count. Never log tokens or signatures.
-- If grant deletion commits but refresh cleanup fails, log a deletion-only event with the deleted grant identity and failed cleanup outcome. Preserve the cleanup error. Successful cleanup logs retain the request context.
+- Preserve refresh-cleanup errors and request context. Successful lifecycle audit logs follow commit. Do not log a deletion-only event for a transaction that rolls back.
 
 ## Acceptance scenarios
 

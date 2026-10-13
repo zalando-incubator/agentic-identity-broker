@@ -11,7 +11,7 @@ import (
 )
 
 func TestRefreshTokenSessionRepoConsent(t *testing.T) {
-	pg, dbName, connStr, cleanup := setupCIMDKeyDomainDatabase(t, 36)
+	pg, dbName, connStr, cleanup := setupCIMDKeyDomainDatabase(t, 37)
 	defer cleanup()
 	store, cleanupStore := newCIMDKeyDomainStorage(t, connStr)
 	defer cleanupStore()

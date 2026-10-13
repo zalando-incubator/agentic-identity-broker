@@ -1,0 +1,60 @@
+# Agentic Identity Broker - Business Event Ledger Configuration
+# Recording, retention, erasure, and recoverable telemetry are implemented.
+# Optional fixed-reference diagnostics do not block release or require a deployment profile.
+#
+# Local example only: in-memory storage is not durable across restarts.
+# The loopback listeners trust the configured local pre-authentication header.
+# Production requires a trusted authentication proxy and PostgreSQL storage.
+#
+# Default ledger configuration:
+#   export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(openssl rand -base64 32)"
+#   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
+#   ./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml
+#
+# Shorter retention with disabled additional telemetry copies:
+#   ./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml \
+#     --business_events.retention=720h \
+#     --business_events.telemetry_copy_enabled=false
+#
+# Exact environment overrides:
+#   IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION=720h
+#   IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED=false
+# Explicit CLI flags > environment > YAML file > defaults.
+
+log:
+  level: info
+  format: text
+
+server:
+  enduser:
+    bind: 127.0.0.1
+    authentication:
+      preauth:
+        principal_header_name: X-Custom-Principal
+  admin:
+    bind: 127.0.0.1
+    authentication:
+      preauth:
+        principal_header_name: X-Custom-Principal
+
+storage:
+  backend: memory
+
+encryption:
+  memory:
+    raw_key: ${IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY}
+
+oauth2_authorization_server:
+  mode: local
+
+business_events:
+  # Positive Go duration: 2160h is 90 days. The 90d syntax is invalid.
+  # Both storage backends round retention upward to whole microseconds.
+  retention: 2160h
+  # Copies also require telemetry.enabled and telemetry.logs.enabled.
+  # Global telemetry retains its existing disabled default.
+  telemetry_copy_enabled: true
+
+# Recording is mandatory. There is no persistence-disable switch.
+# All replicas that share a ledger must use the same retention value.
+# For retention changes, see docs/configuration.md#coordinated-retention-rollout.

@@ -7,23 +7,16 @@ import (
 	"fmt"
 	"time"
 
+	eventschemas "github.com/agentic-identity-broker/agentic-identity-broker/api/events"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // Compile-time interface check
-var _ ports.StorageTransactionManager = (*Adapter)(nil)
-
-type noOpStorageTransactionManager struct{}
-
-func (noOpStorageTransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
-	return ctx, nil
-}
-
-func (noOpStorageTransactionManager) Commit(context.Context) error   { return nil }
-func (noOpStorageTransactionManager) Rollback(context.Context) error { return nil }
+var _ ports.StorageProvider = (*Adapter)(nil)
 
 // lifecycleAdapter defines the lifecycle operations expected on storage adapters.
 type lifecycleAdapter interface {
@@ -41,24 +34,28 @@ type signingKeyAdapter interface {
 // Adapters implement repository interfaces (UserRepository, etc.)
 // This struct is returned by NewAdapter factory function.
 type Adapter struct {
-	lifecycle            lifecycleAdapter
-	users                ports.UserRepository
-	agents               ports.AgentRepository
-	providers            ports.ThirdpartyOAuth2ProviderRepository
-	userGrants           ports.UserGrantRepository
-	userSessions         ports.UserSessionRepository
-	sessionRefresh       ports.UserSessionRefreshRepository
-	toolApprovals        ports.ToolApprovalRepository
-	toolApprovalQueries  ports.ToolApprovalQueryRepository
-	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
-	approvalSyncState    ports.ApprovalSyncStateRepository
-	permissionSets       ports.PermissionSetRepository
-	brokerCredentials    ports.ClientCredentialRepository
-	signingKeys          signingKeyAdapter
-	refreshTokenSessions ports.RefreshTokenSessionRepository
-	transactions         ports.StorageTransactionManager
-	authorizationCodes   ports.AuthorizationCodeRepository
-	pkceSessions         ports.PKCESessionRepository
+	lifecycle               lifecycleAdapter
+	users                   ports.UserRepository
+	agents                  ports.AgentRepository
+	providers               ports.ThirdpartyOAuth2ProviderRepository
+	userGrants              ports.UserGrantRepository
+	userSessions            ports.UserSessionRepository
+	sessionRefresh          ports.UserSessionRefreshRepository
+	toolApprovals           ports.ToolApprovalRepository
+	toolApprovalQueries     ports.ToolApprovalQueryRepository
+	toolApprovalMetrics     ports.ToolApprovalMetricsRepository
+	approvalSyncState       ports.ApprovalSyncStateRepository
+	permissionSets          ports.PermissionSetRepository
+	brokerCredentials       ports.ClientCredentialRepository
+	signingKeys             signingKeyAdapter
+	refreshTokenSessions    ports.RefreshTokenSessionRepository
+	transactions            ports.StorageTransactionManager
+	authorizationCodes      ports.AuthorizationCodeRepository
+	pkceSessions            ports.PKCESessionRepository
+	businessEvents          ports.BusinessEventRepository
+	businessEventLifecycle  ports.BusinessEventLifecycleRepository
+	businessEventDelivery   ports.BusinessEventDeliveryRepository
+	businessEventValidation ports.BusinessEventSchemaConfiguration
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -69,14 +66,18 @@ type Adapter struct {
 // - Backend type is unsupported
 // - Backend-specific initialization fails
 func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	if err != nil {
+		return nil, fmt.Errorf("business event registry initialization failed: %w", err)
+	}
 	backend := storage.StorageBackend(config.Backend)
 
 	switch backend {
 	case storage.BackendMemory:
-		return newMemoryAdapter(config)
+		return newMemoryAdapter(config, registry)
 
 	case storage.BackendPostgres:
-		return newPostgresAdapter(config)
+		return newPostgresAdapter(config, registry)
 
 	default:
 		return nil, fmt.Errorf("unsupported storage backend: %s", config.Backend)
@@ -84,41 +85,49 @@ func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
 }
 
 // newMemoryAdapter creates an in-memory storage adapter.
-func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
-	memAdapter := memory.NewAdapter()
+func newMemoryAdapter(config *ports.StorageConfig, registry *ledger.Registry) (*Adapter, error) {
+	transactions := memory.NewTransactionManager()
+	memAdapter := memory.NewAdapter(transactions)
 	if err := initializeAdapter(context.Background(), memAdapter, config); err != nil {
 		return nil, err
 	}
-	agentRepo := memory.NewAgentRepository()
-	permissionSets := memory.NewPermissionSetRepository().WithAgentRepository(agentRepo)
-	userGrants := memory.NewUserGrantRepository().WithPermissionSetRepository(permissionSets)
-	toolApprovalRepo := memory.NewToolApprovalRepository()
-	signingKeys := memory.NewSigningKeyStore()
-	sessions := memory.NewInMemoryUserSessionRepository()
+	agentRepo := memory.NewAgentRepository(transactions)
+	permissionSets := memory.NewPermissionSetRepository(transactions).WithAgentRepository(agentRepo)
+	userGrants := memory.NewUserGrantRepository(transactions).WithPermissionSetRepository(permissionSets)
+	toolApprovalRepo := memory.NewToolApprovalRepository(transactions)
+	signingKeys := memory.NewSigningKeyStore(transactions)
+	credentials := memory.NewClientCredentialStore(transactions)
+	agentRepo.WithDependentRepositories(userGrants, toolApprovalRepo, credentials)
+	events := memory.NewBusinessEventRepository(transactions, registry)
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
 	return &Adapter{
-		lifecycle:            memAdapter,
-		users:                memAdapter,
-		agents:               agentRepo,
-		providers:            memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
-		userGrants:           userGrants,
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    memory.NewApprovalSyncStateRepository(),
-		permissionSets:       permissionSets,
-		brokerCredentials:    memory.NewClientCredentialStore(),
-		signingKeys:          signingKeys,
-		authorizationCodes:   memory.NewAuthorizationCodeStore(),
-		refreshTokenSessions: memory.NewRefreshTokenSessionStore(),
-		transactions:         noOpStorageTransactionManager{},
-		pkceSessions:         memory.NewPKCESessionStore(),
+		lifecycle:               memAdapter,
+		users:                   memAdapter,
+		agents:                  agentRepo,
+		providers:               memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions),
+		userGrants:              userGrants,
+		userSessions:            sessions,
+		sessionRefresh:          sessions,
+		toolApprovals:           toolApprovalRepo,
+		toolApprovalQueries:     toolApprovalRepo,
+		toolApprovalMetrics:     toolApprovalRepo,
+		approvalSyncState:       memory.NewApprovalSyncStateRepository(transactions),
+		permissionSets:          permissionSets,
+		brokerCredentials:       credentials,
+		signingKeys:             signingKeys,
+		authorizationCodes:      memory.NewAuthorizationCodeStore(transactions),
+		refreshTokenSessions:    memory.NewRefreshTokenSessionStore(transactions),
+		transactions:            transactions,
+		pkceSessions:            memory.NewPKCESessionStore(transactions),
+		businessEvents:          events,
+		businessEventLifecycle:  events,
+		businessEventDelivery:   events,
+		businessEventValidation: events,
 	}, nil
 }
 
 // newPostgresAdapter creates a PostgreSQL storage adapter.
-func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
+func newPostgresAdapter(config *ports.StorageConfig, registry *ledger.Registry) (*Adapter, error) {
 	pgAdapter, err := postgres.NewAdapter(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL adapter: %w", err)
@@ -129,27 +138,33 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 
 	toolApprovalRepo := postgres.NewToolApprovalRepository(pgAdapter)
 	signingKeys := postgres.NewSigningKeyRepo(pgAdapter)
+	userGrants := postgres.NewUserGrantRepository(pgAdapter)
+	events := postgres.NewBusinessEventRepository(pgAdapter, registry)
 	sessions := postgres.NewUserSessionRepository(pgAdapter)
 
 	return &Adapter{
-		lifecycle:            pgAdapter,
-		users:                pgAdapter,
-		agents:               postgres.NewAgentRepository(pgAdapter),
-		providers:            postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
-		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    postgres.NewApprovalSyncStateRepository(pgAdapter),
-		permissionSets:       postgres.NewPermissionSetRepository(pgAdapter),
-		brokerCredentials:    postgres.NewClientCredentialRepo(pgAdapter),
-		signingKeys:          signingKeys,
-		authorizationCodes:   postgres.NewAuthorizationCodeRepo(pgAdapter),
-		refreshTokenSessions: postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		transactions:         pgAdapter,
-		pkceSessions:         postgres.NewPKCESessionRepo(pgAdapter),
+		lifecycle:               pgAdapter,
+		users:                   pgAdapter,
+		agents:                  postgres.NewAgentRepository(pgAdapter),
+		providers:               postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
+		userGrants:              userGrants,
+		userSessions:            sessions,
+		sessionRefresh:          sessions,
+		toolApprovals:           toolApprovalRepo,
+		toolApprovalQueries:     toolApprovalRepo,
+		toolApprovalMetrics:     toolApprovalRepo,
+		approvalSyncState:       postgres.NewApprovalSyncStateRepository(pgAdapter),
+		permissionSets:          postgres.NewPermissionSetRepository(pgAdapter),
+		brokerCredentials:       postgres.NewClientCredentialRepo(pgAdapter),
+		signingKeys:             signingKeys,
+		authorizationCodes:      postgres.NewAuthorizationCodeRepo(pgAdapter),
+		refreshTokenSessions:    postgres.NewRefreshTokenSessionRepo(pgAdapter),
+		transactions:            pgAdapter,
+		pkceSessions:            postgres.NewPKCESessionRepo(pgAdapter),
+		businessEvents:          events,
+		businessEventLifecycle:  postgres.NewBusinessEventLifecycleRepository(pgAdapter),
+		businessEventDelivery:   events,
+		businessEventValidation: events,
 	}, nil
 }
 
@@ -297,4 +312,20 @@ func (a *Adapter) Rollback(ctx context.Context) error {
 // PKCESessions returns the PKCESessionRepository interface implementation.
 func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 	return a.pkceSessions
+}
+
+func (a *Adapter) BusinessEvents() ports.BusinessEventRepository {
+	return a.businessEvents
+}
+
+func (a *Adapter) ConfigureBusinessEventValidation(validator ports.BusinessEventValidator) {
+	a.businessEventValidation.ConfigureBusinessEventValidation(validator)
+}
+
+func (a *Adapter) BusinessEventLifecycle() ports.BusinessEventLifecycleRepository {
+	return a.businessEventLifecycle
+}
+
+func (a *Adapter) BusinessEventDelivery() ports.BusinessEventDeliveryRepository {
+	return a.businessEventDelivery
 }

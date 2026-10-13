@@ -16,13 +16,14 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/go-chi/chi/v5"
 )
 
 func newApprovePatternHandler(t *testing.T) (*ApproveHandler, *memory.ToolApprovalRepository, *storage.ToolApproval) {
 	t.Helper()
-	repo := memory.NewToolApprovalRepository()
-	svc := domainapproval.NewService(repo, repo, repo, memory.NewApprovalSyncStateRepository(), nil, domainapproval.NewApprovalRateLimiter(50, 10), domainapproval.NewApprovalSyncBroadcaster(0), time.Minute, "https://broker.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	repo := memory.NewToolApprovalRepository(memory.NewTransactionManager())
+	svc := domainapproval.NewService(repo, repo, repo, memory.NewApprovalSyncStateRepository(memory.NewTransactionManager()), nil, domainapproval.NewApprovalRateLimiter(50, 10), domainapproval.NewApprovalSyncBroadcaster(0), time.Minute, "https://broker.example", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: id.Principal("user@example.com"), AgentID: id.NewAgentID(), ToolName: "create_pull_request", Arguments: map[string]any{"repo": "acme/app", "title": "Fix bug"}, ArgumentsHash: "hash", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", ExpiresAt: time.Now().Add(time.Minute)}
 	if err := domainapproval.ApplyExactPatterns(approval); err != nil {
 		t.Fatal(err)

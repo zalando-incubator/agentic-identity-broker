@@ -30,6 +30,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type noopBranchKeyManager struct{}
@@ -133,24 +134,16 @@ func (m *MockPermissionSetRepository) CountPermissionSetsForService(ctx context.
 
 // newMockConsentService creates a consent.Service with mock repositories for testing
 func newMockConsentService() *consent.Service {
-	return consent.NewService(
-		&MockAgentRepository{},
-		newTestProviderService(&MockServiceRepository{}),
-		&MockGrantRepository{
-			grant: &storagedomain.UserGrant{
-				ID:         id.NewGrantID(),
-				Principal:  id.Principal("test-principal"),
-				AgentID:    id.NewAgentID(),
-				ValidUntil: func() *time.Time { t := time.Now().Add(24 * time.Hour); return &t }(),
-				CreatedAt:  time.Now(),
-				UpdatedAt:  time.Now(),
-			},
+	return consent.NewService(&MockAgentRepository{}, newTestProviderService(&MockServiceRepository{}), &MockGrantRepository{
+		grant: &storagedomain.UserGrant{
+			ID:         id.NewGrantID(),
+			Principal:  id.Principal("test-principal"),
+			AgentID:    id.NewAgentID(),
+			ValidUntil: func() *time.Time { t := time.Now().Add(24 * time.Hour); return &t }(),
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		},
-		nil,
-		nil,
-		nil,
-		slog.Default(),
-	)
+	}, nil, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 }
 
 // MockAgentRepository mocks the AgentRepository for consent service testing
@@ -307,6 +300,7 @@ type MockGrantRepository struct {
 	grant                        *storagedomain.UserGrant
 	err                          error
 	findByPrincipalAndAgentCalls int
+	ledgerfixture.GrantExpiryMarkers
 }
 
 func (m *MockGrantRepository) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
@@ -428,23 +422,20 @@ func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, p
 	return m.session, m.err
 }
 
-func (m *MockSessionRepository) WithLockedSession(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) (bool, error)) (*storagedomain.UserSession, error) {
-	if m.session == nil {
-		return nil, nil
-	}
-	working := *m.session
-	changed, err := refresh(ctx, &working)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		m.session = &working
-	}
-	return &working, nil
-}
-
 func (m *MockSessionRepository) Create(ctx context.Context, session *storagedomain.UserSession) error {
 	return nil
+}
+
+func (m *MockSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) error) (*storagedomain.UserSession, error) {
+	current, err := m.FindByPrincipalAndService(ctx, principal, serviceID)
+	if err != nil || current == nil {
+		return current, err
+	}
+	session := *current
+	if err := refresh(ctx, &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
 }
 
 func (m *MockSessionRepository) Get(ctx context.Context, sessionID id.SessionID) (*storagedomain.UserSession, error) {
@@ -492,6 +483,7 @@ func NewTokenExchangeServiceForTest(
 		psService,
 		agentRepository,
 		config,
+		ledgerfixture.NewRecorder(),
 	)
 }
 
@@ -639,6 +631,7 @@ func TestNewTokenExchangeService_RequiresPermissionSetService(t *testing.T) {
 		nil,
 		&MockAgentRepository{},
 		&ports.TokenExchangeConfig{},
+		ledgerfixture.NewRecorder(),
 	)
 
 	require.Error(t, err)
@@ -985,7 +978,7 @@ func TestResolveEffectiveScopes_ScopeUnion(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
@@ -1011,7 +1004,7 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 	}}, &MockGrantRepository{}, slog.Default())
 	defer psService.Close()
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
@@ -1050,7 +1043,7 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 	}}, &MockGrantRepository{}, slog.Default())
 	defer psService.Close()
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
@@ -1109,7 +1102,7 @@ func TestResolveEffectiveScopes_SRCeiling(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
@@ -1135,7 +1128,7 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 	}}, &MockGrantRepository{}, slog.Default())
 	defer psService.Close()
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    psID,
@@ -1196,7 +1189,7 @@ func TestResolveEffectiveScopes_PerServiceInclusion(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_omitted"), detail)
@@ -1254,7 +1247,7 @@ func TestResolveEffectiveScopes_MultiPSCrossScopeCeiling(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
@@ -1304,7 +1297,7 @@ func TestResolveEffectiveScopes_NonSRServiceExcluded(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_requirement_excluded"), detail)
@@ -1350,7 +1343,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 		},
 	}
 
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), permissionSetService: psService}
 	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
@@ -1473,15 +1466,7 @@ func newServiceForStep9TestWithAuthz(t *testing.T, keySet jwk.Set, agentRepo por
 	}
 	providerRepo := &MockServiceRepository{service: providerEntity}
 
-	consentSvc := consent.NewService(
-		&MockAgentRepository{},
-		newTestProviderService(&MockServiceRepository{}),
-		&MockGrantRepository{err: ports.ErrNotFound},
-		nil,
-		nil,
-		nil,
-		slog.Default(),
-	)
+	consentSvc := consent.NewService(&MockAgentRepository{}, newTestProviderService(&MockServiceRepository{}), &MockGrantRepository{err: ports.ErrNotFound}, nil, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 
 	svc, err := NewTokenExchangeServiceForTest(
 		jwtValidator,
@@ -1685,15 +1670,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		ProtectedResources: []string{"https://api.example.com/resource"},
 	}
 
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		nil,
-		slog.Default(),
-	)
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 
 	jwtValidator, err := NewJWTValidator(
 		&MockJWKSProvider{keySet: keySet},
@@ -1711,8 +1688,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	svc := &TokenExchangeService{
-		jwtValidator:         jwtValidator,
+	svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), jwtValidator: jwtValidator,
 		celEvaluator:         celEvaluator,
 		providerService:      newTestProviderService(&MockServiceRepository{service: providerEntity}),
 		oauth2SessionService: &oauth2session.OAuth2SessionService{},
@@ -1728,8 +1704,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 				Type: "cel",
 				CEL:  ports.CELAuthorizationConfig{Expression: "true"},
 			},
-		},
-	}
+		}}
 
 	now := time.Now()
 	commonClaims := map[string]interface{}{
@@ -1859,6 +1834,8 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(fixture)
 			}
+			store := &ledgerfixture.Store{}
+			fixture.svc.ledger = store.Recorder(t)
 
 			_, err := fixture.svc.Exchange(context.Background(), fixture.req)
 			require.Error(t, err)
@@ -1883,6 +1860,17 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls)
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
 			assert.Equal(t, tt.wantPSCalls, fixture.psRepo.getByIDsCalls, "permission sets must be resolved at most once")
+			require.Len(t, store.Events, 1, "one specific denial fact without a generic token failure companion")
+			event := store.Events[0]
+			assert.Equal(t, model.BusinessEventTypePrefix+"token-exchange-denied", event.Type)
+			assert.Equal(t, model.BusinessEventDenied, event.Outcome)
+			assert.Equal(t, map[string]any{"reason_code": "authorization_failed"}, event.Data)
+			assert.Equal(t, fixture.grant.Principal, *event.Subject)
+			assert.Equal(t, "gateway", event.Actor.Kind)
+			assert.Equal(t, fixture.grant.Principal.String(), *event.Actor.ID)
+			assert.Equal(t, fixture.agentID, event.AgentID)
+			assert.Equal(t, fixture.grant.ID, event.GrantID)
+			assert.Equal(t, fixture.serviceID, event.ServiceID)
 		})
 	}
 }
@@ -2116,7 +2104,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 				coverage:        grantCoversRequested,
 				callbackBaseURL: "https://broker.example.com",
 				sessionRepo:     sessionRepo,
-				refreshRepo:     sessionRepo,
+				refreshRepo:     &refreshExchangeSessionRepository{sessionRepo},
 				encryption:      &MockEncryption{err: tt.encryptionErr},
 				tokenEndpoint:   tokenEndpoint,
 			})
@@ -2244,7 +2232,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 	psRepo := &MockPermissionSetRepository{psMap: psMap}
 	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
 	t.Cleanup(psService.Close)
-	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, nil, slog.Default())
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 
 	provider := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                 requestedServiceID,
@@ -2267,6 +2255,8 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		nil,
 		sessionConfig,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ledgerfixture.NewRecorder(),
+		nil,
 	)
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
@@ -2280,6 +2270,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 	require.NoError(t, err)
 
 	svc := &TokenExchangeService{
+		ledger:               ledgerfixture.NewRecorder(),
 		jwtValidator:         jwtValidator,
 		celEvaluator:         celEvaluator,
 		providerService:      newTestProviderService(&MockServiceRepository{service: provider}),
@@ -2290,8 +2281,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		config: &ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
 			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
-		},
-	}
+		}}
 
 	now := time.Now()
 	claims := map[string]interface{}{
@@ -2571,7 +2561,6 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				actual = tokenErr.Authorization()
 			}
 			assert.Equal(t, wantAuthorization, actual)
-			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls, "observation must not query the grant twice")
 			assert.Equal(t, tc.wantSessionCalls, sessionRepo.findByPrincipalAndServiceCalls)
 			if fixture.grant.ValidUntil != nil {
 				*fixture.grant.ValidUntil = fixture.grant.ValidUntil.Add(24 * time.Hour)

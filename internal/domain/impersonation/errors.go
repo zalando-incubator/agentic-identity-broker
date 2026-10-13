@@ -65,6 +65,18 @@ func originError(ctx context.Context, envelope *tokenexchange.TokenExchangeError
 	return envelope.WithCause(cause).WithDiagnostic(impersonationDiagnostic(stage, detail))
 }
 
+func recordingFailure(ctx context.Context, description string, requestErr, recordErr error) *tokenexchange.TokenExchangeError {
+	failure := originError(ctx, serverError(description), errors.Join(requestErr, recordErr), tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+	var original *tokenexchange.TokenExchangeError
+	if errors.As(requestErr, &original) {
+		switch original.Diagnostic().Outcome() {
+		case tokenexchange.OutcomeInfrastructureError, tokenexchange.OutcomeConfigurationError, tokenexchange.OutcomeCanceled:
+			failure = failure.WithDiagnostic(original.Diagnostic())
+		}
+	}
+	return failure
+}
+
 // noMatchPrecedence is the deterministic, order-independent precedence applied when no rule
 // matches (FR-004a): access_denied > invalid_request > invalid_client.
 var noMatchPrecedence = map[string]int{

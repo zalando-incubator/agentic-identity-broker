@@ -649,6 +649,18 @@ broker:
     # -- Skip HTTPS validation for third-party services (dev/test only!)
     skipThirdpartyHttpsValidation: false
 
+  # Business event ledger configuration
+  businessEvents:
+    # -- Recorded-time retention as a positive Go duration (2160h = 90 days).
+    # Positive fractions round upward to microseconds. Use 2160h, not 90d.
+    # Environment: IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION.
+    # Retention changes require a coordinated rollout across all replicas.
+    retention: 2160h
+    # -- Enable additional ledger telemetry copies, not ledger persistence.
+    # Also requires telemetry.enabled and telemetry.logs.enabled.
+    # Environment: IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED.
+    telemetryCopyEnabled: true
+
   # OpenTelemetry observability configuration
   telemetry:
     # -- Enable OpenTelemetry distributed tracing and metrics export

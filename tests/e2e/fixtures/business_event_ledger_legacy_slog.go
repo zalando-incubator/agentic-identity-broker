@@ -1,7 +1,9 @@
 package fixtures
 
-// BusinessEventLegacySlogRevision identifies the production code used for this capture.
+// BusinessEventLegacySlogRevision is the original capture revision unless a workflow overrides it.
 const BusinessEventLegacySlogRevision = "d500f36378dd914f8a516604a08525f737e8ddff"
+
+const businessEventLegacySlogMainRevision = "446183e095381afec8252b274768b831d6ba4e0e"
 
 // LegacySlogRecord retains log structure, never runtime attribute values.
 type LegacySlogRecord struct {
@@ -16,6 +18,7 @@ type LegacySlogRecord struct {
 // NoEventLine means no dedicated fact log, not absence of generic request logs.
 type LegacySlogWorkflow struct {
 	Variant          string
+	CaptureRevision  string
 	Scenario         string
 	Source           string
 	AdditionalAction string
@@ -23,8 +26,8 @@ type LegacySlogWorkflow struct {
 	Records          []LegacySlogRecord
 }
 
-// BusinessEventLegacySlog captures all 28 catalogue facts before the ledger refactor.
-// Counts apply to the complete named journey, including repeated business actions.
+// BusinessEventLegacySlog retains pre-ledger fact logs with main's refresh and
+// grant-audit contract changes. Counts cover the named journey.
 var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 	"agent-deleted": {
 		{
@@ -33,7 +36,7 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Source:           "tests/e2e/canonical_resource_ids_test.go:138",
 			AdditionalAction: "DELETE the created agent, expect 204, then GET it and expect 404.",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "agent deleted", FieldKeys: []string{"agent_id", "level", "msg", "time"}, Count: 2},
+				{Event: "", Level: "INFO", Message: "agent deleted", FieldKeys: []string{"action", "actor", "agent_id", "level", "msg", "time", "trace_id"}, Count: 1},
 			},
 		},
 	},
@@ -43,7 +46,7 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Scenario: "Agent Permission Requirements User Story 1: Administrator Configures Agent Service Requirements should accept optional service_requirements array in POST /api/agents",
 			Source:   "tests/e2e/agent_permission_requirements_test.go:177",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "agent created", FieldKeys: []string{"agent_id", "client_id", "level", "msg", "time"}, Count: 1},
+				{Event: "", Level: "INFO", Message: "agent created", FieldKeys: []string{"action", "actor", "agent_id", "level", "msg", "permission_sets", "service_requirements", "time", "trace_id"}, Count: 1},
 			},
 		},
 	},
@@ -53,7 +56,7 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Scenario: "Agent Permission Requirements User Story 1: Administrator Configures Agent Service Requirements should replace entire service requirements on PUT /api/agents/{agent-id}",
 			Source:   "tests/e2e/agent_permission_requirements_test.go:314",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "agent updated", FieldKeys: []string{"agent_id", "client_id", "level", "msg", "time"}, Count: 1},
+				{Event: "", Level: "INFO", Message: "agent updated", FieldKeys: []string{"action", "actor", "agent_id", "level", "msg", "permission_sets", "previous_observed_permission_sets", "previous_observed_service_requirements", "previous_observed_updated_at", "service_requirements", "time", "trace_id"}, Count: 1},
 			},
 		},
 	},
@@ -163,7 +166,7 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Scenario: "Permission Sets (019) US4: User Grant Stores Granted Permission Sets stores granted_permission_sets in UserGrant on consent submission",
 			Source:   "tests/e2e/permission_sets_test.go:1065",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "grant created", FieldKeys: []string{"actor", "agent_id", "grant_id", "level", "msg", "principal", "time", "trace_id"}, Count: 1},
+				{Event: "", Level: "INFO", Message: "grant created", FieldKeys: []string{"action", "actor", "agent_id", "created_at", "grant_id", "granted_permission_sets", "level", "msg", "principal", "time", "trace_id", "updated_at", "valid_until"}, Count: 1},
 			},
 		},
 	},
@@ -181,7 +184,7 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Scenario: "Revoke Agent Grant returns 204 when grant exists and is owned by principal",
 			Source:   "tests/e2e/revoke_grant_test.go:111",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "grant revoked", FieldKeys: []string{"action", "agent_id", "grant_id", "level", "msg", "principal", "time"}, Count: 1},
+				{Event: "", Level: "INFO", Message: "grant revoked", FieldKeys: []string{"action", "actor", "agent_id", "grant_id", "granted_permission_sets", "level", "msg", "principal", "revoked_at", "time", "trace_id", "updated_at", "valid_until"}, Count: 1},
 			},
 		},
 	},
@@ -191,7 +194,8 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Scenario: "Permission Sets (019) US4: User Grant Stores Granted Permission Sets upserts UserGrant with new granted_permission_sets on re-consent",
 			Source:   "tests/e2e/permission_sets_test.go:1193",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "grant created", FieldKeys: []string{"actor", "agent_id", "grant_id", "level", "msg", "principal", "time", "trace_id"}, Count: 2},
+				{Event: "", Level: "INFO", Message: "grant created", FieldKeys: []string{"action", "actor", "agent_id", "created_at", "grant_id", "granted_permission_sets", "level", "msg", "principal", "time", "trace_id", "updated_at", "valid_until"}, Count: 1},
+				{Event: "", Level: "INFO", Message: "grant updated", FieldKeys: []string{"action", "actor", "agent_id", "created_at", "grant_id", "granted_permission_sets", "level", "msg", "previous_observed_granted_permission_sets", "previous_observed_updated_at", "previous_observed_valid_until", "principal", "time", "trace_id", "updated_at", "valid_until"}, Count: 1},
 			},
 		},
 	},
@@ -229,24 +233,25 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 	},
 	"session-refresh-failed": {
 		{
-			Variant:  "default",
-			Scenario: "Public Client Support for Third-Party OAuth2 Services User Story 3: keep a public-client session alive surfaces the failure without retrying with a credential or downgrading",
-			Source:   "tests/e2e/thirdparty_public_client_test.go:507",
+			Variant:         "default",
+			CaptureRevision: businessEventLegacySlogMainRevision,
+			Scenario:        "Public Client Support for Third-Party OAuth2 Services User Story 3: keep a public-client session alive surfaces the failure without retrying with a credential or downgrading",
+			Source:          "tests/e2e/thirdparty_public_client_test.go:507",
 			Records: []LegacySlogRecord{
 				{Event: "", Level: "ERROR", Message: "force refresh failed at upstream", FieldKeys: []string{"error", "level", "msg", "principal", "service_id", "time"}, Count: 1},
-				{Event: "session.oauth2.refresh_failed", Level: "ERROR", Message: "oauth2_refresh_failed", FieldKeys: []string{"error", "event", "level", "msg", "principal", "public_client", "reason", "service_id", "time", "timestamp"}, Count: 1},
+				{Event: "session.oauth2.refresh_failed", Level: "ERROR", Message: "oauth2_refresh_failed", FieldKeys: []string{"actor", "error", "event", "level", "msg", "principal", "public_client", "reason", "service_id", "time", "timestamp", "trace_id"}, Count: 1},
 			},
 		},
 	},
 	"session-refreshed": {
 		{
-			Variant:  "default",
-			Scenario: "Public Client Support for Third-Party OAuth2 Services User Story 3: keep a public-client session alive encrypts and persists the refreshed tokens, replacing the previous ones",
-			Source:   "tests/e2e/thirdparty_public_client_test.go:457",
+			Variant:         "default",
+			CaptureRevision: businessEventLegacySlogMainRevision,
+			Scenario:        "Public Client Support for Third-Party OAuth2 Services User Story 3: keep a public-client session alive encrypts and persists the refreshed tokens, replacing the previous ones",
+			Source:          "tests/e2e/thirdparty_public_client_test.go:457",
 			Records: []LegacySlogRecord{
-				{Event: "", Level: "INFO", Message: "access token refreshed", FieldKeys: []string{"level", "msg", "service_id", "time", "token_endpoint"}, Count: 2},
-				{Event: "", Level: "INFO", Message: "session tokens updated", FieldKeys: []string{"level", "msg", "principal", "service_id", "session_id", "time"}, Count: 2},
-				{Event: "session.oauth2.token_refreshed", Level: "INFO", Message: "oauth2_token_refreshed", FieldKeys: []string{"event", "level", "msg", "principal", "public_client", "reason", "service_id", "time", "timestamp"}, Count: 2},
+				{Event: "", Level: "INFO", Message: "access token refreshed", FieldKeys: []string{"actor", "level", "msg", "service_id", "time", "token_endpoint", "trace_id"}, Count: 2},
+				{Event: "session.oauth2.token_refreshed", Level: "INFO", Message: "oauth2_token_refreshed", FieldKeys: []string{"actor", "event", "level", "msg", "principal", "public_client", "reason", "service_id", "time", "timestamp", "trace_id"}, Count: 2},
 			},
 		},
 	},
@@ -280,6 +285,15 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Source:   "tests/e2e/token_exchange_test.go:275",
 			Records: []LegacySlogRecord{
 				{Event: "", Level: "ERROR", Message: "Token exchange failed", FieldKeys: []string{"actor", "cause", "error", "error_type", "level", "msg", "resource", "time", "trace_id"}, Count: 1},
+			},
+		},
+		{
+			Variant:         "verified-client-no-grant",
+			CaptureRevision: businessEventLegacySlogMainRevision,
+			Scenario:        "RFC 8693 Token Exchange E2E Tests US3: User Grant Verification [US3-S2] should return 403 access_denied without user grant",
+			Source:          "tests/e2e/token_exchange_test.go:525",
+			Records: []LegacySlogRecord{
+				{Event: "", Level: "ERROR", Message: "Token exchange failed", FieldKeys: []string{"actor", "calling_peer", "details", "error", "error_type", "failure_reason", "level", "msg", "resource", "time", "trace_id"}, Count: 1},
 			},
 		},
 	},

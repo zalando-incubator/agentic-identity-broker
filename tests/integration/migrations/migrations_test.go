@@ -25,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jwt"
@@ -521,7 +522,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	require.NoError(t, adapter.Initialize(ctx))
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()
 	repo := postgres.NewSigningKeyRepo(adapter)
-	svc := oauth2server.NewSigningKeyService(repo, repo, encryptor, &noop.BranchKeyManager{}, slog.Default())
+	svc := oauth2server.NewSigningKeyService(repo, repo, encryptor, &noop.BranchKeyManager{}, slog.Default(), ledgerfixture.NewRecorder())
 	_, err = svc.BuildJWKS(ctx)
 	require.NoError(t, err)
 	stored, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, id.NewKeyID(kid))
@@ -530,7 +531,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 
 	freshEncryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "", 0)
 	require.NoError(t, err)
-	freshService := oauth2server.NewSigningKeyService(repo, repo, freshEncryptor, &noop.BranchKeyManager{}, slog.Default())
+	freshService := oauth2server.NewSigningKeyService(repo, repo, freshEncryptor, &noop.BranchKeyManager{}, slog.Default(), ledgerfixture.NewRecorder())
 	set, err := freshService.BuildJWKS(ctx)
 	require.NoError(t, err)
 	verified, err := jwt.Parse(signedBeforeMigration, jwt.WithKeySet(set))

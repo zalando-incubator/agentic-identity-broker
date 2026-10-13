@@ -18,8 +18,14 @@ Ports contain **interfaces only** and minimal DTOs. Do not put business logic or
 | `oauth2_mode_config.go` | `OAuth2ModeConfig` | Resolved proxy, local, and hybrid OAuth2 configuration |
 | `oauth2server.go` | OAuth2 server key and credential contracts | Read the file for exact interfaces |
 | `server.go` | `HealthState` (enum) | Server lifecycle: `Starting`, `Healthy`, `ShuttingDown`, `Unhealthy` |
-| `storage.go` | Repository and transaction interfaces | Storage contracts. Sentinel: `ErrNotFound` |
+| `storage.go` | Repository and transaction interfaces | Storage contracts, including `StorageTransactionManager`, event/lifecycle/delivery ISP facets, and grant/approval expiry-recognition facets. Sentinel: `ErrNotFound` |
 | `thirdparty_provider.go` | Provider configuration storage | `ThirdpartyOAuth2ProviderRepository` |
+
+Ledger values live in `internal/domain/model/business_event.go`.
+
+Before you change ownership, deletion barriers, or dispatch callbacks, read `specs/048-business-event-ledger/contracts/storage.md`.
+
+Delivery returns reference keys only and exports synchronously inside its barrier.
 
 ## Rules
 

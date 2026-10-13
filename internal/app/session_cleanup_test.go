@@ -24,6 +24,7 @@ func TestBuilder_SessionCleanupLifecycle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cfg := &ports.Config{
+					BusinessEvents: ports.DefaultBusinessEventsConfig(),
 					Server: ports.ServerConfig{
 						EndUser: ports.ServerInstanceConfig{PublicURL: "http://localhost:8000"},
 					},

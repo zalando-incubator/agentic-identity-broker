@@ -18,25 +18,27 @@ import (
 	dstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // newTestProvider creates a Provider with in-memory storage and test encryption
 // for unit testing purposes.
 func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *SigningKeyService) {
 	t.Helper()
-	codeRepo := memory.NewAuthorizationCodeStore()
-	credRepo := memory.NewClientCredentialStore()
-	agentRepo := memory.NewAgentRepository()
-	signingKeyRepo := memory.NewSigningKeyStore()
+	codeRepo := memory.NewAuthorizationCodeStore(memory.NewTransactionManager())
+	credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+	signingKeyRepo := memory.NewSigningKeyStore(memory.NewTransactionManager())
 	enc := &testEncryptor{}
 	logger := testSlogger()
 
-	signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
+	signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
+	ledgerStore := &ledgerfixture.Store{}
 	provider, err := NewProvider(
 		codeRepo,
-		memory.NewRefreshTokenSessionStore(),
-		memory.NewPKCESessionStore(),
+		memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()),
+		memory.NewPKCESessionStore(memory.NewTransactionManager()),
 		credRepo,
 		&testClientResolver{agentRepo: agentRepo},
 		signingKeySvc,
@@ -44,8 +46,10 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 		time.Hour, // 1h TTL
 		time.Hour,
 		"", // no CEL expression
-		newTestGrantVerifier(agentRepo),
+		newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()),
 		logger,
+		ledgerStore.Recorder(t),
+		ledgerStore,
 	)
 	require.NoError(t, err)
 
@@ -457,10 +461,10 @@ func TestProvider_RefreshTokens(t *testing.T) {
 	})
 
 	t.Run("cimd client without refresh_token grant gets no refresh token", func(t *testing.T) {
-		codeRepo := memory.NewAuthorizationCodeStore()
-		refreshRepo := memory.NewRefreshTokenSessionStore()
-		credRepo := memory.NewClientCredentialStore()
-		signingKeyRepo := memory.NewSigningKeyStore()
+		codeRepo := memory.NewAuthorizationCodeStore(memory.NewTransactionManager())
+		refreshRepo := memory.NewRefreshTokenSessionStore(memory.NewTransactionManager())
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		signingKeyRepo := memory.NewSigningKeyStore(memory.NewTransactionManager())
 		enc := &testEncryptor{}
 		logger := testSlogger()
 		agent := &dstorage.Agent{
@@ -481,11 +485,12 @@ func TestProvider_RefreshTokens(t *testing.T) {
 			}, nil
 		}}
 
-		signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
+		signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
+		ledgerStore := &ledgerfixture.Store{}
 		provider, err := NewProvider(
 			codeRepo,
 			refreshRepo,
-			memory.NewPKCESessionStore(),
+			memory.NewPKCESessionStore(memory.NewTransactionManager()),
 			credRepo,
 			resolver,
 			signingKeySvc,
@@ -495,6 +500,8 @@ func TestProvider_RefreshTokens(t *testing.T) {
 			"",
 			nil,
 			logger,
+			ledgerStore.Recorder(t),
+			ledgerStore,
 		)
 		require.NoError(t, err)
 		_, err = signingKeySvc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1012,15 +1019,16 @@ func TestProvider_AccessToken_ClaimsAndSignature(t *testing.T) {
 func TestProvider_CEL_RequestGrantType(t *testing.T) {
 	newProviderWithCEL := func(t *testing.T, expr string) (*Provider, *memory.AgentRepository) {
 		t.Helper()
-		codeRepo := memory.NewAuthorizationCodeStore()
-		credRepo := memory.NewClientCredentialStore()
-		agentRepo := memory.NewAgentRepository()
-		signingKeyRepo := memory.NewSigningKeyStore()
+		codeRepo := memory.NewAuthorizationCodeStore(memory.NewTransactionManager())
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+		signingKeyRepo := memory.NewSigningKeyStore(memory.NewTransactionManager())
 		enc := &testEncryptor{}
 		logger := testSlogger()
 
-		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
+		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
+		ledgerStore := &ledgerfixture.Store{}
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()), logger, ledgerStore.Recorder(t), ledgerStore)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1076,15 +1084,16 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing.T) {
 	providerWithCEL := func(t *testing.T, expr string) (*Provider, *memory.AgentRepository) {
 		t.Helper()
-		codeRepo := memory.NewAuthorizationCodeStore()
-		credRepo := memory.NewClientCredentialStore()
-		agentRepo := memory.NewAgentRepository()
-		signingKeyRepo := memory.NewSigningKeyStore()
+		codeRepo := memory.NewAuthorizationCodeStore(memory.NewTransactionManager())
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+		signingKeyRepo := memory.NewSigningKeyStore(memory.NewTransactionManager())
 		enc := &testEncryptor{}
 		logger := testSlogger()
 
-		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
+		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
+		ledgerStore := &ledgerfixture.Store{}
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()), logger, ledgerStore.Recorder(t), ledgerStore)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())

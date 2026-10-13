@@ -19,19 +19,21 @@ type bootstrapLockContextKey struct{}
 
 // SigningKeyStore is an in-memory implementation of SigningKeyRepository.
 type SigningKeyStore struct {
-	mu          sync.RWMutex
-	bootstrapCh chan struct{}
-	byID        map[id.SigningKeyID]*storage.SigningKey
-	byKID       map[id.KeyID]*storage.SigningKey
-	version     int64
+	mu           sync.RWMutex
+	transactions *TransactionManager
+	bootstrapCh  chan struct{}
+	byID         map[id.SigningKeyID]*storage.SigningKey
+	byKID        map[id.KeyID]*storage.SigningKey
+	version      int64
 }
 
 // NewSigningKeyStore creates a new in-memory signing key store.
-func NewSigningKeyStore() *SigningKeyStore {
+func NewSigningKeyStore(transactions *TransactionManager) *SigningKeyStore {
 	return &SigningKeyStore{
-		bootstrapCh: make(chan struct{}, 1),
-		byID:        make(map[id.SigningKeyID]*storage.SigningKey),
-		byKID:       make(map[id.KeyID]*storage.SigningKey),
+		transactions: transactions,
+		bootstrapCh:  make(chan struct{}, 1),
+		byID:         make(map[id.SigningKeyID]*storage.SigningKey),
+		byKID:        make(map[id.KeyID]*storage.SigningKey),
 	}
 }
 
@@ -39,6 +41,7 @@ func cloneSigningKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
 	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
+	clone.RemovedAt = copyPointer(key.RemovedAt)
 	return &clone
 }
 
@@ -48,16 +51,21 @@ func bootstrapWriteLockHeld(ctx context.Context) bool {
 }
 
 func (s *SigningKeyStore) Create(ctx context.Context, key *storage.SigningKey) error {
+	guard, gateErr := s.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
-		return s.createLocked(key)
+		return s.createLocked(ctx, key)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.createLocked(key)
+	return s.createLocked(ctx, key)
 }
 
-func (s *SigningKeyStore) createLocked(key *storage.SigningKey) error {
+func (s *SigningKeyStore) createLocked(ctx context.Context, key *storage.SigningKey) error {
 	if err := key.KeyDomain.Validate(); err != nil {
 		return storage.NewStorageError("SigningKeyStore.Create", storage.ErrorKindValidation, err, "key_domain is invalid")
 	}
@@ -67,23 +75,30 @@ func (s *SigningKeyStore) createLocked(key *storage.SigningKey) error {
 	}
 
 	clone := cloneSigningKey(key)
+	journalEntry(ctx, s.byID, clone.ID)
 	s.byID[clone.ID] = clone
+	journalEntry(ctx, s.byKID, clone.KID)
 	s.byKID[clone.KID] = clone
-	s.version++
+	s.bumpVersion(ctx)
 	return nil
 }
 
 func (s *SigningKeyStore) CreateAndSetCurrent(ctx context.Context, key *storage.SigningKey) error {
+	guard, gateErr := s.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
-		return s.createAndSetCurrentLocked(key)
+		return s.createAndSetCurrentLocked(ctx, key)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.createAndSetCurrentLocked(key)
+	return s.createAndSetCurrentLocked(ctx, key)
 }
 
-func (s *SigningKeyStore) createAndSetCurrentLocked(key *storage.SigningKey) error {
+func (s *SigningKeyStore) createAndSetCurrentLocked(ctx context.Context, key *storage.SigningKey) error {
 	if err := key.KeyDomain.Validate(); err != nil {
 		return storage.NewStorageError("SigningKeyStore.CreateAndSetCurrent", storage.ErrorKindValidation, err, "key_domain is invalid")
 	}
@@ -93,16 +108,23 @@ func (s *SigningKeyStore) createAndSetCurrentLocked(key *storage.SigningKey) err
 	}
 
 	for _, existing := range s.byID {
-		if existing.KeyDomain == key.KeyDomain {
-			existing.IsCurrent = false
+		if existing.KeyDomain == key.KeyDomain && existing.IsCurrent {
+			updated := *existing
+			updated.IsCurrent = false
+			journalEntry(ctx, s.byID, updated.ID)
+			s.byID[updated.ID] = &updated
+			journalEntry(ctx, s.byKID, updated.KID)
+			s.byKID[updated.KID] = &updated
 		}
 	}
 
 	clone := cloneSigningKey(key)
 	clone.IsCurrent = true
+	journalEntry(ctx, s.byID, clone.ID)
 	s.byID[clone.ID] = clone
+	journalEntry(ctx, s.byKID, clone.KID)
 	s.byKID[clone.KID] = clone
-	s.version++
+	s.bumpVersion(ctx)
 	return nil
 }
 
@@ -116,10 +138,14 @@ func (s *SigningKeyStore) getByKIDInDomainLocked(domain storage.KeyDomain, kid i
 }
 
 func (s *SigningKeyStore) GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error) {
+	guard, err := s.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
 		return s.getByKIDInDomainLocked(domain, kid)
 	}
-
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.getByKIDInDomainLocked(domain, kid)
@@ -130,10 +156,14 @@ func (s *SigningKeyStore) GetByKIDInDomain(ctx context.Context, domain storage.K
 // grace period, it falls back to the most recently activated key.
 
 func (s *SigningKeyStore) GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
+	guard, err := s.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
 		return s.getCurrentInDomainLocked(domain)
 	}
-
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.getCurrentInDomainLocked(domain)
@@ -171,6 +201,11 @@ func (s *SigningKeyStore) listActiveInDomainLocked(domain storage.KeyDomain) []*
 }
 
 func (s *SigningKeyStore) KeySetVersion(ctx context.Context) (int64, error) {
+	guard, err := s.transactions.lock(ctx, false)
+	if err != nil {
+		return 0, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
 		return s.version, nil
 	}
@@ -180,10 +215,14 @@ func (s *SigningKeyStore) KeySetVersion(ctx context.Context) (int64, error) {
 }
 
 func (s *SigningKeyStore) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
+	guard, err := s.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
 		return s.listActiveInDomainLocked(domain), nil
 	}
-
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.listActiveInDomainLocked(domain), nil
@@ -192,7 +231,7 @@ func (s *SigningKeyStore) ListActiveInDomain(ctx context.Context, domain storage
 // SetCurrent promotes a key to be the current signing key using the domain-supplied
 // activation timestamp.
 
-func (s *SigningKeyStore) setCurrentInDomainLocked(domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+func (s *SigningKeyStore) setCurrentInDomainLocked(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	target, exists := s.byKID[kid]
 	if !exists || target.RemovedAt != nil || target.KeyDomain != domain {
 		return nil, storage.NewStorageError("SigningKeyStore.SetCurrentInDomain", storage.ErrorKindNotFound, nil,
@@ -200,49 +239,74 @@ func (s *SigningKeyStore) setCurrentInDomainLocked(domain storage.KeyDomain, kid
 	}
 
 	for _, key := range s.byID {
-		if key.KeyDomain == domain {
-			key.IsCurrent = false
+		if key.KeyDomain == domain && key.IsCurrent {
+			updated := *key
+			updated.IsCurrent = false
+			journalEntry(ctx, s.byID, updated.ID)
+			s.byID[updated.ID] = &updated
+			journalEntry(ctx, s.byKID, updated.KID)
+			s.byKID[updated.KID] = &updated
 		}
 	}
-	target.IsCurrent = true
-	target.ActivatesAt = activatesAt
-	s.version++
-	return cloneSigningKey(target), nil
+	updated := *target
+	updated.IsCurrent = true
+	updated.ActivatesAt = activatesAt
+	journalEntry(ctx, s.byID, updated.ID)
+	s.byID[updated.ID] = &updated
+	journalEntry(ctx, s.byKID, updated.KID)
+	s.byKID[updated.KID] = &updated
+	s.bumpVersion(ctx)
+	return cloneSigningKey(&updated), nil
 }
 
 func (s *SigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
+	guard, err := s.transactions.lock(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	defer guard.release()
 	if !bootstrapWriteLockHeld(ctx) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 	}
-	return s.setPublicJWKLocked(kid, publicJWK)
+	return s.setPublicJWKLocked(ctx, kid, publicJWK)
 }
 
-func (s *SigningKeyStore) setPublicJWKLocked(kid id.KeyID, publicJWK []byte) (bool, error) {
+func (s *SigningKeyStore) setPublicJWKLocked(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
 	key, exists := s.byKID[kid]
 	if !exists || key.RemovedAt != nil {
 		return false, storage.NewStorageError("SigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("signing key with kid %s not found", kid))
 	}
 	if key.PublicJWK == nil {
-		key.PublicJWK = append([]byte(nil), publicJWK...)
-		s.version++
+		updated := *key
+		updated.PublicJWK = append([]byte(nil), publicJWK...)
+		journalEntry(ctx, s.byID, updated.ID)
+		s.byID[updated.ID] = &updated
+		journalEntry(ctx, s.byKID, updated.KID)
+		s.byKID[updated.KID] = &updated
+		s.bumpVersion(ctx)
 		return true, nil
 	}
 	return false, nil
 }
 
 func (s *SigningKeyStore) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+	guard, err := s.transactions.lock(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
-		return s.setCurrentInDomainLocked(domain, kid, activatesAt)
+		return s.setCurrentInDomainLocked(ctx, domain, kid, activatesAt)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.setCurrentInDomainLocked(domain, kid, activatesAt)
+	return s.setCurrentInDomainLocked(ctx, domain, kid, activatesAt)
 }
 
-func (s *SigningKeyStore) deleteInDomainLocked(domain storage.KeyDomain, kid id.KeyID) error {
+func (s *SigningKeyStore) deleteInDomainLocked(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error {
 	key, exists := s.byKID[kid]
 	if !exists || key.RemovedAt != nil || key.KeyDomain != domain {
 		return storage.NewStorageError("SigningKeyStore.DeleteInDomain", storage.ErrorKindNotFound, nil,
@@ -267,24 +331,38 @@ func (s *SigningKeyStore) deleteInDomainLocked(domain storage.KeyDomain, kid id.
 		return ports.ErrEffectiveCurrentKey
 	}
 
-	key.RemovedAt = &now
-	s.version++
+	updated := *key
+	updated.RemovedAt = &now
+	journalEntry(ctx, s.byID, updated.ID)
+	s.byID[updated.ID] = &updated
+	journalEntry(ctx, s.byKID, updated.KID)
+	s.byKID[updated.KID] = &updated
+	s.bumpVersion(ctx)
 	return nil
 }
 
 func (s *SigningKeyStore) DeleteInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error {
-	if bootstrapWriteLockHeld(ctx) {
-		return s.deleteInDomainLocked(domain, kid)
+	guard, err := s.transactions.lock(ctx, true)
+	if err != nil {
+		return err
 	}
-
+	defer guard.release()
+	if bootstrapWriteLockHeld(ctx) {
+		return s.deleteInDomainLocked(ctx, domain, kid)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.deleteInDomainLocked(domain, kid)
+	return s.deleteInDomainLocked(ctx, domain, kid)
 }
 
+// WithBootstrapLock encloses only the prepared candidate's recheck and persistence.
+// Callers must finish branch provisioning and encryption before entering it.
 func (s *SigningKeyStore) WithBootstrapLock(ctx context.Context, fn func(context.Context) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if _, joined := memoryTransaction(ctx); joined {
+		return storage.NewStorageError("SigningKeyStore.WithBootstrapLock", storage.ErrorKindConflict, nil, "bootstrap lock must precede the transaction lifecycle gate")
 	}
 
 	select {
@@ -294,10 +372,18 @@ func (s *SigningKeyStore) WithBootstrapLock(ctx context.Context, fn func(context
 		return ctx.Err()
 	}
 
+	txCtx, err := s.transactions.BeginTX(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.transactions.Rollback(txCtx) }()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return fn(context.WithValue(ctx, bootstrapLockContextKey{}, true))
+	err = fn(context.WithValue(txCtx, bootstrapLockContextKey{}, true))
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.transactions.Commit(txCtx)
 }
 
 func (s *SigningKeyStore) countActiveInDomainLocked(domain storage.KeyDomain) int {
@@ -311,11 +397,28 @@ func (s *SigningKeyStore) countActiveInDomainLocked(domain storage.KeyDomain) in
 }
 
 func (s *SigningKeyStore) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
+	guard, err := s.transactions.lock(ctx, false)
+	if err != nil {
+		return 0, err
+	}
+	defer guard.release()
 	if bootstrapWriteLockHeld(ctx) {
 		return s.countActiveInDomainLocked(domain), nil
 	}
-
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.countActiveInDomainLocked(domain), nil
+}
+
+// bumpVersion records the revision alongside the key mutation so rollback
+// cannot invalidate other instances' cache view or make a failed write visible.
+func (s *SigningKeyStore) bumpVersion(ctx context.Context) {
+	if scope, ok := memoryTransaction(ctx); ok {
+		previous := s.version
+		owner := scope.owner
+		owner.mu.Lock()
+		owner.undo = append(owner.undo, func() { s.version = previous })
+		owner.mu.Unlock()
+	}
+	s.version++
 }

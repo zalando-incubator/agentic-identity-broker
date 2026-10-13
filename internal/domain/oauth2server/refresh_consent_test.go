@@ -13,10 +13,13 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/ory/fosite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,9 +30,9 @@ type testConsentVerifier struct {
 	grants *memory.UserGrantRepository
 }
 
-func newTestGrantVerifier(agents ports.AgentRepository) *testConsentVerifier {
-	grants := memory.NewUserGrantRepository()
-	return &testConsentVerifier{consent.NewService(agents, nil, grants, nil, memory.NewRefreshTokenSessionStore(), nil, testSlogger()), grants}
+func newTestGrantVerifier(agents ports.AgentRepository, manager *memory.TransactionManager, recorder *ledger.Service) *testConsentVerifier {
+	grants := memory.NewUserGrantRepository(manager)
+	return &testConsentVerifier{consent.NewService(agents, nil, grants, nil, memory.NewRefreshTokenSessionStore(manager), nil, testSlogger(), recorder), grants}
 }
 
 func seedTestGrant(t *testing.T, verifier grantVerifier, agentID id.AgentID, principal id.Principal) {
@@ -86,17 +89,17 @@ func (r refreshRotationHook) MarkUsed(ctx context.Context, signature string) err
 }
 
 func TestProvider_RefreshContinuingConsent(t *testing.T) {
-	for _, name := range []string{"active", "missing", "expired", "mismatch", "legacy older", "legacy newer", "legacy equal UTC", "verifier failure", "storage failure", "revocation failure", "grant replaced during rotation"} {
+	for _, name := range []string{"active", "missing", "expired", "mismatch", "legacy older", "legacy newer", "legacy equal UTC", "verifier failure", "storage failure", "revocation failure", "grant replaced during rotation", "denial recording failure"} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			provider, agents, _ := newTestProvider(t)
 			agent, _, secret := setupTestCredentials(t, provider, agents)
 			agent.RedirectURIs = []string{"https://client.example.com/callback"}
 			require.NoError(t, agents.Update(ctx, agent))
-			grants := memory.NewUserGrantRepository()
+			grants := memory.NewUserGrantRepository(memory.NewTransactionManager())
 			grant := &storage.UserGrant{ID: id.NewGrantID(), AgentID: agent.ID, Principal: id.Principal("user@example.com"), CreatedAt: time.Now().UTC().Add(-time.Hour)}
 			require.NoError(t, grants.Create(ctx, grant))
-			provider.fositeStorage.verifier = consent.NewService(agents, nil, grants, nil, provider.fositeStorage.refreshRepo, nil, testSlogger())
+			provider.fositeStorage.verifier = consent.NewService(agents, nil, grants, nil, provider.fositeStorage.refreshRepo, nil, testSlogger(), ledgerfixture.NewRecorder())
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", grant.Principal)
 			require.NoError(t, err)
@@ -115,6 +118,8 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 			require.NoError(t, repo.Create(ctx, &chain))
 			var logs bytes.Buffer
 			provider.fositeStorage.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			outcomes := &ledgerfixture.Store{}
+			provider.ledger, provider.fositeStorage.transactions = outcomes.Recorder(t), outcomes
 
 			expected := error(nil)
 			switch name {
@@ -131,7 +136,7 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 				require.NoError(t, grants.Update(ctx, grant))
 				expected = ErrInvalidGrant
 			case "legacy older", "legacy newer", "legacy equal UTC":
-				legacyRepo := memory.NewRefreshTokenSessionStore()
+				legacyRepo := memory.NewRefreshTokenSessionStore(memory.NewTransactionManager())
 				row.GrantID = nil
 				switch name {
 				case "legacy newer":
@@ -164,6 +169,11 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 					}
 					return grants.Create(ctx, &replacement)
 				}}
+			case "denial recording failure":
+				_, err := grants.DeleteByPrincipalAndAgentID(ctx, grant.Principal, agent.ID)
+				require.NoError(t, err)
+				outcomes.AppendError = errors.New("ledger unavailable")
+				expected = ErrServerError
 			}
 
 			rotated, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
@@ -196,10 +206,25 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 				}
 				assert.Equal(t, wantStatus, protocolErr.HTTPStatus())
 			}
+			if name == "denial recording failure" {
+				assert.Empty(t, outcomes.Events)
+			} else {
+				require.Len(t, outcomes.Events, 1)
+				if expected == nil {
+					assert.Equal(t, model.BusinessEventTypePrefix+"token-issued", outcomes.Events[0].Type)
+				} else {
+					assert.Equal(t, model.BusinessEventTypePrefix+"token-request-failed", outcomes.Events[0].Type)
+					reason := "authorization_failed"
+					if expected == ErrServerError {
+						reason = "internal_failure"
+					}
+					assert.Equal(t, map[string]any{"reason_code": reason}, outcomes.Events[0].Data)
+				}
+			}
 			for _, sig := range []string{signature, chain.Signature} {
 				stored, err := repo.FindBySignature(ctx, sig)
 				require.NoError(t, err)
-				if expected == ErrServerError || expected == nil && sig == chain.Signature {
+				if expected == ErrServerError && name != "denial recording failure" || expected == nil && sig == chain.Signature {
 					assert.Nil(t, stored.UsedAt)
 				} else {
 					assert.NotNil(t, stored.UsedAt)
@@ -261,7 +286,7 @@ func TestProvider_RefreshConsentRevokedBeforeRotation(t *testing.T) {
 			principal := id.Principal("user@example.com")
 			repo := provider.fositeStorage.refreshRepo
 			grants := provider.fositeStorage.verifier.(*testConsentVerifier).grants
-			consentService := consent.NewService(agents, nil, grants, nil, repo, nil, testSlogger())
+			consentService := consent.NewService(agents, nil, grants, nil, repo, nil, testSlogger(), ledgerfixture.NewRecorder())
 			provider.fositeStorage.verifier = consentService
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)
@@ -351,14 +376,14 @@ func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
 			entries := []storage.GrantedPermissionSetEntry{{PermissionSetID: psID, IncludedServiceIDs: []id.ServiceID{serviceID}}}
 			grant.GrantedPermissionSets = entries
 			require.NoError(t, grants.Update(ctx, grant))
-			sessions := memory.NewInMemoryUserSessionRepository()
+			sessions := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
 			future := time.Now().Add(time.Hour)
 			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), TokenType: "Bearer", RefreshTokenExpiresAt: &future}))
-			psRepo := memory.NewPermissionSetRepository()
+			psRepo := memory.NewPermissionSetRepository(memory.NewTransactionManager())
 			require.NoError(t, psRepo.Create(ctx, &storage.PermissionSet{ID: psID, Name: "Access", Description: "Lifecycle test", ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}}))
 			psService := permissionset.NewPermissionSetService(psRepo, grants, testSlogger())
 			t.Cleanup(psService.Close)
-			consentService := consent.NewService(agents, nil, grants, sessions, repo, psService, testSlogger())
+			consentService := consent.NewService(agents, nil, grants, sessions, repo, psService, testSlogger(), ledgerfixture.NewRecorder())
 			provider.fositeStorage.verifier = consentService
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)
@@ -394,7 +419,7 @@ func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
 			case "consent deletion":
 				require.NoError(t, consentService.RevokeConsentForPrincipal(ctx, principal, agent.ID))
 			case "credential deletion":
-				credentials := NewCredentialService(agents, provider.fositeStorage.credRepo, repo, provider.clientAuth, testSlogger())
+				credentials := NewCredentialService(agents, provider.fositeStorage.credRepo, repo, provider.clientAuth, testSlogger(), ledgerfixture.NewRecorder())
 				require.NoError(t, credentials.Revoke(ctx, agent.ID))
 			case "expired grant renewal":
 				past := time.Now().Add(-time.Hour)
@@ -428,8 +453,8 @@ func TestProvider_RefreshIssuanceRequiresConsent(t *testing.T) {
 			agent, _, secret := setupTestCredentials(t, provider, agents)
 			agent.RedirectURIs = []string{"https://client.example.com/callback"}
 			require.NoError(t, agents.Update(ctx, agent))
-			grants := memory.NewUserGrantRepository()
-			provider.fositeStorage.verifier = consent.NewService(agents, nil, grants, nil, provider.fositeStorage.refreshRepo, nil, testSlogger())
+			grants := memory.NewUserGrantRepository(memory.NewTransactionManager())
+			provider.fositeStorage.verifier = consent.NewService(agents, nil, grants, nil, provider.fositeStorage.refreshRepo, nil, testSlogger(), ledgerfixture.NewRecorder())
 			if name == "expired" {
 				require.NoError(t, grants.Create(ctx, &storage.UserGrant{ID: id.NewGrantID(), AgentID: agent.ID, Principal: id.Principal("user@example.com"), ValidUntil: ptr.To(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC))}))
 			}
@@ -458,7 +483,12 @@ func TestProvider_RefreshIssuanceRequiresConsent(t *testing.T) {
 
 func TestProvider_RefreshSuccessorStorageFailure(t *testing.T) {
 	ctx := t.Context()
-	provider, agents, _ := newTestProvider(t)
+	signing, _, recorder, manager := newSigningBoundaryFixture(t)
+	_, _, err := signing.EnsureInitialKey(ctx, "ES256")
+	require.NoError(t, err)
+	agents := memory.NewAgentRepository(manager)
+	provider, err := NewProvider(memory.NewAuthorizationCodeStore(manager), memory.NewRefreshTokenSessionStore(manager), memory.NewPKCESessionStore(manager), memory.NewClientCredentialStore(manager), &testClientResolver{agentRepo: agents}, signing, "https://broker.example.com", time.Hour, time.Hour, "", newTestGrantVerifier(agents, manager, recorder), testSlogger(), recorder, manager)
+	require.NoError(t, err)
 	agent, _, secret := setupTestCredentials(t, provider, agents)
 	agent.RedirectURIs = []string{"https://client.example.com/callback"}
 	require.NoError(t, agents.Update(ctx, agent))
@@ -478,4 +508,11 @@ func TestProvider_RefreshSuccessorStorageFailure(t *testing.T) {
 	require.ErrorAs(t, err, &protocolErr)
 	assert.Equal(t, "server_error", protocolErr.Code())
 	assert.Equal(t, http.StatusInternalServerError, protocolErr.HTTPStatus())
+	retained, err := repo.FindBySignature(ctx, sha256Hex(issued.RefreshToken))
+	require.NoError(t, err)
+	assert.Nil(t, retained.UsedAt, "failed successor persistence must roll predecessor consumption back")
+	failures, err := recorder.Query(ctx, model.BusinessEventQuery{Subject: model.BusinessEventSubject{Principal: id.Principal("user@example.com")}, Type: model.BusinessEventTypePrefix + "token-request-failed", Start: time.Now().UTC().Add(-time.Hour), End: time.Now().UTC().Add(time.Hour)})
+	require.NoError(t, err)
+	require.Len(t, failures, 1)
+	assert.Equal(t, map[string]any{"reason_code": "internal_failure"}, failures[0].Data)
 }

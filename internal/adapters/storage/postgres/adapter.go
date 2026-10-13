@@ -234,7 +234,7 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 		)
 	}
 
-	return nil
+	return a.businessEventPartitionsReady(healthCtx)
 }
 
 // CreateUser creates a new user entity in PostgreSQL.
@@ -284,7 +284,7 @@ func (a *Adapter) CreateUser(ctx context.Context, user *ports.User) error {
 		VALUES ($1, $2, $3, $4)
 	`
 
-	_, err := a.db.ExecContext(execCtx, query, user.ID, user.Email, user.CreatedAt, user.UpdatedAt)
+	_, err := a.storageExecutor(execCtx).ExecContext(execCtx, query, user.ID, user.Email, user.CreatedAt, user.UpdatedAt)
 	if err != nil {
 		// Map PostgreSQL errors to domain errors
 		if err.Error() == "context deadline exceeded" {
@@ -346,7 +346,7 @@ func (a *Adapter) GetUser(ctx context.Context, userID id.UserID) (*ports.User, e
 		WHERE id = $1
 	`
 
-	if err := a.db.GetContext(queryCtx, user, query, userID); err != nil {
+	if err := a.storageExecutor(queryCtx).GetContext(queryCtx, user, query, userID); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, storage.NewStorageError(
 				"GetUser",
@@ -422,7 +422,7 @@ func (a *Adapter) UpdateUser(ctx context.Context, user *ports.User) error {
 		WHERE id = $3
 	`
 
-	result, err := a.db.ExecContext(execCtx, query, user.Email, user.UpdatedAt, user.ID)
+	result, err := a.storageExecutor(execCtx).ExecContext(execCtx, query, user.Email, user.UpdatedAt, user.ID)
 	if err != nil {
 		if err.Error() == "context deadline exceeded" {
 			return storage.NewStorageError(
@@ -488,7 +488,7 @@ func (a *Adapter) DeleteUser(ctx context.Context, userID id.UserID) error {
 
 	query := `DELETE FROM users WHERE id = $1`
 
-	_, err := a.db.ExecContext(execCtx, query, userID)
+	_, err := a.storageExecutor(execCtx).ExecContext(execCtx, query, userID)
 	if err != nil {
 		if err.Error() == "context deadline exceeded" {
 			return storage.NewStorageError(
@@ -541,7 +541,7 @@ func (a *Adapter) ListUsers(ctx context.Context, filter *ports.UserFilter) ([]*p
 	}
 
 	var users []*ports.User
-	if err := a.db.SelectContext(queryCtx, &users, query, args...); err != nil {
+	if err := a.storageExecutor(queryCtx).SelectContext(queryCtx, &users, query, args...); err != nil {
 		if err.Error() == "context deadline exceeded" {
 			return nil, storage.NewStorageError(
 				"ListUsers",

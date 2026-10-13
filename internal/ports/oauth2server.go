@@ -33,6 +33,8 @@ type SigningKeyBootstrapCoordinator interface {
 	// WithBootstrapLock serializes initial signing-key bootstrap across replicas.
 	// The coordinator may derive a deadline-bounded context from ctx and pass it
 	// to fn. Callers must not assume fn receives the original ctx unchanged.
+	// fn only rechecks current storage state and persists already-prepared material.
+	// Provisioning, encryption, and other external I/O must precede this call.
 	WithBootstrapLock(ctx context.Context, fn func(context.Context) error) error
 }
 

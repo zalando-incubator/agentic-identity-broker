@@ -20,6 +20,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -102,14 +104,14 @@ func newAgentsHandlerForTest(mockRepo *MockAgentRepository, mockServiceRepo *Moc
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
 	// Use multiAgentEnabled=true so existing CRUD tests don't need ExistsOtherWithClientID expectations.
 	// T033 tests use newAgentsHandlerForTestWithMultiAgent with explicit flags.
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
 // newAgentsHandlerForTestWithMultiAgent creates an AgentsHandler with the given multiAgentEnabled flag.
 func newAgentsHandlerForTestWithMultiAgent(mockRepo *MockAgentRepository, mockServiceRepo *MockProviderRepository, logger *slog.Logger, multiAgentEnabled bool) *AgentsHandler {
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
@@ -769,7 +771,12 @@ func TestAgentsHandler_DeleteAgent(t *testing.T) {
 			handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 			agentID := id.NewAgentID()
-			mockRepo.On("Delete", mock.Anything, agentID).Return(tc.deleted, nil)
+			if tc.deleted {
+				mockRepo.On("Get", mock.Anything, agentID).Return(&storage.Agent{ID: agentID}, nil)
+				mockRepo.On("Delete", mock.Anything, agentID).Return(true, nil)
+			} else {
+				mockRepo.On("Get", mock.Anything, agentID).Return(nil, ports.ErrNotFound)
+			}
 
 			req := httptest.NewRequest(http.MethodDelete, "/api/agents/"+agentID.String(), nil)
 			rctx := chi.NewRouteContext()
@@ -1202,7 +1209,7 @@ func newAgentsHandlerForFR019Test(
 	logger *slog.Logger,
 ) *AgentsHandler {
 	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, svc, logger, true)
+	agentSvc := agents.NewService(mockRepo, svc, logger, true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	return NewAgentsHandler(agentSvc, svc, mockPS, logger)
 }
 
@@ -1656,7 +1663,7 @@ func (v canonicalPermissionSetValidator) CanonicalIDs(_ context.Context, _ []id.
 
 func newAgentsHandlerWithCanonicalPermissionSets(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, permissionSets PermissionSetValidator) *AgentsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
+	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	return NewAgentsHandler(agentService, providerService, permissionSets, slog.Default())
 }
 

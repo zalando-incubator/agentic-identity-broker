@@ -16,7 +16,7 @@ import (
 // The share lock prevents concurrent DELETE transactions from removing referenced PSes
 // before the caller's write commits, closing the write/delete TOCTOU race window.
 // Returns ErrorKindConflict with a descriptive error if any IDs are missing.
-func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sql.Tx, psIDs []id.PermissionSetID) error {
+func verifyPermissionSetExistenceInTx(ctx context.Context, tx sqlTransactionExecutor, psIDs []id.PermissionSetID) error {
 	if len(psIDs) == 0 {
 		return nil
 	}
@@ -25,7 +25,7 @@ func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sql.Tx, psIDs []i
 		idStrings[i] = psID.String()
 	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM permission_sets WHERE id = ANY($1::uuid[]) FOR SHARE`,
+		`SELECT id FROM permission_sets WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`,
 		pq.Array(idStrings),
 	)
 	if err != nil {
@@ -56,7 +56,7 @@ func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sql.Tx, psIDs []i
 	return nil
 }
 
-func verifyServiceExistenceInTx(ctx context.Context, tx *sql.Tx, serviceIDs []id.ServiceID) error {
+func verifyServiceExistenceInTx(ctx context.Context, tx sqlTransactionExecutor, serviceIDs []id.ServiceID) error {
 	if len(serviceIDs) == 0 {
 		return nil
 	}
@@ -64,7 +64,7 @@ func verifyServiceExistenceInTx(ctx context.Context, tx *sql.Tx, serviceIDs []id
 	for i, serviceID := range serviceIDs {
 		idStrings[i] = serviceID.String()
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM thirdparty_oauth2_services WHERE id = ANY($1::uuid[]) FOR SHARE`, pq.Array(idStrings))
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM thirdparty_oauth2_services WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, pq.Array(idStrings))
 	if err != nil {
 		return storage.NewStorageError("verifyServiceExistence", storage.ErrorKindUnknown, err, "failed to lock service rows")
 	}

@@ -46,6 +46,21 @@ type Config struct {
 	Telemetry        TelemetryConfig        `mapstructure:"telemetry"`
 	RequestContext   RequestContextConfig   `mapstructure:"request_context"`
 	Approvals        ApprovalsConfig        `mapstructure:"approvals"`
+	BusinessEvents   BusinessEventsConfig   `mapstructure:"business_events"`
+}
+
+// BusinessEventsConfig controls ledger retention and optional telemetry copies.
+type BusinessEventsConfig struct {
+	Retention            time.Duration `mapstructure:"retention"`
+	TelemetryCopyEnabled bool          `mapstructure:"telemetry_copy_enabled"`
+}
+
+// DefaultBusinessEventsConfig returns the mandatory ledger's default settings.
+func DefaultBusinessEventsConfig() BusinessEventsConfig {
+	return BusinessEventsConfig{
+		Retention:            2160 * time.Hour,
+		TelemetryCopyEnabled: true,
+	}
 }
 
 // ServerConfig contains configuration for both HTTP servers.

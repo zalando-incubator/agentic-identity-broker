@@ -58,8 +58,40 @@ func TestUserGrantRepositorySnapshotDeleteFailureResults(t *testing.T) {
 			if tc.kind == storage.ErrorKindNotFound {
 				assert.ErrorIs(t, err, ports.ErrNotFound)
 			}
-			assert.Empty(t, execs)
+			if tc.wantQueries == 0 {
+				assert.Empty(t, execs)
+			} else {
+				assert.Equal(t, []string{"SELECT pg_advisory_xact_lock_shared($1,$2)"}, execs)
+			}
 			require.Len(t, queries, tc.wantQueries)
+		})
+	}
+}
+
+func TestUserGrantRepositoryAbsentDeleteCompletesJoinedScope(t *testing.T) {
+	for _, failure := range []error{nil, errors.New("delete failed")} {
+		t.Run(fmt.Sprintf("failure=%v", failure), func(t *testing.T) {
+			adapter := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
+				queryColumns: []string{"id", "principal", "agent_id", "valid_until", "granted_permission_sets", "created_at", "updated_at"},
+				queryErr:     failure,
+			}).adapter
+			ctx, err := adapter.BeginTX(t.Context())
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(ctx) }()
+			deleted, err := NewUserGrantRepository(adapter).DeleteByPrincipalAndAgentID(ctx, id.Principal("absent-user"), id.NewAgentID())
+			require.Nil(t, deleted)
+			if failure != nil {
+				require.ErrorIs(t, err, failure)
+				require.Error(t, adapter.Commit(ctx), "actual failures must leave the owner rollback-only")
+				return
+			}
+			require.ErrorIs(t, err, ports.ErrNotFound)
+			effectRan := false
+			effects, ok := ports.StorageTransactionEffectsFromContext(ctx)
+			require.True(t, ok)
+			require.NoError(t, effects.AfterCommit(func() { effectRan = true }))
+			require.NoError(t, adapter.Commit(ctx), "an absent deletion must not poison the owning transaction")
+			require.True(t, effectRan, "the owner must still release its committed effects")
 		})
 	}
 }
@@ -132,12 +164,12 @@ func TestPermissionSetRepositoryDeleteRetryOutcomes(t *testing.T) {
 		wantQueries int
 		wantExecs   int
 	}{
-		{name: "existing", cfg: signingKeyRepoTestConfig{rowsAffected: 1}, wantDeleted: true, wantQueries: 2, wantExecs: 1},
-		{name: "absent", wantQueries: 2, wantExecs: 1},
-		{name: "commit failure", cfg: signingKeyRepoTestConfig{rowsAffected: 1, commitErr: failure}, wantErr: failure, wantQueries: 2, wantExecs: 1},
-		{name: "serialization retries then commits", cfg: signingKeyRepoTestConfig{rowsAffected: 1, execErrs: []error{serialization, nil}}, wantDeleted: true, wantQueries: 4, wantExecs: 2},
-		{name: "serialization exhausts three attempts", cfg: signingKeyRepoTestConfig{execErr: serialization}, wantErr: serialization, wantQueries: 6, wantExecs: 3},
-		{name: "other delete failure does not retry", cfg: signingKeyRepoTestConfig{execErr: failure}, wantErr: failure, wantQueries: 2, wantExecs: 1},
+		{name: "existing", cfg: signingKeyRepoTestConfig{rowsAffected: 1}, wantDeleted: true, wantQueries: 2, wantExecs: 2},
+		{name: "absent", wantQueries: 2, wantExecs: 2},
+		{name: "commit failure", cfg: signingKeyRepoTestConfig{rowsAffected: 1, commitErr: failure}, wantErr: failure, wantQueries: 2, wantExecs: 2},
+		{name: "serialization retries then commits", cfg: signingKeyRepoTestConfig{rowsAffected: 1, execErrs: []error{nil, serialization, nil, nil}}, wantDeleted: true, wantQueries: 4, wantExecs: 4},
+		{name: "serialization exhausts three attempts", cfg: signingKeyRepoTestConfig{execErrs: []error{nil, serialization, nil, serialization, nil, serialization}}, wantErr: serialization, wantQueries: 6, wantExecs: 6},
+		{name: "other delete failure does not retry", cfg: signingKeyRepoTestConfig{execErrs: []error{nil, failure}}, wantErr: failure, wantQueries: 2, wantExecs: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

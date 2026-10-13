@@ -23,7 +23,7 @@ func TestAgentRepository_Create(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success with generated ID", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("test-client")),
 			DisplayName:    "Test Agent",
@@ -42,7 +42,7 @@ func TestAgentRepository_Create(t *testing.T) {
 	})
 
 	t.Run("success with provided ID", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		customID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01")
 		agent := &storage.Agent{
 			ID:             customID,
@@ -58,7 +58,7 @@ func TestAgentRepository_Create(t *testing.T) {
 	})
 
 	t.Run("duplicate ID conflict", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		dupID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a02")
 		agent1 := &storage.Agent{
 			ID:             dupID,
@@ -84,7 +84,7 @@ func TestAgentRepository_Create(t *testing.T) {
 	})
 
 	t.Run("duplicate client_id allowed (Feature 021: multiple agents share one upstream client_id)", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent1 := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("shared-upstream-client")),
 			DisplayName:    "Agent 1",
@@ -107,7 +107,7 @@ func TestAgentRepository_Create(t *testing.T) {
 	})
 
 	t.Run("validation failure", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent := &storage.Agent{
 			ClientID: ptr.To(id.ClientID("test-client")),
 			// Missing required DisplayName
@@ -124,7 +124,7 @@ func TestAgentRepository_Get(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -144,7 +144,7 @@ func TestAgentRepository_Get(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		retrieved, err := repo.Get(ctx, id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"))
 		require.Error(t, err)
@@ -153,7 +153,7 @@ func TestAgentRepository_Get(t *testing.T) {
 	})
 
 	t.Run("returns copy prevents external mutation", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -180,7 +180,7 @@ func TestAgentRepository_Get(t *testing.T) {
 
 func TestAgentRepository_GetByIDs_OmitsMissingAndCopies(t *testing.T) {
 	ctx := context.Background()
-	repo := NewAgentRepository()
+	repo := NewAgentRepository(NewTransactionManager())
 	first := &storage.Agent{ID: id.NewAgentID(), DisplayName: "First", Description: "First agent", PermissionSets: testPermissionSets()}
 	second := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Second", Description: "Second agent", PermissionSets: testPermissionSets()}
 	require.NoError(t, repo.Create(ctx, first))
@@ -200,7 +200,7 @@ func TestAgentRepository_Update(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -227,7 +227,7 @@ func TestAgentRepository_Update(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent := &storage.Agent{
 			ID:             id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"),
 			ClientID:       ptr.To(id.ClientID("test-client")),
@@ -245,7 +245,7 @@ func TestAgentRepository_Update(t *testing.T) {
 		// Feature 021: the repo no longer enforces client_id uniqueness on update.
 		// Uniqueness is the app handler's responsibility (checkClientIDUniqueness).
 		// Multiple agents may share the same upstream client_id.
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		agent1 := &storage.Agent{
 			ID:             id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a21"),
@@ -279,7 +279,7 @@ func TestAgentRepository_Update(t *testing.T) {
 	})
 
 	t.Run("validation failure", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -304,7 +304,7 @@ func TestAgentRepository_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -330,7 +330,7 @@ func TestAgentRepository_Delete(t *testing.T) {
 	})
 
 	t.Run("idempotent - nonexistent agent", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		deleted, err := repo.Delete(ctx, id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"))
 		require.NoError(t, err) // Should not error
@@ -338,7 +338,7 @@ func TestAgentRepository_Delete(t *testing.T) {
 	})
 
 	t.Run("cleans up client_id index", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
 			ID:             testAgentID,
@@ -367,7 +367,7 @@ func TestAgentRepository_Delete(t *testing.T) {
 	})
 
 	t.Run("cleans up client_uri index", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent := &storage.Agent{
 			ClientURIs:     []string{"https://agent.example.com/client.json"},
 			DisplayName:    "Test Agent",
@@ -389,7 +389,7 @@ func TestAgentRepository_Delete(t *testing.T) {
 }
 
 func TestAgentRepository_Delete_Concurrent(t *testing.T) {
-	repo := NewAgentRepository()
+	repo := NewAgentRepository(NewTransactionManager())
 	ctx := context.Background()
 	canonicalID := "deleted-agent"
 	agent := &storage.Agent{
@@ -448,7 +448,7 @@ func TestAgentRepository_MultipleAgentsShareClientID(t *testing.T) {
 	// delete(byClientID, oldClientID) removes the *entire* index entry, making the
 	// other agent invisible via GetByClientID even though its ClientID is unchanged.
 	t.Run("GetByClientID returns remaining agent after sibling client_id is changed", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		alpha := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("shared-client")),
@@ -488,7 +488,7 @@ func TestAgentRepository_List(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns all agents", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		agent1 := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("client-1")),
@@ -514,7 +514,7 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 
 	t.Run("returns empty slice when no agents", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 
 		agents, err := repo.List(ctx)
 		require.NoError(t, err)
@@ -523,7 +523,7 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 
 	t.Run("returns copies prevent external mutation", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		agent := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("test-client")),
 			DisplayName:    "Original Name",
@@ -551,7 +551,7 @@ func TestAgentRepository_List(t *testing.T) {
 // T026b: Storage-layer mutual exclusivity — agent cannot have both ClientID and ClientURIs set.
 func TestAgentRepository_Create_MutualExclusivity(t *testing.T) {
 	ctx := context.Background()
-	repo := NewAgentRepository()
+	repo := NewAgentRepository(NewTransactionManager())
 	clientID := id.ClientID("upstream-client-id")
 
 	agent := &storage.Agent{
@@ -571,7 +571,7 @@ func TestAgentRepository_Create_MutualExclusivity(t *testing.T) {
 
 func TestAgentRepository_Update_MutualExclusivity(t *testing.T) {
 	ctx := context.Background()
-	repo := NewAgentRepository()
+	repo := NewAgentRepository(NewTransactionManager())
 	clientID := id.ClientID("upstream-client-id")
 
 	// Create a valid proxy agent first
@@ -595,7 +595,7 @@ func TestAgentRepository_Update_MutualExclusivity(t *testing.T) {
 
 func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 	ctx := context.Background()
-	repo := NewAgentRepository()
+	repo := NewAgentRepository(NewTransactionManager())
 	newAgent := func(name, uri string) *storage.Agent {
 		return &storage.Agent{DisplayName: name, Description: "CIMD pattern lookup test", ClientURIs: []string{uri}, PermissionSets: testPermissionSets()}
 	}

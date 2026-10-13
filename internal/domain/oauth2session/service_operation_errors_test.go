@@ -16,6 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -36,10 +37,24 @@ func (r operationSessionRepository) FindByPrincipalAndService(ctx context.Contex
 	return r.find(ctx, principal, serviceID)
 }
 
-type operationRefreshRepository func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+type operationRefreshRepository struct {
+	*ledgerSessionRecords
+	lock   func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error)
+	update func(context.Context, *storage.UserSession, *storage.UserSession) error
+}
 
-func (r operationRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-	return r(ctx, principal, serviceID, refresh)
+func (r operationRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
+	if r.lock != nil {
+		return r.lock(ctx, principal, serviceID, refresh)
+	}
+	return r.ledgerSessionRecords.WithLockedSession(ctx, principal, serviceID, refresh)
+}
+
+func (r operationRefreshRepository) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	if r.update != nil {
+		return r.update(ctx, previous, current)
+	}
+	return r.ledgerSessionRecords.UpdateRefreshedSession(ctx, previous, current)
 }
 
 type operationProviderRepository struct {
@@ -94,8 +109,10 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 		AccessTokenExpiresAt: &expired,
 	}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	repository := operationSessionRepository{find: func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
-		return session, nil
+	repository := &ledgerSessionRecords{session: session}
+	store := &ledgerfixture.Store{Snapshot: func() func() {
+		before := copyLedgerSession(repository.session)
+		return func() { repository.session = before }
 	}}
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 		return provider, nil
@@ -106,11 +123,8 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 		httpClient: &http.Client{Transport: operationTransport(func(*http.Request) (*http.Response, error) {
 			return operationTokenResponse(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
 		})},
-		refreshRepo: operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-			current := *session
-			_, err := refresh(ctx, &current)
-			return &current, err
-		}),
+		refreshRepo: operationRefreshRepository{ledgerSessionRecords: repository},
+		ledger:      store.Recorder(t), transactions: store,
 	}
 	return service, provider, session
 }
@@ -148,9 +162,11 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			s.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) { return nil, cause }}, operationEncryption{}, operationBranchKeyManager{}, nil, false, s.logger)
 		}},
 		{"session lock", OperationRefresh, DetailRepositoryUnavailable, DependencySessionRepository, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
-			s.refreshRepo = operationRefreshRepository(func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			repository := s.refreshRepo.(operationRefreshRepository)
+			repository.lock = func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 				return nil, cause
-			})
+			}
+			s.refreshRepo = repository
 		}},
 		{"refresh decryption", OperationRefresh, DetailDecryptionFailed, DependencyEncryption, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
 			s.encryption = operationEncryption{decrypt: func(context.Context, []byte, map[string]string) ([]byte, error) { return nil, cause }}
@@ -169,15 +185,10 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 				return data, nil
 			}}
 		}},
-		{"persistence", OperationRefresh, DetailPersistenceFailed, DependencySessionRepository, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, session *storage.UserSession) {
-			s.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-				current := *session
-				_, err := refresh(ctx, &current)
-				if err != nil {
-					return nil, err
-				}
-				return nil, cause
-			})
+		{"persistence", OperationRefresh, DetailPersistenceFailed, DependencySessionRepository, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
+			repository := s.refreshRepo.(operationRefreshRepository)
+			repository.update = func(context.Context, *storage.UserSession, *storage.UserSession) error { return cause }
+			s.refreshRepo = repository
 		}},
 		{"refreshed access decryption", OperationRefresh, DetailDecryptionFailed, DependencyEncryption, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
 			s.encryption = operationEncryption{decrypt: func(_ context.Context, data []byte, _ map[string]string) ([]byte, error) {
@@ -218,9 +229,11 @@ func TestGetValidAccessTokenPreservesMissingSessionCause(t *testing.T) {
 	for _, locked := range []bool{false, true} {
 		service, provider, session := newOperationTestService(t, io.Discard)
 		if locked {
-			service.refreshRepo = operationRefreshRepository(func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			repository := service.refreshRepo.(operationRefreshRepository)
+			repository.lock = func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 				return nil, ports.ErrNotFound
-			})
+			}
+			service.refreshRepo = repository
 		} else {
 			service.sessionRepo = operationSessionRepository{find: func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
 				return nil, ports.ErrNotFound
@@ -391,4 +404,47 @@ func TestRefreshRejectionBodyReadPreservesDependencyCause(t *testing.T) {
 	var retrieveError *oauth2.RetrieveError
 	require.ErrorAs(t, err, &retrieveError)
 	assert.NotContains(t, err.Error(), cause.Error())
+}
+
+func TestRefreshFailureKeepsLedgerReasonAndSafeOperationMetadata(t *testing.T) {
+	cause := errors.New("sentinel-private-refresh-network-cause")
+	for _, tc := range []struct {
+		name      string
+		reason    string
+		detail    ErrorDetail
+		configure func(*OAuth2SessionService)
+	}{
+		{"network", "upstream_unavailable", DetailProviderUnavailable, func(s *OAuth2SessionService) {
+			s.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) { return nil, cause })
+		}},
+		{"invalid response", "invalid_response", DetailProviderResponseInvalid, func(s *OAuth2SessionService) {
+			s.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+				return operationTokenResponse(http.StatusOK, "sentinel-invalid-response"), nil
+			})
+		}},
+		{"empty decrypted refresh", "refresh_unavailable", DetailRefreshUnavailable, func(s *OAuth2SessionService) {
+			s.encryption = operationEncryption{decrypt: func(context.Context, []byte, map[string]string) ([]byte, error) { return nil, nil }}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			service, provider, session := newOperationTestService(t, &logs)
+			tc.configure(service)
+			_, _, err := service.GetValidAccessToken(context.Background(), session.Principal, provider.ID)
+			metadata := requireOperationError(t, err, OperationRefresh, tc.detail)
+			if tc.name == "network" {
+				require.ErrorIs(t, err, cause)
+			}
+			if tc.name == "invalid response" {
+				require.Equal(t, http.StatusOK, metadata.StatusCode())
+			}
+			require.NotContains(t, err.Error(), "sentinel-")
+			require.NotContains(t, logs.String(), "sentinel-")
+			store := service.transactions.(*ledgerfixture.Store)
+			require.Len(t, store.Events, 1)
+			require.Equal(t, model.BusinessEventTypePrefix+"session-refresh-failed", store.Events[0].Type)
+			require.Equal(t, map[string]any{"reason_code": tc.reason}, store.Events[0].Data)
+			require.Equal(t, session.ID, store.Events[0].SessionID)
+		})
+	}
 }

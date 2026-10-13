@@ -1,10 +1,12 @@
 package e2e_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
+	integrationbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -29,6 +31,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 var _ = SynchronizedAfterSuite(func() {
 	_ = os.Unsetenv(e2eUpstreamBaseURLEnv)
+	Expect(integrationbootstrap.TerminateSharedPostgres(context.Background())).To(Succeed())
 }, func() {
 	if suiteUpstream != nil {
 		suiteUpstream.Close()

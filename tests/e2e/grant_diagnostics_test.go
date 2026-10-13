@@ -692,12 +692,10 @@ var _ = Describe("Grant Observation Context", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(sessions)).To(BeZero())
 		}, http.StatusBadRequest, "session_missing", true, true),
-		Entry("unregistered subject-token candidate is not exported despite a stored grant", func(f *grantDiagnosticsFixture) {
+		Entry("unregistered subject-token candidate is not exported after agent deletion", func(f *grantDiagnosticsFixture) {
 			deleted, err := f.Storage.Agents().Delete(context.Background(), f.Agent.ID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(deleted).To(BeTrue())
-			_, err = f.Storage.UserGrants().Get(context.Background(), f.Grant.ID)
-			Expect(err).NotTo(HaveOccurred(), "the candidate must not expose even a still-stored grant")
 		}, http.StatusInternalServerError, "agent_missing", false, false),
 	)
 })

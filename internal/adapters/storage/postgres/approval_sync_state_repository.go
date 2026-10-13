@@ -46,9 +46,7 @@ func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (int64, er
 	defer cancel()
 
 	var version int64
-	err := r.adapter.db.QueryRowContext(queryCtx,
-		`SELECT version FROM approval_sync_state WHERE id = 1`,
-	).Scan(&version)
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT version FROM approval_sync_state WHERE id = 1`).Scan(&version)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
@@ -92,7 +90,7 @@ func (r *ApprovalSyncStateRepository) IncrementVersion(ctx context.Context) (int
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return 0, storage.NewStorageError(
 			"IncrementApprovalSyncVersion",

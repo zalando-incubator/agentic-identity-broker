@@ -14,7 +14,6 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -69,6 +68,7 @@ func NewServerFactory(config *ports.Config, logger *slog.Logger) *ServerFactory 
 //
 // Parameters:
 //   - storage: Storage adapter (PRODUCTION memory or postgres adapter)
+//   - configure: Optional builder callbacks, applied after the defaults
 //
 // Returns:
 //   - *app.App: Fully-wired application with all services initialized
@@ -78,8 +78,9 @@ func NewServerFactory(config *ports.Config, logger *slog.Logger) *ServerFactory 
 // 1. Validate inputs (config, storage provided)
 // 2. Create production app.Builder
 // 3. Configure builder with config, storage, logger
-// 4. Call production app.Builder.Build()
-// 5. Return wired App or error
+// 4. Apply optional builder callbacks
+// 5. Call production app.Builder.Build()
+// 6. Return wired App or error
 //
 // Example usage:
 //
@@ -88,7 +89,7 @@ func NewServerFactory(config *ports.Config, logger *slog.Logger) *ServerFactory 
 //	app, err := factory.BuildApp(storage)
 //	require.NoError(t, err)
 //	// app is ready to pass to TestServer
-func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
+func (f *ServerFactory) BuildApp(storage interface{}, configure ...func(*app.Builder)) (*app.App, error) {
 	// Validate inputs
 	if storage == nil {
 		return nil, fmt.Errorf("storage adapter is required")
@@ -105,10 +106,9 @@ func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
 	// Create production app.Builder (no custom DI)
 	builder := app.NewBuilder()
 
-	// Storage must be *storageadapter.Adapter from production
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
+	storageAdapter, ok := storage.(ports.StorageProvider)
 	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
+		return nil, fmt.Errorf("storage must implement ports.StorageProvider")
 	}
 
 	// Configure with production pattern (using builder methods)
@@ -118,6 +118,10 @@ func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
 		WithLogger(f.logger).
 		WithStaticWebResourcesPath(webDistPath())
 
+	for _, configureBuilder := range configure {
+		configureBuilder(builder)
+	}
+
 	return builder.Build()
 }
 
@@ -126,56 +130,18 @@ func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
 // The TracerProvider is registered as the global OTel provider and used to
 // capture spans emitted during tests.
 func (f *ServerFactory) BuildAppWithTracerProvider(storage interface{}, tp *sdktrace.TracerProvider) (*app.App, error) {
-	if storage == nil {
-		return nil, fmt.Errorf("storage adapter is required")
-	}
-	if f.config == nil {
-		return nil, fmt.Errorf("factory config is required")
-	}
-	if f.logger == nil {
-		return nil, fmt.Errorf("factory logger is required")
-	}
-
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
-	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
-	}
-
-	return app.NewBuilder().
-		WithConfig(f.config).
-		WithStorage(storageAdapter).
-		WithLogger(f.logger).
-		WithStaticWebResourcesPath(webDistPath()).
-		WithTracerProvider(tp).
-		Build()
+	return f.BuildApp(storage, func(builder *app.Builder) {
+		builder.WithTracerProvider(tp)
+	})
 }
 
 // BuildAppWithCIMDFetcher creates a fully-wired application with an injected CIMDFetcher.
 // Used in CIMD E2E tests where the mock CIMD server uses a self-signed TLS certificate
 // (e.g., httptest.NewTLSServer) that the production fetcher's system cert pool would reject.
 func (f *ServerFactory) BuildAppWithCIMDFetcher(storage interface{}, cimdFetcher ports.CIMDFetcher) (*app.App, error) {
-	if storage == nil {
-		return nil, fmt.Errorf("storage adapter is required")
-	}
-	if f.config == nil {
-		return nil, fmt.Errorf("factory config is required")
-	}
-	if f.logger == nil {
-		return nil, fmt.Errorf("factory logger is required")
-	}
-
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
-	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
-	}
-
-	return app.NewBuilder().
-		WithConfig(f.config).
-		WithStorage(storageAdapter).
-		WithLogger(f.logger).
-		WithStaticWebResourcesPath(webDistPath()).
-		WithCIMDFetcher(cimdFetcher).
-		Build()
+	return f.BuildApp(storage, func(builder *app.Builder) {
+		builder.WithCIMDFetcher(cimdFetcher)
+	})
 }
 
 // ValidateFactory checks factory is properly initialized.

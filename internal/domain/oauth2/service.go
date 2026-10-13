@@ -8,8 +8,12 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
@@ -62,23 +66,25 @@ type OAuth2Config struct {
 
 // AuthorizationService implements the OAuth2Service port.
 type AuthorizationService struct {
-	grantRepo           ports.UserGrantRepository
+	consentService      *consent.Service
 	sessionRepo         ports.UserSessionRepository
 	clientResolver      ports.ClientResolver
 	sessionTokenService *sessiontoken.Service
 	config              *OAuth2Config
 	logger              *slog.Logger
+	ledger              *ledger.Service
 }
 
 // NewAuthorizationService creates an AuthorizationService.
 // Panics if sessionTokenService, sessionRepo, or config.ModeStrategy is nil.
 func NewAuthorizationService(
-	grantRepo ports.UserGrantRepository,
+	consentService *consent.Service,
 	sessionRepo ports.UserSessionRepository,
 	clientResolver ports.ClientResolver,
 	config *OAuth2Config,
 	logger *slog.Logger,
 	sessionTokenService *sessiontoken.Service,
+	recorder *ledger.Service,
 ) *AuthorizationService {
 	if sessionTokenService == nil {
 		panic("oauth2.NewAuthorizationService: sessionTokenService must not be nil")
@@ -90,13 +96,26 @@ func NewAuthorizationService(
 		panic("oauth2.NewAuthorizationService: config.ModeStrategy must not be nil")
 	}
 	return &AuthorizationService{
-		grantRepo:           grantRepo,
+		consentService:      consentService,
 		sessionRepo:         sessionRepo,
 		clientResolver:      clientResolver,
 		config:              config,
 		logger:              logger,
 		sessionTokenService: sessionTokenService,
+		ledger:              recorder,
 	}
+}
+
+func (s *AuthorizationService) recordAuthorization(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+	actorID := principal.String()
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+"authorization-requested", model.BusinessEvent{
+		OccurredAt: time.Now().UTC(), Subject: &principal, Actor: model.BusinessEventActor{Kind: "user", ID: &actorID},
+		AgentID: agentID, Data: map[string]any{},
+	})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
 }
 
 // ResolveForTokenGrant resolves the client_id, classifies the agent, and enforces
@@ -223,9 +242,16 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 
+	if err := s.recordAuthorization(ctx, principal, agent.ID); err != nil {
+		errRedirect, _ := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
+		return ports.ErrorDecision("server_error", "Failed to record authorization request", errRedirect), nil
+	}
 	// Step 2: Check if user has active grant for this agent
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agent.ID)
-	if err != nil && !errors.Is(err, ports.ErrNotFound) {
+	grant, err := s.consentService.VerifyAgentAccess(ctx, principal, agent.ID)
+	if errors.Is(err, consent.ErrAgentAccessDenied) || errors.Is(err, consent.ErrGrantExpired) {
+		grant, err = nil, nil
+	}
+	if err != nil {
 		// redirect_uri is validated above so a redirect-with-error is safe here.
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
