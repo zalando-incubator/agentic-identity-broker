@@ -31,7 +31,7 @@ func testSigningKeyInDomain(kid string, domain storage.KeyDomain, isCurrent bool
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: []byte("encrypted-key-material"),
 		IsCurrent:           isCurrent,
-		ActivatesAt:         now,
+		ActivatesAt:         now.Add(-time.Hour),
 		CreatedAt:           now,
 	}
 }
@@ -170,7 +170,7 @@ func TestSigningKeyRepo_PublicJWK(t *testing.T) {
 		PrivateKeyEncrypted: []byte("encrypted-key-material"),
 		PublicJWK:           first,
 		IsCurrent:           true,
-		ActivatesAt:         now,
+		ActivatesAt:         now.Add(-time.Hour),
 		CreatedAt:           now,
 	}
 	require.NoError(t, repo.Create(ctx, key))

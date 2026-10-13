@@ -73,55 +73,6 @@ func TestTokenExchangeErrorDescription(t *testing.T) {
 	}
 }
 
-func TestTokenExchangeErrorWithDetails(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name            string
-		err             *TokenExchangeError
-		expectedDetails string
-	}{
-		{
-			name:            "invalid_request with details",
-			err:             NewInvalidRequestErrorWithDetails("missing param", "param_required"),
-			expectedDetails: "param_required",
-		},
-		{
-			name:            "invalid_client with details",
-			err:             NewInvalidClientErrorWithDetails("bad cert", "signature_invalid"),
-			expectedDetails: "signature_invalid",
-		},
-		{
-			name:            "invalid_grant with details",
-			err:             NewInvalidGrantErrorWithDetails("no tokens", "session_missing"),
-			expectedDetails: "session_missing",
-		},
-		{
-			name:            "invalid_target with details",
-			err:             NewInvalidTargetErrorWithDetails("no match", "resource_ambiguous"),
-			expectedDetails: "resource_ambiguous",
-		},
-		{
-			name:            "access_denied with details",
-			err:             NewAccessDeniedErrorWithDetails("no grant", "grant_expired"),
-			expectedDetails: "grant_expired",
-		},
-		{
-			name:            "server_error with details",
-			err:             NewServerErrorWithDetails("internal error", "cel_timeout"),
-			expectedDetails: "cel_timeout",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := tt.err.Details(); got != tt.expectedDetails {
-				t.Errorf("Details() = %q, want %q", got, tt.expectedDetails)
-			}
-		})
-	}
-}
-
 func TestTokenExchangeErrorErrorMethod(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

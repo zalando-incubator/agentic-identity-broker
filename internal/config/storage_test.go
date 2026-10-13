@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStorageConfigValidation_Memory(t *testing.T) {
@@ -90,6 +92,35 @@ func TestStorageConfigValidation_PostgresNoURL(t *testing.T) {
 
 	err := validateStorageConfig(config)
 	assert.Error(t, err)
+}
+
+func TestValidate_PostgresConnectionURLCredentialsRedacted(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"invalid scheme", "mysql://user:credential-secret@localhost/testdb"},
+		{"missing scheme", "user:credential-secret@localhost/testdb"},
+		{"malformed URL with query password", "postgresql:/localhost/testdb?password=credential-secret%zz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.Storage.Backend = "postgres"
+			cfg.Storage.Postgres.ConnectionURL = tt.url
+
+			err := Validate(cfg)
+			require.Error(t, err)
+			var configErr *domconfig.ConfigError
+			require.ErrorAs(t, err, &configErr)
+			assert.Equal(t, "storage.postgres.connection_url", configErr.Field)
+			assert.Equal(t, RedactedValue, configErr.Value)
+			assert.Contains(t, err.Error(), "valid postgresql:// URL")
+			assert.NotContains(t, err.Error(), tt.url)
+			assert.NotContains(t, err.Error(), "credential-secret")
+		})
+	}
 }
 
 func TestStorageConfigValidation_PostgresInvalidURL(t *testing.T) {

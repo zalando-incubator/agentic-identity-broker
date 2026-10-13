@@ -233,25 +233,25 @@ func TestTokenExchangeRequest_InvalidResource(t *testing.T) {
 		name       string
 		resource   string
 		wantCode   string
-		wantErrMsg string
+		wantDetail FailureDetail
 	}{
 		{
 			name:       "empty resource",
 			resource:   "",
 			wantCode:   "invalid_request",
-			wantErrMsg: "resource parameter is required",
+			wantDetail: DetailResourceMissing,
 		},
 		{
 			name:       "invalid percent-encoding",
 			resource:   "https://api.example.com/%GG/",
 			wantCode:   "invalid_request",
-			wantErrMsg: "resource URI is not a valid URL",
+			wantDetail: DetailRequestMalformed,
 		},
 		{
 			name:       "relative resource URI",
 			resource:   "api.example.com",
 			wantCode:   "invalid_request",
-			wantErrMsg: "resource URI must include a scheme",
+			wantDetail: DetailRequestMalformed,
 		},
 	}
 
@@ -276,8 +276,8 @@ func TestTokenExchangeRequest_InvalidResource(t *testing.T) {
 				if texErr.Code() != tt.wantCode {
 					t.Errorf("error code = %q, want %q", texErr.Code(), tt.wantCode)
 				}
-				if !strings.Contains(texErr.Description(), tt.wantErrMsg) {
-					t.Errorf("error description = %q, want substring %q", texErr.Description(), tt.wantErrMsg)
+				if got := texErr.Diagnostic(); got.Detail() != tt.wantDetail || got.Stage() != StageRequestValidation || got.Outcome() != OutcomeInvalidRequest {
+					t.Errorf("request classification = %#v, want invalid_request/request_validation/%s", got, tt.wantDetail)
 				}
 			}
 		})

@@ -446,7 +446,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	// is returned as an ImmediateResponse from the headers phase. Because the body has not been
 	// read at that point, the JSON-RPC request id is unknown and the error carries id=null.
 	It("should return URLElicitationRequiredError from headers phase with null id when exchange requires re-auth", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		const opaAgentgwReAuthURL = "https://broker.example.com/api/third-party/svc-opa/oauth2/authorize"
+		const opaAgentgwReAuthURL = "https://broker.example.com/sessions"
 		mockTokenExchangeSvr.withReAuthErrorURI(opaAgentgwReAuthURL)
 		defer mockTokenExchangeSvr.reset()
 

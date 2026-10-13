@@ -36,34 +36,33 @@ func (r *UserGrantRepository) WithPermissionSetRepository(psRepo ports.Permissio
 }
 
 // Create creates a new user grant or updates existing grant for same principal+agent (upsert semantics).
-// Returns deep copy of the created/updated grant.
+// On success, copies persisted metadata back into grant without sharing its expiry pointer.
 func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Generate ID if not provided
-	if grant.ID.IsZero() {
-		grant.ID = id.NewGrantID()
+	stored := grant.Copy()
+	if stored.ID.IsZero() {
+		stored.ID = id.NewGrantID()
 	}
 
-	// Check if grant already exists for this principal+agent pair (upsert semantics)
-	key := principalAgentKey(grant.Principal, grant.AgentID)
+	key := principalAgentKey(stored.Principal, stored.AgentID)
 	if existingID, exists := r.byPrincipalAndAgent[key]; exists {
-		// Update existing grant
-		existingGrant := r.grants[existingID]
-		existingGrant.ValidUntil = grant.ValidUntil
-		existingGrant.GrantedPermissionSets = grant.GrantedPermissionSets
-		existingGrant.UpdatedAt = grant.UpdatedAt
-
-		// Copy back the existing ID to the provided grant
-		grant.ID = existingID
+		stored.ID = existingID
+		stored.CreatedAt = r.grants[existingID].CreatedAt
 	} else {
-		// Store new grant
-		r.grants[grant.ID] = grant.Copy()
-		r.byPrincipalAndAgent[key] = grant.ID
+		r.byPrincipalAndAgent[key] = stored.ID
+		r.grantIDsByAgent[stored.AgentID] = append(r.grantIDsByAgent[stored.AgentID], stored.ID)
+	}
+	r.grants[stored.ID] = stored
 
-		// Update agent index for cascade delete
-		r.grantIDsByAgent[grant.AgentID] = append(r.grantIDsByAgent[grant.AgentID], grant.ID)
+	grant.ID = stored.ID
+	grant.CreatedAt = stored.CreatedAt
+	grant.UpdatedAt = stored.UpdatedAt
+	grant.ValidUntil = nil
+	if stored.ValidUntil != nil {
+		validUntil := *stored.ValidUntil
+		grant.ValidUntil = &validUntil
 	}
 
 	return nil
@@ -95,8 +94,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Check if grant exists
-	_, exists := r.grants[grant.ID]
+	existing, exists := r.grants[grant.ID]
 	if !exists {
 		return storage.NewStorageError(
 			"UpdateUserGrant",
@@ -106,8 +104,18 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 		)
 	}
 
-	// Store deep copy
-	r.grants[grant.ID] = grant.Copy()
+	stored := grant.Copy()
+	stored.CreatedAt = existing.CreatedAt
+	r.grants[stored.ID] = stored
+
+	grant.ID = stored.ID
+	grant.CreatedAt = stored.CreatedAt
+	grant.UpdatedAt = stored.UpdatedAt
+	grant.ValidUntil = nil
+	if stored.ValidUntil != nil {
+		validUntil := *stored.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 
 	return nil
 }
@@ -219,23 +227,25 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 	return nil
 }
 
-// DeleteByPrincipalAndAgentID deletes the grant owned by principal for the given agent.
+// DeleteByPrincipalAndAgentID returns a defensive snapshot of the grant it deletes.
 // Returns StorageError wrapping ports.ErrNotFound when no grant exists for the pair.
 // This is NOT idempotent: absence of a grant is an error (revocation semantics FR-014).
-func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	key := principalAgentKey(principal, agentID)
 	grantID, exists := r.byPrincipalAndAgent[key]
-	if !exists {
-		return storage.NewStorageError(
+	grant := r.grants[grantID]
+	if !exists || grant == nil {
+		return nil, storage.NewStorageError(
 			"DeleteByPrincipalAndAgentID",
 			storage.ErrorKindNotFound,
 			ports.ErrNotFound,
 			"no active grant exists for this principal and agent",
 		)
 	}
+	snapshot := grant.Copy()
 
 	// Remove from principal+agent index
 	delete(r.byPrincipalAndAgent, key)
@@ -246,7 +256,7 @@ func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, p
 	// Remove grant
 	delete(r.grants, grantID)
 
-	return nil
+	return snapshot, nil
 }
 
 // principalAgentKey creates a composite key for indexing by principal and agent.

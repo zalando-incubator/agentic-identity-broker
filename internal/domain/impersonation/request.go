@@ -26,7 +26,7 @@ type Request struct {
 func ParseRequest(form map[string][]string) (*Request, error) {
 	// FR-002a: impersonation accepts optional scope but never accepts resource.
 	if present(form, tokenexchange.ResourceParam) {
-		return nil, invalidRequest("resource parameter is not permitted for impersonation", "resource_present")
+		return nil, invalidRequest("resource parameter is not permitted for impersonation")
 	}
 
 	clientAssertion, err := singleton(form, tokenexchange.ClientAssertionParam)
@@ -38,7 +38,7 @@ func ParseRequest(form map[string][]string) (*Request, error) {
 		return nil, err
 	}
 	if clientAssertionType != tokenexchange.JWTBearerType {
-		return nil, invalidRequest("client_assertion_type must be the JWT bearer type", "client_assertion_type_invalid")
+		return nil, invalidRequest("client_assertion_type must be the JWT bearer type")
 	}
 
 	actorToken, err := singleton(form, tokenexchange.ActorTokenParam)
@@ -50,7 +50,7 @@ func ParseRequest(form map[string][]string) (*Request, error) {
 		return nil, err
 	}
 	if actorTokenType != JWTTokenType {
-		return nil, invalidRequest("actor_token_type must be the RFC 8693 JWT token type", "actor_token_type_invalid")
+		return nil, invalidRequest("actor_token_type must be the RFC 8693 JWT token type")
 	}
 
 	subjectToken, err := singleton(form, tokenexchange.SubjectTokenParam)
@@ -74,7 +74,7 @@ func ParseRequest(form map[string][]string) (*Request, error) {
 			return nil, err
 		}
 		if requestedTokenType != AccessTokenType {
-			return nil, invalidRequest("requested_token_type must be the access-token type", "requested_token_type_invalid")
+			return nil, invalidRequest("requested_token_type must be the access-token type")
 		}
 	}
 
@@ -94,13 +94,13 @@ func ParseRequest(form map[string][]string) (*Request, error) {
 func singleton(form map[string][]string, key string) (string, error) {
 	values := form[key]
 	if len(values) == 0 {
-		return "", invalidRequest(key+" is required", key+"_missing")
+		return "", invalidRequest(key + " is required")
 	}
 	if len(values) > 1 {
-		return "", invalidRequest(key+" must not be repeated", key+"_repeated")
+		return "", invalidRequest(key + " must not be repeated")
 	}
 	if values[0] == "" {
-		return "", invalidRequest(key+" must not be empty", key+"_empty")
+		return "", invalidRequest(key + " must not be empty")
 	}
 	return values[0], nil
 }

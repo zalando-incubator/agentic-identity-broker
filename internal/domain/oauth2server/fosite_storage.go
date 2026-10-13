@@ -12,6 +12,7 @@ import (
 	"github.com/ory/fosite"
 	fositestorage "github.com/ory/fosite/storage"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -21,6 +22,10 @@ import (
 
 var _ fositestorage.Transactional = (*FositeStorage)(nil)
 
+type grantVerifier interface {
+	VerifyAgentAccess(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error)
+}
+
 // FositeStorage wraps project repositories to implement fosite storage interfaces.
 type FositeStorage struct {
 	codeRepo       ports.AuthorizationCodeRepository
@@ -29,6 +34,7 @@ type FositeStorage struct {
 	pkceRepo       ports.PKCESessionRepository
 	credRepo       ports.ClientCredentialRepository
 	clientResolver ports.ClientResolver
+	verifier       grantVerifier
 	logger         *slog.Logger
 }
 
@@ -39,6 +45,7 @@ func NewFositeStorage(
 	pkceRepo ports.PKCESessionRepository,
 	credRepo ports.ClientCredentialRepository,
 	clientResolver ports.ClientResolver,
+	verifier grantVerifier,
 	logger *slog.Logger,
 	transactions ...ports.StorageTransactionManager,
 ) *FositeStorage {
@@ -48,6 +55,7 @@ func NewFositeStorage(
 		pkceRepo:       pkceRepo,
 		credRepo:       credRepo,
 		clientResolver: clientResolver,
+		verifier:       verifier,
 		logger:         logger,
 	}
 	if len(transactions) > 0 {
@@ -126,6 +134,8 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 	return s.codeRepo.Create(ctx, authCode)
 }
 
+type exchangeClientContextKey struct{}
+
 // GetAuthorizeCodeSession retrieves an authorization code session by code signature.
 func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, requestSession fosite.Session) (fosite.Requester, error) {
 	authCode, err := s.codeRepo.FindByCodeHash(ctx, code)
@@ -141,16 +151,25 @@ func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string
 		requestSession.SetExpiresAt(fosite.AuthorizeCode, authCode.ExpiresAt)
 	}
 
-	// Look up the client using the stored ClientID (the original client_id from the authorize
-	// request). For CIMD clients this is the metadata URL; for opaque clients it's the UUID.
-	// Using AgentID.String() would fail for CIMD clients whose resolver rejects UUID lookups.
+	// Match the original client_id, not AgentID: CIMD stores a metadata URL, not the agent UUID.
+	// During an exchange, reuse the request-resolved client instead of resolving it again.
 	clientLookupID := authCode.ClientID.String()
 	if clientLookupID == "" {
 		clientLookupID = authCode.AgentID.String()
 	}
-	client, err := s.GetClient(ctx, clientLookupID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to look up client: %w", err)
+	client, ok := ctx.Value(exchangeClientContextKey{}).(fosite.Client)
+	if !ok {
+		client, err = s.GetClient(ctx, clientLookupID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to look up client: %w", err)
+		}
+	}
+	agentID, err := extractAgentID(client)
+	if err != nil || agentID != authCode.AgentID || client.GetID() != clientLookupID {
+		return nil, fosite.ErrNotFound
+	}
+	if confidential, ok := client.(*confidentialClient); ok && confidential.credential.AgentID != authCode.AgentID {
+		return nil, fosite.ErrNotFound
 	}
 
 	// Reconstruct the fosite request
@@ -226,12 +245,29 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 		return fmt.Errorf("CreateRefreshTokenSession: %w", err)
 	}
 
+	var grantID id.GrantID
+	var previousSignature string
+	if extra, ok := req.GetSession().(fosite.ExtraClaimsSession); ok {
+		grantID, _ = extra.GetExtraClaims()["consent_grant_id"].(id.GrantID)
+		previousSignature, _ = extra.GetExtraClaims()["refresh_parent_signature"].(string)
+	}
+	if grantID.IsZero() {
+		grant, err := s.verifier.VerifyAgentAccess(ctx, id.Principal(req.GetSession().GetSubject()), agentID)
+		if errors.Is(err, consent.ErrAgentAccessDenied) || errors.Is(err, consent.ErrGrantExpired) {
+			return fosite.ErrInvalidGrant
+		}
+		if err != nil {
+			return fosite.ErrServerError.WithWrap(err)
+		}
+		grantID = grant.ID
+	}
 	email, displayName := sessionProfile(req.GetSession())
 
 	session := &storage.RefreshTokenSession{
 		Signature:   signature,
 		RequestID:   req.GetID(),
 		AgentID:     agentID,
+		GrantID:     &grantID,
 		ClientID:    id.NewClientID(req.GetClient().GetID()),
 		Principal:   id.NewPrincipal(req.GetSession().GetSubject()),
 		Email:       email,
@@ -242,6 +278,12 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 	}
 	if err := session.Validate(); err != nil {
 		return err
+	}
+	if previousSignature != "" {
+		if err := s.refreshRepo.CreateSuccessor(ctx, session, previousSignature); err != nil {
+			return s.mapStorageError(ctx, err)
+		}
+		return nil
 	}
 	return s.refreshRepo.Create(ctx, session)
 }
@@ -278,6 +320,30 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 	if refreshSession.UsedAt != nil {
 		return req, fosite.ErrInactiveToken
 	}
+	grant, err := s.verifier.VerifyAgentAccess(ctx, refreshSession.Principal, refreshSession.AgentID)
+	reason := ""
+	switch {
+	case errors.Is(err, consent.ErrAgentAccessDenied):
+		reason = "grant_missing"
+	case errors.Is(err, consent.ErrGrantExpired):
+		reason = "grant_expired"
+	case err != nil:
+		return nil, err
+	case refreshSession.GrantID != nil && *refreshSession.GrantID != grant.ID:
+		reason = "grant_mismatch"
+	case refreshSession.GrantID == nil && grant.CreatedAt.UTC().After(refreshSession.CreatedAt.UTC()):
+		reason = "grant_mismatch"
+	}
+	if reason != "" {
+		if err := s.refreshRepo.RevokeByRequestID(ctx, refreshSession.RequestID); err != nil {
+			return nil, fosite.ErrServerError.WithWrap(err)
+		}
+		s.logger.InfoContext(ctx, "refresh denied for consent", "reason", reason,
+			"principal", refreshSession.Principal, "agent_id", refreshSession.AgentID)
+		return nil, fosite.ErrNotFound
+	}
+	sess.GetExtraClaims()["consent_grant_id"] = grant.ID
+	sess.GetExtraClaims()["refresh_parent_signature"] = signature
 
 	return req, nil
 }

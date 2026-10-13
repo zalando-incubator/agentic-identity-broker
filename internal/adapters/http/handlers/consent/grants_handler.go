@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -281,6 +282,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 	}
 
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	grant, err := h.consentService.GrantConsent(r.Context(), grantReq)
 	if err != nil {
 		handleGrantError(err)
@@ -292,12 +294,6 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
-
-	// Audit logging
-	h.logger.InfoContext(r.Context(), "grant created",
-		"principal", principalValue,
-		"agent_id", agentID,
-		"grant_id", grant.ID)
 
 	resp := map[string]interface{}{"data": h.toGrantResponse(grant)}
 	if sessionRedirectURI != "" {
@@ -313,6 +309,7 @@ func (h *GrantsHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.consentService.RevokeConsentForPrincipal(r.Context(), principalValue, agentID); err != nil {
 		if errors.Is(err, consent.ErrGrantNotFound) {
 			h.writeError(w, http.StatusNotFound, "not found", "no active grant exists for this agent")

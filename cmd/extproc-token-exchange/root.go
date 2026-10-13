@@ -116,11 +116,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	logger := initLogger(cfg)
 	logger.Info("ExtProc Token Exchange Service starting",
 		"grpc_bind", cfg.GRPC.Bind,
-		"grpc_port", cfg.GRPC.Port,
-		"token_endpoint", cfg.OAuth2.TokenEndpoint,
-		"issuer", cfg.OAuth2.Issuer,
-		"client_id", cfg.OAuth2.ClientID,
-		"client_secret", "[REDACTED]")
+		"grpc_port", cfg.GRPC.Port)
 
 	// 3. Setup signal handling for graceful shutdown.
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -154,7 +150,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer func() {
 			shutdownTelemetry(logger, telemetryShutdown)
 		}()
-		logger.Info("Telemetry initialized", "endpoint", cfg.Telemetry.Exporter.Endpoint)
+		logger.Info("Telemetry initialized")
 
 		// T047: Wire slog-to-OTel bridge when telemetry AND logs are both enabled.
 		// This enables log-trace correlation (US5): structured log entries will carry
@@ -180,7 +176,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// 6. Optionally initialise OPA authorizer when authorization is enabled.
 	var authorizer authorization.Authorizer
 	if cfg.Authorization.Enabled {
-		logger.Info("OPA authorization enabled", "policy_path", cfg.Authorization.Policy.Path)
+		logger.Info("OPA authorization enabled")
 		authorizer, err = authorization.NewOPAAuthorizer(&cfg.Authorization, logger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OPA authorizer: %w", err)

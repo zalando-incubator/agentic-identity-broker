@@ -3,14 +3,17 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/telemetryhttp"
 )
 
 // LoggingMiddleware logPrefixes defines a whitelist of path prefixes that should be logged (e.g. "/api/").
@@ -46,10 +49,14 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 
 			// Log after the request completes
 			duration := time.Since(start)
-			clientIP := clientIPFromContext(r.Context(), r.RemoteAddr)
+			clientIP := sanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
+			method := r.Method
+			if r.URL.Path == "/oauth2/token" {
+				method = telemetryhttp.MethodName(method)
+			}
 			logger.InfoContext(r.Context(), "HTTP request",
-				"method", r.Method,
-				"path", r.URL.Path,
+				"method", sanitizeLogValue(method),
+				"path", sanitizeLogValue(r.URL.Path),
 				"status", wrapped.statusCode,
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", clientIP,
@@ -68,17 +75,20 @@ func RecoveryMiddleware(logger *slog.Logger, traceResponseEnabled bool) func(nex
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
-					stack := debug.Stack()
-					clientIP := clientIPFromContext(r.Context(), r.RemoteAddr)
 					writeTraceResponseHeaderIfPresent(w, r.Context(), traceResponseEnabled)
-					logger.ErrorContext(r.Context(), "Panic recovered",
-						"error", err,
-						"method", r.Method,
-						"path", r.URL.Path,
-						"remote_addr", clientIP,
-						"client_ip", clientIP,
-						"stack", string(stack),
-					)
+					if r.URL.Path == "/oauth2/token" {
+						logger.ErrorContext(r.Context(), "Panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
+					} else {
+						clientIP := sanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
+						logger.ErrorContext(r.Context(), "Panic recovered",
+							"error", sanitizeLogValue(fmt.Sprint(err)),
+							"method", sanitizeLogValue(r.Method),
+							"path", sanitizeLogValue(r.URL.Path),
+							"remote_addr", clientIP,
+							"client_ip", clientIP,
+							"stack", string(debug.Stack()),
+						)
+					}
 
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}
@@ -103,6 +113,14 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func sanitizeLogValue(value string) string {
+	if !strings.ContainsAny(value, "\\\r\n\v\f\u0085\u2028\u2029") {
+		return value
+	}
+	quoted := strconv.Quote(value)
+	return quoted[1 : len(quoted)-1]
 }
 
 func clientIPFromContext(ctx context.Context, fallback string) string {

@@ -301,16 +301,14 @@ func TestOPAAuthorizer_Evaluate_CreatesTraceSpanWithDecisionAttributes(t *testin
 		assert.Equal(t, "allow", attrs["authorization.action"])
 		assert.Equal(t, "ok", attrs["authorization.result_code"])
 		assert.Equal(t, "mcp", attrs["authorization.protocol"])
-		assert.Equal(t, "list_files", attrs["authorization.tool_name"])
+		assert.NotContains(t, attrs, "authorization.tool_name")
 		break
 	}
 	assert.True(t, found, "span 'extproc.opa.evaluate' must exist")
 }
 
-// TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName verifies that a
-// non-empty MCPInput.TargetServerName is included in the trace span and audit log
-// as authorization.target_server_name / target_server_name (SR-004).
-func TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName(t *testing.T) {
+// Caller-provided target-server names remain policy inputs, never trace attributes.
+func TestOPAAuthorizer_Evaluate_TraceSpanOmitsCallerTargetServerName(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	prevTP := otel.GetTracerProvider()
@@ -343,7 +341,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName(t *testing.T) 
 		}
 		found = true
 		attrs := attributeMap(s.Attributes())
-		assert.Equal(t, "github-mcp", attrs["authorization.target_server_name"])
+		assert.NotContains(t, attrs, "authorization.target_server_name")
 		break
 	}
 	assert.True(t, found, "span 'extproc.opa.evaluate' must exist")
@@ -606,7 +604,7 @@ func TestOPAAuthorizer_UndefinedActionWarnsAndDenies(t *testing.T) {
 	assert.Equal(t, authorization.ActionDeny, decision.Action)
 	assert.Equal(t, []string{"unknown action: future_action"}, decision.Reasons)
 	assert.Contains(t, logBuf.String(), "undefined OPA action")
-	assert.Contains(t, logBuf.String(), "future_action")
+	assert.NotContains(t, logBuf.String(), "future_action")
 }
 
 func TestOPAAuthorizer_AuditLog_UsesRequestContext(t *testing.T) {

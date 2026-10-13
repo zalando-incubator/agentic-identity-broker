@@ -92,6 +92,22 @@ func TestRefreshTokenSessionRepo(t *testing.T) {
 		assert.Nil(t, got.UsedAt)
 	})
 
+	t.Run("Successor creation requires the rotation transaction", func(t *testing.T) {
+		root := newSession(t, "sig-no-transaction", "req-no-transaction", time.Now().Add(time.Hour).UTC())
+		require.NoError(t, repo.Create(ctx, root))
+		require.NoError(t, repo.MarkUsed(ctx, root.Signature))
+		require.NoError(t, repo.RevokeByRequestID(ctx, root.RequestID))
+		successor := *root
+		successor.Signature += "-successor"
+		err := repo.CreateSuccessor(ctx, &successor, root.Signature)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+		_, err = repo.FindBySignature(ctx, successor.Signature)
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	})
+
 	t.Run("RevokeByRequestID marks all matching sessions used", func(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, newSession(t, "sig-3", "req-chain", time.Now().Add(time.Hour).UTC())))
 		require.NoError(t, repo.Create(ctx, newSession(t, "sig-4", "req-chain", time.Now().Add(time.Hour).UTC())))

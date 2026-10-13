@@ -53,6 +53,8 @@ export EXTPROC_TELEMETRY_EXPORTER_PROTOCOL=grpc
    - **extproc-token-exchange** → HTTP client span (child of `extproc.token_exchange`, created by `otelhttp.NewTransport`)
    - **agentic-identity-broker** (child of the HTTP client span)
 
+ExtProc extracts HTTP propagation fields first, then applies valid gRPC metadata trace context in preference to HTTP trace context. With the `baggage` propagator enabled, HTTP baggage is preserved when the gRPC metadata carries no baggage.
+
 ## Key Implementation Files
 
 | File | What Changed |

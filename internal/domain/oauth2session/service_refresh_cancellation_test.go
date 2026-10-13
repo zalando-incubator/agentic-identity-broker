@@ -109,6 +109,7 @@ func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testin
 	select {
 	case err := <-leaderDone:
 		assert.ErrorIs(t, err, context.Canceled)
+		assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailCallerCanceled)
 	case <-time.After(500 * time.Millisecond):
 		t.Error("canceled request remained blocked on the shared refresh")
 	}

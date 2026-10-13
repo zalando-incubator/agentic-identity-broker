@@ -153,12 +153,13 @@ JWT Pre-Authentication configuration. Demonstrates:
 - Unsigned JWT support for service mesh environments (`verification: none`)
 - CEL expressions for principal and profile attribute extraction (display name, email, picture URL)
 - Fail-closed behavior when `authentication.jwt` is configured (no plain-header fallback)
+- Independent admin JWT pre-auth with a gateway-supplied `X-Userinfo` operator principal
 - Mutual exclusivity enforcement (`verification: none` + `jwks_uri` → startup error)
 
 **Usage:**
 ```bash
-# Include jwt section in your main configuration file under server.enduser.authentication
-# See jwt-preauth.yaml for complete examples of signed, unsigned, and plain-header-only configurations
+# Include a jwt section under server.enduser.authentication and/or server.admin.authentication
+# See jwt-preauth.yaml for signed, unsigned, admin, and plain-header examples
 server:
   enduser:
     authentication:
@@ -270,6 +271,7 @@ EXTPROC_TELEMETRY_EXPORTER_ENDPOINT=collector.monitoring.svc:4317 \
 **Key Features:**
 - Reuses the same telemetry configuration schema as the identity broker for operational parity
 - Adds W3C Trace Context (`tracecontext`) to default propagators to handle agentgateway's traceparent headers
+- Valid trace context in the ExtProc gRPC stream metadata takes precedence over proxied HTTP trace headers. Missing or invalid metadata trace context falls back to HTTP headers, even when the stream context already contains a span.
 - End-to-end trace visibility: each token exchange request creates a child span linked to the upstream trace
 - Graceful degradation when collector is unavailable (FR-008 — service continues operating normally)
 

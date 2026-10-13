@@ -94,6 +94,20 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Get(_ context.Context, serv
 	return providerRecordToEntity(record, r.resources[serviceID]), nil
 }
 
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByIDs(_ context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	providers := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(ids))
+	seen := make(map[id.ServiceID]bool, len(ids))
+	for _, serviceID := range ids {
+		if record, ok := r.providers[serviceID]; ok && !seen[serviceID] {
+			providers = append(providers, providerRecordToEntity(record, r.resources[serviceID]))
+			seen[serviceID] = true
+		}
+	}
+	return providers, nil
+}
+
 func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -223,18 +237,18 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx
 	default:
 	}
 	if resourceURI == "" {
-		return nil, tokenexchange.NewInvalidTargetError("resource parameter cannot be empty")
+		return nil, tokenexchange.NewInvalidRequestError("resource parameter cannot be empty").WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailResourceMissing))
 	}
 	resource, err := model.NormalizeAndValidateProtectedResource(resourceURI)
 	if err != nil {
-		return nil, tokenexchange.NewInvalidTargetError("resource parameter is invalid")
+		return nil, tokenexchange.NewInvalidRequestError("resource parameter is invalid").WithCause(err).WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	owner, found := r.resourceOwners[resource]
 	if !found {
-		return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
+		return nil, tokenexchange.NewResourceUnregisteredError()
 	}
 	return providerRecordToEntity(r.providers[owner], r.resources[owner]), nil
 }

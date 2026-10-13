@@ -95,7 +95,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			http.MethodPut,
 			"/api/cimd-client-keys/"+url.PathEscape(kid)+"/current",
 			adminPrincipal,
-			nil,
+			map[string]string{"Content-Type": "application/json"},
 			nil,
 		)
 		Expect(err).NotTo(HaveOccurred())

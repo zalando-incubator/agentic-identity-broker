@@ -122,6 +122,8 @@ If subtests share a cloned database, apply these rules:
 
 - Prefer polling to sleeps for server readiness.
 If the behavior does not need real infra, use in-memory adapters.
+- Use the broker configuration loader for example configuration coverage. See `config_test.go` for assertions on effective values.
+- Assert behavior, not documentation wording or source comments.
 
 ## Anti-patterns
 

@@ -696,7 +696,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body["error"]).To(Equal("access_denied"))
 			Expect(body["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/agents/" + targetAgent.ID.String()))
 			Expect(body).ToNot(HaveKey("access_token"))
-			Expect(logBuf.String()).To(ContainSubstring("user_grant_missing"))
+			Expect(logBuf.String()).To(ContainSubstring(`"token_exchange.failure_detail":"grant_missing"`))
 		})
 
 		// Scenario US5.3 from specs/037-oauth2-user-impersonation/spec.md
@@ -715,7 +715,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body["error"]).To(Equal("access_denied"))
 			Expect(body["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/agents/" + targetAgent.ID.String()))
 			Expect(body).ToNot(HaveKey("access_token"))
-			Expect(logBuf.String()).To(ContainSubstring("user_grant_expired"))
+			Expect(logBuf.String()).To(ContainSubstring(`"token_exchange.failure_detail":"grant_expired"`))
 		})
 	})
 
@@ -773,7 +773,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body["error"]).To(Equal("server_error"))
 			Expect(body).ToNot(HaveKey("access_token"))
 			Expect(body).ToNot(HaveKey("error_uri"))
-			Expect(logBuf.String()).To(ContainSubstring(`"failure_category":"user_grant_lookup_failed"`))
+			Expect(logBuf.String()).To(ContainSubstring(`"token_exchange.failure_detail":"grant_repository_unavailable"`))
 			Expect(logBuf.String()).ToNot(ContainSubstring(req.Get("client_assertion")))
 			Expect(logBuf.String()).ToNot(ContainSubstring(req.Get("actor_token")))
 			Expect(logBuf.String()).ToNot(ContainSubstring(req.Get("subject_token")))

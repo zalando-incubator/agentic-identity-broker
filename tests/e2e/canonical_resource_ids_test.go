@@ -58,7 +58,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		if headers == nil {
 			headers = map[string]string{}
 		}
-		if body != nil {
+		if body != nil || method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
 			headers["Content-Type"] = "application/json"
 		}
 		return server.DirectRequest(method, path, principal, headers, reader)

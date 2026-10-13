@@ -327,6 +327,8 @@ migration:
 # Broker application configuration
 broker:
   # -- Additional broker environment variables (supports value or valueFrom)
+  # Keep IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL false in production.
+  # True requires explicit GO_ENV=development; all other environments reject it.
   extraEnv: []
 
   # Logging
@@ -373,13 +375,21 @@ broker:
       port: 14000
       # -- Bind address
       bind: "::"
-      # -- Public URL for admin API
+      # -- Public URL for admin API Host validation; set to the external admin URL (proxy must preserve Host). Empty uses the broker default http://localhost:14000.
       publicUrl: ""
       # Authentication
       authentication:
         preauth:
           # -- Header name containing authenticated principal (omit to disable plain-header pre-auth)
           principalHeaderName: ""
+        # -- Admin JWT pre-authentication configuration (optional, independent of enduser)
+        # The admin gateway must authorize the caller, strip client-supplied copies
+        # of this header, then inject its own JWT. Restrict direct access to port 14000.
+        # jwt:
+        #   header_name: X-Userinfo
+        #   verification: none
+        #   claim_extraction:
+        #     principal_expression: "claims.principal"
 
     # Graceful shutdown
     shutdown:

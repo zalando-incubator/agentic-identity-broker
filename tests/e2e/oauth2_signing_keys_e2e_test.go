@@ -95,7 +95,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 			http.MethodPut,
 			"/api/oauth2-server/signing-keys/"+kid+"/current",
 			fixtures.AdminPrincipal().String(),
-			nil,
+			map[string]string{"Content-Type": "application/json"},
 			nil,
 		)
 		Expect(err).ToNot(HaveOccurred())
@@ -230,7 +230,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 			http.MethodPut,
 			"/api/oauth2-server/signing-keys/"+nonCurrentKid+"/current",
 			fixtures.AdminPrincipal().String(),
-			nil,
+			map[string]string{"Content-Type": "application/json"},
 			nil,
 		)
 		Expect(err).ToNot(HaveOccurred())

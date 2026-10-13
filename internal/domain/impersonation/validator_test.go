@@ -185,8 +185,24 @@ func TestSignedValidator(t *testing.T) {
 	t.Run("rejects unavailable JWKS", func(t *testing.T) {
 		unavailable := &signedValidator{jwksProvider: configurableJWKSProvider{err: errors.New("unavailable")}, issuerURI: issuer, allowedAlgorithms: map[jwa.SignatureAlgorithm]struct{}{jwa.ES256(): {}}, clockSkew: defaultClockSkew}
 		_, err := unavailable.validate(context.Background(), valid, audience)
-		require.ErrorContains(t, err, "jwks unavailable for issuer")
+		var exchangeErr *tokenexchange.TokenExchangeError
+		require.ErrorAs(t, err, &exchangeErr)
+		assert.Equal(t, tokenexchange.DetailJWKSUnavailable, exchangeErr.Diagnostic().Detail())
 	})
+}
+
+func TestSignedValidator_JWKSFailurePreservesTypedOrigin(t *testing.T) {
+	cause := errors.New("JWKS_SECRET_SENTINEL")
+	validator := &signedValidator{jwksProvider: configurableJWKSProvider{err: cause}}
+	_, err := validator.verify(context.Background(), "TOKEN_SECRET_SENTINEL")
+	var exchangeErr *tokenexchange.TokenExchangeError
+	require.ErrorAs(t, err, &exchangeErr)
+	assert.ErrorIs(t, err, cause)
+	assert.Equal(t, tokenexchange.DetailJWKSUnavailable, exchangeErr.Diagnostic().Detail())
+	assert.Equal(t, tokenexchange.OutcomeInfrastructureError, exchangeErr.Diagnostic().Outcome())
+	assert.Equal(t, tokenexchange.ExchangeImpersonation, exchangeErr.Diagnostic().ExchangeKind())
+	assert.NotContains(t, exchangeErr.Error(), "JWKS_SECRET_SENTINEL")
+	assert.NotContains(t, exchangeErr.Error(), "TOKEN_SECRET_SENTINEL")
 }
 
 var _ tokenexchange.JWKSProvider = configurableJWKSProvider{}

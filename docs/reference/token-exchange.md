@@ -166,17 +166,17 @@ curl -X POST http://localhost:8000/oauth2/token \
 
 ## Third-party token exchange errors
 
-Third-party token-exchange errors use the OAuth2 error format. The format contains `error`
-and optional `error_description`.
+Third-party token-exchange errors use the OAuth2 `error`, `error_description`, and optional `error_uri` fields.
+Descriptions are credential-free summaries, not stable diagnostic identifiers. Clients use the code and recovery URI, not description text.
 
 | HTTP status | `error` | When it occurs |
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
 | 400 | `invalid_target` | The `resource` matches no configured service. |
-| 400 | `invalid_grant` | The user has no active session with the target service. |
+| 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
-| 403 | `access_denied` | The user has not granted the agent access, or a CEL policy denied it. |
-| 500 | `server_error` | An unexpected server error. |
+| 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
+| 500 | `server_error` | Configuration or infrastructure failure, including ambiguous registered resources. |
 
 ### 400 invalid_request
 
@@ -187,9 +187,8 @@ and optional `error_description`.
 }
 ```
 
-Common causes include a missing `subject_token`, `client_assertion`, or `resource`. Other
-causes include an invalid token format or signature, an invalid resource URI, or a missing
-claim such as `sub`.
+Common causes include a missing `subject_token`, `client_assertion`, or `resource`, or an invalid resource URI.
+A supplied subject credential that fails format, signature, or claim validation returns `invalid_grant`, not `invalid_request`.
 
 ### 400 invalid_target
 
@@ -211,8 +210,12 @@ No service has the requested URI in its `protected_resources`.
 }
 ```
 
-The user has no session for the service. Or, both stored access and refresh tokens expired
-and cannot be refreshed.
+Rejected subject credentials do not require provider-session recovery.
+A missing, expired, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
+This URI opens the existing session-management page. It does not automatically start provider login.
+The page's Refresh action uses an existing refresh token. It cannot replace a missing or rejected token.
+Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
+Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
 
@@ -235,8 +238,9 @@ can also be expired or have no broker audience.
 }
 ```
 
-The user has no active grant for the agent and service. The grant can be revoked or expired.
-A CEL authorization expression can also be false.
+Missing, revoked, expired, empty, stale, or insufficient grants return `access_denied` with the agent consent-management `error_uri`.
+The broker denies these requests before token-vault access. A false CEL policy also returns `access_denied`, without a consent recovery URI.
+CEL compilation or configuration failure instead returns `server_error`.
 
 ### 500 server_error
 
@@ -246,6 +250,105 @@ A CEL authorization expression can also be false.
   "error_description": "An unexpected error occurred"
 }
 ```
+
+### Diagnostic attributes
+
+Logs, spans, and metrics use the following bounded attributes:
+
+| Attribute | Values |
+|---|---|
+| `token_exchange.outcome` | `success`, `authorization_denied`, `authentication_failed`, `reauth_required`, `invalid_request`, `configuration_error`, `infrastructure_error`, `canceled` |
+| `token_exchange.failure_stage` | `request_validation`, `exchange_routing`, `subject_validation`, `client_validation`, `identity_resolution`, `client_authorization`, `resource_resolution`, `grant_authorization`, `session_lookup`, `refresh`, `scope_validation`, `response_write` |
+| `token_exchange.failure_detail` | Typed origin detail; unknown failures use `internal_unclassified` at the known stage |
+| `token_exchange.recovery_action` | `reconsent`, `reauthenticate`, `fix_configuration`, `retry`, `none` |
+| `token_exchange.recovery_target` | `consent`, `subject_identity`, `calling_client`, `provider_session`, `broker_configuration`, `none` |
+| `token_exchange.exchange_kind` | `third_party`, `impersonation`. ExtProc uses `unknown` when the broker profile is not observable. |
+
+Successful logs and spans omit failure-only stage/detail fields. Successful metric observations use `none` for those fields.
+Recovery values are diagnostic recommendations, not instructions for automatic retries.
+
+Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
+Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
+
+Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
+They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
+Grant coverage denials use the first applicable detail below. Scope unions, agent ceilings, HTTP status, and recovery behavior are unchanged.
+
+| Detail | Meaning |
+|---|---|
+| `grant_empty` | The grant has no permission-set entries. |
+| `grant_permission_set_undeclared` | A referenced permission set is no longer declared by the agent. |
+| `grant_permission_set_missing` | A referenced permission-set definition is missing, including unrelated stale references. |
+| `grant_service_omitted` | The grant's effective inclusion entries omit the requested service. |
+| `grant_service_definition_missing` | The included service is absent from applicable granted definitions. |
+| `grant_service_requirement_excluded` | Nonempty agent service requirements exclude the included, defined service. |
+| `grant_scope_intersection_empty` | The explicit agent ceiling removes every scope from a nonempty permission-set union. |
+
+`grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
+
+Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
+Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
+Provider refresh rejection and recorded local expiry are distinct causes.
+Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
+Provider client-authentication rejection instead indicates broker configuration failure.
+
+Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
+Origin metadata maps to exchange diagnostics without inspecting error text.
+ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
+Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
+
+Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
+Broker exchange logs and spans also carry scalar resolved authorization context; these fields are not metric labels or response fields:
+
+| Attribute | Presence |
+|---|---|
+| `token_exchange.agent.id` | Only after the broker resolves a registered agent. |
+| `token_exchange.grant.id` | Only when the user-agent grant was found, including an expired grant. |
+| `token_exchange.grant.updated_at` | Found grant's nonzero stored timestamp, UTC RFC3339Nano. |
+| `token_exchange.grant.valid_until` | Found grant's explicit expiry, UTC RFC3339Nano; omitted for indefinite grants. |
+
+The same available context survives authorization and session denials, cancellation, and response-write failures. Missing grants have no invented grant metadata; parsed but unregistered agent candidates are not exported. Impersonation does not acquire third-party grant context. The existing authenticated actor, calling peer, and trace ID remain the request identity.
+
+Successful grant writes return persisted identity and timestamps to the domain through the supplied grant value. Atomic upserts preserve the winning grant ID and creation time; PostgreSQL metadata is published only after commit and reflects stored timestamp precision. Expiry pointers are defensive copies.
+
+Grant revocation uses the atomically deleted row as its observation snapshot, not a preceding lookup. Agent and permission-set deletion records are emitted only when the primary entity was actually deleted; repeated absent deletes retain their existing HTTP responses without another successful deletion record. These outcomes do not change adapter cascade behavior.
+
+Session failures also carry bounded `token_exchange.session.*` metadata.
+Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
+Established authenticated actor and calling-peer audit fields remain unchanged.
+Span status descriptions are static. Raw errors never become exception events.
+
+ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+OPA audit data retains bounded action, result code, protocol, allowlisted MCP method, and duration.
+It excludes policy reasons and request-derived tool or target-server names.
+
+Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.
+It records only bounded method/status/error kind. Token-endpoint inbound instrumentation uses a credential-free request view, then restores the original request before handling it.
+HTTP method telemetry uses the standard-method allowlist. Extension methods become `_OTHER` without changing request routing.
+Token-endpoint panic logs use bounded summaries, not panic values or stacks.
+OTel resources exclude process command arguments and command lines, including configured overrides.
+
+## Grant and definition lifecycle audits
+
+The domain mutation service emits one successful operational record after persistence. Request handlers do not emit a second success or infer a mutation from the HTTP status. These synchronous logs are observations, not a durable transactional audit ledger.
+
+| Actions | Purpose-limited fields |
+|---|---|
+| `grant_created`, `grant_updated` | Owner `principal`, `agent_id`, committed `grant_id`, `valid_until`, `created_at`, `updated_at`, and typed `{permission_set_id, included_service_ids}` entries. |
+| `grant_revoked` | Atomically deleted grant's owner, IDs, validity, update time and granted entries, plus `revoked_at`. |
+| `agent_created`, `agent_updated` | Registered `agent_id`, typed `permission_sets`, and `service_requirements` with service ID, requirement type, required scopes and all-scopes flag. |
+| `agent_deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
+| `permission_set_created`, `permission_set_updated` | `permission_set_id` and typed `service_scopes`. |
+| `permission_set_deleted` | The permission-set ID actually deleted. |
+
+Audit timestamps use UTC RFC3339Nano. Indefinite grant validity is JSON `null`. Stored definition scopes are authorization metadata, not issued-token scope values; names, profile text, credentials, token/JWT material, arbitrary errors and sensitive URIs are excluded. None of these identity or snapshot fields are metric labels.
+
+Updates include applicable `previous_observed_*` validity, definition/inclusion and update-time fields only when that state was read before writing. They describe that observed state, not a transactionally guaranteed immediate predecessor. A raced initial consent upsert that updates another request's winning grant is `grant_updated`, with no fabricated previous snapshot. A sequential unchanged consent submission returns the existing grant without a mutation record; an actual successful definition Update remains audited.
+
+Validation or persistence failure, absent idempotent deletion, and rejected empty consent POSTs emit no successful mutation event. An empty POST cannot revoke an existing grant. Explicit consent DELETE retains 204 then 404 behavior; repeated absent agent or permission-set DELETEs remain 204 without false audits.
+
+The existing request-security logger decorator supplies authenticated `actor` and `trace_id`; the grant owner is not used to invent an actor. Authorized mutation handlers finalize the existing capture holder immediately before the domain call. An admin request without an authenticated principal remains anonymous, and plain domain calls do not manufacture request identity.
 
 ## User impersonation
 
@@ -337,11 +440,10 @@ rejected scopes.
 
 ### Audit events
 
-Each impersonation decision records a credential-free structured log event. The event name
-is `impersonation_decision`. It contains the routing audience, target, selected rule, issuer
-identifiers, credential roles, safe identities, OAuth error or failure category, and
-`request_id`. It does not contain client assertions, actor or subject tokens, issued access
-tokens, or signing keys. Use this audit record to investigate a rejected request.
+Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
+The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+Separate token-exchange diagnostic fields distinguish missing and expired grants.
+The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
 See [Configuration](/docs/configuration) and
 `examples/config/impersonation.yaml` for operator setup and examples.

@@ -22,11 +22,13 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
@@ -99,6 +101,7 @@ func (m *mockMultiAgentVerifier) VerifyAgentIDClaim(ctx context.Context, respons
 // correct agent is selected by configuring the stub with the expected agent.
 // Storage-layer routing (fetching the correct agent by ID) is tested in the storage adapter tests.
 type stubAgentRepo struct {
+	ports.AgentRepository
 	agent *storage.Agent
 	err   error
 }
@@ -118,7 +121,16 @@ func (r *stubAgentRepo) Get(_ context.Context, _ id.AgentID) (*storage.Agent, er
 
 func (r *stubAgentRepo) Create(_ context.Context, _ *storage.Agent) error { return nil }
 func (r *stubAgentRepo) Update(_ context.Context, _ *storage.Agent) error { return nil }
-func (r *stubAgentRepo) Delete(_ context.Context, _ id.AgentID) error     { return nil }
+func (r *stubAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	if r.agent == nil || r.agent.ID != agentID {
+		return false, nil
+	}
+	r.agent = nil
+	return true, nil
+}
 func (r *stubAgentRepo) List(_ context.Context) ([]*storage.Agent, error) { return nil, nil }
 func (r *stubAgentRepo) GetByClientID(_ context.Context, _ id.ClientID) (*storage.Agent, error) {
 	return nil, nil
@@ -557,6 +569,50 @@ func TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier(t *testing.T) {
 			assert.Equal(t, tt.wantStatusCode, w.Code)
 			respBody, _ := io.ReadAll(w.Body)
 			assert.Contains(t, string(respBody), tt.wantBodyContains)
+		})
+	}
+}
+
+func TestOAuth2TokenHandler_ProxyToUpstream_OversizedResponse(t *testing.T) {
+	agentID := id.NewAgentID()
+	agentRepo := newStubAgentRepo(agentID, "test-upstream-client")
+	upstreamBody := `{"access_token":"upstream-secret","token_type":"Bearer"}` + strings.Repeat(" ", 1<<20)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, upstreamBody)
+	}))
+	defer upstream.Close()
+
+	for _, tt := range []struct {
+		name       string
+		verifier   ports.MultiAgentVerifier
+		wantStatus int
+	}{
+		{"verified response fails closed", &mockMultiAgentVerifier{verifyFn: func(_ context.Context, _ []byte, _ id.AgentID) error { return nil }}, http.StatusInternalServerError},
+		{"unverified response streams unchanged", nil, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &OAuth2TokenHandler{
+				GrantHandler:  newProxyTokenGrantStrategyForTest(upstream.URL, tt.verifier),
+				OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code&code=abc123&client_id="+agentID.String()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.verifier == nil {
+				assert.Equal(t, upstreamBody, w.Body.String())
+				return
+			}
+			var failure struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &failure))
+			assert.Equal(t, "server_error", failure.Error)
+			assert.NotContains(t, w.Body.String(), "upstream-secret")
 		})
 	}
 }
@@ -1369,7 +1425,10 @@ func TestHandleTokenExchange_NilService(t *testing.T) {
 	var body map[string]string
 	_ = json.NewDecoder(w.Body).Decode(&body)
 	assert.Equal(t, "unsupported_grant_type", body["error"])
-	assert.Contains(t, logs.String(), "WARN", "nil TokenExchange must log at Warn level")
+	assert.Contains(t, logs.String(), "token_exchange.failure_stage=exchange_routing")
+	assert.Contains(t, logs.String(), "token_exchange.failure_detail=internal_unclassified")
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-cache", w.Header().Get("Pragma"))
 }
 
 // TestOAuth2TokenHandler_UnauthorizedClient_Returns400 verifies that an unauthorized_client
@@ -1564,7 +1623,7 @@ func TestHandleTokenExchangeError_WrappedError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &OAuth2TokenHandler{}
 			w := httptest.NewRecorder()
-			h.handleTokenExchangeError(w, tt.err)
+			require.NoError(t, h.handleTokenExchangeError(w, tt.err))
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			var body map[string]string
@@ -1574,15 +1633,14 @@ func TestHandleTokenExchangeError_WrappedError(t *testing.T) {
 	}
 }
 
-// TestHandleTokenExchangeError_UnrecognizedErrorLogged verifies that when a non-TokenExchangeError
-// reaches handleTokenExchangeError, an Error-level log is emitted so it isn't silently swallowed.
+// Unknown failures still receive bounded diagnostics and an Error-level log.
 func TestHandleTokenExchangeError_UnrecognizedErrorLogged(t *testing.T) {
 	var buf strings.Builder
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	h := &OAuth2TokenHandler{Logger: logger}
 	w := httptest.NewRecorder()
-	h.handleTokenExchangeError(w, errors.New("unexpected db failure"))
+	h.writeTokenExchangeFailure(context.Background(), trace.SpanFromContext(context.Background()), w, errors.New("unexpected db failure"), tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified))
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	logLine := buf.String()
@@ -1596,11 +1654,11 @@ func TestHandleTokenExchange_WrappedTokenExchangeErrorMapsCorrectly(t *testing.T
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	wrapped := fmt.Errorf("context: %w",
-		tokenexchange.NewInvalidRequestErrorWithDetails("bad token", "details about the failure"))
+		tokenexchange.NewInvalidRequestError("bad token"))
 
 	h := &OAuth2TokenHandler{Logger: logger}
 	w := httptest.NewRecorder()
-	h.handleTokenExchangeError(w, wrapped)
+	require.NoError(t, h.handleTokenExchangeError(w, wrapped))
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, "wrapped error must map to 400, not 500")
 }
@@ -1731,8 +1789,10 @@ func (m *oauth2TokenNoopBranchKeyManager) Create(_ context.Context, _ domainencr
 }
 
 type oauth2TokenProviderRepo struct {
-	seenSC security.SecurityContext
-	seenOK bool
+	ports.ThirdpartyOAuth2ProviderRepository
+	seenSC  security.SecurityContext
+	seenOK  bool
+	findErr error
 }
 
 func (r *oauth2TokenProviderRepo) Create(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error {
@@ -1757,7 +1817,10 @@ func (r *oauth2TokenProviderRepo) List(context.Context) ([]*model.ThirdpartyOAut
 
 func (r *oauth2TokenProviderRepo) FindByProtectedResource(ctx context.Context, _ string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	r.seenSC, r.seenOK = security.FromContext(ctx)
-	return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
+	return nil, tokenexchange.NewResourceUnregisteredError()
 }
 
 func (*oauth2TokenProviderRepo) AddProtectedResource(context.Context, id.ServiceID, string) (ports.ProtectedResourceMutationResult, error) {
@@ -1809,7 +1872,7 @@ func signOAuth2TokenExchangeJWT(t *testing.T, privateKey *rsa.PrivateKey, claims
 	return string(signed)
 }
 
-func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.Set, repo ports.ThirdpartyOAuth2ProviderRepository) *tokenexchange.TokenExchangeService {
+func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.Set, repo ports.ThirdpartyOAuth2ProviderRepository, agentRepo ports.AgentRepository) *tokenexchange.TokenExchangeService {
 	t.Helper()
 
 	validator, err := tokenexchange.NewJWTValidator(
@@ -1846,7 +1909,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		&oauth2session.OAuth2SessionService{},
 		&consent.Service{},
 		permissionSetService,
-		newStubAgentRepo(id.NewAgentID(), "upstream-client-id"),
+		agentRepo,
 		&ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{
 				PrincipalExpression: "subject_token.sub",
@@ -1870,7 +1933,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	logger := slog.New(telemetry.NewContextHandler(logCapture))
 	handler := &OAuth2TokenHandler{
-		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo),
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, newStubAgentRepo(id.NewAgentID(), "upstream-client-id")),
 		Logger:        logger,
 	}
 
@@ -1973,40 +2036,7 @@ func TestOAuth2TokenHandler_FinalizesSecurityContextBeforeGrantHandler(t *testin
 	assert.Equal(t, "svc-account@example.com", sc.Actor)
 }
 
-func TestSanitizeResourceURI(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"plain uri unchanged", "https://api.example.com/resource", "https://api.example.com/resource"},
-		{"query stripped", "https://api.example.com/resource?access_token=SECRET", "https://api.example.com/resource"},
-		{"fragment stripped", "https://api.example.com/resource#SECRET", "https://api.example.com/resource"},
-		{"query and fragment stripped", "https://api.example.com/r?token=SECRET#frag", "https://api.example.com/r"},
-		{"unparseable with query redacted", "not a uri?token=SECRET", "[invalid resource URI]"},
-		{"unparseable with fragment redacted", "not a uri#SECRET", "[invalid resource URI]"},
-		{"userinfo stripped", "https://user:secret@example.com/resource", "https://example.com/resource"},
-		{"unparseable userinfo redacted", "https://user:secret@example.com/%zz", "[invalid resource URI]"},
-		{"empty redacted", "", "[invalid resource URI]"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := sanitizeResourceURI(tt.in)
-			assert.Equal(t, tt.want, got)
-			assert.NotContains(t, got, "SECRET", "sanitized resource must never retain query/fragment secrets")
-			assert.NotContains(t, got, "user:secret", "sanitized resource must never retain URI credentials")
-		})
-	}
-}
-
-// TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan guards the
-// secret-scrubbing contract: the RFC 8693 resource is caller-controlled and its
-// query string / fragment can carry tokens. The handler MUST NOT emit the raw
-// resource into span attributes or structured logs.
-func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testing.T) {
+func TestOAuth2TokenHandler_TokenExchangeResourceOmittedFromLogsAndSpan(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	prevTP := otel.GetTracerProvider()
@@ -2018,20 +2048,21 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	logger := slog.New(telemetry.NewContextHandler(logCapture))
 	handler := &OAuth2TokenHandler{
-		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo),
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, newStubAgentRepo(id.NewAgentID(), "upstream-client-id")),
 		Logger:        logger,
 	}
 
-	const rawResource = "https://api.example.com/resource?access_token=SUPERSECRET#frag"
-	const sanitized = "https://api.example.com/resource"
+	const rawResource = "https://URL_HOST_SENTINEL:URL_PASSWORD_SENTINEL@URL_HOST_SENTINEL.example/URL_PATH_SENTINEL?access_token=URL_QUERY_SENTINEL#URL_FRAGMENT_SENTINEL"
 	now := time.Now()
 	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
-		"iss": "https://auth.example.com",
-		"aud": "agentic-identity-broker",
-		"sub": "user@example.com",
-		"azp": id.NewAgentID().String(),
-		"exp": now.Add(time.Hour).Unix(),
-		"iat": now.Unix(),
+		"iss":        "https://auth.example.com",
+		"aud":        "agentic-identity-broker",
+		"sub":        "user@example.com",
+		"azp":        id.NewAgentID().String(),
+		"exp":        now.Add(time.Hour).Unix(),
+		"iat":        now.Unix(),
+		"jti":        "JWT_ID_SENTINEL",
+		"credential": "JWT_CLAIM_SENTINEL",
 	})
 	clientAssertion := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
 		"iss": "https://auth.example.com",
@@ -2048,18 +2079,24 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 		"client_assertion":      {clientAssertion},
 		"client_assertion_type": {tokenexchange.JWTBearerType},
 		"resource":              {rawResource},
+		"client_secret":         {"FORM_SECRET_SENTINEL"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "https://REQUEST_HOST_SENTINEL.example/oauth2/token?token=REQUEST_QUERY_SENTINEL", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "HEADER_SECRET_SENTINEL")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	record, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
 	require.True(t, ok, "token-exchange failures must be logged")
-	assert.Equal(t, sanitized, record.attrs["resource"], "error log resource must be sanitized")
-	assert.NotContains(t, fmt.Sprintf("%v", record.attrs["resource"]), "SUPERSECRET")
+	assert.NotContains(t, record.attrs, "resource")
+	assert.NotContains(t, record.attrs, "service_name")
+	assert.NotContains(t, record.attrs, "token_exchange.service.name")
+	assertTokenExchangeTelemetryContainsNoSecrets(t, *logCapture.records, spanRecorder.Ended(),
+		subjectToken, clientAssertion, "JWT_ID_SENTINEL", "JWT_CLAIM_SENTINEL", "FORM_SECRET_SENTINEL", "HEADER_SECRET_SENTINEL", "REQUEST_HOST_SENTINEL", "REQUEST_QUERY_SENTINEL",
+		"URL_HOST_SENTINEL", "URL_PASSWORD_SENTINEL", "URL_PATH_SENTINEL", "URL_QUERY_SENTINEL", "URL_FRAGMENT_SENTINEL")
 
 	spans := spanRecorder.Ended()
-	var resourceAttr string
+	var resourceAttrPresent bool
 	var sawSpan bool
 	for _, s := range spans {
 		if s.Name() != "tokenexchange.exchange" {
@@ -2068,11 +2105,359 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 		sawSpan = true
 		for _, kv := range s.Attributes() {
 			if string(kv.Key) == "token_exchange.resource" {
-				resourceAttr = kv.Value.AsString()
+				resourceAttrPresent = true
 			}
 		}
 	}
 	require.True(t, sawSpan, "tokenexchange.exchange span must be recorded")
-	assert.Equal(t, sanitized, resourceAttr, "span resource attribute must be sanitized")
-	assert.NotContains(t, resourceAttr, "SUPERSECRET")
+	assert.False(t, resourceAttrPresent, "resource URL must not be recorded even after query removal")
+}
+
+type resolvedServiceRepo struct {
+	oauth2TokenProviderRepo
+	service *model.ThirdpartyOAuth2ProviderEntity
+}
+
+func (r *resolvedServiceRepo) FindByProtectedResource(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return r.service, nil
+}
+
+func TestOAuth2TokenHandler_TokenExchangeSpanRecordsDiagnosticAndService(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		require.NoError(t, tp.Shutdown(context.Background()))
+	})
+
+	privateKey, keySet := generateOAuth2TokenExchangeKeySet(t)
+	svcID := id.NewServiceID()
+	serviceRepo := &resolvedServiceRepo{service: &model.ThirdpartyOAuth2ProviderEntity{
+		ID: svcID, DisplayName: "SERVICE_NAME_SENTINEL",
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Secret: model.NewAbsentSecret(),
+	}}
+	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	handler := &OAuth2TokenHandler{
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, serviceRepo, &stubAgentRepo{err: ports.ErrNotFound}),
+		Logger:        slog.New(telemetry.NewContextHandler(logCapture)),
+	}
+	now := time.Now()
+	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker",
+		"sub": "user@example.com", "azp": id.NewAgentID().String(),
+		"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	clientAssertion := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker",
+		"sub": "privileged-client-1", "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	form := url.Values{
+		"grant_type": {tokenexchange.TokenExchangeGrantType}, "subject_token": {subjectToken},
+		"subject_token_type": {tokenexchange.AccessTokenType}, "client_assertion": {clientAssertion},
+		"client_assertion_type": {tokenexchange.JWTBearerType}, "resource": {"https://api.example.com/resource"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	logRecord, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
+	require.True(t, ok, "token-exchange failures must be logged")
+	assert.Equal(t, slog.LevelError, logRecord.level)
+	assert.Equal(t, string(tokenexchange.DetailAgentMissing), logRecord.attrs["token_exchange.failure_detail"])
+	assert.Equal(t, string(tokenexchange.StageIdentityResolution), logRecord.attrs["token_exchange.failure_stage"])
+	assert.NotContains(t, logRecord.attrs, "resource")
+	assert.NotContains(t, logRecord.attrs, "token_exchange.service.name")
+	assert.NotContains(t, logRecord.attrs, "token_exchange.agent.id")
+	assert.NotContains(t, logRecord.attrs, "token_exchange.grant.id")
+	assert.NotContains(t, logRecord.attrs, "token_exchange.grant.updated_at")
+	assert.NotContains(t, logRecord.attrs, "token_exchange.grant.valid_until")
+
+	attrs := map[string]string{}
+	sawSpan := false
+	for _, span := range spanRecorder.Ended() {
+		if span.Name() != "tokenexchange.exchange" {
+			continue
+		}
+		sawSpan = true
+		for _, kv := range span.Attributes() {
+			attrs[string(kv.Key)] = kv.Value.AsString()
+		}
+	}
+	require.True(t, sawSpan, "tokenexchange.exchange span must be recorded")
+	assert.Equal(t, string(tokenexchange.DetailAgentMissing), attrs["token_exchange.failure_detail"])
+	assert.Equal(t, svcID.String(), attrs["token_exchange.service.id"])
+	assert.NotContains(t, attrs, "token_exchange.service.name")
+	assert.NotContains(t, attrs, "token_exchange.error_description")
+	assert.NotContains(t, attrs, "token_exchange.agent.id")
+	assert.NotContains(t, attrs, "token_exchange.grant.id")
+	assert.NotContains(t, attrs, "token_exchange.grant.updated_at")
+	assert.NotContains(t, attrs, "token_exchange.grant.valid_until")
+	assertTokenExchangeTelemetryContainsNoSecrets(t, *logCapture.records, spanRecorder.Ended(), "SERVICE_NAME_SENTINEL")
+}
+
+func assertTokenExchangeObservationContext(t *testing.T, record tokenEndpointLogRecord, span sdktrace.ReadOnlySpan, want map[string]any) {
+	t.Helper()
+	spanAttrs := make(map[string]any, len(span.Attributes()))
+	for _, attr := range span.Attributes() {
+		spanAttrs[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	for _, key := range []string{
+		"token_exchange.service.id",
+		"token_exchange.agent.id",
+		"token_exchange.grant.id",
+		"token_exchange.grant.updated_at",
+		"token_exchange.grant.valid_until",
+	} {
+		value, present := want[key]
+		if present {
+			assert.Equal(t, value, record.attrs[key], "log attribute %s", key)
+			assert.Equal(t, value, spanAttrs[key], "span attribute %s", key)
+		} else {
+			assert.NotContains(t, record.attrs, key, "log must omit unavailable context")
+			assert.NotContains(t, spanAttrs, key, "span must omit unavailable context")
+		}
+	}
+}
+
+func TestTokenExchangeSuccessObservationContext(t *testing.T) {
+	agentID, grantID, serviceID := id.NewAgentID(), id.NewGrantID(), id.NewServiceID()
+	updatedAt := time.Date(2026, time.October, 8, 12, 34, 56, 123456789, time.FixedZone("test", 2*60*60))
+	validUntil := updatedAt.Add(time.Hour)
+	for _, test := range []struct {
+		name          string
+		authorization tokenexchange.AuthorizationRef
+		want          map[string]any
+	}{
+		{
+			name: "expiring grant",
+			authorization: tokenexchange.AuthorizationRef{
+				AgentID: agentID, GrantID: grantID, GrantUpdatedAt: updatedAt,
+				GrantValidUntil: validUntil, GrantHasValidUntil: true,
+			},
+			want: map[string]any{
+				"token_exchange.agent.id": agentID.String(), "token_exchange.grant.id": grantID.String(),
+				"token_exchange.grant.updated_at":  "2026-10-08T10:34:56.123456789Z",
+				"token_exchange.grant.valid_until": "2026-10-08T11:34:56.123456789Z",
+			},
+		},
+		{
+			name: "indefinite grant",
+			authorization: tokenexchange.AuthorizationRef{
+				AgentID: agentID, GrantID: grantID, GrantUpdatedAt: updatedAt, GrantValidUntil: validUntil,
+			},
+			want: map[string]any{
+				"token_exchange.agent.id": agentID.String(), "token_exchange.grant.id": grantID.String(),
+				"token_exchange.grant.updated_at": "2026-10-08T10:34:56.123456789Z",
+			},
+		},
+		{
+			name: "registered agent without grant",
+			authorization: tokenexchange.AuthorizationRef{
+				AgentID: agentID, GrantValidUntil: validUntil, GrantHasValidUntil: true,
+			},
+			want: map[string]any{"token_exchange.agent.id": agentID.String()},
+		},
+		{
+			name:          "grant without updated timestamp",
+			authorization: tokenexchange.AuthorizationRef{AgentID: agentID, GrantID: grantID},
+			want: map[string]any{
+				"token_exchange.agent.id": agentID.String(), "token_exchange.grant.id": grantID.String(),
+			},
+		},
+		{name: "no resolved authorization", want: map[string]any{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
+			response := tokenexchange.NewTokenExchangeResponseFull("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", 3600)
+			response.Service = tokenexchange.ServiceRef{ID: serviceID}
+			response.Authorization = test.authorization
+			response.Principal, response.AgentID = "wire-owner@example.com", agentID.String()
+			response.GrantedPermissionSets = map[string][]string{"permission-set": {serviceID.String()}}
+			ctx, span := otel.Tracer("tokenexchange-test").Start(context.Background(), "tokenexchange.exchange")
+			writer := httptest.NewRecorder()
+			handler.writeTokenExchangeSuccess(ctx, span, writer, response, tokenexchange.ExchangeThirdParty)
+			span.End()
+
+			require.Equal(t, http.StatusOK, writer.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
+			assert.Len(t, body, 9, "observation context must not add wire fields")
+			assert.Equal(t, response.AccessToken, body["access_token"])
+			assert.Equal(t, response.Principal, body["principal"])
+			assert.Equal(t, response.AgentID, body["agent_id"])
+			assert.Equal(t, map[string]any{"permission-set": []any{serviceID.String()}}, body["granted_permission_sets"])
+			assert.NotContains(t, body, "Authorization")
+			assert.NotContains(t, body, "authorization")
+			assert.NotContains(t, writer.Body.String(), grantID.String())
+			require.Len(t, *logs.records, 1)
+			require.Len(t, spans.Ended(), 1)
+			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], tokenexchange.SuccessDiagnostic(tokenexchange.ExchangeThirdParty))
+			test.want["token_exchange.service.id"] = serviceID.String()
+			assertTokenExchangeObservationContext(t, (*logs.records)[0], spans.Ended()[0], test.want)
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", response.Principal)
+		})
+	}
+}
+
+func TestTokenExchangeFailureObservationContext(t *testing.T) {
+	agentID, grantID, serviceID := id.NewAgentID(), id.NewGrantID(), id.NewServiceID()
+	updatedAt := time.Date(2026, time.October, 8, 12, 34, 56, 987654321, time.UTC)
+	validUntil := updatedAt.Add(time.Hour)
+	full := tokenexchange.AuthorizationRef{
+		AgentID: agentID, GrantID: grantID, GrantUpdatedAt: updatedAt,
+		GrantValidUntil: validUntil, GrantHasValidUntil: true,
+	}
+	for _, test := range []struct {
+		name          string
+		diagnostic    tokenexchange.Diagnostic
+		authorization tokenexchange.AuthorizationRef
+		makeError     func(string) *tokenexchange.TokenExchangeError
+		status        int
+		code          string
+	}{
+		{"missing grant", tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing), tokenexchange.AuthorizationRef{AgentID: agentID}, tokenexchange.NewAccessDeniedError, http.StatusForbidden, "access_denied"},
+		{"expired grant", tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired), full, tokenexchange.NewAccessDeniedError, http.StatusForbidden, "access_denied"},
+		{"service omitted", tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantServiceOmitted), full, tokenexchange.NewAccessDeniedError, http.StatusForbidden, "access_denied"},
+		{"missing session", tokenexchange.NewDiagnostic(tokenexchange.StageSessionLookup, tokenexchange.DetailSessionMissing), full, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant"},
+		{"unexpected failure after resolution", tokenexchange.NewDiagnostic(tokenexchange.StageSessionLookup, tokenexchange.DetailInternalUnclassified), full, tokenexchange.NewServerError, http.StatusInternalServerError, "server_error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
+			err := test.makeError("DESCRIPTION_SENTINEL").WithCause(errors.New("CAUSE_SENTINEL")).
+				WithErrorURI("https://broker.example.com/RECOVERY_URI_SENTINEL").
+				WithObservation(test.diagnostic, tokenexchange.ServiceRef{ID: serviceID}, test.authorization)
+			ctx, span := otel.Tracer("tokenexchange-test").Start(context.Background(), "tokenexchange.exchange")
+			writer := httptest.NewRecorder()
+			handler.writeTokenExchangeFailure(ctx, span, writer, fmt.Errorf("OUTER_SENTINEL: %w", err), tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified))
+			span.End()
+
+			assert.Equal(t, test.status, writer.Code)
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
+			assert.Len(t, body, 3)
+			assert.Equal(t, test.code, body["error"])
+			assert.Equal(t, err.ErrorURI(), body["error_uri"])
+			assert.NotContains(t, writer.Body.String(), grantID.String())
+			require.Len(t, *logs.records, 1)
+			require.Len(t, spans.Ended(), 1)
+			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], test.diagnostic)
+			want := map[string]any{"token_exchange.service.id": serviceID.String(), "token_exchange.agent.id": agentID.String()}
+			if test.name != "missing grant" {
+				want["token_exchange.grant.id"] = grantID.String()
+				want["token_exchange.grant.updated_at"] = "2026-10-08T12:34:56.987654321Z"
+				want["token_exchange.grant.valid_until"] = "2026-10-08T13:34:56.987654321Z"
+			}
+			assertTokenExchangeObservationContext(t, (*logs.records)[0], spans.Ended()[0], want)
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DESCRIPTION_SENTINEL", "CAUSE_SENTINEL", "OUTER_SENTINEL", "RECOVERY_URI_SENTINEL")
+		})
+	}
+}
+
+func TestTokenExchangeResponseWritePreservesObservationContext(t *testing.T) {
+	agentID, grantID, serviceID := id.NewAgentID(), id.NewGrantID(), id.NewServiceID()
+	updatedAt := time.Date(2026, time.October, 8, 12, 34, 56, 123456789, time.UTC)
+	authorization := tokenexchange.AuthorizationRef{
+		AgentID: agentID, GrantID: grantID, GrantUpdatedAt: updatedAt,
+		GrantValidUntil: updatedAt.Add(time.Hour), GrantHasValidUntil: true,
+	}
+	service := tokenexchange.ServiceRef{ID: serviceID}
+	want := map[string]any{
+		"token_exchange.service.id": serviceID.String(), "token_exchange.agent.id": agentID.String(),
+		"token_exchange.grant.id": grantID.String(), "token_exchange.grant.updated_at": "2026-10-08T12:34:56.123456789Z",
+		"token_exchange.grant.valid_until": "2026-10-08T13:34:56.123456789Z",
+	}
+	for _, failureResponse := range []bool{false, true} {
+		for _, test := range []struct {
+			name   string
+			cause  error
+			cancel bool
+			detail tokenexchange.FailureDetail
+		}{
+			{"failed write", errors.New("WRITE_CAUSE_SENTINEL"), false, tokenexchange.DetailResponseWriteFailed},
+			{"short write", nil, false, tokenexchange.DetailResponseWriteFailed},
+			{"canceled write", context.Canceled, true, tokenexchange.DetailCallerCanceled},
+		} {
+			t.Run(fmt.Sprintf("failure_response=%t/%s", failureResponse, test.name), func(t *testing.T) {
+				spans := captureTokenExchangeSpans(t)
+				logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+				handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
+				ctx, span := otel.Tracer("tokenexchange-test").Start(context.Background(), "tokenexchange.exchange")
+				ctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				if test.cancel {
+					cancel()
+				}
+				writer := &tokenExchangeFailingWriter{ResponseRecorder: httptest.NewRecorder(), err: test.cause}
+				if failureResponse {
+					diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantServiceOmitted)
+					err := tokenexchange.NewAccessDeniedError("DESCRIPTION_SENTINEL").WithObservation(diagnostic, service, authorization)
+					handler.writeTokenExchangeFailure(ctx, span, writer, err, diagnostic)
+				} else {
+					response := tokenexchange.NewTokenExchangeResponse("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType)
+					response.Service, response.Authorization = service, authorization
+					handler.writeTokenExchangeSuccess(ctx, span, writer, response, tokenexchange.ExchangeThirdParty)
+				}
+				span.End()
+				count := 1
+				if failureResponse {
+					count = 2
+				}
+				require.Len(t, *logs.records, count)
+				require.Len(t, spans.Ended(), 1)
+				last := (*logs.records)[count-1]
+				assertTokenExchangeDiagnostic(t, last, spans.Ended()[0], tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, test.detail))
+				for _, record := range *logs.records {
+					assertTokenExchangeObservationContext(t, record, spans.Ended()[0], want)
+				}
+				assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "WRITE_CAUSE_SENTINEL", "DESCRIPTION_SENTINEL", "ACCESS_TOKEN_SENTINEL")
+			})
+		}
+	}
+}
+
+func TestTokenExchangeEarlyAndImpersonationObservationsHaveNoAuthorization(t *testing.T) {
+	for _, name := range []string{"unavailable exchange", "missing resource", "impersonation success", "impersonation denial"} {
+		t.Run(name, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
+			form := url.Values{"grant_type": {tokenexchange.TokenExchangeGrantType}}
+			if name == "missing resource" {
+				handler.TokenExchange = &tokenexchange.TokenExchangeService{}
+			}
+			if strings.HasPrefix(name, "impersonation") {
+				form = diagnosticImpersonationForm()
+				service := &diagnosticImpersonationService{
+					target:   &impersonation.Target{Agent: &storage.Agent{ID: id.NewAgentID()}},
+					response: tokenexchange.NewTokenExchangeResponse("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType),
+				}
+				if name == "impersonation denial" {
+					service.exchangeErr = tokenexchange.NewInvalidGrantError("DESCRIPTION_SENTINEL").
+						WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageSubjectValidation, tokenexchange.DetailSubjectInvalid))
+				}
+				handler.Impersonation = service
+			}
+			request := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			require.Len(t, spans.Ended(), 1)
+			var observed bool
+			for _, record := range *logs.records {
+				if record.message != "Token exchange failed" && record.message != "token_exchange_succeeded" {
+					continue
+				}
+				observed = true
+				assertTokenExchangeObservationContext(t, record, spans.Ended()[0], nil)
+			}
+			require.True(t, observed)
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "DESCRIPTION_SENTINEL")
+		})
+	}
 }

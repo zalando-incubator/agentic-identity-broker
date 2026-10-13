@@ -44,7 +44,7 @@ server:
     #   - Use separate network namespace in Kubernetes
     # For this example, we bind to all interfaces but firewall rules should restrict access
     bind: "::"
-    # Public URL (optional for admin server, but can be set for completeness)
+    # Required public authority; the reverse proxy must preserve this Host.
     public_url: ${IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL:http://localhost:14000}
     # Authentication configuration for admin server
     authentication:

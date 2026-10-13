@@ -95,7 +95,8 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create route setup function for admin server
 	adminRouteSetup := func(r chi.Router) {
 		routing.SetupAdminRoutes(r, application.AdminHandlers, routing.AdminRouteConfig{
-			CORS: cfg.Server.Admin.CORS,
+			CORS:      cfg.Server.Admin.CORS,
+			PublicURL: cfg.Server.Admin.PublicURL,
 		})
 	}
 
@@ -103,7 +104,7 @@ func run(cmd *cobra.Command, args []string) error {
 	enduserRouteSetup := func(r chi.Router) {
 		routing.SetupEnduserRoutes(r, application.EnduserHandlers, routing.EnduserRouteConfig{
 			Authentication:               cfg.Server.EndUser.Authentication,
-			JWTAuthenticator:             application.JWTAuthenticator,
+			JWTAuthenticator:             application.EnduserJWTAuthenticator,
 			ApprovalRequestAuthenticator: application.ApprovalRequestAuthenticator,
 			Logger:                       application.Logger,
 			CORS:                         cfg.Server.EndUser.CORS,
@@ -114,13 +115,14 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create server instances with route setup functions
 	adminServer := httpAdapter.NewServer(
 		httpAdapter.ServerConfig{
-			Port:           cfg.Server.Admin.Port,
-			Bind:           cfg.Server.Admin.Bind,
-			PublicURL:      cfg.Server.Admin.PublicURL,
-			Name:           "admin",
-			Telemetry:      cfg.Telemetry,
-			RequestContext: &cfg.RequestContext,
-			Authentication: cfg.Server.Admin.Authentication,
+			Port:             cfg.Server.Admin.Port,
+			Bind:             cfg.Server.Admin.Bind,
+			PublicURL:        cfg.Server.Admin.PublicURL,
+			Name:             "admin",
+			Telemetry:        cfg.Telemetry,
+			RequestContext:   &cfg.RequestContext,
+			Authentication:   cfg.Server.Admin.Authentication,
+			JWTAuthenticator: application.AdminJWTAuthenticator,
 		},
 		adminRouteSetup,
 		application.Logger,
@@ -135,7 +137,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Telemetry:        cfg.Telemetry,
 			RequestContext:   &cfg.RequestContext,
 			Authentication:   cfg.Server.EndUser.Authentication,
-			JWTAuthenticator: application.JWTAuthenticator,
+			JWTAuthenticator: application.EnduserJWTAuthenticator,
 			HealthComponents: application.EnduserHealthComponents,
 		},
 		enduserRouteSetup,
@@ -190,6 +192,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Wait for both binds to complete
 	if err := g.Wait(); err != nil {
+		select {
+		case listener := <-enduserListenerCh:
+			_ = listener.Close()
+		case listener := <-adminListenerCh:
+			_ = listener.Close()
+		default:
+		}
 		logger.Error("Atomic startup failed during bind phase", "error", err)
 		return err
 	}
@@ -332,6 +341,7 @@ func displayStartupSummary(loader *config.Loader, cfg interface{}) {
 		displayConfigValue("server.admin.port", fmt.Sprintf("%d", c.Server.Admin.Port), keyToSource["server.admin.port"])
 		displayConfigValue("server.admin.bind", c.Server.Admin.Bind, keyToSource["server.admin.bind"])
 		displayConfigValue("server.shutdown.timeout", c.Server.Shutdown.Timeout.String(), keyToSource["server.shutdown.timeout"])
+		displayConfigValue("security.skip_cimd_ssrf_validation", fmt.Sprintf("%t", c.Security.SkipCIMDSSRFValidation), keyToSource["security.skip_cimd_ssrf_validation"])
 	}
 
 	fmt.Println("\n=== Configuration Sources ===")

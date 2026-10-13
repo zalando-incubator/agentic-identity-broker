@@ -174,12 +174,8 @@ ginkgo -v --label-filter="!performance" ./tests/e2e/
 # Run the dedicated performance-labelled SC-001 measurement
 ginkgo -v --procs=1 --label-filter="performance" ./tests/e2e/
 
-# Run functional backend tests with coverage
-ginkgo -v --label-filter="!performance" --cover ./tests/e2e/
-
-# Generate functional backend HTML coverage report
-ginkgo -v --label-filter="!performance" --coverprofile=coverage/e2e-backend.out ./tests/e2e/
-go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html
+# Run functional backend tests with production-code coverage and generate HTML
+just test-e2e-backend-coverage
 
 # Watch functional backend tests
 ginkgo watch -v --label-filter="!performance" ./tests/e2e/

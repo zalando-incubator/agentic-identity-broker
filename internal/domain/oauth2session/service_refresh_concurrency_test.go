@@ -266,7 +266,7 @@ func TestGetValidAccessToken_DoesNotAuditRefreshSuccessBeforePersistence(t *test
 		nil, nil, encryption, &http.Client{}, nil, oauth2session.DefaultConfig(), slog.New(slog.NewJSONHandler(&logs, nil)),
 	)
 	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
-	require.ErrorContains(t, err, "failed to commit refreshed session")
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailPersistenceFailed)
 	assert.NotContains(t, logs.String(), "session.oauth2.token_refreshed")
 	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)

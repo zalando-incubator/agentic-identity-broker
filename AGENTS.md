@@ -77,7 +77,9 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 1. **Security-First** — Fail closed. Do not use bypasses. Never treat signature validation as optional.
-2. **ADRs are Binding** — Treat ADRs as binding. Use `ARCHITECTURE.md` as the source of truth. A deviation requires a superseding ADR.
+2. **ADRs are Binding** — Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
+   for same-PR ADR acceptance and revisions. A merged Accepted ADR requires an Accepted
+   superseding ADR for deviations.
 3. **Library-First Security** — Do not use custom crypto. Use Go `crypto/*`, `golang.org/x/crypto`, or AWS Encryption SDK.
 4. **OpenAPI Transparency** — Define APIs in `api/{enduser,admin}/openapi.yaml` before implementation.
 5. **Domain-Driven Design** — Enforce ubiquitous language. Add new concepts to the `ARCHITECTURE.md` glossary.
@@ -110,7 +112,11 @@ It can use routing middleware and configuration. Do not let adapters import each
 
 ## ADR Decision Index
 
-Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. Treat a new ADR in the same PR only as a proposal.
+Read relevant ADRs before implementation. You can mark an ADR introduced on this branch as
+Accepted in the same PR. Before the branch merges into `main`, you can revise that ADR in
+the same PR, even after acceptance. The final ADR and code MUST agree before merge.
+After that merge, a change or deviation requires a new Accepted superseding ADR.
+See Principle II in `.specify/memory/constitution.md`.
 
 | ADR | File | Decision |
 |---|---|---|

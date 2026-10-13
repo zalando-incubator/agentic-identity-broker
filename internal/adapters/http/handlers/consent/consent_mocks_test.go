@@ -2,10 +2,12 @@ package consent
 
 import (
 	"context"
+	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/stretchr/testify/mock"
 )
 
 var _ ConsentService = (*mockConsentService)(nil)
@@ -59,4 +61,22 @@ func (m *mockConsentService) GetUserGrants(ctx context.Context, principal id.Pri
 		return m.getUserGrantsFunc(ctx, principal, agentID)
 	}
 	return nil, nil
+}
+
+type mockAgentsService struct {
+	mockConsentService
+	mock.Mock
+}
+
+func newMockAgentsService(t *testing.T) *mockAgentsService {
+	t.Helper()
+	m := &mockAgentsService{}
+	m.Test(t)
+	t.Cleanup(func() { m.AssertExpectations(t) })
+	return m
+}
+
+func (m *mockAgentsService) GetAgentDelegations(ctx context.Context, principal id.Principal) ([]consent.AgentDelegation, error) {
+	args := m.Called(ctx, principal)
+	return args.Get(0).([]consent.AgentDelegation), args.Error(1)
 }

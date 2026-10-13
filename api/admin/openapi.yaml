@@ -29,6 +29,24 @@ info:
 
     ## Security Considerations
 
+    ### Browser Request Protection
+
+    All `/api` requests must use the Host authority configured by
+    `server.admin.public_url`. Hostname comparison is case-insensitive; the
+    scheme's default port may be omitted. Forwarded Host headers are ignored.
+    Reverse proxies must preserve the configured public Host.
+
+    Unsafe cross-origin browser requests are rejected using Go's
+    `http.CrossOriginProtection`, even when the origin is permitted by CORS.
+    POST, PUT, and PATCH requests require `Content-Type: application/json`,
+    including actions with no request body. Other requests carrying a body
+    also require JSON. Media-type parameters such as `charset=utf-8` are accepted.
+
+    These checks return `403 Forbidden` for an unrecognized Host or a
+    cross-origin mutation, and `415 Unsupported Media Type` for a missing,
+    malformed, or non-JSON Content-Type. Boundary rejection bodies are plain
+    text. `/health` is not subject to these checks.
+
     ### Client Secret Protection (SR-003)
 
     - Client secrets are **NEVER** transmitted in plaintext to the frontend
@@ -69,8 +87,9 @@ info:
 
     ## Error Handling
 
-    All error responses follow a consistent format with appropriate HTTP status codes.
-    See the ErrorResponse schema for details.
+    Handler error responses follow the ErrorResponse schema with appropriate
+    HTTP status codes. Browser boundary rejections use plain-text bodies as
+    described above.
 
   contact:
     name: Agentic Identity Broker Team

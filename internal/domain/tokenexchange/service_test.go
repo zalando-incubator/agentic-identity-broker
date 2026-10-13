@@ -4,7 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -55,7 +59,9 @@ func newMockPermissionSetService() *permissionset.Service {
 
 // MockPermissionSetRepository is a hand-rolled mock for testing
 type MockPermissionSetRepository struct {
-	psMap map[id.PermissionSetID]*storagedomain.PermissionSet
+	psMap         map[id.PermissionSetID]*storagedomain.PermissionSet
+	getByIDsCalls int
+	getByIDsErr   error
 }
 
 func (m *MockPermissionSetRepository) Get(ctx context.Context, psID id.PermissionSetID) (*storagedomain.PermissionSet, error) {
@@ -71,6 +77,10 @@ func (m *MockPermissionSetRepository) Get(ctx context.Context, psID id.Permissio
 // GetByIDs returns partial results: IDs not in psMap are silently absent.
 // Matches the ports.PermissionSetRepository contract: "IDs not found are silently absent (caller validates)."
 func (m *MockPermissionSetRepository) GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storagedomain.PermissionSet, error) {
+	m.getByIDsCalls++
+	if m.getByIDsErr != nil {
+		return nil, m.getByIDsErr
+	}
 	if m.psMap == nil {
 		return []*storagedomain.PermissionSet{}, nil
 	}
@@ -99,12 +109,10 @@ func (m *MockPermissionSetRepository) Update(ctx context.Context, ps *storagedom
 	return nil
 }
 
-func (m *MockPermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) error {
-	if m.psMap == nil {
-		return nil
-	}
+func (m *MockPermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) (bool, error) {
+	_, existed := m.psMap[psID]
 	delete(m.psMap, psID)
-	return nil
+	return existed, nil
 }
 
 func (m *MockPermissionSetRepository) List(ctx context.Context, serviceID id.ServiceID) ([]*storagedomain.PermissionSet, error) {
@@ -140,12 +148,13 @@ func newMockConsentService() *consent.Service {
 		},
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 }
 
 // MockAgentRepository mocks the AgentRepository for consent service testing
-type MockAgentRepository struct{}
+type MockAgentRepository struct{ ports.AgentRepository }
 
 func (m *MockAgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
 	return nil, nil
@@ -163,8 +172,8 @@ func (m *MockAgentRepository) Update(ctx context.Context, agent *storagedomain.A
 	return nil
 }
 
-func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
-	return nil
+func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	return false, nil
 }
 
 func (m *MockAgentRepository) List(ctx context.Context) ([]*storagedomain.Agent, error) {
@@ -249,6 +258,7 @@ func (m *MockOAuth2SessionService) GetSessionWithValidToken(ctx context.Context,
 
 // MockTokenExchangeRepository mocks are defined at the end of this file
 type MockServiceRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
 	service *model.ThirdpartyOAuth2ProviderEntity
 	err     error
 }
@@ -294,15 +304,34 @@ func (m *MockServiceRepository) ListProtectedResources(_ context.Context, _ id.S
 }
 
 type MockGrantRepository struct {
-	grant *storagedomain.UserGrant
-	err   error
+	grant                        *storagedomain.UserGrant
+	err                          error
+	findByPrincipalAndAgentCalls int
 }
 
 func (m *MockGrantRepository) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
+	m.findByPrincipalAndAgentCalls++
 	return m.grant, m.err
 }
 
 func (m *MockGrantRepository) Create(ctx context.Context, grant *storagedomain.UserGrant) error {
+	if m.err != nil {
+		return m.err
+	}
+	persisted := grant.Copy()
+	if m.grant != nil && m.grant.Principal == grant.Principal && m.grant.AgentID == grant.AgentID {
+		persisted.ID = m.grant.ID
+		persisted.CreatedAt = m.grant.CreatedAt
+	}
+	m.grant = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -311,6 +340,23 @@ func (m *MockGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 }
 
 func (m *MockGrantRepository) Update(ctx context.Context, grant *storagedomain.UserGrant) error {
+	if m.err != nil {
+		return m.err
+	}
+	if m.grant == nil || m.grant.ID != grant.ID {
+		return ports.ErrNotFound
+	}
+	persisted := grant.Copy()
+	persisted.CreatedAt = m.grant.CreatedAt
+	m.grant = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -338,8 +384,16 @@ func (m *MockGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 	return nil, nil
 }
 
-func (m *MockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	return m.err
+func (m *MockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.grant == nil || m.grant.Principal != principal || m.grant.AgentID != agentID {
+		return nil, storagedomain.NewStorageError("DeleteByPrincipalAndAgentID", storagedomain.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
+	}
+	snapshot := m.grant.Copy()
+	m.grant = nil
+	return snapshot, nil
 }
 
 func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
@@ -347,9 +401,11 @@ func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Cont
 }
 
 type MockSessionRepository struct {
+	ports.UserSessionRepository
 	session                        *storagedomain.UserSession
 	err                            error
 	findByPrincipalAndServiceCalls int
+	findByPrincipalAndServiceFunc  func(context.Context, id.Principal, id.ServiceID) (*storagedomain.UserSession, error)
 }
 
 type MockEncryption struct {
@@ -366,7 +422,25 @@ func (m *MockEncryption) Decrypt(ctx context.Context, ciphertext []byte, context
 
 func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storagedomain.UserSession, error) {
 	m.findByPrincipalAndServiceCalls++
+	if m.findByPrincipalAndServiceFunc != nil {
+		return m.findByPrincipalAndServiceFunc(ctx, principal, serviceID)
+	}
 	return m.session, m.err
+}
+
+func (m *MockSessionRepository) WithLockedSession(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) (bool, error)) (*storagedomain.UserSession, error) {
+	if m.session == nil {
+		return nil, nil
+	}
+	working := *m.session
+	changed, err := refresh(ctx, &working)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		m.session = &working
+	}
+	return &working, nil
 }
 
 func (m *MockSessionRepository) Create(ctx context.Context, session *storagedomain.UserSession) error {
@@ -912,14 +986,13 @@ func TestResolveEffectiveScopes_ScopeUnion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 
 	// Scope union: read + write
 	assert.Contains(t, scopes, svcA)
-	assert.Len(t, scopes[svcA], 2)
-	assert.Contains(t, scopes[svcA], "read")
-	assert.Contains(t, scopes[svcA], "write")
+	assert.Equal(t, []string{"read", "write"}, scopes[svcA])
 }
 
 func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
@@ -939,7 +1012,7 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -952,9 +1025,10 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 			ServiceID:       serviceID,
 			RequirementType: storagedomain.RequirementTypeMandatory,
 		}},
-	})
+	}, serviceID)
 
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 	assert.Contains(t, effectiveScopes, serviceID)
 	assert.Empty(t, effectiveScopes[serviceID])
 }
@@ -977,7 +1051,7 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -991,9 +1065,10 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 			RequiredScopes:  []string{"write"},
 			RequirementType: storagedomain.RequirementTypeMandatory,
 		}},
-	})
+	}, serviceID)
 
 	require.NoError(t, err)
+	assert.Equal(t, FailureDetail("grant_scope_intersection_empty"), detail)
 	assert.NotContains(t, effectiveScopes, serviceID)
 }
 
@@ -1035,14 +1110,13 @@ func TestResolveEffectiveScopes_SRCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 
 	// "admin" should be excluded by SR ceiling
 	assert.Contains(t, scopes, svcA)
-	assert.Contains(t, scopes[svcA], "read")
-	assert.Contains(t, scopes[svcA], "write")
-	assert.NotContains(t, scopes[svcA], "admin")
+	assert.Equal(t, []string{"read", "write"}, scopes[svcA])
 }
 
 func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
@@ -1062,7 +1136,7 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    psID,
 			IncludedServiceIDs: []id.ServiceID{svcA},
@@ -1075,9 +1149,10 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 			ServiceID:        svcA,
 			RequireAllScopes: true,
 		}},
-	})
+	}, svcA)
 
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 	assert.Equal(t, []string{"admin", "read", "write"}, effectiveScopes[svcA])
 }
 
@@ -1122,8 +1197,9 @@ func TestResolveEffectiveScopes_PerServiceInclusion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
+	assert.Equal(t, FailureDetail("grant_service_omitted"), detail)
 
 	// Only svcA should have scopes; svcB was not included
 	assert.Contains(t, scopes, svcA)
@@ -1179,17 +1255,14 @@ func TestResolveEffectiveScopes_MultiPSCrossScopeCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 
 	// Union of PS scopes: {read, admin, write, delete}
 	// After SR ceiling intersection: {read, write}
 	assert.Contains(t, scopes, svcA)
-	assert.Len(t, scopes[svcA], 2)
-	assert.Contains(t, scopes[svcA], "read")
-	assert.Contains(t, scopes[svcA], "write")
-	assert.NotContains(t, scopes[svcA], "admin")
-	assert.NotContains(t, scopes[svcA], "delete")
+	assert.Equal(t, []string{"read", "write"}, scopes[svcA])
 }
 
 // TestResolveEffectiveScopes_NonSRServiceExcluded verifies FR-013: services present in a
@@ -1232,8 +1305,9 @@ func TestResolveEffectiveScopes_NonSRServiceExcluded(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
+	assert.Equal(t, FailureDetail("grant_service_requirement_excluded"), detail)
 
 	assert.Contains(t, scopes, svcA)
 	assert.Equal(t, []string{"read"}, scopes[svcA])
@@ -1277,8 +1351,9 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
 	assert.Equal(t, []string{"read"}, scopes[svcA],
 		"PS scopes should flow through directly when agent has no service_requirements")
 }
@@ -1290,6 +1365,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 // trackingAgentRepository is a spy that records whether Get or GetByClientID was called.
 // Returns ErrNotFound for all lookups to stop execution after the agent lookup step.
 type trackingAgentRepository struct {
+	ports.AgentRepository
 	getCalled           bool
 	getByClientIDCalled bool
 }
@@ -1308,7 +1384,9 @@ func (r *trackingAgentRepository) Create(_ context.Context, _ *storagedomain.Age
 
 func (r *trackingAgentRepository) Update(_ context.Context, _ *storagedomain.Agent) error { return nil }
 
-func (r *trackingAgentRepository) Delete(_ context.Context, _ id.AgentID) error { return nil }
+func (r *trackingAgentRepository) Delete(_ context.Context, _ id.AgentID) (bool, error) {
+	return false, nil
+}
 
 func (r *trackingAgentRepository) List(_ context.Context) ([]*storagedomain.Agent, error) {
 	return nil, nil
@@ -1401,6 +1479,7 @@ func newServiceForStep9TestWithAuthz(t *testing.T, keySet jwk.Set, agentRepo por
 		&MockGrantRepository{err: ports.ErrNotFound},
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -1472,10 +1551,7 @@ func TestExchange_AgentLookup_UsesGetNotGetByClientID(t *testing.T) {
 	assert.False(t, tracker.getByClientIDCalled, "agentRepository.GetByClientID must NOT be called after T030")
 }
 
-// TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest verifies that when the CEL
-// expression returns a non-UUID string, the service returns an invalid_request error.
-// [T029] Written before T030 — fails until T030 adds id.ParseAgentID and returns invalid_request.
-func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
+func TestExchange_AgentLookup_InvalidUUIDIsConfigurationError(t *testing.T) {
 	privateKey, keySet := generateTestRSAKeySet(t)
 
 	tracker := &trackingAgentRepository{}
@@ -1515,18 +1591,25 @@ func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
 	require.Error(t, err)
 	tokenErr, ok := err.(*TokenExchangeError)
 	require.True(t, ok, "error must be a *TokenExchangeError, got %T: %v", err, err)
-	assert.Equal(t, "invalid_request", tokenErr.Code(),
-		"non-UUID agentClientID must return invalid_request (not access_denied)")
+	assert.Equal(t, "server_error", tokenErr.Code())
+	assert.Equal(t, OutcomeConfigurationError, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, StageIdentityResolution, tokenErr.Diagnostic().Stage())
+	assert.Equal(t, DetailAgentInvalid, tokenErr.Diagnostic().Detail())
 }
 
 // singleAgentRepo is a minimal ports.AgentRepository that returns one fixed agent.
 type singleAgentRepo struct {
+	ports.AgentRepository
 	agentID id.AgentID
 	agent   *storagedomain.Agent
+	err     error
 }
 
 func (r *singleAgentRepo) Get(_ context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
-	if agentID == r.agentID {
+	if r.err != nil {
+		return nil, r.err
+	}
+	if agentID == r.agentID && r.agent != nil {
 		return r.agent, nil
 	}
 	return nil, ports.ErrNotFound
@@ -1541,7 +1624,16 @@ func (r *singleAgentRepo) GetByClientURI(_ context.Context, _ string) (*storaged
 }
 func (r *singleAgentRepo) Create(_ context.Context, _ *storagedomain.Agent) error { return nil }
 func (r *singleAgentRepo) Update(_ context.Context, _ *storagedomain.Agent) error { return nil }
-func (r *singleAgentRepo) Delete(_ context.Context, _ id.AgentID) error           { return nil }
+func (r *singleAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	if r.agent == nil || agentID != r.agentID {
+		return false, nil
+	}
+	r.agent = nil
+	return true, nil
+}
 func (r *singleAgentRepo) List(_ context.Context) ([]*storagedomain.Agent, error) { return nil, nil }
 func (r *singleAgentRepo) ExistsOtherWithClientID(_ context.Context, _ id.ClientID, _ *id.AgentID) (bool, error) {
 	return false, nil
@@ -1597,6 +1689,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		agentRepo,
 		newTestProviderService(&MockServiceRepository{}),
 		grantRepo,
+		nil,
 		nil,
 		nil,
 		slog.Default(),
@@ -1670,21 +1763,440 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 	require.Error(t, exchErr)
 	tokenErr, ok := exchErr.(*TokenExchangeError)
 	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", exchErr, exchErr)
-	assert.Equal(t, "invalid_grant", tokenErr.Code(),
-		"empty-grant guard must fire for PS-backed agent with no SRs and empty grant")
-	assert.Contains(t, tokenErr.Description(), "re-consent",
-		"error description must mention re-consent")
+	assert.Equal(t, "access_denied", tokenErr.Code())
+	assert.Equal(t, OutcomeAuthorizationDenied, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 }
 
-// TestExchange_UncoveredServiceDeniedBeforeSessionLookup verifies that an agent
-// without service requirements cannot exchange for a service outside its granted
-// permission set before the token vault is read.
+// Grant authorization must reject every uncovered target before reading the token vault.
 func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 	t.Parallel()
 
+	tests := []struct {
+		name            string
+		coverage        grantCoverage
+		callbackBaseURL string
+		mutate          func(exchangeFixture)
+		wantDetail      FailureDetail
+		wantPSCalls     int
+	}{
+		{name: "grant excludes requested service", coverage: grantCoversOtherService, wantDetail: "grant_service_omitted", wantPSCalls: 1},
+		{name: "trailing-slash callback base", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com/", wantDetail: "grant_service_omitted", wantPSCalls: 1},
+		{name: "empty grant", coverage: grantEmpty, wantDetail: "grant_empty"},
+		{name: "stale permission set", coverage: grantStalePermissionSet, wantDetail: "grant_permission_set_missing", wantPSCalls: 1},
+		{name: "undeclared permission set", mutate: func(f exchangeFixture) {
+			f.agent.PermissionSets = nil
+		}, wantDetail: "grant_permission_set_undeclared"},
+		{name: "included service no longer defined", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes = nil
+		}, wantDetail: "grant_service_definition_missing", wantPSCalls: 1},
+		{name: "agent requirements exclude target", mutate: func(f exchangeFixture) {
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: id.NewServiceID(), RequiredScopes: []string{"read"}}}
+		}, wantDetail: "grant_service_requirement_excluded", wantPSCalls: 1},
+		{name: "scope ceiling removes union", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"read"}
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID, RequiredScopes: []string{"write"}}}
+		}, wantDetail: "grant_scope_intersection_empty", wantPSCalls: 1},
+		{name: "explicit zero scope ceiling removes nonempty union", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"read"}
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID}}
+		}, wantDetail: "grant_scope_intersection_empty", wantPSCalls: 1},
+		{name: "empty source set does not bypass ceiling on nonempty union", mutate: func(f exchangeFixture) {
+			otherID := id.NewPermissionSetID()
+			f.psRepo.psMap[otherID] = &storagedomain.PermissionSet{ID: otherID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: f.serviceID, Scopes: []string{"read"}}}}
+			f.agent.PermissionSets = append(f.agent.PermissionSets, storagedomain.AgentPermissionSetEntry{PermissionSetID: otherID})
+			f.grant.GrantedPermissionSets = append(f.grant.GrantedPermissionSets, storagedomain.GrantedPermissionSetEntry{PermissionSetID: otherID, IncludedServiceIDs: []id.ServiceID{f.serviceID}})
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID, RequiredScopes: []string{"write"}}}
+		}, wantDetail: "grant_scope_intersection_empty", wantPSCalls: 1},
+		{name: "empty grant precedes requirement exclusion", coverage: grantEmpty, mutate: func(f exchangeFixture) {
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: id.NewServiceID()}}
+		}, wantDetail: "grant_empty"},
+		{name: "undeclared precedes missing and omission", coverage: grantCoversOtherService, mutate: func(f exchangeFixture) {
+			f.agent.PermissionSets = nil
+			f.psRepo.psMap = nil
+		}, wantDetail: "grant_permission_set_undeclared"},
+		{name: "missing precedes omission and requirement exclusion", coverage: grantStalePermissionSet, mutate: func(f exchangeFixture) {
+			f.grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: id.NewServiceID()}}
+		}, wantDetail: "grant_permission_set_missing", wantPSCalls: 1},
+		{name: "unrelated missing set invalidates covered target", mutate: func(f exchangeFixture) {
+			missingID := id.NewPermissionSetID()
+			f.agent.PermissionSets = append(f.agent.PermissionSets, storagedomain.AgentPermissionSetEntry{PermissionSetID: missingID})
+			f.grant.GrantedPermissionSets = append(f.grant.GrantedPermissionSets, storagedomain.GrantedPermissionSetEntry{PermissionSetID: missingID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}})
+		}, wantDetail: "grant_permission_set_missing", wantPSCalls: 1},
+		{name: "omission precedes absent definition and requirement exclusion", coverage: grantCoversOtherService, mutate: func(f exchangeFixture) {
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: id.NewServiceID()}}
+		}, wantDetail: "grant_service_omitted", wantPSCalls: 1},
+		{name: "absent definition precedes requirement exclusion", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes = nil
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: id.NewServiceID()}}
+		}, wantDetail: "grant_service_definition_missing", wantPSCalls: 1},
+		{name: "definition must come from an applicable inclusion", mutate: func(f exchangeFixture) {
+			otherID := id.NewPermissionSetID()
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes = nil
+			f.psRepo.psMap[otherID] = &storagedomain.PermissionSet{ID: otherID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: f.serviceID, Scopes: []string{"read"}}}}
+			f.agent.PermissionSets = append(f.agent.PermissionSets, storagedomain.AgentPermissionSetEntry{PermissionSetID: otherID})
+			f.grant.GrantedPermissionSets = append(f.grant.GrantedPermissionSets, storagedomain.GrantedPermissionSetEntry{PermissionSetID: otherID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}})
+		}, wantDetail: "grant_service_definition_missing", wantPSCalls: 1},
+		{name: "duplicate persisted entry uses final inclusion", mutate: func(f exchangeFixture) {
+			f.grant.GrantedPermissionSets = append(f.grant.GrantedPermissionSets, storagedomain.GrantedPermissionSetEntry{PermissionSetID: f.permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}})
+		}, wantDetail: "grant_service_omitted", wantPSCalls: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sessionRepo := &MockSessionRepository{}
+			callbackBaseURL := tt.callbackBaseURL
+			if callbackBaseURL == "" {
+				callbackBaseURL = "https://broker.example.com"
+			}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				coverage:        tt.coverage,
+				callbackBaseURL: callbackBaseURL,
+				sessionRepo:     sessionRepo,
+				encryption:      &MockEncryption{},
+			})
+			if tt.mutate != nil {
+				tt.mutate(fixture)
+			}
+
+			_, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			require.Error(t, err)
+			tokenErr, ok := err.(*TokenExchangeError)
+			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
+			assert.Equal(t, "access_denied", tokenErr.Code())
+			assert.Equal(t, http.StatusForbidden, tokenErr.HTTPStatus())
+			assert.Equal(t, tt.wantDetail, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, OutcomeAuthorizationDenied, tokenErr.Diagnostic().Outcome())
+			assert.Equal(t, StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
+			assert.Equal(t, TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
+			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
+			assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+			assert.Equal(t, AuthorizationRef{
+				AgentID:            fixture.agentID,
+				GrantID:            fixture.grant.ID,
+				GrantUpdatedAt:     fixture.grant.UpdatedAt,
+				GrantValidUntil:    *fixture.grant.ValidUntil,
+				GrantHasValidUntil: true,
+			}, tokenErr.Authorization())
+			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls)
+			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
+			assert.Equal(t, tt.wantPSCalls, fixture.psRepo.getByIDsCalls, "permission sets must be resolved at most once")
+		})
+	}
+}
+
+func TestExchange_GrantCoverageScopeMath(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name   string
+		mutate func(exchangeFixture)
+	}{
+		{name: "original zero scopes remain covered under zero ceiling", mutate: func(f exchangeFixture) {
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID}}
+		}},
+		{name: "no requirements preserve permission set scopes", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"write", "read"}
+		}},
+		{name: "require all bypasses explicit ceiling", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"write", "read"}
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID, RequiredScopes: []string{"unrelated"}, RequireAllScopes: true}}
+		}},
+		{name: "sets union before scope ceiling", mutate: func(f exchangeFixture) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"write"}
+			otherID := id.NewPermissionSetID()
+			f.psRepo.psMap[otherID] = &storagedomain.PermissionSet{ID: otherID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: f.serviceID, Scopes: []string{"read"}}}}
+			f.agent.PermissionSets = append(f.agent.PermissionSets, storagedomain.AgentPermissionSetEntry{PermissionSetID: otherID})
+			f.grant.GrantedPermissionSets = append(f.grant.GrantedPermissionSets, storagedomain.GrantedPermissionSetEntry{PermissionSetID: otherID, IncludedServiceIDs: []id.ServiceID{f.serviceID}})
+			f.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: f.serviceID, RequiredScopes: []string{"read"}}}
+		}},
+		{name: "unrelated stale included service does not invalidate target", mutate: func(f exchangeFixture) {
+			f.grant.GrantedPermissionSets[0].IncludedServiceIDs = append(f.grant.GrantedPermissionSets[0].IncludedServiceIDs, id.NewServiceID())
+		}},
+		{name: "duplicate persisted entry final inclusion covers target", mutate: func(f exchangeFixture) {
+			f.grant.GrantedPermissionSets = append([]storagedomain.GrantedPermissionSetEntry{{PermissionSetID: f.permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}}, f.grant.GrantedPermissionSets...)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			future := time.Now().Add(time.Hour)
+			sessionRepo := &MockSessionRepository{session: &storagedomain.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            id.Principal("user@example.com"),
+				EncryptedAccessToken: []byte("access-token"),
+				AccessTokenExpiresAt: &future,
+				TokenType:            "Bearer",
+				Scope:                []string{"read", "write"},
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				callbackBaseURL: "https://broker.example.com",
+				sessionRepo:     sessionRepo,
+				encryption:      &MockEncryption{},
+			})
+			sessionRepo.session.ServiceID = fixture.serviceID
+			tt.mutate(fixture)
+			response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			require.NoError(t, err)
+			require.NotNil(t, response)
+			assert.Equal(t, "read write", response.Scope)
+			assert.Equal(t, fixture.agentID.String(), response.AgentID)
+			assert.Equal(t, 1, sessionRepo.findByPrincipalAndServiceCalls)
+			assert.Equal(t, 1, fixture.psRepo.getByIDsCalls)
+		})
+	}
+}
+
+func TestResolveEffectiveScopes_MissingReferenceAndRepositoryError(t *testing.T) {
+	t.Parallel()
+	for _, unavailable := range []bool{false, true} {
+		name := "missing reference"
+		if unavailable {
+			name = "repository unavailable"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{callbackBaseURL: "https://broker.example.com"})
+			fixture.psRepo.psMap = nil
+			cause := errors.New("repository unavailable")
+			if unavailable {
+				fixture.psRepo.getByIDsErr = cause
+			}
+			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			assert.Nil(t, scopes)
+			assert.Equal(t, DetailNone, detail, "error diagnostics must not compete with the separate coverage detail")
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			if unavailable {
+				assert.Equal(t, "server_error", tokenErr.Code())
+				assert.Equal(t, DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
+				assert.ErrorIs(t, err, cause)
+				assert.Empty(t, tokenErr.ErrorURI())
+			} else {
+				assert.Equal(t, "access_denied", tokenErr.Code())
+				assert.Equal(t, FailureDetail("grant_permission_set_missing"), tokenErr.Diagnostic().Detail())
+				assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
+			}
+			assert.Equal(t, 1, fixture.psRepo.getByIDsCalls)
+		})
+	}
+}
+
+func TestResolveEffectiveScopes_CoverageDetailPreservesOtherServiceScopes(t *testing.T) {
+	t.Parallel()
+	for _, wantDetail := range []FailureDetail{
+		"grant_service_omitted",
+		"grant_service_definition_missing",
+		"grant_service_requirement_excluded",
+		"grant_scope_intersection_empty",
+	} {
+		t.Run(string(wantDetail), func(t *testing.T) {
+			t.Parallel()
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{callbackBaseURL: "https://broker.example.com"})
+			otherServiceID := id.NewServiceID()
+			fixture.grant.GrantedPermissionSets[0].IncludedServiceIDs = []id.ServiceID{fixture.serviceID, otherServiceID}
+			definition := fixture.psRepo.psMap[fixture.permissionSetID]
+			definition.ServiceScopes = []storagedomain.ServiceScope{
+				{ServiceID: fixture.serviceID, Scopes: []string{"read"}},
+				{ServiceID: otherServiceID, Scopes: []string{"read"}},
+			}
+			switch wantDetail {
+			case "grant_service_omitted":
+				fixture.grant.GrantedPermissionSets[0].IncludedServiceIDs = []id.ServiceID{otherServiceID}
+			case "grant_service_definition_missing":
+				definition.ServiceScopes = definition.ServiceScopes[1:]
+			case "grant_service_requirement_excluded":
+				fixture.agent.ServiceRequirements = []storagedomain.ServiceRequirement{{ServiceID: otherServiceID, RequiredScopes: []string{"read"}}}
+			case "grant_scope_intersection_empty":
+				fixture.agent.ServiceRequirements = []storagedomain.ServiceRequirement{
+					{ServiceID: fixture.serviceID, RequiredScopes: []string{"write"}},
+					{ServiceID: otherServiceID, RequiredScopes: []string{"read"}},
+				}
+			}
+			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			require.NoError(t, err, "coverage gaps must use the separate detail, not the structural error channel")
+			assert.Equal(t, wantDetail, detail)
+			assert.Equal(t, map[id.ServiceID][]string{otherServiceID: {"read"}}, scopes)
+			assert.Equal(t, 1, fixture.psRepo.getByIDsCalls)
+		})
+	}
+}
+
+func TestExchange_PermissionSetRepositoryFailureBeforeSessionLookup(t *testing.T) {
+	t.Parallel()
+	sessionRepo := &MockSessionRepository{}
+	fixture := newExchangeFixture(t, exchangeFixtureConfig{
+		callbackBaseURL: "https://broker.example.com",
+		sessionRepo:     sessionRepo,
+		encryption:      &MockEncryption{},
+	})
+	cause := errors.New("permission set repository unavailable")
+	fixture.psRepo.getByIDsErr = cause
+	fixture.grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+	response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+	assert.Nil(t, response)
+	var tokenErr *TokenExchangeError
+	require.ErrorAs(t, err, &tokenErr)
+	assert.Equal(t, "server_error", tokenErr.Code())
+	assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
+	assert.Equal(t, DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
+	assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+	assert.Equal(t, AuthorizationRef{
+		AgentID:            fixture.agentID,
+		GrantID:            fixture.grant.ID,
+		GrantUpdatedAt:     fixture.grant.UpdatedAt,
+		GrantValidUntil:    *fixture.grant.ValidUntil,
+		GrantHasValidUntil: true,
+	}, tokenErr.Authorization())
+	assert.Equal(t, StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+	assert.Equal(t, OutcomeInfrastructureError, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, RecoveryRetry, tokenErr.Diagnostic().RecoveryAction())
+	assert.Empty(t, tokenErr.ErrorURI())
+	assert.ErrorIs(t, err, cause)
+	assert.Equal(t, 1, fixture.psRepo.getByIDsCalls)
+	assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls)
+}
+
+// US5-S4 / US5-S5: only a parsed provider HTTP 400 invalid_grant refresh rejection is a
+// user-recoverable re-authentication; every other retrieval failure stays a server error.
+func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
+	t.Parallel()
+
+	expired := time.Now().Add(-time.Hour)
+	refreshableSession := func() *storagedomain.UserSession {
+		return &storagedomain.UserSession{
+			ID:                    id.NewSessionID(),
+			Principal:             id.Principal("user@example.com"),
+			EncryptedAccessToken:  []byte("expired-access-token"),
+			EncryptedRefreshToken: []byte("stored-refresh-token"),
+			TokenType:             "Bearer",
+			AccessTokenExpiresAt:  &expired,
+		}
+	}
+	thirdpartyResponseHandler := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+
+	tests := []struct {
+		name              string
+		session           *storagedomain.UserSession
+		repoErr           error
+		encryptionErr     error
+		thirdpartyHandler http.HandlerFunc
+		wantCode          string
+		wantReauthURI     bool
+		wantRefreshErr    bool
+	}{
+		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 401 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 500 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 without OAuth code", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `not json`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "transport failure", session: refreshableSession(), wantCode: "server_error", wantRefreshErr: true},
+		{name: "decryption failure", session: refreshableSession(), encryptionErr: errors.New("kms unavailable"), wantCode: "server_error"},
+		{name: "storage failure", repoErr: errors.New("database unavailable"), wantCode: "server_error"},
+		{name: "missing session", wantCode: "invalid_grant", wantReauthURI: true},
+		{name: "expired session without refresh token", session: &storagedomain.UserSession{ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), EncryptedAccessToken: []byte("expired"), AccessTokenExpiresAt: &expired}, wantCode: "invalid_grant", wantReauthURI: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tokenEndpoint := "http://127.0.0.1:0/token"
+			if tt.thirdpartyHandler != nil {
+				server := httptest.NewServer(tt.thirdpartyHandler)
+				t.Cleanup(server.Close)
+				tokenEndpoint = server.URL
+			}
+			sessionRepo := &MockSessionRepository{session: tt.session, err: tt.repoErr}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				coverage:        grantCoversRequested,
+				callbackBaseURL: "https://broker.example.com",
+				sessionRepo:     sessionRepo,
+				refreshRepo:     sessionRepo,
+				encryption:      &MockEncryption{err: tt.encryptionErr},
+				tokenEndpoint:   tokenEndpoint,
+			})
+			var before storagedomain.UserSession
+			if tt.session != nil {
+				before = *tt.session
+			}
+
+			_, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			require.Error(t, err)
+			tokenErr, ok := err.(*TokenExchangeError)
+			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
+			assert.Equal(t, tt.wantCode, tokenErr.Code())
+			if tt.wantReauthURI {
+				assert.Equal(t, 400, tokenErr.HTTPStatus())
+				assert.Equal(t, "https://broker.example.com/sessions", tokenErr.ErrorURI())
+			} else {
+				assert.Equal(t, 500, tokenErr.HTTPStatus())
+				assert.Empty(t, tokenErr.ErrorURI())
+			}
+			assert.NotContains(t, tokenErr.Description(), "sentinel-description")
+			assert.Equal(t, tt.wantRefreshErr, errors.Is(err, oauth2session.ErrRefreshFailed), "refresh failure cause must remain discoverable")
+			if tt.wantRefreshErr && tt.thirdpartyHandler != nil {
+				var retrieveErr *oauth2.RetrieveError
+				assert.ErrorAs(t, err, &retrieveErr)
+			}
+			if tt.session != nil {
+				assert.Same(t, tt.session, sessionRepo.session, "a rejected refresh must not persist session changes")
+				assert.Equal(t, before, *sessionRepo.session)
+			}
+		})
+	}
+}
+
+type grantCoverage int
+
+const (
+	grantCoversRequested grantCoverage = iota
+	grantCoversOtherService
+	grantEmpty
+	grantStalePermissionSet
+)
+
+type exchangeFixtureConfig struct {
+	coverage        grantCoverage
+	callbackBaseURL string
+	sessionRepo     ports.UserSessionRepository
+	refreshRepo     ports.UserSessionRefreshRepository
+	encryption      ports.EncryptionPort
+	tokenEndpoint   string
+}
+
+type exchangeFixture struct {
+	svc             *TokenExchangeService
+	req             *TokenExchangeRequest
+	agentID         id.AgentID
+	serviceID       id.ServiceID
+	permissionSetID id.PermissionSetID
+	agent           *storagedomain.Agent
+	grant           *storagedomain.UserGrant
+	grantRepo       *MockGrantRepository
+	psRepo          *MockPermissionSetRepository
+}
+
+type fixedProviderRepository struct {
+	MockServiceRepository
+}
+
+func (r *fixedProviderRepository) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if r.service != nil && r.service.ID == serviceID {
+		return r.service, nil
+	}
+	return nil, ports.ErrNotFound
+}
+
+func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture {
+	t.Helper()
+
 	privateKey, keySet := generateTestRSAKeySet(t)
 	agentID := id.NewAgentID()
-	coveredServiceID := id.NewServiceID()
 	requestedServiceID := id.NewServiceID()
 	permissionSetID := id.NewPermissionSetID()
 
@@ -1696,72 +2208,68 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional},
 		},
 	}
+	grantedServiceID := requestedServiceID
+	if cfg.coverage == grantCoversOtherService {
+		grantedServiceID = id.NewServiceID()
+	}
+	var entries []storagedomain.GrantedPermissionSetEntry
+	if cfg.coverage != grantEmpty {
+		entries = []storagedomain.GrantedPermissionSetEntry{
+			{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{grantedServiceID}},
+		}
+	}
 	futureTime := time.Now().Add(time.Hour)
 	grant := &storagedomain.UserGrant{
-		ID:         id.NewGrantID(),
-		AgentID:    agentID,
-		Principal:  id.Principal("user@example.com"),
-		ValidUntil: &futureTime,
-		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{
-			{
-				PermissionSetID:    permissionSetID,
-				IncludedServiceIDs: []id.ServiceID{coveredServiceID},
-			},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:                    id.NewGrantID(),
+		AgentID:               agentID,
+		Principal:             id.Principal("user@example.com"),
+		ValidUntil:            &futureTime,
+		GrantedPermissionSets: entries,
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	agentRepo := &singleAgentRepo{agentID: agentID, agent: agent}
 	grantRepo := &MockGrantRepository{grant: grant}
-	psRepo := &MockPermissionSetRepository{psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{
+	psMap := map[id.PermissionSetID]*storagedomain.PermissionSet{
 		permissionSetID: {
-			ID:          permissionSetID,
-			Name:        "Test Permission Set",
-			Description: "Covers only a different service",
-			ServiceScopes: []storagedomain.ServiceScope{
-				{ServiceID: coveredServiceID, RequirementType: storagedomain.RequirementTypeOptional},
-			},
-		},
-	}}
-	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		slog.Default(),
-	)
-
-	sessionRepo := &MockSessionRepository{
-		session: &storagedomain.UserSession{
-			ID:                   id.NewSessionID(),
-			Principal:            id.Principal("user@example.com"),
-			ServiceID:            requestedServiceID,
-			EncryptedAccessToken: []byte("access-token"),
-			TokenType:            "Bearer",
+			ID:            permissionSetID,
+			Name:          "Test Permission Set",
+			ServiceScopes: []storagedomain.ServiceScope{{ServiceID: grantedServiceID, RequirementType: storagedomain.RequirementTypeOptional}},
 		},
 	}
+	if cfg.coverage == grantStalePermissionSet {
+		psMap = nil
+	}
+	psRepo := &MockPermissionSetRepository{psMap: psMap}
+	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
+	t.Cleanup(psService.Close)
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, nil, slog.Default())
+
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                 requestedServiceID,
+		DisplayName:        "Requested Service",
+		ClientID:           id.ClientID("service-client"),
+		Secret:             model.NewEncryptedSecret([]byte("placeholder")),
+		ProtectedResources: []string{"https://api.example.com/requested"},
+		Endpoints:          model.OAuth2Endpoints{TokenEndpoint: cfg.tokenEndpoint},
+	}
+	sessionConfig := oauth2session.DefaultConfig()
+	sessionConfig.CallbackBaseURL = cfg.callbackBaseURL
 	oauth2SessionService := oauth2session.NewOAuth2SessionService(
-		nil,
-		sessionRepo,
-		nil,
-		nil,
-		nil,
-		&MockEncryption{},
+		newTestProviderService(&fixedProviderRepository{MockServiceRepository{service: provider}}),
+		cfg.sessionRepo,
+		cfg.refreshRepo,
 		nil,
 		nil,
-		oauth2session.DefaultConfig(),
-		slog.Default(),
+		cfg.encryption,
+		&http.Client{Timeout: 5 * time.Second},
+		nil,
+		sessionConfig,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	jwtValidator, err := NewJWTValidator(
-		&MockJWKSProvider{keySet: keySet},
-		"https://auth.example.com",
-		"agentic-identity-broker",
-		60,
-	)
+	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 	require.NoError(t, err)
 	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
 		PrincipalExpression:     "subject_token.sub",
@@ -1772,17 +2280,9 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := &TokenExchangeService{
-		jwtValidator: jwtValidator,
-		celEvaluator: celEvaluator,
-		providerService: newTestProviderService(&MockServiceRepository{
-			service: &model.ThirdpartyOAuth2ProviderEntity{
-				ID:                 requestedServiceID,
-				DisplayName:        "Requested Service",
-				ClientID:           id.ClientID("service-client"),
-				Secret:             model.NewEncryptedSecret([]byte("placeholder")),
-				ProtectedResources: []string{"https://api.example.com/requested"},
-			},
-		}),
+		jwtValidator:         jwtValidator,
+		celEvaluator:         celEvaluator,
+		providerService:      newTestProviderService(&MockServiceRepository{service: provider}),
 		oauth2SessionService: oauth2SessionService,
 		consentService:       consentSvc,
 		permissionSetService: psService,
@@ -1811,14 +2311,8 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		"https://api.example.com/requested",
 		"",
 	)
-
-	_, err = svc.Exchange(context.Background(), req)
-	require.Error(t, err)
-	tokenErr, ok := err.(*TokenExchangeError)
-	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
-	assert.Equal(t, "invalid_grant", tokenErr.Code())
-	assert.Contains(t, tokenErr.Description(), "not authorized by any permission set")
-	assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
+	return exchangeFixture{svc: svc, req: req, agentID: agentID, serviceID: requestedServiceID,
+		permissionSetID: permissionSetID, agent: agent, grant: grant, grantRepo: grantRepo, psRepo: psRepo}
 }
 
 func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) {
@@ -1985,4 +2479,213 @@ func TestExchange_FinalizesSecurityContextWhenAuthorizationDenied(t *testing.T) 
 	assert.Equal(t, "user@example.com", sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", sc.TraceID)
+}
+
+func TestExchange_AuthorizationContext(t *testing.T) {
+	t.Parallel()
+	dependencyCause := errors.New("grant repository unavailable")
+	for _, tc := range []struct {
+		name             string
+		mutate           func(exchangeFixture, *MockSessionRepository)
+		wantDetail       FailureDetail
+		wantCode         string
+		wantStatus       int
+		wantGrant        bool
+		wantCause        error
+		wantSessionCalls int
+	}{
+		{name: "success with expiring grant", wantDetail: DetailNone, wantGrant: true, wantSessionCalls: 1},
+		{name: "success with indefinite grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grant.ValidUntil = nil
+		}, wantDetail: DetailNone, wantGrant: true, wantSessionCalls: 1},
+		{name: "missing grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.grant = nil
+			f.grantRepo.err = ports.ErrNotFound
+		}, wantDetail: DetailGrantMissing, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantCause: consent.ErrAgentAccessDenied},
+		{name: "nil grant fails closed", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.grant = nil
+		}, wantDetail: DetailGrantMissing, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantCause: consent.ErrAgentAccessDenied},
+		{name: "expired grant remains observable", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			*f.grant.ValidUntil = time.Date(2020, time.January, 1, 2, 3, 4, 987654321, time.FixedZone("stored", 3600))
+		}, wantDetail: DetailGrantExpired, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantGrant: true, wantCause: consent.ErrGrantExpired},
+		{name: "grant repository error discards returned grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.err = dependencyCause
+		}, wantDetail: DetailGrantRepositoryUnavailable, wantCode: "server_error", wantStatus: http.StatusInternalServerError, wantCause: dependencyCause},
+		{name: "missing session retains found grant", mutate: func(_ exchangeFixture, repo *MockSessionRepository) {
+			repo.session = nil
+		}, wantDetail: DetailSessionMissing, wantCode: "invalid_grant", wantStatus: http.StatusBadRequest, wantGrant: true, wantSessionCalls: 1},
+		{name: "session scope denial retains found grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"read"}
+		}, wantDetail: DetailSessionScopeInsufficient, wantCode: "invalid_grant", wantStatus: http.StatusBadRequest, wantGrant: true, wantSessionCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			future := time.Now().Add(time.Hour)
+			sessionRepo := &MockSessionRepository{session: &storagedomain.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            id.Principal("user@example.com"),
+				EncryptedAccessToken: []byte("access-token"),
+				AccessTokenExpiresAt: &future,
+				TokenType:            BearerTokenType,
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				callbackBaseURL: "https://broker.example.com",
+				sessionRepo:     sessionRepo,
+				encryption:      &MockEncryption{},
+			})
+			sessionRepo.session.ServiceID = fixture.serviceID
+			fixture.grant.UpdatedAt = time.Date(2026, time.January, 1, 2, 3, 4, 123456789, time.FixedZone("stored", 3600))
+			if tc.mutate != nil {
+				tc.mutate(fixture, sessionRepo)
+			}
+			wantAuthorization := AuthorizationRef{AgentID: fixture.agentID}
+			if tc.wantGrant {
+				wantAuthorization.GrantID = fixture.grant.ID
+				wantAuthorization.GrantUpdatedAt = fixture.grant.UpdatedAt
+				if fixture.grant.ValidUntil != nil {
+					wantAuthorization.GrantValidUntil = *fixture.grant.ValidUntil
+					wantAuthorization.GrantHasValidUntil = true
+				}
+			}
+			response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			var actual AuthorizationRef
+			if tc.wantDetail == DetailNone {
+				require.NoError(t, err)
+				require.NotNil(t, response)
+				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, response.Service)
+				assert.Equal(t, fixture.agentID.String(), response.AgentID)
+				assert.Equal(t, fixture.grant.Principal.String(), response.Principal)
+				assert.Equal(t, map[string][]string{fixture.permissionSetID.String(): {fixture.serviceID.String()}}, response.GrantedPermissionSets)
+				actual = response.Authorization
+			} else {
+				assert.Nil(t, response)
+				var tokenErr *TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
+				assert.Equal(t, tc.wantCode, tokenErr.Code())
+				assert.Equal(t, tc.wantStatus, tokenErr.HTTPStatus())
+				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+				if tc.wantCause != nil {
+					assert.ErrorIs(t, err, tc.wantCause)
+				}
+				actual = tokenErr.Authorization()
+			}
+			assert.Equal(t, wantAuthorization, actual)
+			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls, "observation must not query the grant twice")
+			assert.Equal(t, tc.wantSessionCalls, sessionRepo.findByPrincipalAndServiceCalls)
+			if fixture.grant.ValidUntil != nil {
+				*fixture.grant.ValidUntil = fixture.grant.ValidUntil.Add(24 * time.Hour)
+			}
+			fixture.grant.UpdatedAt = fixture.grant.UpdatedAt.Add(time.Hour)
+			fixture.grant.ID = id.NewGrantID()
+			if response != nil {
+				assert.Equal(t, wantAuthorization, response.Authorization, "response observation must not alias stored grant metadata")
+			} else {
+				var tokenErr *TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, wantAuthorization, tokenErr.Authorization(), "error observation must not alias stored grant metadata")
+			}
+		})
+	}
+}
+
+func TestExchange_UnresolvedAgentDoesNotExportCandidateIdentity(t *testing.T) {
+	t.Parallel()
+	dependencyCause := errors.New("agent repository unavailable")
+	for _, tc := range []struct {
+		name            string
+		agentExpression string
+		repoErr         error
+		wantDetail      FailureDetail
+		wantService     bool
+	}{
+		{name: "unregistered candidate UUID", repoErr: ports.ErrNotFound, wantDetail: DetailAgentMissing, wantService: true},
+		{name: "agent repository error", repoErr: dependencyCause, wantDetail: DetailAgentRepositoryUnavailable, wantService: true},
+		{name: "invalid candidate UUID", agentExpression: "'not-a-valid-uuid'", wantDetail: DetailAgentInvalid, wantService: true},
+		{name: "agent claim cannot resolve", agentExpression: "subject_token.missing_agent", wantDetail: DetailCELEvaluationFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sessionRepo := &MockSessionRepository{}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
+			fixture.svc.agentRepository.(*singleAgentRepo).err = tc.repoErr
+			if tc.agentExpression != "" {
+				evaluator, err := NewCELEvaluator(CELEvaluatorConfig{
+					PrincipalExpression:     "subject_token.sub",
+					AgentIDExpression:       tc.agentExpression,
+					AuthorizationExpression: "true",
+					EvaluationTimeout:       100 * time.Millisecond,
+				})
+				require.NoError(t, err)
+				fixture.svc.celEvaluator = evaluator
+			}
+			response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			assert.Nil(t, response)
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, "server_error", tokenErr.Code())
+			assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
+			assert.Equal(t, AuthorizationRef{}, tokenErr.Authorization())
+			wantService := ServiceRef{}
+			if tc.wantService {
+				wantService.ID = fixture.serviceID
+			}
+			assert.Equal(t, wantService, tokenErr.Service())
+			if tc.repoErr != nil {
+				assert.ErrorIs(t, err, tc.repoErr)
+			}
+			assert.Zero(t, fixture.grantRepo.findByPrincipalAndAgentCalls)
+			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls)
+		})
+	}
+}
+
+func TestExchange_CancellationPreservesOnlyResolvedAuthorizationContext(t *testing.T) {
+	t.Parallel()
+	for _, early := range []bool{true, false} {
+		name := "session lookup cancellation retains agent and grant"
+		if early {
+			name = "early cancellation has no resolved context"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sessionRepo := &MockSessionRepository{findByPrincipalAndServiceFunc: func(context.Context, id.Principal, id.ServiceID) (*storagedomain.UserSession, error) {
+				cancel()
+				return nil, ctx.Err()
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
+			wantService := ServiceRef{ID: fixture.serviceID}
+			wantAuthorization := AuthorizationRef{
+				AgentID:            fixture.agentID,
+				GrantID:            fixture.grant.ID,
+				GrantUpdatedAt:     fixture.grant.UpdatedAt,
+				GrantValidUntil:    *fixture.grant.ValidUntil,
+				GrantHasValidUntil: true,
+			}
+			wantStage := StageSessionLookup
+			wantCalls := 1
+			if early {
+				cancel()
+				wantService = ServiceRef{}
+				wantAuthorization = AuthorizationRef{}
+				wantStage = StageRequestValidation
+				wantCalls = 0
+			}
+			response, err := fixture.svc.Exchange(ctx, fixture.req)
+			assert.Nil(t, response)
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.ErrorIs(t, err, context.Canceled)
+			assert.Equal(t, DetailCallerCanceled, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, OutcomeCanceled, tokenErr.Diagnostic().Outcome())
+			assert.Equal(t, wantStage, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, wantService, tokenErr.Service())
+			assert.Equal(t, wantAuthorization, tokenErr.Authorization())
+			assert.Equal(t, wantCalls, fixture.grantRepo.findByPrincipalAndAgentCalls)
+			assert.Equal(t, wantCalls, sessionRepo.findByPrincipalAndServiceCalls)
+		})
+	}
 }

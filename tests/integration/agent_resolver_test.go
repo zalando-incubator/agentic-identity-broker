@@ -45,7 +45,8 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 
 	_, err := svc.ResolveUniqueByClientID(ctx, shared)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ambiguous")
+	assert.ErrorIs(t, err, agents.ErrAmbiguousClientID)
+	assert.NotContains(t, err.Error(), string(shared))
 }
 
 // TestResolveAgentIDByClientID_UnambiguousClientID verifies the happy path:

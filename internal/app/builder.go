@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/telemetryhttp"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/contrib/propagators/ot"
 	"go.opentelemetry.io/otel"
@@ -86,8 +86,9 @@ type App struct {
 	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
 	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
-	// JWT pre-authentication (optional, nil when not configured)
-	JWTAuthenticator             domjwtauth.JWTAuthenticator
+	// JWT pre-authentication is independent for each server (nil when not configured).
+	EnduserJWTAuthenticator      domjwtauth.JWTAuthenticator
+	AdminJWTAuthenticator        domjwtauth.JWTAuthenticator
 	ApprovalRequestAuthenticator *httpmiddleware.ApprovalRequestAuthenticator
 
 	// Handler groups for routing
@@ -478,6 +479,7 @@ func (b *Builder) Build() (*App, error) {
 			app.ProviderService,
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
+			b.storage.RefreshTokenSessions(),
 			app.PermissionSetService,
 			b.logger,
 		)
@@ -546,9 +548,7 @@ func (b *Builder) Build() (*App, error) {
 					return nil, fmt.Errorf("failed to create CIMD fetcher: %w", fetchErr)
 				}
 				if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
-					concreteFetcher.WrapTransport(func(base http.RoundTripper) http.RoundTripper {
-						return otelhttp.NewTransport(base)
-					})
+					concreteFetcher.WrapTransport(telemetryhttp.NewTransport)
 				}
 				activeFetcher = concreteFetcher
 			}
@@ -602,20 +602,13 @@ func (b *Builder) Build() (*App, error) {
 	}
 	cfg.RefreshStorageTimeout = 2*readTimeout + 2*writeTimeout
 
-	upstreamClient := &http.Client{
-		Timeout: ov.upstreamTimeout,
-	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 100
+	upstreamClient := &http.Client{Transport: transport, Timeout: ov.upstreamTimeout}
 
-	// Wrap the HTTP transport with OTel instrumentation when tracing is enabled.
-	// This is the "last resort" layer: even operations without an explicit custom span will
-	// still emit a client span and propagate W3C traceparent/tracestate headers to every
-	// outgoing HTTP call (JWKS fetches, upstream token proxy, OAuth2 session token exchange).
+	// Propagate traces without recording provider URLs, headers, bodies or error strings.
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
-		base := upstreamClient.Transport
-		if base == nil {
-			base = http.DefaultTransport
-		}
-		upstreamClient.Transport = otelhttp.NewTransport(base)
+		upstreamClient.Transport = telemetryhttp.NewTransport(transport)
 	}
 
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
@@ -744,29 +737,33 @@ func (b *Builder) Build() (*App, error) {
 		clientAssertionJWKS = adapter
 	}
 
-	// Create JWT pre-authentication adapter if configured
-	// Per Constitution Principle VII: Configuration-Driven Design — only create when JWT block present
-	if b.config.Server.EndUser.Authentication.JWT != nil {
-		jwtCfg := b.config.Server.EndUser.Authentication.JWT
-
-		// Validate JWT config mutual exclusivity (defense-in-depth, also checked by config validator)
+	for _, server := range [...]struct {
+		name          string
+		config        *ports.JWTConfig
+		authenticator *domjwtauth.JWTAuthenticator
+	}{
+		{"enduser", b.config.Server.EndUser.Authentication.JWT, &app.EnduserJWTAuthenticator},
+		{"admin", b.config.Server.Admin.Authentication.JWT, &app.AdminJWTAuthenticator},
+	} {
+		jwtCfg := server.config
+		if jwtCfg == nil {
+			continue
+		}
 		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
-			return nil, fmt.Errorf("authentication.jwt: verification 'none' and jwks_uri are mutually exclusive")
+			err := fmt.Errorf("server.%s.authentication.jwt: verification 'none' and jwks_uri are mutually exclusive", server.name)
+			return nil, errors.Join(err, app.Shutdown(context.Background()))
 		}
 
-		// Create CEL evaluator for JWT claim extraction (domain layer)
-		celConfig := domjwtauth.CELEvaluatorConfig{
+		celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
 			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
 			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
 			EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
 			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
-		}
-		celEval, err := domjwtauth.NewCELEvaluator(celConfig, b.logger)
+		}, b.logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		// Create JWT authenticator adapter (uses lestrrat-go/jwx v4)
 		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
 			JWTConfig:    jwtCfg,
 			CELEvaluator: celEval,
@@ -774,10 +771,10 @@ func (b *Builder) Build() (*App, error) {
 			Logger:       b.logger,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		app.JWTAuthenticator = jwtAuthenticator
+		*server.authenticator = jwtAuthenticator
 		prevShutdown := app.Shutdown
 		app.Shutdown = func(ctx context.Context) error {
 			var prevErr error
@@ -787,6 +784,7 @@ func (b *Builder) Build() (*App, error) {
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
 		b.logger.Info("JWT pre-authentication enabled",
+			"server", server.name,
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
 			"has_audience", jwtCfg.ExpectedAudience != "",
@@ -883,6 +881,7 @@ func (b *Builder) Build() (*App, error) {
 			tokenTTL,
 			ov.localRefreshTokenTTL,
 			claimsExpr,
+			app.ConsentService,
 			b.logger,
 			b.storage,
 		)
@@ -919,7 +918,7 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
@@ -1207,6 +1206,14 @@ func (b *Builder) Build() (*App, error) {
 		}
 	}
 
+	// Keep the transport open until background workers have stopped.
+	prevShutdown := app.Shutdown
+	app.Shutdown = func(ctx context.Context) error {
+		err := prevShutdown(ctx)
+		transport.CloseIdleConnections()
+		return err
+	}
+
 	return app, nil
 }
 
@@ -1234,17 +1241,28 @@ func newTokenExchangeAgentIDResolver(agentService *agentsservice.Service, timeou
 			return agent.ID.String(), nil
 		}
 		if !ports.IsNotFoundErr(err) {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", err)
+			detail := tokenexchange.DetailAgentRepositoryUnavailable
+			if errors.Is(err, agentsservice.ErrAmbiguousClientID) {
+				detail = tokenexchange.DetailAgentInvalid
+			}
+			return "", tokenexchange.NewServerErrorWithCause("agent identifier resolution failed", err).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, detail))
 		}
 
 		parsedAgentID, parseErr := id.ParseAgentID(rawIdentifier)
 		if parseErr != nil {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", parseErr)
+			return "", tokenexchange.NewServerErrorWithCause("no agent configured for the subject identity", errors.Join(err, parseErr)).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentMissing))
 		}
 
 		agent, err = agentService.Get(ctx, parsedAgentID)
 		if err != nil {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", err)
+			detail := tokenexchange.DetailAgentRepositoryUnavailable
+			if ports.IsNotFoundErr(err) {
+				detail = tokenexchange.DetailAgentMissing
+			}
+			return "", tokenexchange.NewServerErrorWithCause("agent identifier lookup failed", err).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, detail))
 		}
 
 		return agent.ID.String(), nil

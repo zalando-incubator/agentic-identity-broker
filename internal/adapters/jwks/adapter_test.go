@@ -294,6 +294,24 @@ func TestGetKeySet_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestGetKeySet_RejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"keys":[]}`)
+		_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+	}))
+	defer server.Close()
+
+	adapter, err := NewJWKSAdapter(server.URL, server.Client(), 15*time.Minute, time.Hour, testLogger())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Shutdown(context.Background()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = adapter.GetKeySet(ctx)
+	require.ErrorContains(t, err, "exceeds")
+}
+
 func TestGetKeySet_RecordsSpanErrorOnFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -325,8 +343,14 @@ func TestGetKeySet_RecordsSpanErrorOnFailure(t *testing.T) {
 	span := findSpanByName(spanRecorder.Ended(), "jwks.fetch")
 	require.NotNil(t, span)
 	assert.Equal(t, codes.Error, span.Status().Code)
-	assert.Contains(t, span.Status().Description, "failed to fetch jwks")
-	assert.Contains(t, spanEvents(span), "exception")
+	assert.Empty(t, span.Events(), "raw JWKS errors must not become exception events")
+	var kind string
+	for _, attr := range span.Attributes() {
+		if attr.Key == "error.type" {
+			kind = attr.Value.AsString()
+		}
+	}
+	assert.Equal(t, "jwks_unavailable", kind)
 }
 
 // TestGetKeySet_ContextCancelled tests cancellation handling
@@ -582,15 +606,6 @@ func findSpanByName(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnl
 	return nil
 }
 
-func spanEvents(span sdktrace.ReadOnlySpan) []string {
-	events := span.Events()
-	names := make([]string, 0, len(events))
-	for _, event := range events {
-		names = append(names, event.Name)
-	}
-	return names
-}
-
 func TestShutdown_CanBeCalledMultipleTimes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -710,7 +725,7 @@ func TestMarkStaleServeLogged_RelogsEveryTenthServe(t *testing.T) {
 
 	logged := 0
 	for range 10 {
-		if err := adapter.markStaleServeLogged(); err != nil {
+		if adapter.markStaleServeLogged() {
 			logged++
 		}
 	}

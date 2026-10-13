@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -1736,7 +1738,7 @@ func TestServer_Process_StreamHandledCleanly(t *testing.T) {
 // returns HTTP 200 with JSON-RPC -32042 URLElicitationRequiredError. id is null because
 // the request body has not been read yet; this is correct per JSON-RPC 2.0 §5.
 func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t *testing.T) {
-	reAuthURL := "https://broker.example.com/api/third-party/svc-123/oauth2/authorize"
+	reAuthURL := "https://broker.example.com/sessions"
 	const description = "User session has expired. Please re-authenticate."
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
@@ -1799,7 +1801,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_ReturnsElicita
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-123/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}
@@ -1825,7 +1827,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DefaultsToMCP(
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-999/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}
@@ -1851,7 +1853,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DirectClientDe
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-123/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}
@@ -2913,8 +2915,7 @@ func TestServer_Process_BrokerErrorWithoutURI_Returns500(t *testing.T) {
 // T021: Span creation in processRequestHeaders
 // ---------------------------------------------------------------------------
 
-// Spec: US1 S2 — When traces are enabled, processRequestHeaders creates a span
-// with resource.uri and outcome attributes set correctly
+// Credential-free spans retain outcomes without exporting caller-controlled resources.
 func TestServer_ProcessRequestHeaders_CreatesSpanWithAttributes(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
@@ -2942,8 +2943,8 @@ func TestServer_ProcessRequestHeaders_CreatesSpanWithAttributes(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			found = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, testResourceURI, attrs["resource.uri"], "resource.uri must be set")
-			assert.Equal(t, "success", attrs["outcome"], "outcome must be 'success'")
+			assert.NotContains(t, attrs, "resource.uri", "caller-controlled resources must not be telemetry")
+			assert.Equal(t, "success", attrs["token_exchange.outcome"], "outcome must be 'success'")
 			break
 		}
 	}
@@ -2975,10 +2976,64 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 	var outcomeAttr string
 	for _, s := range spans {
 		if s.Name() == "extproc.token_exchange" {
-			outcomeAttr = attributeMap(s.Attributes())["outcome"]
+			outcomeAttr = attributeMap(s.Attributes())["token_exchange.outcome"]
 		}
 	}
 	assert.Equal(t, "success", outcomeAttr, "span outcome must be 'success' on successful exchange")
+	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code, "successful exchange must leave span status UNSET")
+}
+
+// Agentgateway injects a fresh "traceparent" entry directly into the gRPC
+// call metadata of the Process stream it opens (its own ExtProc CLIENT span,
+// the direct and immediate caller of this server). The proxied HTTP request's
+// headers may carry an unrelated traceparent from an earlier hop (e.g.
+// skipper-ingress). The gRPC metadata value must win so the resulting span
+// nests under agentgateway's ExtProc span rather than an unrelated ancestor.
+func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHeader(t *testing.T) {
+	prevProp := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() { otel.SetTextMapPropagator(prevProp) })
+
+	const grpcTraceparent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	const grpcTraceID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const httpTraceparent = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01"
+
+	var seenTraceID string
+	var seenBaggage string
+	exchanger := &mockExchanger{
+		exchangeFunc: func(ctx context.Context, _, _ string) (server.ExchangeResult, error) {
+			seenTraceID = trace.SpanContextFromContext(ctx).TraceID().String()
+			seenBaggage = baggage.FromContext(ctx).Member("tenant").Value()
+			return server.ExchangeResult{Token: "exchanged-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+	defer cleanup()
+
+	outgoingCtx := metadata.AppendToOutgoingContext(context.Background(), "traceparent", grpcTraceparent)
+	stream, err := client.Process(outgoingCtx)
+	require.NoError(t, err)
+
+	req := &extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(""),
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &extprocv3.HttpHeaders{
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: "traceparent", RawValue: []byte(httpTraceparent)},
+					{Key: "baggage", RawValue: []byte("tenant=acme")},
+				}},
+			},
+		},
+	}
+	require.NoError(t, stream.Send(req))
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, grpcTraceID, seenTraceID,
+		"trace context must come from agentgateway's own gRPC call metadata, not the proxied HTTP request header")
+	assert.Equal(t, "acme", seenBaggage,
+		"HTTP baggage must survive when the preferred gRPC trace context has no baggage")
 }
 
 // Spec: US1 S2 — Span outcome attribute must be set on exchange_failure
@@ -3006,10 +3061,97 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnFailure(t *testing.T) {
 	var outcomeAttr string
 	for _, s := range spans {
 		if s.Name() == "extproc.token_exchange" {
-			outcomeAttr = attributeMap(s.Attributes())["outcome"]
+			outcomeAttr = attributeMap(s.Attributes())["token_exchange.outcome"]
 		}
 	}
-	assert.Equal(t, "exchange_failure", outcomeAttr, "span outcome must be 'exchange_failure' on error")
+	assert.Equal(t, "infrastructure_error", outcomeAttr, "unclassified failures use the bounded infrastructure outcome")
+	assert.Equal(t, otelcodes.Error, findTokenExchangeSpan(t, spans).Status().Code)
+	assert.Equal(t, "token exchange failed", findTokenExchangeSpan(t, spans).Status().Description)
+}
+
+func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
+	const recoveryURL = "https://broker.example.test/reauth"
+	tests := []struct {
+		name, code, wantCode, uri string
+		status                    int
+		wantHTTP                  httpv3.StatusCode
+		wantOutcome               string
+	}{
+		{name: "recovery", code: "invalid_grant", wantCode: "invalid_grant", uri: recoveryURL, status: 400, wantHTTP: httpv3.StatusCode_OK, wantOutcome: "reauth_required"},
+		{name: "server error with recovery URI", code: "server_error", wantCode: "server_error", uri: recoveryURL, status: 500, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
+		{name: "invalid_request", code: "invalid_request", wantCode: "invalid_request", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
+		{name: "invalid_client", code: "invalid_client", wantCode: "invalid_client", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "authentication_failed"},
+		{name: "unauthorized_client", code: "unauthorized_client", wantCode: "unauthorized_client", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "authentication_failed"},
+		{name: "unsupported_grant_type", code: "unsupported_grant_type", wantCode: "unsupported_grant_type", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
+		{name: "invalid_scope", code: "invalid_scope", wantCode: "invalid_scope", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
+		{name: "invalid_target", code: "invalid_target", wantCode: "invalid_target", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
+		{name: "access_denied", code: "access_denied", wantCode: "access_denied", status: 403, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "authorization_denied"},
+		{name: "untrusted code", code: "secret-from-provider", wantCode: "unknown", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
+		{name: "empty code", code: "", wantCode: "unknown", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := installSpanRecorder(t)
+
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{}, fmt.Errorf("broker rejected exchange: %w", &server.BrokerExchangeError{
+					StatusCode: tt.status, Code: tt.code, ErrorURI: tt.uri,
+				})
+			}}
+			client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+			defer cleanup()
+
+			resp, err := sendRequestHeadersWithProtocol(t, client, nil, "mcp")
+			require.NoError(t, err)
+			assertBrokerErrorResponse(t, resp, tt.wantHTTP, recoveryURL)
+
+			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.status, tt.wantCode, tt.wantOutcome)
+		})
+	}
+}
+
+func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
+	const recoveryURL = "https://broker.example.test/reauth"
+	for _, phase := range []string{"body-bearing", "header-only"} {
+		for _, statusCode := range []int{400, 500} {
+			t.Run(fmt.Sprintf("%s/broker-%d", phase, statusCode), func(t *testing.T) {
+				recorder := installSpanRecorder(t)
+
+				code := "invalid_grant"
+				wantHTTP := httpv3.StatusCode_OK
+				wantOutcome := "reauth_required"
+				if statusCode == 500 {
+					code = "server_error"
+					wantHTTP = httpv3.StatusCode_InternalServerError
+					wantOutcome = "infrastructure_error"
+				}
+				auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+					return &authorization.OPADecision{Action: "allow"}, nil
+				}}
+				exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+					return server.ExchangeResult{}, &server.BrokerExchangeError{StatusCode: statusCode, Code: code, ErrorURI: recoveryURL}
+				}}
+				client, cleanup := startTestServerWithAuthorizerConfig(t, testConfigWithTelemetry(), exchanger, auth)
+				defer cleanup()
+
+				var resp *extprocv3.ProcessingResponse
+				if phase == "body-bearing" {
+					var bodyResp *extprocv3.ProcessingResponse
+					resp, bodyResp = sendHeadersThenBodyWithMetadata(t, client, map[string]string{":method": "POST"},
+						tokenExchangeMetadataWithMCPServer("mcp"), []byte(`{"jsonrpc":"2.0","method":"tools/list"}`))
+					assert.Nil(t, bodyResp, "exchange rejection must complete in headers phase")
+				} else {
+					var err error
+					resp, err = sendRequestHeadersWithMetadata(t, client, map[string]string{":method": "GET"},
+						tokenExchangeMetadataWithMCPServer("mcp"), true)
+					require.NoError(t, err)
+				}
+				assertBrokerErrorResponse(t, resp, wantHTTP, recoveryURL)
+				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), statusCode, code, wantOutcome)
+			})
+		}
+	}
 }
 
 // Spec: US3 S1 — Metrics are recorded with outcome attribute
@@ -3042,7 +3184,7 @@ func TestServer_ProcessRequestHeaders_MetricsRecordOutcome(t *testing.T) {
 				if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
 					for _, dp := range sum.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundCounterWithOutcome = true
 							}
 						}
@@ -3052,7 +3194,7 @@ func TestServer_ProcessRequestHeaders_MetricsRecordOutcome(t *testing.T) {
 				if hist, ok := m.Data.(metricdata.Histogram[float64]); ok {
 					for _, dp := range hist.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundHistogramWithOutcome = true
 							}
 						}
@@ -3186,11 +3328,12 @@ func TestServer_OPA_BodyBearing_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, testResourceURI, attrs["resource.uri"])
-			assert.Equal(t, "success", attrs["outcome"])
+			assert.NotContains(t, attrs, "resource.uri")
+			assert.Equal(t, "success", attrs["token_exchange.outcome"])
 		}
 	}
 	assert.True(t, foundSpan, "OPA exchange path must emit extproc.token_exchange span")
+	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code)
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, metricReader.Collect(context.Background(), &rm))
@@ -3202,7 +3345,7 @@ func TestServer_OPA_BodyBearing_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 				if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
 					for _, dp := range sum.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundCounterWithOutcome = true
 							}
 						}
@@ -3212,7 +3355,7 @@ func TestServer_OPA_BodyBearing_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 				if hist, ok := m.Data.(metricdata.Histogram[float64]); ok {
 					for _, dp := range hist.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundHistogramWithOutcome = true
 							}
 						}
@@ -3276,11 +3419,12 @@ func TestServer_OPA_HeadersOnly_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, testResourceURI, attrs["resource.uri"])
-			assert.Equal(t, "success", attrs["outcome"])
+			assert.NotContains(t, attrs, "resource.uri")
+			assert.Equal(t, "success", attrs["token_exchange.outcome"])
 		}
 	}
 	assert.True(t, foundSpan, "OPA header-only exchange path must emit extproc.token_exchange span")
+	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code)
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, metricReader.Collect(context.Background(), &rm))
@@ -3292,7 +3436,7 @@ func TestServer_OPA_HeadersOnly_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 				if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
 					for _, dp := range sum.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundCounterWithOutcome = true
 							}
 						}
@@ -3302,7 +3446,7 @@ func TestServer_OPA_HeadersOnly_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 				if hist, ok := m.Data.(metricdata.Histogram[float64]); ok {
 					for _, dp := range hist.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "success" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "success" {
 								foundHistogramWithOutcome = true
 							}
 						}
@@ -3357,12 +3501,15 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, testResourceURI, attrs["resource.uri"])
-			assert.Equal(t, "authorization_denied", attrs["outcome"])
-			assert.Equal(t, "access_denied", attrs["error.type"])
+			assert.NotContains(t, attrs, "resource.uri")
+			assert.Equal(t, "authorization_denied", attrs["token_exchange.outcome"])
+			assert.Equal(t, "client_authorization", attrs["token_exchange.failure_stage"])
+			assert.Equal(t, "policy_denied", attrs["token_exchange.failure_detail"])
 		}
 	}
 	assert.True(t, foundSpan, "OPA header-only deny path must emit extproc.token_exchange span")
+	assert.Equal(t, otelcodes.Error, findTokenExchangeSpan(t, spans).Status().Code)
+	assert.Equal(t, "token exchange failed", findTokenExchangeSpan(t, spans).Status().Description)
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, metricReader.Collect(context.Background(), &rm))
@@ -3374,7 +3521,7 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 				if sum, ok := m.Data.(metricdata.Sum[int64]); ok {
 					for _, dp := range sum.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "authorization_denied" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "authorization_denied" {
 								foundCounterWithOutcome = true
 							}
 						}
@@ -3384,7 +3531,7 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 				if hist, ok := m.Data.(metricdata.Histogram[float64]); ok {
 					for _, dp := range hist.DataPoints {
 						for _, attr := range dp.Attributes.ToSlice() {
-							if string(attr.Key) == "outcome" && attr.Value.AsString() == "authorization_denied" {
+							if string(attr.Key) == "token_exchange.outcome" && attr.Value.AsString() == "authorization_denied" {
 								foundHistogramWithOutcome = true
 							}
 						}
@@ -3395,6 +3542,58 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 	}
 	assert.True(t, foundCounterWithOutcome, "OPA header-only deny path must record counter with outcome=authorization_denied")
 	assert.True(t, foundHistogramWithOutcome, "OPA header-only deny path must record histogram with outcome=authorization_denied")
+}
+
+func TestServer_DisabledLocalTracingDoesNotModifyInheritedSpan(t *testing.T) {
+	for _, withOPA := range []bool{false, true} {
+		name := "direct"
+		if withOPA {
+			name = "OPA header-only"
+		}
+		t.Run(name, func(t *testing.T) {
+			recorder := tracetest.NewSpanRecorder()
+			tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+			defer func() { _ = tp.Shutdown(context.Background()) }()
+			prevTP := otel.GetTracerProvider()
+			otel.SetTracerProvider(tp)
+			t.Cleanup(func() { otel.SetTracerProvider(prevTP) })
+			ctx, parent := tp.Tracer("parent").Start(context.Background(), "upstream-parent")
+			defer parent.End()
+
+			cfg := testConfigWithTelemetry()
+			cfg.Telemetry.Traces.Enabled = false
+			cfg.Telemetry.Metrics.Enabled = false
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{}, &server.BrokerExchangeError{StatusCode: 400, Code: "invalid_grant"}
+			}}
+			var svc *server.Server
+			headers := extProcHeaders(nil, false)
+			metadata := validTokenExchangeMetadata("")
+			if withOPA {
+				auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+					return &authorization.OPADecision{Action: "allow"}, nil
+				}}
+				svc = server.NewServerWithAuthorizer(cfg, exchanger, auth, testLogger())
+				headers = extProcHeaders(map[string]string{":method": "GET"}, true)
+				metadata = validTokenExchangeMetadata("a2a")
+			} else {
+				svc = server.NewServer(cfg, exchanger, testLogger())
+			}
+			stream := &failingProcessStream{ctx: ctx, requests: []*extprocv3.ProcessingRequest{{
+				MetadataContext: metadata,
+				Request:         &extprocv3.ProcessingRequest_RequestHeaders{RequestHeaders: headers},
+			}}}
+			require.NoError(t, svc.Process(stream))
+			assert.True(t, parent.IsRecording(), "ExtProc must not end an inherited span")
+			assert.Len(t, recorder.Started(), 1, "ExtProc must not create a span when tracing is disabled")
+			assert.Empty(t, recorder.Ended(), "ExtProc must not finish a span when tracing is disabled")
+			parent.End()
+			spans := recorder.Ended()
+			require.Len(t, spans, 1)
+			assert.Empty(t, spans[0].Attributes(), "ExtProc must not annotate an inherited span")
+			assert.Equal(t, otelcodes.Unset, spans[0].Status().Code, "ExtProc must not mark an inherited span as error")
+		})
+	}
 }
 
 // Spec: FR-014 — OPA-disabled requests must log the propagated trace_id with anonymous actor semantics.
@@ -3672,6 +3871,66 @@ func TestServer_RequestContext_OPAInvalidInput_LogsTraceID(t *testing.T) {
 	record := requireLogRecord(t, capture, "OPA: failed to parse request body — denying")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "invalid-input deny log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
+}
+
+func findTokenExchangeSpan(t *testing.T, spans []sdktrace.ReadOnlySpan) sdktrace.ReadOnlySpan {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name() == "extproc.token_exchange" {
+			return span
+		}
+	}
+	t.Fatal("extproc.token_exchange span not recorded")
+	return nil
+}
+
+func installSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = tp.Shutdown(context.Background())
+	})
+	return recorder
+}
+
+func assertBrokerErrorResponse(t *testing.T, resp *extprocv3.ProcessingResponse, wantHTTP httpv3.StatusCode, recoveryURL string) {
+	t.Helper()
+	immediate := resp.GetImmediateResponse()
+	require.NotNil(t, immediate)
+	assert.Equal(t, int32(wantHTTP), int32(immediate.Status.Code))
+	assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
+	if wantHTTP == httpv3.StatusCode_OK {
+		assert.Contains(t, string(immediate.Body), `"code":-32042`)
+		assert.Contains(t, string(immediate.Body), recoveryURL)
+	} else {
+		assert.NotContains(t, string(immediate.Body), recoveryURL)
+	}
+}
+
+func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCode int, errorCode, wantOutcome string) {
+	t.Helper()
+	assert.Equal(t, otelcodes.Error, span.Status().Code)
+	assert.Equal(t, "token exchange failed", span.Status().Description)
+	attrs := make(map[string]attribute.Value, len(span.Attributes()))
+	for _, attr := range span.Attributes() {
+		attrs[string(attr.Key)] = attr.Value
+	}
+	require.Equal(t, wantOutcome, attrs["token_exchange.outcome"].AsString())
+	assert.Equal(t, "exchange_routing", attrs["token_exchange.failure_stage"].AsString(), "broker origin stages are unknown to ExtProc")
+	assert.Equal(t, "unknown", attrs["token_exchange.exchange_kind"].AsString())
+	assert.NotContains(t, attrs, "outcome")
+	status, ok := attrs["token_exchange.broker_status_code"]
+	require.True(t, ok, "broker status must be present")
+	assert.Equal(t, attribute.INT64, status.Type())
+	assert.Equal(t, int64(statusCode), status.AsInt64())
+	code, ok := attrs["token_exchange.broker_error_code"]
+	require.True(t, ok, "broker code must be present")
+	assert.Equal(t, attribute.STRING, code.Type())
+	assert.Equal(t, errorCode, code.AsString())
 }
 
 // attributeMap converts a slice of key-value attributes to a map for easy assertions.

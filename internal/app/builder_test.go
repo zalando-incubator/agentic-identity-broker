@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +28,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -222,6 +226,108 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 	if app.EnduserHandlers.UserInfo == nil {
 		t.Error("expected UserInfo handler to be created")
 	}
+}
+
+func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
+	const parallel = 8
+	var connections atomic.Int32
+	var closed atomic.Int32
+	var arrived [2]atomic.Int32
+	released := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		burst := 0
+		if r.Form.Get("refresh_token") == "second" {
+			burst = 1
+		}
+		if arrived[burst].Add(1) == parallel {
+			close(released[burst])
+		}
+		select {
+		case <-released[burst]:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer"}`)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			connections.Add(1)
+		case http.StateClosed:
+			closed.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	cfg := &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{
+				Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
+				Authentication: ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}},
+			},
+			Admin: ports.ServerInstanceConfig{
+				Port: 14000, Bind: "::1", PublicURL: "http://localhost:14000",
+				Authentication: ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}},
+			},
+			Shutdown: ports.ShutdownConfig{Timeout: 5 * time.Second},
+		},
+		Storage: ports.StorageConfig{
+			Backend: "memory", Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
+		},
+		ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{
+			JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+		},
+		Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+		OAuth2AuthServer: ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}},
+	}
+	store, err := storage.NewAdapter(&cfg.Storage)
+	require.NoError(t, err)
+	app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
+		WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
+	require.NoError(t, err)
+	shutdown := false
+	t.Cleanup(func() {
+		if !shutdown {
+			require.NoError(t, app.Shutdown(context.Background()))
+		}
+	})
+
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: id.NewServiceID(), ClientID: id.ClientID("client"),
+		Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Endpoints: model.OAuth2Endpoints{TokenEndpoint: server.URL},
+	}
+	runBurst := func(refreshToken string) {
+		results := make(chan error, parallel)
+		for range parallel {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken)
+				results <- err
+			}()
+		}
+		for range parallel {
+			require.NoError(t, <-results)
+		}
+	}
+
+	runBurst("first")
+	firstConnections := connections.Load()
+	require.Equal(t, int32(parallel), firstConnections)
+	runBurst("second")
+	require.Equal(t, firstConnections, connections.Load(), "idle connections must serve the next burst")
+	require.Zero(t, closed.Load(), "connections should remain idle before shutdown")
+	require.NoError(t, app.Shutdown(context.Background()))
+	shutdown = true
+	require.Eventually(t, func() bool { return closed.Load() == int32(parallel) }, time.Second, 10*time.Millisecond,
+		"app shutdown must close idle upstream connections")
 }
 
 // TestBuilderMissingRequiredDependency validates that the builder rejects invalid configurations.
@@ -724,8 +830,70 @@ func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 		resolve := newTokenExchangeAgentIDResolver(newService(repo), time.Second)
 		_, err := resolve(rawIdentifier)
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "ambiguous")
+		assert.ErrorIs(t, err, agentsservice.ErrAmbiguousClientID)
+		var tokenErr *tokenexchange.TokenExchangeError
+		require.ErrorAs(t, err, &tokenErr)
+		assert.Equal(t, tokenexchange.OutcomeConfigurationError, tokenErr.Diagnostic().Outcome())
+		assert.Equal(t, tokenexchange.DetailAgentInvalid, tokenErr.Diagnostic().Detail())
+		assert.NotContains(t, tokenErr.Error(), rawIdentifier)
 	})
+}
+
+func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
+	t.Parallel()
+	secretCause := errors.New("https://secret-store.example/private?credential=secret-store-token")
+	missingCause := domstorage.NewStorageError("GetByClientID", domstorage.ErrorKindNotFound, ports.ErrNotFound, "secret-missing-value")
+	unavailableCause := domstorage.NewStorageError("Get", domstorage.ErrorKindConnection, secretCause, "secret-dependency-value")
+	agentID := id.NewAgentID()
+	for _, tc := range []struct {
+		name          string
+		rawIdentifier string
+		repo          *builderTestAgentRepo
+		cause         error
+		outcome       tokenexchange.Outcome
+		detail        tokenexchange.FailureDetail
+	}{
+		{"unregistered upstream ID", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: missingCause}, missingCause, tokenexchange.OutcomeConfigurationError, tokenexchange.DetailAgentMissing},
+		{"unregistered UUID", agentID.String(), &builderTestAgentRepo{}, ports.ErrNotFound, tokenexchange.OutcomeConfigurationError, tokenexchange.DetailAgentMissing},
+		{"client lookup unavailable", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"UUID lookup unavailable", agentID.String(), &builderTestAgentRepo{getErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"shared deadline", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: context.DeadlineExceeded}, context.DeadlineExceeded, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"duplicate check unavailable", "secret-client-id", &builderTestAgentRepo{byClientID: map[id.ClientID]*domstorage.Agent{"secret-client-id": {ID: agentID}}, existsOtherErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false)
+			resolve := newTokenExchangeAgentIDResolver(svc, time.Second)
+			assertFailure := func(err error) {
+				t.Helper()
+				var tokenErr *tokenexchange.TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, "server_error", tokenErr.Code())
+				assert.Equal(t, tc.outcome, tokenErr.Diagnostic().Outcome())
+				assert.Equal(t, tokenexchange.StageIdentityResolution, tokenErr.Diagnostic().Stage())
+				assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+				assert.ErrorIs(t, err, tc.cause)
+				if storageCause, ok := tc.cause.(*domstorage.StorageError); ok {
+					var preserved *domstorage.StorageError
+					require.ErrorAs(t, err, &preserved)
+					assert.Same(t, storageCause, preserved)
+				}
+				for _, secret := range []string{tc.rawIdentifier, "secret-store", "secret-missing-value", "secret-dependency-value"} {
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
+				}
+			}
+			_, err := resolve(tc.rawIdentifier)
+			assertFailure(err)
+			evaluator, err := tokenexchange.NewCELEvaluator(tokenexchange.CELEvaluatorConfig{
+				AgentIDExpression:        "resolveAgentIdByClientId(subject_token.azp)",
+				ResolveAgentIDByClientID: resolve,
+				EvaluationTimeout:        time.Second,
+			})
+			require.NoError(t, err)
+			_, err = evaluator.ExtractAgentID(map[string]any{"azp": tc.rawIdentifier})
+			assertFailure(err)
+		})
+	}
 }
 
 type builderTestRequirementValidator struct{}
@@ -735,6 +903,7 @@ func (builderTestRequirementValidator) ValidateServiceRequirements(context.Conte
 }
 
 type builderTestAgentRepo struct {
+	ports.AgentRepository
 	byID                    map[id.AgentID]*domstorage.Agent
 	byClientID              map[id.ClientID]*domstorage.Agent
 	getErr                  error
@@ -757,7 +926,17 @@ func (r *builderTestAgentRepo) Get(_ context.Context, agentID id.AgentID) (*doms
 
 func (r *builderTestAgentRepo) Update(context.Context, *domstorage.Agent) error { return nil }
 
-func (r *builderTestAgentRepo) Delete(context.Context, id.AgentID) error { return nil }
+func (r *builderTestAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	_, existed := r.byID[agentID]
+	delete(r.byID, agentID)
+	for clientID, agent := range r.byClientID {
+		if agent.ID == agentID {
+			existed = true
+			delete(r.byClientID, clientID)
+		}
+	}
+	return existed, nil
+}
 
 func (r *builderTestAgentRepo) List(context.Context) ([]*domstorage.Agent, error) { return nil, nil }
 
@@ -1081,6 +1260,69 @@ func TestBuilder_ShutdownStopsUpstreamJWKSAdapterWorkers(t *testing.T) {
 				"expected upstream JWKS adapter workers to stop after shutdown")
 		})
 	}
+}
+
+func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
+	newJWKS := func() (*httptest.Server, *atomic.Int32) {
+		fetches := &atomic.Int32{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fetches.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"keys":[]}`)
+		}))
+		t.Cleanup(server.Close)
+		return server, fetches
+	}
+	enduserJWKS, enduserFetches := newJWKS()
+	adminJWKS, adminFetches := newJWKS()
+	config := &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{
+				PublicURL: "http://localhost:8000",
+				Authentication: ports.AuthenticationConfig{JWT: &ports.JWTConfig{
+					HeaderName: "Authorization", Verification: "jwks", JWKSURI: enduserJWKS.URL,
+					ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+				}},
+			},
+			Admin: ports.ServerInstanceConfig{
+				PublicURL: "http://localhost:14000",
+				Authentication: ports.AuthenticationConfig{JWT: &ports.JWTConfig{
+					HeaderName: "X-Userinfo", Verification: "jwks", JWKSURI: adminJWKS.URL,
+					ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.principal"},
+				}},
+			},
+		},
+		Storage:          ports.StorageConfig{Backend: "memory"},
+		ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+		Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+		OAuth2AuthServer: ports.OAuth2AuthServerConfig{
+			Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour},
+		},
+	}
+	adapter, err := storage.NewAdapter(&config.Storage)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, adapter.Close(context.Background())) })
+
+	baseline := countHTTPRCGoroutines(t)
+	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if built != nil {
+			require.NoError(t, built.Shutdown(context.Background()))
+		}
+	})
+	require.Positive(t, enduserFetches.Load())
+	require.Positive(t, adminFetches.Load())
+	waitForHTTPRCGoroutineCount(t,
+		func(count int) bool { return count >= baseline+2 },
+		"expected a JWKS refresh worker for each server")
+
+	require.NoError(t, built.Shutdown(context.Background()))
+	built = nil
+	waitForHTTPRCGoroutineCount(t,
+		func(count int) bool { return count <= baseline },
+		"expected both JWT JWKS refresh workers to stop after shutdown")
 }
 
 func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {

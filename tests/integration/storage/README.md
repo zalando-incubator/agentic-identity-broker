@@ -1,7 +1,7 @@
 # Storage Integration Tests
 
-This directory contains the storage-focused integration tests for the persistence layer adapters.
-Self-contained tests stay in `tests/integration/storage/`, while infra-backed PostgreSQL tests live in `tests/integration/storage/infra/`.
+This directory contains storage integration tests. Self-contained tests are in `tests/integration/storage/`.
+PostgreSQL adapter tests are in `tests/integration/storage/infra/` and `internal/adapters/storage/postgres/`.
 
 ## Running Integration Tests
 
@@ -51,6 +51,13 @@ Requires Docker:
 ```bash
 go test -tags=integration -v ./tests/integration/storage/infra/...
 # or just test-integration-infra
+```
+
+The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
+Run them against PostgreSQL with:
+
+```bash
+go test -tags=integration -count=1 ./internal/adapters/storage/postgres
 ```
 
 Tests:

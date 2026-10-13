@@ -18,6 +18,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
@@ -25,6 +26,7 @@ import (
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -416,6 +418,22 @@ func TestRefreshAccessToken_CIMDClientFailsClosedBeforeTokenRequestWhenSigningUn
 			assert.Zero(t, tokenRequests.Load(), "signing must fail before a refresh token request can leave the broker")
 		})
 	}
+}
+
+func TestRefreshAccessToken_RejectsOversizedResponse(t *testing.T) {
+	service, _, _ := setupService(t)
+	provider := createTestService(id.NewServiceID())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"token","token_type":"Bearer"}`)
+		_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+	}))
+	defer server.Close()
+	provider.Endpoints.TokenEndpoint = server.URL
+
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.Nil(t, token)
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderResponseInvalid)
 }
 
 func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
@@ -922,8 +940,12 @@ func TestHandleCallback_OAuth2ErrorResponse(t *testing.T) {
 
 			assert.Error(t, err)
 			assert.Nil(t, result)
-			// Verify error contains the OAuth2 error code
-			assert.Contains(t, err.Error(), tt.error, "error should contain OAuth2 error code")
+			metadata := assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderRejected)
+			if oauth2session.IsSafeOAuthErrorCode(tt.error) {
+				assert.Equal(t, tt.error, metadata.OAuthCode())
+			} else {
+				assert.Equal(t, "unknown", metadata.OAuthCode())
+			}
 		})
 	}
 }
@@ -1035,9 +1057,8 @@ func TestHandleCallback_RetryExhausted(t *testing.T) {
 	// Verify error handling
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	// Verify it exhausted retries and contains expected error messages
-	assert.Contains(t, err.Error(), "failed to exchange authorization code", "error should indicate authorization code exchange failed")
-	assert.Contains(t, err.Error(), "token exchange failed", "error should indicate retry exhaustion")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderUnavailable)
 }
 
 func TestHandleCallback_ContextCancellationDuringRetry(t *testing.T) {
@@ -1265,10 +1286,9 @@ func TestHandleCallback_PKCEValidationFailure(t *testing.T) {
 	// Verify error handling
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	// PKCE validation failures result in token exchange errors with specific messages
-	assert.Contains(t, err.Error(), "failed to exchange authorization code", "error should indicate authorization code exchange failed")
-	// The mock returns invalid_grant which becomes a token exchange error
-	assert.Contains(t, err.Error(), "invalid_grant", "error should indicate PKCE validation failure")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	metadata := assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderRejected)
+	assert.Equal(t, "invalid_grant", metadata.OAuthCode())
 }
 
 func TestHandleCallback_MissingCode(t *testing.T) {
@@ -1474,6 +1494,44 @@ func createMockOAuth2TokenEndpoint(t *testing.T, config mockTokenConfig) *httpte
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()
 	return testutil.NewTestEncryptionAdapter(t)
+}
+
+type batchOnlyProviderRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
+}
+
+func (batchOnlyProviderRepository) Get(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return nil, errors.New("scalar provider lookup is not available")
+}
+
+func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing.T) {
+	ctx := context.Background()
+	principal := id.Principal("user@example.com")
+	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := createTestService(id.NewServiceID())
+	provider.Secret = model.NewAbsentSecret()
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	require.NoError(t, providerRepo.Create(ctx, provider))
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
+		batchOnlyProviderRepository{providerRepo}, newTestEncryption(t), newNoopBranchKeyManager(), nil, false, slog.Default())
+	sessions := memory.NewInMemoryUserSessionRepository()
+	for _, serviceID := range []id.ServiceID{provider.ID, id.NewServiceID()} {
+		past := time.Now().Add(-time.Minute)
+		require.NoError(t, sessions.Create(ctx, &storage.UserSession{
+			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
+			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+		}))
+	}
+	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,
+		memory.NewUserGrantRepository(), nil, nil, nil, nil, oauth2session.DefaultConfig(), slog.Default())
+	summaries, err := svc.ListUserSessions(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, 1, "sessions for deleted providers are omitted")
+	assert.Equal(t, provider.ID, summaries[0].ServiceID)
+	assert.Equal(t, provider.DisplayName, summaries[0].ServiceDisplayName)
+	assert.True(t, summaries[0].HasRefreshToken)
+	assert.True(t, summaries[0].IsExpired)
 }
 
 func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
@@ -1952,7 +2010,9 @@ func TestForceRefreshSession(t *testing.T) {
 
 	t.Run("upstream rejects", func(t *testing.T) {
 		ctx := context.Background()
-		service, _, providerService := setupService(t)
+		service, _, sessions, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
+			config.RetryBaseDelay = 10 * time.Millisecond
+		})
 		serviceID := id.NewServiceID()
 		provider := createTestService(serviceID)
 
@@ -1976,6 +2036,9 @@ func TestForceRefreshSession(t *testing.T) {
 			State:     flow.StateToken,
 		})
 		require.NoError(t, err)
+		stored, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+		require.NoError(t, err)
+		before := *stored
 
 		rejectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.NoError(t, r.ParseForm())
@@ -1992,8 +2055,73 @@ func TestForceRefreshSession(t *testing.T) {
 		_, err = service.ForceRefreshSession(ctx, principal, serviceID)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, oauth2session.ErrRefreshFailed))
-		assert.ErrorContains(t, err, "upstream token endpoint returned error status 400")
+		var retrieveErr *oauth2.RetrieveError
+		require.ErrorAs(t, err, &retrieveErr)
+		require.NotNil(t, retrieveErr.Response)
+		assert.Equal(t, http.StatusBadRequest, retrieveErr.Response.StatusCode)
+		assert.Equal(t, "invalid_grant", retrieveErr.ErrorCode)
+		assert.NotContains(t, err.Error(), "refresh rejected")
+
+		after, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+		require.NoError(t, err)
+		assert.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
+		assert.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
+		assert.Equal(t, before.AccessTokenExpiresAt, after.AccessTokenExpiresAt)
+		assert.Equal(t, before.RefreshTokenExpiresAt, after.RefreshTokenExpiresAt)
 	})
+}
+
+func TestRefreshAccessToken_SanitizesThirdpartyRejection(t *testing.T) {
+	const sentinel = "sentinel-thirdparty-secret"
+	const invalidGrant = `{"error":"invalid_grant"}`
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "invalid_grant", status: http.StatusBadRequest, body: `{"error":"invalid_grant","error_description":"` + sentinel + `","error_uri":"https://` + sentinel + `"}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_grant"},
+		{name: "invalid_client", status: http.StatusUnauthorized, body: `{"error":"invalid_client","error_description":"` + sentinel + `"}`, wantStatus: http.StatusUnauthorized, wantCode: "invalid_client"},
+		{name: "unknown code carrying sentinel", status: http.StatusBadRequest, body: `{"error":"` + sentinel + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "non-JSON body", status: http.StatusBadRequest, body: "<html>" + sentinel + "</html>", wantStatus: http.StatusBadRequest},
+		{name: "wrong-typed error field", status: http.StatusBadRequest, body: `{"error":["invalid_grant"],"error_description":"` + sentinel + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "oversized body", status: http.StatusBadRequest, body: `{"error":"invalid_grant","error_description":"` + strings.Repeat("x", 64<<10) + sentinel + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "valid JSON over size cap", status: http.StatusBadRequest, body: invalidGrant + strings.Repeat(" ", 64<<10), wantStatus: http.StatusBadRequest},
+		{name: "valid JSON at size cap", status: http.StatusBadRequest, body: invalidGrant + strings.Repeat(" ", 64<<10-len(invalidGrant)), wantStatus: http.StatusBadRequest, wantCode: "invalid_grant"},
+		{name: "empty body", status: http.StatusBadRequest, wantStatus: http.StatusBadRequest},
+		{name: "server error carrying invalid_grant", status: http.StatusInternalServerError, body: `{"error":"invalid_grant","error_description":"` + sentinel + `"}`, wantStatus: http.StatusInternalServerError, wantCode: "invalid_grant"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, _, _ := setupService(t)
+			provider := createTestService(id.NewServiceID())
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer mockServer.Close()
+			provider.Endpoints.TokenEndpoint = mockServer.URL
+
+			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+			require.Error(t, err)
+			assert.Nil(t, token)
+			var retrieveErr *oauth2.RetrieveError
+			require.ErrorAs(t, err, &retrieveErr)
+			require.NotNil(t, retrieveErr.Response)
+			assert.Equal(t, tt.wantStatus, retrieveErr.Response.StatusCode)
+			assert.Equal(t, tt.wantCode, retrieveErr.ErrorCode)
+			assert.Empty(t, retrieveErr.ErrorDescription)
+			assert.Empty(t, retrieveErr.ErrorURI)
+			assert.Empty(t, retrieveErr.Body)
+			assert.Nil(t, retrieveErr.Response.Body)
+			assert.Nil(t, retrieveErr.Response.Header)
+			assert.Nil(t, retrieveErr.Response.Request)
+			assert.NotContains(t, err.Error(), sentinel)
+			assert.NotContains(t, fmt.Sprintf("%+v", retrieveErr), sentinel)
+		})
+	}
 }
 
 // =============================================================================
@@ -2071,6 +2199,13 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 
 	// Create third-party service
 	thirdPartyService := createTestService(serviceID)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant","error_description":"SENTINEL_CALLBACK_PROVIDER_SECRET"}`)
+	}))
+	defer upstream.Close()
+	thirdPartyService.Endpoints.TokenEndpoint = upstream.URL
 	err = providerService.Create(ctx, thirdPartyService)
 	require.NoError(t, err)
 
@@ -2099,8 +2234,10 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 	// Verify error occurred
 	require.Error(t, err)
 	require.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to exchange authorization code",
-		"Error should indicate token exchange failure")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	var operationErr *oauth2session.OperationError
+	require.ErrorAs(t, err, &operationErr)
+	assert.Equal(t, oauth2session.OperationCodeExchange, operationErr.Metadata().Operation())
 
 	// Parse log output to verify audit log was emitted
 	logLines := strings.Split(logOutput.String(), "\n")
@@ -2123,7 +2260,10 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 
 			// Verify required fields
 			assert.Equal(t, "session.oauth2.pkce_validation_failed", eventVal)
-			assert.Equal(t, principal.String(), logEntry["principal"])
+			metadata, ok := logEntry["oauth2_session"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, string(oauth2session.OperationCodeExchange), metadata["operation"])
+			assert.Equal(t, string(oauth2session.DetailProviderRejected), metadata["failure_detail"])
 			assert.Equal(t, serviceID.String(), logEntry["service_id"])
 			assert.NotEmpty(t, logEntry["timestamp"])
 			assert.Equal(t, "token_exchange_failed", logEntry["reason"])
@@ -2132,6 +2272,7 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 			break
 		}
 	}
+	assert.NotContains(t, logOutput.String(), "SENTINEL_CALLBACK_PROVIDER_SECRET")
 
 	assert.True(t, foundAuditLog, "Audit log for PKCE validation failure not found in logs. Log output:\n%s", logOutput.String())
 	if foundAuditLog {

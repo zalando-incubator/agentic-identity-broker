@@ -14,6 +14,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -67,9 +68,9 @@ func (m *MockPermissionSetRepository) Update(ctx context.Context, ps *storage.Pe
 	return args.Error(0)
 }
 
-func (m *MockPermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) error {
+func (m *MockPermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) (bool, error) {
 	args := m.Called(ctx, id)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockPermissionSetRepository) List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error) {
@@ -114,8 +115,8 @@ func (n *nopGrantRepo) FindByPrincipalAndAgent(_ context.Context, _ id.Principal
 	return nil, nil
 }
 func (n *nopGrantRepo) DeleteByAgent(_ context.Context, _ id.AgentID) error { return nil }
-func (n *nopGrantRepo) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) error {
-	return nil
+func (n *nopGrantRepo) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) (*storage.UserGrant, error) {
+	return nil, storage.NewStorageError("DeleteByPrincipalAndAgentID", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
 }
 func (n *nopGrantRepo) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
 	return nil, nil
@@ -616,27 +617,36 @@ func TestPermissionSetsHandler_Update(t *testing.T) {
 func TestPermissionSetsHandler_Delete(t *testing.T) {
 	logger := slog.Default()
 
-	t.Run("successful delete", func(t *testing.T) {
-		mockRepo := new(MockPermissionSetRepository)
-		handler := newPermissionSetsHandlerForTest(mockRepo, logger)
+	for _, tc := range []struct {
+		name    string
+		deleted bool
+	}{
+		{name: "successful delete", deleted: true},
+		{name: "absent permission set remains idempotent", deleted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockPermissionSetRepository)
+			handler := newPermissionSetsHandlerForTest(mockRepo, logger)
 
-		psID := id.MustParsePermissionSetID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+			psID := id.MustParsePermissionSetID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
-		mockRepo.On("CountAgentsReferencingPermissionSet", mock.Anything, psID).Return(0, nil)
-		mockRepo.On("Delete", mock.Anything, psID).Return(nil)
+			mockRepo.On("CountAgentsReferencingPermissionSet", mock.Anything, psID).Return(0, nil)
+			mockRepo.On("Delete", mock.Anything, psID).Return(tc.deleted, nil)
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/permission-sets/a1b2c3d4-e5f6-7890-abcd-ef1234567890", nil)
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("id", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req := httptest.NewRequest(http.MethodDelete, "/api/permission-sets/a1b2c3d4-e5f6-7890-abcd-ef1234567890", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-		w := httptest.NewRecorder()
+			w := httptest.NewRecorder()
 
-		handler.Delete(w, req)
+			handler.Delete(w, req)
 
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		mockRepo.AssertExpectations(t)
-	})
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.Empty(t, w.Body.String())
+			mockRepo.AssertExpectations(t)
+		})
+	}
 
 	t.Run("deletion protection returns 409", func(t *testing.T) {
 		mockRepo := new(MockPermissionSetRepository)

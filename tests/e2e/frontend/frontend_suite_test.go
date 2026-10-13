@@ -5,6 +5,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,6 +48,9 @@ type SuiteContext struct {
 	// DevFrontendURL is the Vite dev server URL (only set in dev mode)
 	// This is "http://localhost:3000" when FrontendMode is "dev"
 	DevFrontendURL string
+
+	// BrowserCoverageDir is empty unless built-mode browser coverage is enabled.
+	BrowserCoverageDir string
 }
 
 // TestContext holds resources fresh for each individual test.
@@ -80,6 +85,8 @@ type TestContext struct {
 	// In dev mode: http://localhost:3000
 	// In built mode: http://127.0.0.1:RANDOM_PORT
 	FrontendURL string
+
+	BrowserCoverage *browserCoverage
 }
 
 // suiteCtx holds suite-level resources initialized in BeforeSuite
@@ -89,6 +96,57 @@ var suiteCtx *SuiteContext
 // testCtx holds test-level resources created in BeforeEach and cleaned in AfterEach
 // This is fresh for each test to ensure complete isolation
 var testCtx *TestContext
+
+// Each document keeps its latest cumulative Istanbul counters, including pages
+// that navigated away before AfterEach can inspect the current page.
+type browserCoverage struct {
+	sync.Mutex
+	documents map[string]json.RawMessage
+	err       error
+}
+
+func (c *browserCoverage) capture(args ...any) any {
+	if len(args) != 1 {
+		c.Lock()
+		c.err = fmt.Errorf("browser coverage binding received %d arguments", len(args))
+		c.Unlock()
+		return nil
+	}
+	snapshot, ok := args[0].(map[string]any)
+	if !ok {
+		c.Lock()
+		c.err = fmt.Errorf("browser coverage binding received %T", args[0])
+		c.Unlock()
+		return nil
+	}
+	id, idOK := snapshot["id"].(string)
+	coverage, coverageOK := snapshot["coverage"].(map[string]any)
+	if !idOK || id == "" || !coverageOK {
+		c.Lock()
+		c.err = fmt.Errorf("browser coverage binding received an invalid snapshot")
+		c.Unlock()
+		return nil
+	}
+	data, err := json.Marshal(coverage)
+	c.Lock()
+	defer c.Unlock()
+	if err != nil {
+		c.err = fmt.Errorf("encode browser coverage: %w", err)
+	} else {
+		c.documents[id] = data
+	}
+	return nil
+}
+
+const browserCoverageInitScript = `(() => {
+  const id = crypto.randomUUID();
+  window.__e2eFlushCoverage = () => {
+    if (globalThis.__coverage__) {
+      return window.__e2eRecordCoverage({ id, coverage: globalThis.__coverage__ });
+    }
+  };
+  window.addEventListener('pagehide', () => { void window.__e2eFlushCoverage(); });
+})()`
 
 // TestFrontendE2E is the entry point for the frontend E2E test suite.
 // Ginkgo calls this to register and run all tests in this package.
@@ -105,6 +163,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	}
 	if mode != "built" && mode != "dev" {
 		Fail(fmt.Sprintf("Invalid E2E_FRONTEND_MODE=%q. Must be 'built' or 'dev'", mode))
+	}
+	if os.Getenv("E2E_WEB_COVERAGE_DIR") != "" && mode != "built" {
+		Fail("E2E_WEB_COVERAGE_DIR requires E2E_FRONTEND_MODE=built")
 	}
 	if mode == "built" {
 		Expect(ensureFrontendBuilt(bootstrap.TestLogger(slog.LevelInfo))).To(Succeed(), "Failed to build frontend")
@@ -125,6 +186,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	// Step 2: Use the mode validated on process 1.
 	frontendMode := string(mode)
+	coverageDir := os.Getenv("E2E_WEB_COVERAGE_DIR")
+	if coverageDir != "" {
+		if !filepath.IsAbs(coverageDir) {
+			coverageDir = filepath.Join(getProjectRoot(), coverageDir)
+		}
+		Expect(os.MkdirAll(coverageDir, 0o755)).To(Succeed(), "Failed to create browser coverage directory")
+	}
 
 	headlessStr := os.Getenv("HEADLESS")
 	headless := headlessStr == "" || headlessStr == "true"
@@ -169,12 +237,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	// Store suite context
 	suiteCtx = &SuiteContext{
-		Logger:         logger,
-		Playwright:     pw,
-		Browser:        browserInstance,
-		FrontendMode:   frontendMode,
-		Headless:       headless,
-		DevFrontendURL: devFrontendURL,
+		Logger:             logger,
+		Playwright:         pw,
+		Browser:            browserInstance,
+		FrontendMode:       frontendMode,
+		Headless:           headless,
+		DevFrontendURL:     devFrontendURL,
+		BrowserCoverageDir: coverageDir,
 	}
 
 	logger.Info("Frontend E2E suite initialization complete")
@@ -240,6 +309,12 @@ var _ = BeforeEach(func() {
 	}
 	browserContext, err := suiteCtx.Browser.NewContext(contextOpts)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create Playwright context")
+	var coverage *browserCoverage
+	if suiteCtx.BrowserCoverageDir != "" {
+		coverage = &browserCoverage{documents: make(map[string]json.RawMessage)}
+		Expect(browserContext.ExposeFunction("__e2eRecordCoverage", coverage.capture)).To(Succeed(), "Failed to expose browser coverage binding")
+		Expect(browserContext.AddInitScript(playwright.Script{Content: playwright.String(browserCoverageInitScript)})).To(Succeed(), "Failed to register browser coverage script")
+	}
 
 	page, err := browserContext.NewPage()
 	Expect(err).NotTo(HaveOccurred(), "Failed to create Playwright page")
@@ -249,15 +324,16 @@ var _ = BeforeEach(func() {
 
 	// Store in test context
 	testCtx = &TestContext{
-		Suite:          suiteCtx,
-		Storage:        storage,
-		StorageFactory: storageFactory,
-		MockUpstream:   mockUpstream,
-		Server:         server,
-		ServerFactory:  serverFactory,
-		BrowserContext: browserContext,
-		Page:           page,
-		FrontendURL:    frontendURL,
+		Suite:           suiteCtx,
+		Storage:         storage,
+		StorageFactory:  storageFactory,
+		MockUpstream:    mockUpstream,
+		Server:          server,
+		ServerFactory:   serverFactory,
+		BrowserContext:  browserContext,
+		Page:            page,
+		FrontendURL:     frontendURL,
+		BrowserCoverage: coverage,
 	}
 
 	suiteCtx.Logger.Info("Test setup complete",
@@ -271,6 +347,40 @@ var _ = BeforeEach(func() {
 var _ = AfterEach(func() {
 	if testCtx == nil {
 		return
+	}
+	var coverageErr error
+	if testCtx.BrowserCoverage != nil {
+		for _, page := range testCtx.BrowserContext.Pages() {
+			if page.IsClosed() {
+				continue
+			}
+			for _, frame := range page.Frames() {
+				_, err := frame.Evaluate(`() => window.__e2eFlushCoverage?.()`)
+				if err != nil && coverageErr == nil {
+					coverageErr = fmt.Errorf("flush browser coverage: %w", err)
+				}
+			}
+		}
+		coverage := testCtx.BrowserCoverage
+		coverage.Lock()
+		data, err := json.Marshal(coverage.documents)
+		if coverage.err != nil {
+			err = coverage.err
+		}
+		coverage.Unlock()
+		if coverageErr == nil {
+			coverageErr = err
+		}
+		if coverageErr == nil {
+			file, err := os.CreateTemp(suiteCtx.BrowserCoverageDir, fmt.Sprintf("worker-%d-spec-*.json", GinkgoParallelProcess()))
+			if err == nil {
+				_, err = file.Write(data)
+				if closeErr := file.Close(); err == nil {
+					err = closeErr
+				}
+			}
+			coverageErr = err
+		}
 	}
 	if testCtx.BrowserContext != nil {
 		if err := testCtx.BrowserContext.Close(); err != nil {
@@ -290,6 +400,7 @@ var _ = AfterEach(func() {
 	}
 	suiteCtx.Logger.Info("Test cleanup complete")
 	testCtx = nil
+	Expect(coverageErr).NotTo(HaveOccurred(), "Failed to collect browser coverage")
 })
 
 // AfterSuite closes each worker's browser and Playwright process.

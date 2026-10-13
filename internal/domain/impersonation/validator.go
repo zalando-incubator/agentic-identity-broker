@@ -113,7 +113,8 @@ func (v *signedValidator) validateAlgorithm(tokenString string) error {
 func (v *signedValidator) verify(ctx context.Context, tokenString string) (jwt.Token, error) {
 	keyset, err := v.jwksProvider.GetKeySet(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("jwks unavailable for issuer: %w", err)
+		return nil, tokenexchange.NewServerError("credential verification keys are unavailable").WithCause(err).
+			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageSubjectValidation, tokenexchange.DetailJWKSUnavailable))
 	}
 	return jwt.ParseString(
 		tokenString,

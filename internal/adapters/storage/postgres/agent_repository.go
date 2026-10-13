@@ -319,6 +319,44 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	return agent.Copy(), nil
 }
 
+func (r *AgentRepository) GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	if r.adapter.db == nil {
+		return nil, storage.NewStorageError("GetAgentsByIDs", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if len(ids) == 0 {
+		return []*storage.Agent{}, nil
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	rows, err := r.adapter.db.QueryContext(queryCtx, `SELECT id, canonical_id, client_id, external_id, display_name, description,
+		governance_url, user_documentation_url, agent_interface_url, service_requirements, permission_sets,
+		redirect_uris, allowed_scopes, created_at, updated_at FROM agents WHERE id = ANY($1::uuid[])`, pq.Array(ids))
+	if err != nil {
+		kind := storage.ErrorKindConnection
+		if errors.Is(err, context.DeadlineExceeded) {
+			kind = storage.ErrorKindTimeout
+		}
+		return nil, storage.NewStorageError("GetAgentsByIDs", kind, err, "failed to get agents")
+	}
+	defer func() { _ = rows.Close() }()
+	agents, err := r.scanAgentRows(queryCtx, rows, "GetAgentsByIDs")
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[id.AgentID]*storage.Agent, len(agents))
+	for _, agent := range agents {
+		byID[agent.ID] = agent
+	}
+	result := make([]*storage.Agent, 0, len(agents))
+	for _, agentID := range ids {
+		if agent := byID[agentID]; agent != nil {
+			result = append(result, agent)
+			delete(byID, agentID)
+		}
+	}
+	return result, nil
+}
+
 func (r *AgentRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.Agent, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -468,11 +506,11 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 }
 
 // Delete deletes an agent entity by ID from PostgreSQL.
-// Idempotent: returns nil if agent doesn't exist.
+// Idempotent: returns false if agent doesn't exist.
 // Associated grants and client URIs are CASCADE deleted per FR-021.
-func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	if r.adapter.db == nil {
-		return storage.NewStorageError(
+		return false, storage.NewStorageError(
 			"DeleteAgent",
 			storage.ErrorKindConnection,
 			nil,
@@ -481,7 +519,7 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 	}
 
 	if agentID.IsZero() {
-		return storage.NewStorageError(
+		return false, storage.NewStorageError(
 			"DeleteAgent",
 			storage.ErrorKindValidation,
 			nil,
@@ -492,15 +530,19 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
+	result, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
-			return storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent")
+		return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent")
 	}
 
-	return nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindUnknown, err, "failed to get rows affected")
+	}
+	return rowsAffected > 0, nil
 }
 
 // List retrieves all agent entities from PostgreSQL.
@@ -533,7 +575,11 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var agents []*storage.Agent
+	return r.scanAgentRows(queryCtx, rows, "ListAgents")
+}
+
+func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, operation string) ([]*storage.Agent, error) {
+	agents := make([]*storage.Agent, 0)
 	for rows.Next() {
 		agent := &storage.Agent{}
 		var serviceReqsJSON, permissionSetsJSON []byte
@@ -545,46 +591,45 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 			pq.Array(&agent.RedirectURIs), pq.Array(&agent.AllowedScopes),
 			&agent.CreatedAt, &agent.UpdatedAt,
 		); err != nil {
-			return nil, storage.NewStorageError("ListAgents", storage.ErrorKindConnection, err, "failed to scan agent row")
+			return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, err, "failed to scan agent row")
 		}
 		if len(serviceReqsJSON) > 0 {
 			if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
-				return nil, storage.NewStorageError("ListAgents", storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
 			}
 		}
 		if len(permissionSetsJSON) > 0 {
 			if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
-				return nil, storage.NewStorageError("ListAgents", storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
 			}
 		}
 		agents = append(agents, agent)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, storage.NewStorageError("ListAgents", storage.ErrorKindConnection, err, "error iterating agent rows")
+		kind := storage.ErrorKindConnection
+		if errors.Is(err, context.DeadlineExceeded) {
+			kind = storage.ErrorKindTimeout
+		}
+		return nil, storage.NewStorageError(operation, kind, err, "error iterating agent rows")
 	}
-
 	if len(agents) == 0 {
-		return []*storage.Agent{}, nil
+		return agents, nil
 	}
-
 	agentIDs := make([]id.AgentID, len(agents))
-	for i, a := range agents {
-		agentIDs[i] = a.ID
+	for i, agent := range agents {
+		agentIDs[i] = agent.ID
 	}
-	uriMap, err := r.batchFetchClientURIs(queryCtx, agentIDs)
+	uriMap, err := r.batchFetchClientURIs(ctx, agentIDs)
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]*storage.Agent, len(agents))
-	for i, agent := range agents {
+	for _, agent := range agents {
 		agent.ClientURIs = uriMap[agent.ID]
 		if agent.ClientURIs == nil {
 			agent.ClientURIs = []string{}
 		}
-		result[i] = agent.Copy()
 	}
-	return result, nil
+	return agents, nil
 }
 
 // batchFetchClientURIs retrieves client URIs for all given agent IDs in a single query.

@@ -9,7 +9,7 @@ import (
 )
 
 func TestCORSMiddleware_RegularRequest(t *testing.T) {
-	cfg := ports.CORSConfig{AllowedOrigins: []string{"*"}}
+	cfg := ports.CORSConfig{AllowedOrigins: []string{"http://localhost:3000"}}
 	handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("success"))
@@ -27,13 +27,13 @@ func TestCORSMiddleware_RegularRequest(t *testing.T) {
 
 	// Verify CORS origin header is set
 	origin := rr.Header().Get("Access-Control-Allow-Origin")
-	if origin != "*" {
-		t.Errorf("expected Access-Control-Allow-Origin '*', got %q", origin)
+	if origin != "http://localhost:3000" {
+		t.Errorf("expected Access-Control-Allow-Origin 'http://localhost:3000', got %q", origin)
 	}
 }
 
 func TestCORSMiddleware_PreflightRequest(t *testing.T) {
-	cfg := ports.CORSConfig{AllowedOrigins: []string{"*"}}
+	cfg := ports.CORSConfig{AllowedOrigins: []string{"http://localhost:3000"}}
 	handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("should not reach here"))
@@ -54,8 +54,8 @@ func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 
 	// Verify CORS headers are set on preflight
 	origin := rr.Header().Get("Access-Control-Allow-Origin")
-	if origin != "*" {
-		t.Errorf("expected Access-Control-Allow-Origin '*', got %q", origin)
+	if origin != "http://localhost:3000" {
+		t.Errorf("expected Access-Control-Allow-Origin 'http://localhost:3000', got %q", origin)
 	}
 
 	methods := rr.Header().Get("Access-Control-Allow-Methods")
@@ -70,7 +70,7 @@ func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 }
 
 func TestCORSMiddleware_AllowedHeaders(t *testing.T) {
-	cfg := ports.CORSConfig{AllowedOrigins: []string{"*"}}
+	cfg := ports.CORSConfig{AllowedOrigins: []string{"http://localhost:3000"}}
 	handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -91,7 +91,7 @@ func TestCORSMiddleware_AllowedHeaders(t *testing.T) {
 }
 
 func TestCORSMiddleware_RequestWithoutOrigin(t *testing.T) {
-	cfg := ports.CORSConfig{AllowedOrigins: []string{"*"}}
+	cfg := ports.CORSConfig{AllowedOrigins: []string{"http://localhost:3000"}}
 	nextCalled := false
 	handler := CORSMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true

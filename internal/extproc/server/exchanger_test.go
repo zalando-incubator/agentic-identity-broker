@@ -766,7 +766,7 @@ func TestTokenExchanger_New_NilConfig_ReturnsError(t *testing.T) {
 
 // Spec: US1 S2 — When traces are enabled, outbound HTTP request receives traceparent header
 func TestTokenExchanger_Exchange_PropagatesTraceContext(t *testing.T) {
-	// Install a real tracer provider + W3C propagator so outbound otelhttp transport injects traceparent.
+	// Install a real provider and W3C propagator for the credential-free HTTP transport.
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	prevTP := otel.GetTracerProvider()
@@ -934,13 +934,8 @@ func TestTokenExchanger_Exchange_PropagatesWithoutLocalSpans(t *testing.T) {
 		"propagated traceparent must carry the original trace ID")
 }
 
-// TestTokenExchanger_Exchange_SanitizesResourceURIInLogs guards the perimeter
-// secret-scrubbing contract below the ExtProc perimeter sanitizer: the exchanger
-// logs the resource URI on the request, shared-result, broker-error, and non-200
-// paths. The resource URI is caller-controlled and its query string can carry
-// tokens, so every logged occurrence must be stripped of query/fragment even
-// though the outgoing broker form retains the raw value.
-func TestTokenExchanger_Exchange_SanitizesResourceURIInLogs(t *testing.T) {
+// Resource URLs remain protocol inputs, never log attributes, even without a query.
+func TestTokenExchanger_Exchange_OmitsResourceURIFromLogs(t *testing.T) {
 	mocks := newMockServers()
 	defer mocks.Close()
 	mocks.exchangeStatus = http.StatusForbidden
@@ -953,7 +948,6 @@ func TestTokenExchanger_Exchange_SanitizesResourceURIInLogs(t *testing.T) {
 	defer exchanger.Shutdown()
 
 	const rawResource = "http://mcp-server:9003/mcp?access_token=SUPERSECRET"
-	const sanitized = "http://mcp-server:9003/mcp"
 
 	_, err = exchanger.Exchange(context.Background(), "subject-token", rawResource)
 	require.Error(t, err, "forbidden broker response must return an error")
@@ -961,18 +955,13 @@ func TestTokenExchanger_Exchange_SanitizesResourceURIInLogs(t *testing.T) {
 	records := capture.records(t)
 	require.NotEmpty(t, records, "exchanger must emit logs on the broker-error path")
 
-	sawResourceField := false
 	for _, record := range records {
 		raw, err := json.Marshal(record)
 		require.NoError(t, err)
-		assert.NotContains(t, string(raw), "SUPERSECRET",
-			"no log line may contain the resource query-string secret")
-		if res, ok := record["resource"]; ok {
-			sawResourceField = true
-			assert.Equal(t, sanitized, res, "logged resource field must be sanitized")
-		}
+		assert.NotContains(t, string(raw), "SUPERSECRET")
+		assert.NotContains(t, string(raw), "mcp-server")
+		assert.NotContains(t, record, "resource", "no part of the resource is telemetry")
 	}
-	require.True(t, sawResourceField, "at least one log line must carry the resource field for this assertion to be meaningful")
 
 	// The outgoing broker request must still carry the raw resource per RFC 8693.
 	assert.Equal(t, rawResource, mocks.lastExchangeForm.Get("resource"),

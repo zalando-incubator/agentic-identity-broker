@@ -496,7 +496,7 @@ func agentgwTokenDigest(token string) string {
 // an RFC 8693 error with error_uri, ExtProc returns JSON-RPC code -32042 with an
 // elicitations array directly from the headers phase (id: null, per JSON-RPC 2.0 §5).
 
-const agentgwElicitationReAuthURL = "https://broker.example.com/api/third-party/svc-elicitation/oauth2/authorize"
+const agentgwElicitationReAuthURL = "https://broker.example.com/sessions"
 
 // newAgentgwElicitationBroker returns a mock broker that accepts client_credentials at
 // /oauth/token (200) but rejects token exchange at /oauth2/token (401 + error_uri).

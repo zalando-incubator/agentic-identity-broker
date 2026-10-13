@@ -87,6 +87,7 @@ Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, o
 - **Adapter** (internal/config/loader.go): Viper-based implementation loading from multiple sources
 - **Domain Types** (internal/domain/config/): LogLevel, LogFormat enums with validation
 - **Domain Errors** (internal/domain/config/errors.go): ConfigError with error wrapping support
+- **Shared Utility** (internal/configutil/viper.go): Viper construction and structural paths for both services, using `::` to preserve literal dots in map keys. Each service owns its defaults and loading policy.
 
 **Configuration Sources** (in precedence order, lowest to highest):
 
@@ -101,6 +102,7 @@ Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, o
 - Command injection prevention (rejects $(cmd), backticks, shell metacharacters)
 - Circular reference detection (max depth: 10)
 - Fail-closed on errors (graceful termination with clear messages)
+- AWS TLS certificate verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`; every other environment, including unset, rejects it before AWS clients are initialized.
 - File permission validation
 - Structured audit logging (JSON to stdout)
 
@@ -338,6 +340,10 @@ HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx
 
 The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
 
+**Token exchange diagnostic boundary**:
+
+Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -435,6 +441,8 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Rate Limiting**: Per (principal, agent) pair using `golang.org/x/time/rate` token bucket. Configured via `approvals.rate_limit.max_pending_per_pair` and `approvals.rate_limit.max_requests_per_minute`.
 
+**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The service rechecks expiry after retrieval so an approval that expires during the lookup is not reused. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
+
 **Trace Context**: `POST /api/approvals` accepts an optional W3C `traceparent` header. The broker persists the validated remote context so later browser lifecycle spans can link to the originating tool call.
 
 #### 3.1.6. Long-Poll Sync with PostgreSQL LISTEN/NOTIFY
@@ -467,14 +475,14 @@ internal/adapters/storage/postgres/
 - **[/api/enduser/openapi.yaml](/api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
   - Endpoints: Health check, user info, consent management (agent delegations, service grants)
-  - Authentication: Pre-authentication via reverse proxy (X-Remote-User header) + session-based
+  - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
 
 - **[/api/admin/openapi.yaml](/api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
   - Endpoints: Health check, agent management (CRUD), service management (CRUD)
-  - Authentication: Pre-authentication via reverse proxy (admin-level access controlled upstream)
+  - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT); admin access controlled upstream
   - Security emphasis: Client secrets always redacted in responses (SR-003)
   - Referential integrity: 409 Conflict responses when deleting services with active grants
   - OAuth2 support: Service metadata for OIDC discovery
@@ -514,6 +522,16 @@ Admin Server (Port 14000):
       └── DELETE /{id}
 ```
 
+**Admin browser boundary**: All admin `/api` routes validate the request Host
+against the required `server.admin.public_url` authority before CORS handling.
+Hostname comparison is case-insensitive, default HTTP/HTTPS ports are equivalent,
+and forwarded Host headers are ignored. This blocks DNS-rebinding requests,
+including same-origin reads. Reverse proxies must preserve the public Host.
+Go's `http.CrossOriginProtection` rejects cross-origin mutations without trusted
+origin exceptions. POST, PUT, and PATCH require `application/json` even without
+a body; any other request carrying a body also requires JSON. Host/cross-origin
+rejections return 403; media-type rejections return 415. `/health` is excluded.
+
 **Usage**:
 
 - Import specifications into Swagger UI, Redoc, or other OpenAPI tooling
@@ -539,7 +557,19 @@ Admin Server (Port 14000):
 
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
+**Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
+
 **OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
+
+**Continuing consent for local refresh (Feature 049)**: Initial refresh issuance binds the active grant ID to the existing refresh row. Before rotation, Fosite storage verifies continuing consent and the grant identity. Legacy rows use UTC creation-time comparison for one rotation. Consent denial revokes the request chain and returns the existing `invalid_grant` response. Infrastructure errors leave the token unchanged.
+
+If targeted revocation wins after the consent lookup, the provider returns canonical `invalid_grant` after Fosite rolls back rotation. A rollback error remains `server_error`.
+
+Successor persistence uses `RefreshTokenSessionRepository.CreateSuccessor`. Memory revocation marks consumed ancestors as revoked without changing their consumption timestamps. Successor creation checks the predecessor and stores the replacement under the same mutex. A missing, revoked, or unrelated predecessor cannot create a successor. Expiry cleanup removes the predecessor and its revocation state together. PostgreSQL requires the existing rotation transaction and retains its agent lock through successor insertion.
+
+PostgreSQL rotation locks the agent `FOR KEY SHARE` before refresh rows. Targeted revocation locks the agent `FOR UPDATE` before one update of unused rows. Grant deletion, expired renewal, and credential deletion invoke targeted revocation. Grant and credential repositories do not join this transaction, so a revocation error cannot undo deletion. Old binaries retain their consent-check and lock-order deployment limits. Existing access tokens remain valid until `token_ttl` expires.
+
+If grant deletion commits but refresh cleanup fails, the consent service emits `grant_deleted` with `refresh_cleanup=failed` from the deleted snapshot. It returns the cleanup error without reporting successful refresh revocation. Successful refresh cleanup logs retain the request context. Migration 036 resets `lock_timeout` after both schema changes so later migrations do not inherit its five-second limit.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 
@@ -644,6 +674,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
+- **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
 
 #### 3.1.5. Encryption Vault for OAuth Tokens (Feature 012)
@@ -703,8 +734,11 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
+- **Listing reads**: Consent delegations and session/consent requirements batch-load existing agents and providers by ID; missing records are omitted. Batch provider reads decrypt static confidential secrets and leave public and CIMD confidential providers unchanged. Consent connection status uses a narrow active-service-ID query instead of loading encrypted tokens per requirement. User-visible session summaries include expired sessions and derive refresh-token presence in PostgreSQL without selecting token ciphertext. PostgreSQL session repository reads and writes use configured read/write timeouts; refresh's row-lock transaction retains separate bounded acquisition and query phases.
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
+- **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
+- **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange retries network failures and HTTP 5xx, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
 - Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
 - No manual encryption steps required in calling code - encryption is transparent
@@ -826,6 +860,8 @@ OAuth2 /authorize request
 
 **Security Properties**: SSRF blocked at TCP-connect time (TOCTOU-safe). The fetcher rejects non-global IP addresses, known private and special-purpose ranges, and IPv6 translation/tunnel prefixes that can reach IPv4 destinations. Authorization context never relays through browser URL as plain params (JWE session_token seals context server-side, SR-013/SR-014). All agent modes (local, proxy, CIMD) use session_token — no redirect_uri fallback.
 
+**CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
+
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 
 **See Also**: ADR 015 — CIMD Fetcher Architecture (SSRF hardening, caching, strategy pattern)
@@ -861,6 +897,8 @@ Authorization-code exchange after PKCE, or token refresh
 ```
 
 The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its sole `aud` equals the configured token endpoint. It expires within five minutes and has a new `jti` for every attempt. Authorization-code exchange uses `AuthStyleInParams`, an empty client secret, and a fresh assertion pair inside the existing retry loop. Refresh uses the manual form-post path and adds a fresh assertion pair. No CIMD request sends a shared secret or HTTP Basic credential. A metadata, key, assertion, or provider-validation error fails the affected operation closed without an authentication downgrade.
+
+CIMD token refresh emits a credential-free token-acquisition audit record with the service ID, operation `refresh`, and outcome `rejected` on failure, including response-drain read errors and responses over the 1 MiB limit. Other client modes do not emit CIMD token-acquisition events.
 
 **Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
 
@@ -1077,7 +1115,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 - Initialize logger
 - Initialize telemetry provider (if enabled; bounded by exporter timeout, interruptible by signal)
 - Wire slog-to-OTel bridge (if telemetry + logs enabled)
-- Create TokenExchanger (acquires client assertion; otelhttp wraps outbound HTTP)
+- Create TokenExchanger (acquires client assertion; credential-free transport traces outbound HTTP)
 - Create gRPC server
 - Register ExternalProcessorServer
 - Listen on configured bind/port
@@ -1468,6 +1506,16 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
+**ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
+
+**AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
+
+**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
+
+**Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
+
+**Session Operation Metadata**: Immutable classification at a session-operation origin, with bounded operation, detail, kind, dependency, HTTP status, and allowlisted OAuth code. Exchange diagnostics derive from this metadata, not error descriptions.
+
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 
 **ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
@@ -1529,6 +1577,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
 **StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. Participating PostgreSQL repositories select the ambient transaction through `storageExecutor`. The in-memory factory currently returns a no-op transaction manager. The shared name does not imply memory rollback or nested transaction ownership.
+
+**RefreshTokenSession**: An existing stored local refresh token, identified by its signature and Fosite request chain. Its nullable `grant_id` binds refresh authority to one user grant. Null legacy rows require an active grant created no later than the refresh row.
 
 **SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 
@@ -1639,6 +1689,10 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 **RBAC**: Role-Based Access Control
 
 ### JWT Pre-Authentication
+
+At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
+
+`verification: none` trusts the identity-bearing header without a signature. Its trust boundary is the authenticated gateway or mesh: only it can reach the broker ports, and it must remove every inbound client-supplied copy of the JWT header before setting the verified user's claims. The bearer token used to authenticate at the gateway is not a broker operator principal. Without these deployment controls, a caller could forge an unsigned JWT and become an operator.
 
 **PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
