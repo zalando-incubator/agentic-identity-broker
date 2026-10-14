@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -151,9 +152,9 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		}()
 		encryption := testutil.NewTestEncryptionAdapter(t)
 		committing := make(chan context.Context, 1)
-		locks, requests := 0, 0
+		var locks, requests atomic.Int32
 		refreshRepo := shutdownRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *domstorage.UserSession) (bool, error)) (*domstorage.UserSession, error) {
-			locks++
+			locks.Add(1)
 			return adapter.SessionRefresh().WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *domstorage.UserSession) (bool, error) {
 				changed, err := refresh(ctx, current)
 				if changed && err == nil {
@@ -172,7 +173,7 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		application.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
 			application.ProviderService, adapter.UserSessions(), refreshRepo, nil, nil, encryption,
 			&http.Client{Transport: shutdownTokenTransport(func(*http.Request) (*http.Response, error) {
-				requests++
+				requests.Add(1)
 				return &http.Response{
 					StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
 					Body: io.NopCloser(strings.NewReader(`{"access_token":"new-access","refresh_token":"rotated-refresh","token_type":"Bearer","expires_in":3600}`)),
@@ -233,8 +234,8 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		require.NoError(t, err)
 		assert.Equal(t, "old-access", token)
 		synctest.Wait()
-		assert.Equal(t, 1, locks, "shutdown must reject background work for another due session")
-		assert.Equal(t, 1, requests)
+		assert.Equal(t, int32(1), locks.Load(), "shutdown must reject background work for another due session")
+		assert.Equal(t, int32(1), requests.Load())
 		persisted, err = adapter.UserSessions().Get(context.Background(), later.ID)
 		require.NoError(t, err)
 		assert.Equal(t, later, persisted)
