@@ -1,6 +1,6 @@
 # Feature Specification: Inline and File-Based JWKS for Trust Anchors
 
-**Feature Branch**: `claude/nifty-franklin-u83f3g`
+**Feature Branch**: `052-inline-jwks-trust-anchors`
 
 **Created**: 2026-10-12
 
