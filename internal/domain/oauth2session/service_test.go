@@ -165,7 +165,7 @@ func TestHandleCallbackAndRefresh_PassAuthorizationParams(t *testing.T) {
 
 	decryptedProvider, err := providerService.Get(ctx, serviceID)
 	require.NoError(t, err)
-	_, err = service.RefreshAccessToken(ctx, decryptedProvider, "refresh-token")
+	_, err = service.RefreshAccessToken(ctx, decryptedProvider, "refresh-token", nil)
 	require.NoError(t, err)
 	require.Len(t, requests, 3)
 	for _, request := range requests {
@@ -220,7 +220,7 @@ func TestLegacyAuthorizationParamsCannotOverrideBrokerFields(t *testing.T) {
 
 	decryptedProvider, err := providerService.Get(ctx, serviceID)
 	require.NoError(t, err)
-	_, err = service.RefreshAccessToken(ctx, decryptedProvider, "refresh-token")
+	_, err = service.RefreshAccessToken(ctx, decryptedProvider, "refresh-token", nil)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
 	assert.Equal(t, "authorization-code", requests[0].Get("code"))
@@ -246,7 +246,7 @@ func TestRefreshAccessToken_OmitsAuthorizationParamsForUnconfiguredService(t *te
 	defer mockServer.Close()
 
 	provider.Endpoints.TokenEndpoint = mockServer.URL
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	require.NoError(t, err)
 	assert.Empty(t, request.Get("business_partner_id"))
 }
@@ -272,7 +272,7 @@ func TestRefreshAccessToken_PublicClientOmitsClientSecret(t *testing.T) {
 	defer tokenEndpoint.Close()
 
 	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	require.NoError(t, err)
 
 	expectedBody := url.Values{}
@@ -304,7 +304,7 @@ func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T)
 	defer tokenEndpoint.Close()
 
 	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	require.NoError(t, err)
 
 	expectedBody := url.Values{}
@@ -315,6 +315,35 @@ func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T)
 	expectedBody.Set("business_partner_id", "12345")
 	assert.Equal(t, expectedBody.Encode(), receivedBody)
 	assert.Zero(t, assertionSignerCallCount(signer), "static confidential refresh behavior must not invoke the CIMD signer")
+}
+
+func TestRefreshAccessToken_FilesystemRetriesReusePairUntilNextOperation(t *testing.T) {
+	binding := projectedCredentialPair(t, "refresh-client", "initial-secret")
+	h := newCredentialSessionHarness(t, map[string]ports.CredentialFileBinding{"refresh-retry": binding})
+	provider := h.register(t, model.CredentialSourceFilesystem, "refresh-retry", "", "")
+	established := id.ClientID("refresh-client")
+	var attempts atomic.Int32
+	h.endpoint.setOnRequest(func(credentialTokenRequest) (int, error) {
+		if attempts.Add(1) == 1 {
+			return http.StatusServiceUnavailable, publishCredentialGeneration(binding, "refresh-client", "rotated-secret")
+		}
+		return http.StatusOK, nil
+	})
+	for range 2 {
+		_, err := h.service.RefreshAccessToken(context.Background(), provider, "refresh-token", &established)
+		require.NoError(t, err)
+	}
+	requests := h.endpoint.captured(t)
+	require.Len(t, requests, 3)
+	assert.Equal(t, "initial-secret", requests[0].secret)
+	assert.Equal(t, "initial-secret", requests[1].secret, "a safe retry retains the selected pair")
+	assert.Equal(t, "rotated-secret", requests[2].secret, "a new logical refresh acquires the current pair")
+	for _, request := range requests {
+		assert.Equal(t, established.String(), request.clientID)
+	}
+	ids, pairs := h.reader.counts()
+	assert.Zero(t, ids)
+	assert.Equal(t, 2, pairs, "acquire once per logical refresh, not once per HTTP retry")
 }
 
 func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testing.T) {
@@ -352,10 +381,12 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 
 	provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
 	provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
-	require.NoError(t, err)
+	for range 2 {
+		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
+		require.NoError(t, err)
+	}
 
-	require.Len(t, requests, 2)
+	require.Len(t, requests, 3, "the first operation retries once, then the second operation sends a fresh request")
 	for _, request := range requests {
 		require.NoError(t, request.err)
 		assert.Equal(t, http.MethodPost, request.method)
@@ -370,15 +401,16 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 	}
 
 	assert.NotEqual(t, requests[0].body.Get("client_assertion"), requests[1].body.Get("client_assertion"), "retry must carry a fresh assertion")
+	assert.NotEqual(t, requests[1].body.Get("client_assertion"), requests[2].body.Get("client_assertion"), "independent refresh must carry a fresh assertion")
 
 	signedRequests := signer.Requests()
-	require.Len(t, signedRequests, 2)
+	require.Len(t, signedRequests, 3)
 	for _, signedRequest := range signedRequests {
 		assert.Equal(t, id.ClientID(cimdClientIDForService(serviceID)), signedRequest.clientID)
 		assert.Equal(t, tokenEndpoint.URL, signedRequest.tokenEndpoint)
 	}
 	assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
-	assert.Equal(t, 1, strings.Count(logs.String(), `"msg":"CIMD client token acquisition"`))
+	assert.Equal(t, 2, strings.Count(logs.String(), `"msg":"CIMD client token acquisition"`))
 }
 
 // T057: A missing or rejected CIMD signer must prevent refresh token-endpoint traffic.
@@ -418,7 +450,7 @@ func TestRefreshAccessToken_CIMDClientFailsClosedBeforeTokenRequestWhenSigningUn
 
 			provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
 			provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
-			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 			require.Error(t, err)
 			assert.Nil(t, token)
 			assert.Equal(t, tt.wantCalls, assertionSignerCallCount(tt.signer))
@@ -438,7 +470,7 @@ func TestRefreshAccessToken_RejectsOversizedResponse(t *testing.T) {
 	defer server.Close()
 	provider.Endpoints.TokenEndpoint = server.URL
 
-	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	require.Nil(t, token)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderResponseInvalid)
 }
@@ -1557,17 +1589,23 @@ func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { 
 func setupServiceWithConfig(
 	t *testing.T,
 	configure func(*oauth2session.Config),
+	loggers ...*slog.Logger,
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
-	return setupServiceWithHTTPClient(t, configure, &http.Client{})
+	return setupServiceWithHTTPClient(t, configure, &http.Client{}, loggers...)
 }
 
 func setupServiceWithHTTPClient(
 	t *testing.T,
 	configure func(*oauth2session.Config),
 	httpClient *http.Client,
+	loggers ...*slog.Logger,
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
+	logger := slog.Default()
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 
 	// Create test JWE key
 	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
@@ -1601,7 +1639,7 @@ func setupServiceWithHTTPClient(
 		newNoopBranchKeyManager(),
 		nil,
 		false,
-		slog.Default(),
+		logger,
 	).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 
 	svc := oauth2session.NewOAuth2SessionService(
@@ -1614,7 +1652,7 @@ func setupServiceWithHTTPClient(
 		httpClient,
 		domjwe.New(key),
 		config,
-		slog.Default(),
+		logger,
 	)
 
 	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
@@ -2122,7 +2160,7 @@ func TestRefreshAccessToken_SanitizesThirdpartyRejection(t *testing.T) {
 			defer mockServer.Close()
 			provider.Endpoints.TokenEndpoint = mockServer.URL
 
-			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 			require.Error(t, err)
 			assert.Nil(t, token)
 			var retrieveErr *oauth2.RetrieveError

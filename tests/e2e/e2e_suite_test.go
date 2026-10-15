@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,6 +17,15 @@ var suiteUpstream *helpers.MockUpstreamOAuth2Server
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "OAuth2 Authorization Server E2E Suite")
+}
+
+func TestCredentialBrokerProcess(t *testing.T) {
+	if os.Getenv("AIB_CREDENTIAL_BROKER_HELPER") != "1" {
+		return
+	}
+	if err := bootstrap.RunCredentialBrokerProcess(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 var _ = SynchronizedBeforeSuite(func() []byte {

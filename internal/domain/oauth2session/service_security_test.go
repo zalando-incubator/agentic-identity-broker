@@ -270,7 +270,7 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 		provider := createCIMDTestProvider(serviceID, tokenServer.URL)
 		require.NoError(t, providerService.Create(context.Background(), provider))
 
-		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 		require.NoError(t, err)
 		assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
 	})
@@ -282,7 +282,7 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 		provider := createCIMDTestProvider(serviceID, "https://issuer.example.com/oauth/token")
 		require.NoError(t, providerService.Create(context.Background(), provider))
 
-		_, err := service.RefreshAccessToken(context.Background(), provider, "")
+		_, err := service.RefreshAccessToken(context.Background(), provider, "", nil)
 
 		require.Error(t, err)
 		assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
@@ -322,7 +322,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 						provider.Secret = model.NewAbsentSecret()
 					}
 
-					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 					require.Error(t, err)
 					assert.Nil(t, token)
 					if failure == "drain read error" {
@@ -352,7 +352,7 @@ func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *
 
 	provider := createCIMDTestProvider(id.NewServiceID(), tokenServer.URL+"?client_secret=stale-secret")
 	provider.ClientID = id.ClientID(cimdClientIDForService(provider.ID))
-	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailConfiguration)
 	assert.Nil(t, token)
 	assert.Zero(t, requests.Load(), "an invalid persisted CIMD configuration must not send a token request")

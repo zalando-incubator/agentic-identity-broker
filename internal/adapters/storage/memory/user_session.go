@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -65,16 +66,17 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 	// If session exists for this principal+service, update it
 	if existing, ok := r.index[key]; ok {
 		if !replace {
-			return existing, nil
+			return cloneUserSession(existing), nil
 		}
 		// Reuse ID
 		session.ID = existing.ID
 		delete(r.sessions, existing.ID)
 	}
 
-	r.sessions[session.ID] = session
-	r.index[key] = session
-	return session, nil
+	stored := cloneUserSession(session)
+	r.sessions[stored.ID] = stored
+	r.index[key] = stored
+	return cloneUserSession(stored), nil
 }
 
 // Get retrieves a session by ID.
@@ -90,7 +92,7 @@ func (r *InMemoryUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	if !ok {
 		return nil, storage.NewStorageError("Get", storage.ErrorKindNotFound, nil, "session not found")
 	}
-	return session, nil
+	return cloneUserSession(session), nil
 }
 
 // FindByPrincipalAndService retrieves the session for a principal and service.
@@ -107,7 +109,7 @@ func (r *InMemoryUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	if !ok {
 		return nil, nil // Not found is not an error
 	}
-	return session, nil
+	return cloneUserSession(session), nil
 }
 
 // WithLockedSession serializes refreshes for one session while leaving other sessions available.
@@ -128,11 +130,18 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		r.mu.RUnlock()
 		return nil, nil
 	}
-	session := *current
+	session := cloneUserSession(current)
+	upstreamClientID := session.UpstreamClientID
 	r.mu.RUnlock()
-	updated, err := refresh(ctx, &session)
+	updated, err := refresh(ctx, session)
 	if err != nil {
 		return nil, err
+	}
+	if session.CallbackID == current.CallbackID {
+		session.UpstreamClientID = upstreamClientID
+		if upstreamClientID != nil {
+			*upstreamClientID = *current.UpstreamClientID
+		}
 	}
 	if updated {
 		if err := session.Validate(); err != nil {
@@ -142,11 +151,12 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 			return nil, err
 		}
 		r.mu.Lock()
-		r.index[key] = &session
-		r.sessions[session.ID] = &session
+		stored := cloneUserSession(session)
+		r.index[key] = stored
+		r.sessions[stored.ID] = stored
 		r.mu.Unlock()
 	}
-	return &session, nil
+	return session, nil
 }
 
 func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error) {
@@ -216,19 +226,7 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 		return compareSessionExpiryKey(selected[i], *selected[j].AccessTokenExpiresAt, selected[j].ID) < 0
 	})
 	for i, session := range selected {
-		snapshot := *session
-		snapshot.EncryptedAccessToken = bytes.Clone(session.EncryptedAccessToken)
-		snapshot.EncryptedRefreshToken = bytes.Clone(session.EncryptedRefreshToken)
-		snapshot.Scope = append([]string(nil), session.Scope...)
-		if session.AccessTokenExpiresAt != nil {
-			expiry := *session.AccessTokenExpiresAt
-			snapshot.AccessTokenExpiresAt = &expiry
-		}
-		if session.RefreshTokenExpiresAt != nil {
-			expiry := *session.RefreshTokenExpiresAt
-			snapshot.RefreshTokenExpiresAt = &expiry
-		}
-		selected[i] = &snapshot
+		selected[i] = cloneUserSession(session)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
@@ -258,7 +256,7 @@ func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	var sessions []*storage.UserSession
 	for _, session := range r.sessions {
 		if session.Principal == principal {
-			sessions = append(sessions, session)
+			sessions = append(sessions, cloneUserSession(session))
 		}
 	}
 	return sessions, nil
@@ -273,7 +271,13 @@ func (r *InMemoryUserSessionRepository) ListSummariesByPrincipal(_ context.Conte
 	summaries := make([]*storage.UserSessionSummary, 0)
 	for _, session := range r.sessions {
 		if session.Principal == principal {
-			summaries = append(summaries, storage.NewUserSessionSummary(session, "", 0))
+			summary := storage.NewUserSessionSummary(session, "", 0)
+			summary.Scope = slices.Clone(summary.Scope)
+			if summary.RefreshTokenExpiresAt != nil {
+				expiresAt := *summary.RefreshTokenExpiresAt
+				summary.RefreshTokenExpiresAt = &expiresAt
+			}
+			summaries = append(summaries, summary)
 		}
 	}
 	return summaries, nil
@@ -306,7 +310,7 @@ func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	var sessions []*storage.UserSession
 	for _, session := range r.sessions {
 		if session.Principal == principal && !session.IsExpired() {
-			sessions = append(sessions, session)
+			sessions = append(sessions, cloneUserSession(session))
 		}
 	}
 	return sessions, nil
@@ -385,6 +389,26 @@ func (r *InMemoryUserSessionRepository) CountByService(ctx context.Context, serv
 		}
 	}
 	return count, nil
+}
+
+func cloneUserSession(session *storage.UserSession) *storage.UserSession {
+	clone := *session
+	if session.UpstreamClientID != nil {
+		clientID := *session.UpstreamClientID
+		clone.UpstreamClientID = &clientID
+	}
+	clone.EncryptedAccessToken = slices.Clone(session.EncryptedAccessToken)
+	clone.EncryptedRefreshToken = slices.Clone(session.EncryptedRefreshToken)
+	clone.Scope = slices.Clone(session.Scope)
+	if session.AccessTokenExpiresAt != nil {
+		expiresAt := *session.AccessTokenExpiresAt
+		clone.AccessTokenExpiresAt = &expiresAt
+	}
+	if session.RefreshTokenExpiresAt != nil {
+		expiresAt := *session.RefreshTokenExpiresAt
+		clone.RefreshTokenExpiresAt = &expiresAt
+	}
+	return &clone
 }
 
 // Helper function

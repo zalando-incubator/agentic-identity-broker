@@ -54,6 +54,9 @@ go test -tags=integration -v ./tests/integration/storage/infra/...
 ```
 
 The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
+
+Provider updates preserve protected-resource ownership and creation timestamps when normalized membership is unchanged, while advancing the parent version. `TestProtectedResourceUpdatePreservesUnchangedCreatedAt` covers omitted resources, normalized-equivalent membership, replacement, empty membership, and stale CAS through the domain service.
+
 Run them against PostgreSQL with:
 
 ```bash

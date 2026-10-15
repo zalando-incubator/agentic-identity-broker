@@ -22,7 +22,7 @@ import (
 )
 
 func TestRefreshConsentEuropeBerlin(t *testing.T) {
-	pg, dbName, connStr, cleanupDB := setupCIMDKeyDomainDatabase(t, 36)
+	pg, dbName, connStr, cleanupDB := setupCIMDKeyDomainDatabase(t, 38)
 	defer cleanupDB()
 	pg.ExecuteSQL(t, dbName, fmt.Sprintf("ALTER DATABASE %s SET timezone TO 'Europe/Berlin'", dbName))
 	require.Equal(t, "Europe/Berlin", pg.QuerySQL(t, dbName, "SHOW timezone"))

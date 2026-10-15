@@ -300,6 +300,7 @@ type testServerOptions struct {
 	port                    int  // 0 for random port, non-zero for fixed port
 	fixedPort               bool // true to use fixed port
 	requestSecurityObserver *SecurityContextObserver
+	listener                net.Listener
 }
 
 // validate checks that the options are internally consistent.
@@ -334,6 +335,12 @@ func WithFixedPort(port int) TestServerOption {
 	return func(o *testServerOptions) {
 		o.port = port
 		o.fixedPort = true
+	}
+}
+
+func withListener(listener net.Listener) TestServerOption {
+	return func(o *testServerOptions) {
+		o.listener = listener
 	}
 }
 
@@ -419,7 +426,12 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 	// Reserve the listener before building the admin router so its public URL
 	// includes the actual port without changing config shared with other servers.
 	var server *httptest.Server
-	if options.fixedPort {
+	if options.listener != nil {
+		server = &httptest.Server{
+			Listener: options.listener,
+			Config:   &http.Server{ReadHeaderTimeout: 5 * time.Second},
+		}
+	} else if options.fixedPort {
 		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", options.port))
 		if err != nil {
 			return nil, fmt.Errorf("failed to listen on port %d: %w", options.port, err)
