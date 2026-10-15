@@ -16,6 +16,18 @@ type SessionExpiryCursor struct {
 	ID                   id.SessionID
 }
 
+// SessionAdminCursor locates the last (principal, service_id) pair returned by an operator listing.
+// The zero value starts the scan.
+type SessionAdminCursor struct {
+	Principal id.Principal
+	ServiceID id.ServiceID
+}
+
+// IsZero reports whether the cursor starts the scan.
+func (c SessionAdminCursor) IsZero() bool {
+	return c == SessionAdminCursor{}
+}
+
 // UserSession represents an authenticated OAuth2 session between a user and a third-party service.
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
@@ -132,6 +144,51 @@ func (s *UserSession) CanRefresh() bool {
 		return true // No expiration set
 	}
 	return time.Now().Before(*s.RefreshTokenExpiresAt)
+}
+
+// SessionAdminSummary is the operator read model of one session. It names the user
+// and carries no token material, encrypted or plain.
+type SessionAdminSummary struct {
+	ID                    id.SessionID `json:"id"`
+	Principal             id.Principal `json:"principal"`
+	ServiceID             id.ServiceID `json:"service_id"`
+	TokenType             string       `json:"token_type"`
+	Scope                 []string     `json:"scope"`
+	InitiatedAt           time.Time    `json:"initiated_at"`
+	AccessTokenExpiresAt  *time.Time   `json:"access_token_expires_at,omitempty"`
+	RefreshTokenExpiresAt *time.Time   `json:"refresh_token_expires_at,omitempty"`
+	IsExpired             bool         `json:"is_expired"`
+	AccessTokenExpired    bool         `json:"access_token_expired"`
+	HasRefreshToken       bool         `json:"has_refresh_token"`
+}
+
+// Evaluate derives the expiry flags at now and normalizes a nil scope to an empty slice.
+// A missing expiry means the token does not expire. The refresh token is expired only after
+// its expiry instant, matching UserSession.IsExpired. The access token is expired at its expiry
+// instant, matching UserSession.HasValidAccessToken.
+func (s *SessionAdminSummary) Evaluate(now time.Time) {
+	if s.Scope == nil {
+		s.Scope = []string{}
+	}
+	s.IsExpired = s.RefreshTokenExpiresAt != nil && now.After(*s.RefreshTokenExpiresAt)
+	s.AccessTokenExpired = s.AccessTokenExpiresAt != nil && !now.Before(*s.AccessTokenExpiresAt)
+}
+
+// NewSessionAdminSummary builds the operator read model from a session, evaluated at now.
+func NewSessionAdminSummary(session *UserSession, now time.Time) *SessionAdminSummary {
+	summary := &SessionAdminSummary{
+		ID:                    session.ID,
+		Principal:             session.Principal,
+		ServiceID:             session.ServiceID,
+		TokenType:             session.TokenType,
+		Scope:                 session.Scope,
+		InitiatedAt:           session.InitiatedAt,
+		AccessTokenExpiresAt:  session.AccessTokenExpiresAt,
+		RefreshTokenExpiresAt: session.RefreshTokenExpiresAt,
+		HasRefreshToken:       len(session.EncryptedRefreshToken) > 0,
+	}
+	summary.Evaluate(now)
+	return summary
 }
 
 // UserSessionSummary is a read model for displaying session information.

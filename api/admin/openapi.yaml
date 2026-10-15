@@ -135,7 +135,7 @@ tags:
   - name: CIMD Client Keys
     description: Administrative lifecycle operations for the broker-global CIMD client-authentication key set
   - name: Sessions
-    description: Administrative maintenance of third-party user sessions across all principals
+    description: Administrative inspection and maintenance of third-party user sessions across all principals
 
 paths:
   /health:
@@ -1835,6 +1835,181 @@ paths:
                     error: server_misconfiguration
                     message: operator principal required for session sweep
 
+  /api/sessions:
+    get:
+      summary: List third-party user sessions
+      description: |
+        Lists stored third-party OAuth2 sessions across all users, ordered by `principal` and then
+        `service_id`. The order of `principal` follows the database text collation, so do not
+        depend on a specific order between users. Use it to see which users have connected which
+        services.
+
+        **Filter**: `principal` selects one user. It is an exact, case-sensitive match on the user
+        identifier the broker stored when the user connected the service. This is the value the
+        broker received for the user (the `X-Remote-User` header or the configured JWT claim), so it
+        is an email address or a login name depending on the deployment. There is no prefix or
+        substring search. Query strings can appear in proxy and access logs.
+
+        **Limit and paging**: At most `limit` sessions are returned (default 100, maximum 1000).
+        `truncated` is `true` when more sessions matched than were returned. In that case the
+        response also contains `next_cursor`. Pass it unchanged as `cursor`, with the same
+        `principal` filter, to read the next page. Repeat until `truncated` is `false`. A cursor is
+        a key position in the `principal`, `service_id` order, so a session created or deleted
+        between pages never repeats or hides another session. A session created at a position
+        before the cursor does not appear in later pages.
+
+        Responses never contain token material, encrypted or plain. Every call is audit-logged with
+        the operator principal, including calls rejected as invalid.
+      operationId: listSessions
+      tags:
+        - Sessions
+      parameters:
+        - name: principal
+          in: query
+          required: false
+          description: Exact user identifier to filter by. Must not be empty, longer than 200 characters, or contain NUL characters or invalid UTF-8.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: alice@example.com
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of sessions to return.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: cursor
+          in: query
+          required: false
+          description: |
+            The `next_cursor` value of the previous page. Treat it as opaque. Use it only with the
+            same `principal` filter as the request that returned it. A cursor that is malformed, or
+            that belongs to a different `principal` filter, returns `400`.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1115
+      responses:
+        '200':
+          description: Matching sessions. An empty `items` array means no session matched.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+              example:
+                items:
+                  - id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                    principal: alice@example.com
+                    service_id: 550e8400-e29b-41d4-a716-446655440000
+                    token_type: Bearer
+                    scope: [repo, read:user]
+                    initiated_at: '2026-10-01T09:00:00Z'
+                    access_token_expires_at: '2026-10-01T10:00:00Z'
+                    refresh_token_expires_at: '2026-12-30T09:00:00Z'
+                    is_expired: false
+                    access_token_expired: false
+                    has_refresh_token: true
+                truncated: true
+                next_cursor: NTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwYWxpY2VAZXhhbXBsZS5jb20
+        '400':
+          description: Invalid query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty_principal:
+                  value:
+                    error: invalid_request
+                    message: 'invalid session query: principal must not be empty'
+                bad_limit:
+                  value:
+                    error: invalid_request
+                    message: 'invalid session query: limit must be an integer from 1 to 1000'
+                bad_cursor:
+                  value:
+                    error: invalid_request
+                    message: 'invalid session query: cursor is not valid'
+        '500':
+          description: |
+            The session store is unavailable, or the request reached the broker without an operator
+            principal (`server_misconfiguration`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                storage_unavailable:
+                  value:
+                    error: internal server error
+                missing_operator:
+                  value:
+                    error: server_misconfiguration
+                    message: operator principal required for session listing
+
+  /api/sessions/{session-id}:
+    get:
+      summary: Get one third-party user session
+      description: |
+        Returns one stored third-party OAuth2 session by its session ID, which is the `id` field
+        returned by `GET /api/sessions`. The response never contains token material, encrypted or
+        plain. Every call is audit-logged with the operator principal.
+      operationId: getSession
+      tags:
+        - Sessions
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: The session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAdminSummary'
+              example:
+                id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                principal: alice@example.com
+                service_id: 550e8400-e29b-41d4-a716-446655440000
+                token_type: Bearer
+                scope: [repo, read:user]
+                initiated_at: '2026-10-01T09:00:00Z'
+                access_token_expires_at: '2026-10-01T10:00:00Z'
+                refresh_token_expires_at: '2026-12-30T09:00:00Z'
+                is_expired: false
+                access_token_expired: false
+                has_refresh_token: true
+        '400':
+          description: The session ID is not a UUID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid_request
+                message: invalid session id
+        '404':
+          description: No session has this ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: not_found
+                message: session not found
+        '500':
+          description: |
+            The session store is unavailable, or the request reached the broker without an operator
+            principal (`server_misconfiguration`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/cimd-client-keys/{kid}/current:
     put:
       summary: Promote a CIMD client-authentication key immediately
@@ -1903,6 +2078,16 @@ components:
       examples:
         uuid: { value: 550e8400-e29b-41d4-a716-446655440000 }
         canonical: { value: research-agent }
+
+    SessionId:
+      name: session-id
+      in: path
+      required: true
+      description: UUID of the session, as returned in the `id` field of `GET /api/sessions`
+      schema:
+        type: string
+        format: uuid
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 
     PreferCanonicalReferences:
       name: Prefer
@@ -3314,6 +3499,76 @@ components:
             Number of candidate sessions read per page. Defaults to the server-configured
             `token_refresh.sweep.default_page_size` (default 100).
           example: 100
+    SessionAdminSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - principal
+        - service_id
+        - token_type
+        - scope
+        - initiated_at
+        - is_expired
+        - access_token_expired
+        - has_refresh_token
+      description: One third-party OAuth2 session. Contains no token material.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Session ID
+        principal:
+          type: string
+          description: User identifier stored when the user connected the service
+        service_id:
+          type: string
+          format: uuid
+          description: ID of the third-party OAuth2 service the session belongs to
+        token_type:
+          type: string
+          example: Bearer
+        scope:
+          type: array
+          items:
+            type: string
+        initiated_at:
+          type: string
+          format: date-time
+          description: When the user connected the service
+        access_token_expires_at:
+          type: string
+          format: date-time
+          description: Omitted when the provider gave no access-token expiry
+        refresh_token_expires_at:
+          type: string
+          format: date-time
+          description: Omitted when there is no refresh-token expiry
+        is_expired:
+          type: boolean
+          description: The refresh-token expiry has passed. A session with no refresh-token expiry is not expired.
+        access_token_expired:
+          type: boolean
+          description: The access-token expiry has passed. A session with no access-token expiry is not expired.
+        has_refresh_token:
+          type: boolean
+    SessionListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - truncated
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionAdminSummary'
+        truncated:
+          type: boolean
+          description: More sessions matched than `limit` allowed. Pass `next_cursor` as `cursor` to read the next page.
+        next_cursor:
+          type: string
+          description: Opaque position of the last returned session. Present exactly when `truncated` is `true`.
     SessionSweepResult:
       type: object
       additionalProperties: false

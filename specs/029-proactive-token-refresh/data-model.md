@@ -66,6 +66,41 @@ type SessionExpiryCursor struct {
 
 A zero ID and zero expiry start the scan. An expiry without an ID is a validation error. A cursor with an ID continues strictly after its `(access_token_expires_at, id)` tuple, including a zero expiry. The order compares expiry first and UUID bytes second. Rows without an expiry never enter the scan. A stored zero expiry is due.
 
+## New read model: `SessionAdminSummary` (User Story 4)
+
+**Location**: `internal/domain/storage/user_session.go` | **Port**: `UserSessionAdminRepository`
+
+```go
+type SessionAdminSummary struct {
+    ID                    id.SessionID
+    Principal             id.Principal
+    ServiceID             id.ServiceID
+    TokenType             string
+    Scope                 []string
+    InitiatedAt           time.Time
+    AccessTokenExpiresAt  *time.Time
+    RefreshTokenExpiresAt *time.Time
+    IsExpired             bool
+    AccessTokenExpired    bool
+    HasRefreshToken       bool
+}
+```
+
+The summary carries no token material, encrypted or plain. `Evaluate(now)` derives the flags and turns a nil `Scope` into an empty slice. A nil refresh-token expiry is never expired. `IsExpired` is true only after the refresh-token expiry, as in `UserSession.IsExpired`. `AccessTokenExpired` is true at the access-token expiry instant, as in `UserSession.HasValidAccessToken`. `HasRefreshToken` is true when the stored refresh-token ciphertext is not empty. The PostgreSQL adapter computes it with `octet_length` and does not select the ciphertext.
+
+## New value object: `SessionAdminCursor` (User Story 4)
+
+**Location**: `internal/domain/storage/user_session.go` | **Port**: `UserSessionAdminRepository.ListAdminSummaries`
+
+```go
+type SessionAdminCursor struct {
+    Principal id.Principal
+    ServiceID id.ServiceID
+}
+```
+
+The zero value starts the scan. A cursor continues strictly after its `(principal, service_id)` pair. With a `principal` filter, only `ServiceID` is compared. `principal` order follows the database text collation, and the cursor compares under the same order. `SessionAdminService` encodes the cursor as the opaque `next_cursor` string: base64url of the 36-character service ID followed by the principal. The decoded size is capped at 36 + 200 x 4 bytes.
+
 ## New enumeration: `RefreshTrigger`
 
 **Location**: `internal/domain/oauth2session/refresh_trigger.go`
@@ -246,6 +281,8 @@ parameter, and every caller must be updated, confirmed with `lsp references` dur
 | **Proactive Refresh** | A non-blocking background refresh of a `UserSession`, triggered when token exchange serves a token inside the Refresh Lookahead Window. It is bounded per replica and dropped on saturation. | Shares per-replica deduplication with on-demand refresh; persists through the locked session update. |
 | **Session Sweep** | An admin-triggered, externally scheduled pass that refreshes every `UserSession` whose access token expires within a lookahead window, in keyset pages. | Produces a `SweepResult`; scheduled by an operator CronJob. |
 | **SessionExpiryCursor** | The internal `(AccessTokenExpiresAt, ID)` keyset value for Session Sweep, ordered by expiry then UUID bytes. | A zero ID and zero expiry start `ListExpiringSessions`; an expiry without an ID is invalid. A nonzero ID can pair with a zero expiry. |
+| **SessionAdminSummary** | The operator read model of one `UserSession`: identifiers, scopes, timestamps, and the flags `is_expired`, `access_token_expired`, `has_refresh_token`. It has no token material. | Built from a `UserSession` by `NewSessionAdminSummary`, or directly from summary columns by the PostgreSQL adapter. Returned by `GET /api/sessions` and `GET /api/sessions/{session-id}`. |
+| **SessionAdminCursor** | The `(principal, service_id)` keyset value of an operator listing. | Encoded as the opaque `next_cursor`. Rejected when used with a different `principal` filter. Distinct from `SessionExpiryCursor`. |
 | **SweepRequest** | The input value object for a Session Sweep: lookahead, dry-run flag, and page size. | Applies the configured defaults and validation before the sweep evaluates a `UserSession`. |
 | **SweepResult** | The value object summarizing a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, `dry_run`. | `refreshed + skipped + failed = total_evaluated`. |
 | **RefreshTrigger** | The origin of a token refresh: `on-demand`, `background`, or `sweep`. Recorded as `triggered_by`. | Attribute of `SessionTokensRefreshed` and the refresh counters. |

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -232,7 +233,10 @@ func compareSessionExpiryKey(session *storage.UserSession, expiry time.Time, ses
 	return bytes.Compare(session.ID[:], sessionID[:])
 }
 
-var _ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)
+var (
+	_ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)
+	_ ports.UserSessionAdminRepository  = (*InMemoryUserSessionRepository)(nil)
+)
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.
 func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
@@ -265,6 +269,59 @@ func (r *InMemoryUserSessionRepository) ListSummariesByPrincipal(_ context.Conte
 		}
 	}
 	return summaries, nil
+}
+
+func compareSessionAdminKey(principalA id.Principal, serviceA id.ServiceID, principalB id.Principal, serviceB id.ServiceID) int {
+	if c := strings.Compare(principalA.String(), principalB.String()); c != 0 {
+		return c
+	}
+	return bytes.Compare(serviceA[:], serviceB[:])
+}
+
+func (r *InMemoryUserSessionRepository) ListAdminSummaries(_ context.Context, principal id.Principal, after storage.SessionAdminCursor, limit int) ([]*storage.SessionAdminSummary, error) {
+	if limit < 1 {
+		return nil, storage.NewStorageError("ListAdminSummaries", storage.ErrorKindValidation, nil, "limit must be at least 1")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	matched := make([]*storage.UserSession, 0)
+	for _, session := range r.sessions {
+		if !principal.IsZero() && session.Principal != principal {
+			continue
+		}
+		if !after.IsZero() {
+			afterPrincipal := after.Principal
+			if !principal.IsZero() {
+				afterPrincipal = principal
+			}
+			if compareSessionAdminKey(session.Principal, session.ServiceID, afterPrincipal, after.ServiceID) <= 0 {
+				continue
+			}
+		}
+		matched = append(matched, session)
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		return compareSessionAdminKey(matched[i].Principal, matched[i].ServiceID, matched[j].Principal, matched[j].ServiceID) < 0
+	})
+	if len(matched) > limit {
+		matched = matched[:limit]
+	}
+	now := time.Now()
+	summaries := make([]*storage.SessionAdminSummary, len(matched))
+	for i, session := range matched {
+		summaries[i] = storage.NewSessionAdminSummary(session, now)
+	}
+	return summaries, nil
+}
+
+func (r *InMemoryUserSessionRepository) GetAdminSummary(_ context.Context, sessionID id.SessionID) (*storage.SessionAdminSummary, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	session, ok := r.sessions[sessionID]
+	if !ok {
+		return nil, storage.NewStorageError("GetAdminSummary", storage.ErrorKindNotFound, nil, "session not found")
+	}
+	return storage.NewSessionAdminSummary(session, time.Now()), nil
 }
 
 func (r *InMemoryUserSessionRepository) ListActiveServiceIDsByPrincipal(_ context.Context, principal id.Principal) ([]id.ServiceID, error) {

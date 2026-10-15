@@ -37,6 +37,8 @@ type AdminHandlers struct {
 
 	// SessionSweep runs the operator-triggered third-party session refresh.
 	SessionSweep *admin.SessionSweepHandler
+	// Sessions lists and reads third-party user sessions for operators.
+	Sessions *admin.SessionsHandler
 }
 
 // EnduserHandlers groups all handler instances needed by the enduser server.

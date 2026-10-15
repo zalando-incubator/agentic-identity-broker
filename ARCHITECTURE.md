@@ -541,6 +541,8 @@ The optional `lookahead_duration` accepts a positive ISO 8601 duration in days, 
 
 Only this route clears the admin HTTP write deadline. The external caller controls the overall timeout. The sweep checks request cancellation between candidates. An admitted refresh uses its own bounded context to finish token persistence. The handler logs the operator in its aggregate audit; per-session refresh logs identify each session owner separately. See [the session-sweep runbook](docs/operations/session-sweep.md) for scheduling and recovery.
 
+**Admin session inspection**: The builder wires `SessionsHandler` through `SessionAdminService` and the focused `UserSessionAdminRepository`. `GET /api/sessions` lists sessions across all users, ordered by `principal` then `service_id`, with an optional exact `principal` filter, a `limit` of 1 to 1000 (default 100), and an optional opaque `cursor`. The service reads one row past the limit to set `truncated`. When it sets `truncated`, it also returns `next_cursor`, which encodes the `(principal, service_id)` key of the last returned row. The repository returns rows strictly after that key, so paging is keyset-based and stable under concurrent inserts and deletes. A cursor used with a different `principal` filter is rejected. `GET /api/sessions/{session-id}` reads one session. The repository selects summary columns only, so encrypted token blobs never enter the broker process on these paths. Both handlers write an audit log entry with the operator principal for every request, including rejected ones. The list uses four fixed queries, one per combination of filter and cursor. An integration test checks with `EXPLAIN` that each reads the `(principal, service_id)` index, without a table scan. The endpoints show stored session state only. They cannot show refresh failures at the provider, because the broker does not store them. See [the inspection runbook](docs/operations/session-inspection.md).
+
 **Usage**:
 
 - Import specifications into Swagger UI, Redoc, or other OpenAPI tooling
@@ -1507,6 +1509,10 @@ Define any project-specific terms or acronyms.)
 **SweepRequest**: The input value object for a Session Sweep. It holds a lookahead duration, `dry_run`, and page size. Omitted lookahead and page size use the configured defaults. Validation occurs before the sweep evaluates sessions.
 
 **SweepResult**: The result of a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, and `dry_run`. In dry-run mode, `refreshed` counts candidates that would be refreshed. Each candidate has one outcome, so `refreshed + skipped + failed = total_evaluated`.
+
+**SessionAdminSummary**: The operator read model of one `UserSession`, returned by `GET /api/sessions` and `GET /api/sessions/{session-id}`. It holds the session ID, `principal`, service ID, token type, scopes, `initiated_at`, both expiry timestamps, and the flags `is_expired`, `access_token_expired`, and `has_refresh_token`. It names the user and carries no token material, encrypted or plain. The PostgreSQL repository computes `has_refresh_token` in SQL, so the encrypted blobs never enter the broker process. `Evaluate` derives the expiry flags with the same rules as `UserSession.IsExpired` and `UserSession.HasValidAccessToken`.
+
+**SessionAdminCursor**: The keyset position of an operator listing, containing the `principal` and `service_id` of the last returned `SessionAdminSummary`. The zero value starts the scan. `SessionAdminService` encodes it as the opaque `next_cursor` string and rejects a cursor that is used with a different `principal` filter. It is separate from `SessionExpiryCursor`, which orders the Session Sweep by expiry.
 
 **RefreshTrigger**: The origin of a session token refresh: `on-demand`, `background`, or `sweep`. It supplies the `triggered_by` value for `SessionTokensRefreshed`. The background and sweep metrics use only their respective fixed trigger values.
 

@@ -3,8 +3,10 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -569,6 +571,130 @@ var _ = Describe("Proactive Token Refresh", func() {
 					Expect(after.AccessTokenExpiresAt).To(Equal(before[principal].AccessTokenExpiresAt))
 				}
 			})
+		})
+	})
+
+	Describe("User Story 4: when an operator inspects stored sessions", func() {
+		var alice, bob string
+
+		seedSecondSession := func(principal string) *storagedomain.UserSession {
+			other := fixtures.GitHubSessionForPrincipal(principal)
+			other.ServiceID = id.MustParseServiceID("a0000000-0000-0000-0000-000000000002")
+			otherService := fixtures.GitHubService()
+			otherService.ID = other.ServiceID
+			otherService.DisplayName = "Second Service"
+			otherService.ClientID = id.ClientID("second-client")
+			otherService.ProtectedResources = nil
+			Expect(store.Services().Create(ctx, otherService)).To(Succeed())
+			seedSession(other)
+			return other
+		}
+
+		getJSON := func(path string, status int) map[string]any {
+			response, err := admin.AuthenticatedGET(path, fixtures.AdminPrincipal().String())
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = response.Body.Close() }()
+			Expect(response.StatusCode).To(Equal(status))
+			var body map[string]any
+			Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+			return body
+		}
+
+		BeforeEach(func() {
+			factory = bootstrap.NewServerFactory(config, logger)
+			app, err := factory.BuildApp(store)
+			Expect(err).NotTo(HaveOccurred())
+			admin, err = bootstrap.NewAdminTestServer(app, logger)
+			Expect(err).NotTo(HaveOccurred())
+			alice, bob = "alice-inspect@example.com", "bob-inspect@example.com"
+			seedSession(fixtures.GitHubSessionForPrincipal(bob))
+			seedSession(fixtures.ExpiredGitHubSessionForPrincipal(alice))
+		})
+
+		// US4-S1 from specs/029-proactive-token-refresh/spec.md
+		It("should list sessions in order with expiry state and no token material", func() {
+			stored := storedSession(alice)
+			response, err := admin.AuthenticatedGET("/api/sessions", fixtures.AdminPrincipal().String())
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = response.Body.Close() }()
+			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			raw, err := io.ReadAll(response.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(raw)).NotTo(ContainSubstring("encrypted"))
+			Expect(string(raw)).NotTo(ContainSubstring("github-token-xyz"))
+			Expect(string(raw)).NotTo(ContainSubstring(base64.StdEncoding.EncodeToString(stored.EncryptedAccessToken)))
+			var body struct {
+				Items     []map[string]any `json:"items"`
+				Truncated bool             `json:"truncated"`
+			}
+			Expect(json.Unmarshal(raw, &body)).To(Succeed())
+			Expect(body.Truncated).To(BeFalse())
+			Expect(body.Items).To(HaveLen(2))
+			Expect(body.Items[0]).To(HaveKeyWithValue("principal", alice))
+			Expect(body.Items[0]).To(HaveKeyWithValue("access_token_expired", true))
+			Expect(body.Items[0]).To(HaveKeyWithValue("has_refresh_token", true))
+			Expect(body.Items[1]).To(HaveKeyWithValue("principal", bob))
+			Expect(body.Items[1]).To(HaveKeyWithValue("access_token_expired", false))
+		})
+
+		// US4-S2 from specs/029-proactive-token-refresh/spec.md
+		It("should filter by exact principal and report truncation at the limit", func() {
+			seedSecondSession(alice)
+
+			body := getJSON("/api/sessions?principal="+url.QueryEscape(alice)+"&limit=1", http.StatusOK)
+			Expect(body["truncated"]).To(BeTrue())
+			Expect(body["next_cursor"]).NotTo(BeEmpty())
+			items := body["items"].([]any)
+			Expect(items).To(HaveLen(1))
+			Expect(items[0]).To(HaveKeyWithValue("principal", alice))
+
+			body = getJSON("/api/sessions?principal="+url.QueryEscape(strings.ToUpper(alice)), http.StatusOK)
+			Expect(body["items"]).To(BeEmpty())
+			Expect(body["truncated"]).To(BeFalse())
+			Expect(body).NotTo(HaveKey("next_cursor"))
+		})
+
+		// US4-S4 from specs/029-proactive-token-refresh/spec.md
+		It("should page through every session exactly once by following next_cursor", func() {
+			second := seedSecondSession(alice)
+
+			var seen []string
+			cursor := ""
+			for pages := 1; ; pages++ {
+				Expect(pages).To(BeNumerically("<=", 3), "three sessions at limit=1 need three pages")
+				path := "/api/sessions?limit=1"
+				if cursor != "" {
+					path += "&cursor=" + url.QueryEscape(cursor)
+				}
+				body := getJSON(path, http.StatusOK)
+				items := body["items"].([]any)
+				Expect(items).To(HaveLen(1))
+				seen = append(seen, items[0].(map[string]any)["id"].(string))
+				if body["truncated"] == false {
+					Expect(body).NotTo(HaveKey("next_cursor"))
+					break
+				}
+				cursor = body["next_cursor"].(string)
+			}
+			Expect(seen).To(HaveLen(3))
+			Expect(seen[:2]).To(ConsistOf(storedSession(alice).ID.String(), second.ID.String()))
+			Expect(seen[2]).To(Equal(storedSession(bob).ID.String()))
+
+			getJSON("/api/sessions?principal="+url.QueryEscape(bob)+"&cursor="+url.QueryEscape(cursor), http.StatusBadRequest)
+			getJSON("/api/sessions?cursor=not-a-cursor", http.StatusBadRequest)
+		})
+
+		// US4-S3 from specs/029-proactive-token-refresh/spec.md
+		It("should return one session by ID and 404 for an unknown ID", func() {
+			stored := storedSession(bob)
+			body := getJSON("/api/sessions/"+stored.ID.String(), http.StatusOK)
+			Expect(body).To(HaveKeyWithValue("id", stored.ID.String()))
+			Expect(body).To(HaveKeyWithValue("principal", bob))
+			Expect(body).NotTo(HaveKey("encrypted_access_token"))
+
+			getJSON("/api/sessions/"+id.NewSessionID().String(), http.StatusNotFound)
+			getJSON("/api/sessions/"+id.SessionID{}.String(), http.StatusNotFound)
+			getJSON("/api/sessions/not-a-uuid", http.StatusBadRequest)
 		})
 	})
 })

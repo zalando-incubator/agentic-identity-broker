@@ -19,6 +19,11 @@ the hot path in two ways:
    `user_sessions` in access-token expiry, then UUID-byte order. It refreshes sessions due within a
    fixed window, including those with no active agent traffic. An operator CronJob schedules it.
    The broker runs no scheduler and no distributed lock.
+3. **Operator session inspection (US4)**: `GET /api/sessions` and `GET /api/sessions/{session-id}` on
+   the admin server let an operator list and read stored sessions across all users. The listing
+   pages by a `(principal, service_id)` keyset through a focused `UserSessionAdminRepository` port.
+   The responses carry metadata and expiry flags and no token material. The endpoints need no
+   migration and no configuration.
 
 Research found that much of the spec already exists, and the design builds on it. The expired-token
 path (US2) is implemented, with a `singleflight` group and a row-locked, update-only refresh
@@ -162,7 +167,21 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
   both adapters. PostgreSQL uses first-page and later-page composite-keyset queries with sqlx
   `SelectContext`, the adapter read timeout, and `StorageError` wrapping (R2, contracts/ports.md §1).
 
-**Gate status**: Amended ADR 039 and the admin API have written approval. The direct migration image, both Helm modes, and PostgreSQL lifecycle, recovery, and planner checks passed. Recovery remains non-atomic.
+**User Story 4 amendment (operator inspection)**:
+
+- [x] **Domain Model and Concepts**: `SessionAdminSummary` and `SessionAdminCursor` are in [data-model.md](data-model.md) and in the `ARCHITECTURE.md` glossary. No new entity.
+- [x] **Entity IDs, Configuration, Helm, Migration**: N/A. No new entity, key, chart value, or migration. The listing reads the existing `(principal, service_id)` index from migration `004`.
+- [x] **API Design First**: API-006 and API-007 in the spec define both operations. Both operations and the `SessionAdminSummary` and `SessionListResponse` schemas are in `api/admin/openapi.yaml`. The port contract is in [contracts/ports.md](contracts/ports.md) sections 7 and 8.
+- [ ] **API Changes - OPEN**: The two read endpoints are additive. Principle X requires written stakeholder approval before implementation, and no approval is recorded. The 2026-10-09 approval above covers only the four sweep choices. T080 stays open until the stakeholder confirms the endpoints in writing and the reference is recorded here. Do not merge before then.
+- [ ] **ADRs - OPEN**: ADR 038 is on `main`, so Principle II bars an in-place amendment. The endpoints add to its admin API contract and change none of its decisions, so this plan expects no ADR. The stakeholder must confirm that in the T080 approval. If the stakeholder judges the endpoints to deviate from ADR 038, a superseding ADR is required in the same PR.
+- [x] **E2E Acceptance Tests**: US4-S1 to US4-S4 map 1:1 to four `It()` blocks in `tests/e2e/proactive_token_refresh_test.go`.
+- [x] **Frontend Playwright E2E and Screenshots**: N/A. No React UI change.
+- [x] **Security-First**: Responses never carry token material. The PostgreSQL statements do not select ciphertext. Every request that reaches the handler with an operator principal is audit-logged, including rejected ones. The endpoints expose all user identifiers, so the admin proxy must authenticate and authorize the operator. The runbook states this.
+- [x] **Hexagonal Architecture**: `SessionAdminService` owns limit, principal, and cursor rules. The handler parses input and maps errors. No adapter imports another. Wiring is in `builder.go`.
+- [x] **Persistence Patterns**: A focused two-method ISP port with memory and PostgreSQL adapters. PostgreSQL uses four fixed keyset statements, `SelectContext` and `GetContext`, the adapter read timeout, and `StorageError` wrapping. An integration test runs `EXPLAIN` on each statement.
+- [x] **Architecture and Operator Docs**: `ARCHITECTURE.md` (admin section and glossary), `docs/operations/session-inspection.md`, and a link in `docs/operations/session-sweep.md`.
+
+**Gate status**: Amended ADR 039 and the sweep admin API have written approval. The US4 read endpoints do not yet have written approval (see the two OPEN items above). The direct migration image, both Helm modes, and PostgreSQL lifecycle, recovery, and planner checks passed. Recovery remains non-atomic.
 
 **Post-Design Re-check**: DB-002 names the existing locked, update-only refresh. DB-003 uses the
 focused expiry port with `SessionExpiryCursor{AccessTokenExpiresAt, ID}` and expiry-then-UUID order.
@@ -204,7 +223,9 @@ adrs/
 ├── 038-proactive-token-refresh.md                       # ACCEPTED — feature 029 refresh behavior
 └── 039-concurrent-session-expiry-index.md                # ACCEPTED — feature 029 Principle IX exception
 
-api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
+api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas;
+                                                         #   US4: GET /api/sessions, GET /api/sessions/{session-id},
+                                                         #   SessionAdminSummary, SessionListResponse
 
 migrations/
 ├── 037_user_sessions_access_token_expiry_index.up.sql   # concurrent two-key index; informational directive
@@ -236,10 +257,12 @@ internal/domain/oauth2session/
 
 internal/adapters/storage/
 ├── factory.go                                           # MODIFIED — SessionExpiry()
-├── memory/user_session.go                               # MODIFIED — ListExpiringSessions
-├── memory/user_session_test.go                          # MODIFIED — contract E1–E7
-├── postgres/user_session.go                             # MODIFIED — ListExpiringSessions (+ exported-to-test query const)
-└── postgres/user_session_test.go                        # MODIFIED — contract E1–E7, SC-006 EXPLAIN (integration tag)
+├── memory/user_session.go                               # MODIFIED — ListExpiringSessions; US4: ListAdminSummaries, GetAdminSummary
+├── memory/user_session_test.go                          # MODIFIED — contract E1–E7; US4 keyset order and filter
+├── postgres/user_session.go                             # MODIFIED — ListExpiringSessions (+ exported-to-test query const);
+│                                                        #   US4: four keyset statements, ListAdminSummaries, GetAdminSummary
+└── postgres/user_session_test.go                        # MODIFIED — contract E1–E7, SC-006 EXPLAIN (integration tag);
+                                                         #   US4: adapter tests and four EXPLAIN plans
 
 internal/adapters/http/
 ├── middleware.go                                        # MODIFIED (Phase 0) — responseWriter.Unwrap
@@ -248,7 +271,10 @@ internal/adapters/http/
 ├── handlers/admin/session_sweep_handler_test.go         # NEW
 ├── handlers/admin/iso8601_duration.go                   # NEW — parseISO8601Duration
 ├── handlers/admin/iso8601_duration_test.go              # NEW
-└── routing/admin.go                                     # MODIFIED — POST /api/sessions/sweep (+ route-tree comment)
+├── handlers/admin/sessions_handler.go                   # NEW (US4)
+├── handlers/admin/sessions_handler_test.go              # NEW (US4)
+└── routing/admin.go                                     # MODIFIED — POST /api/sessions/sweep (+ route-tree comment);
+                                                         #   US4: GET /api/sessions, GET /api/sessions/{session-id}
 
 internal/app/
 ├── handlers.go                                          # MODIFIED — AdminHandlers.SessionSweep
@@ -403,6 +429,15 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 27. `docs/operations/session-sweep.md`: purpose, reference CronJob, schedule and lookahead
     guidance, `concurrencyPolicy: Forbid`, caller timeout, admin-proxy access, counts and metrics.
     Keep migration failure recovery in ADR 039, not in the administrator guide.
+
+### Phase 6b: US4 — Operator inspection (P3)
+
+US4 follows the same order as the earlier phases: failing tests first, then implementation, then
+documentation. It adds domain tests (`admin_sessions_test.go`, `session_admin_summary_test.go`),
+handler and route tests, adapter tests, and four E2E scenarios. Then it adds the port, the two
+adapters, `SessionAdminService`, `SessionsHandler`, the route, the builder wiring, the OpenAPI
+operations, and the docs. Tasks T071 to T081 in `tasks.md` list the steps. T080 (written
+stakeholder approval and the ADR 038 decision) must close before merge.
 
 ### Phase N: Constitution Compliance Verification
 

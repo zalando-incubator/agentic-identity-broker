@@ -167,6 +167,31 @@ description: "Task list for proactive token refresh"
 
 **Checkpoint**: The admin API works without active exchanges, paginates all due candidates, and returns 200 when the sweep completes even if every candidate fails.
 
+## Phase 6: User Story 4 — Operator Inspection of Stored Sessions (P3)
+
+**Goal**: Let an authenticated operator list and read stored third-party sessions across all principals. Return metadata and expiry state only, never token material.
+
+**Independent Test**: Seed sessions for several users. Call the list and get endpoints. Check the filter, the limit, `truncated`, paging through every session once with `next_cursor`, `404` for an unknown ID, and that no response contains token material.
+
+### Tests for User Story 4
+
+- [X] T071 [P] [US4] Write failing domain tests in `internal/domain/oauth2session/admin_sessions_test.go` and `internal/domain/storage/session_admin_summary_test.go`. Cover defaults, the 1–1000 limit, principal length counted in characters, NUL and invalid UTF-8 rejection, cursor validation and filter mismatch, paging under concurrent changes, the maximum-length cursor round trip, and the expiry flags.
+- [X] T072 [P] [US4] Write failing handler and route tests in `internal/adapters/http/handlers/admin/sessions_handler_test.go` and `internal/adapters/http/routing/admin_test.go`. Cover the operator principal requirement, 400 mapping, 404 mapping, the audit entry for every request including rejected ones, and route registration through the admin router.
+- [X] T073 [P] [US4] Write failing adapter tests in `internal/adapters/storage/memory/user_session_test.go` and `internal/adapters/storage/postgres/user_session_test.go`. Cover keyset order, the principal filter, the cursor boundary, the summary fields, and the four `EXPLAIN` plans (integration tag).
+- [X] T074 [US4] Add four scenarios in `tests/e2e/proactive_token_refresh_test.go`, one `It()` each: ordered listing without token material, exact filter with truncation, full paging by cursor, and get by ID with `404`.
+
+### Implementation for User Story 4
+
+- [X] T075 [US4] Define `UserSessionAdminRepository` in `internal/ports/storage.go`. Define `SessionAdminSummary` and `SessionAdminCursor` in `internal/domain/storage/user_session.go`.
+- [X] T076 [US4] Implement `ListAdminSummaries` and `GetAdminSummary` in the memory and PostgreSQL user-session repositories. Use four fixed keyset queries in PostgreSQL. Compute `has_refresh_token` in SQL. Expose `SessionAdmin()` from `internal/adapters/storage/factory.go`.
+- [X] T077 [US4] Implement `SessionAdminService` in `internal/domain/oauth2session/admin_sessions.go`. Read one row past the limit to set `truncated`. Encode the cursor from the last returned `(principal, service_id)` key. Derive the cursor length cap from the principal and service ID limits.
+- [X] T078 [US4] Implement `SessionsHandler` in `internal/adapters/http/handlers/admin/sessions_handler.go`. Register `GET /api/sessions` and `GET /api/sessions/{session-id}` in `internal/adapters/http/routing/admin.go`. Add `AdminHandlers.Sessions` in `internal/app/handlers.go` and build it in `internal/app/builder.go`.
+- [X] T079 [US4] Add both operations and the `SessionAdminSummary` and `SessionListResponse` schemas to `api/admin/openapi.yaml`. Document the inspection endpoints in `ARCHITECTURE.md`, `docs/operations/session-inspection.md`, and the link in `docs/operations/session-sweep.md`.
+- [ ] T080 [US4] Obtain written stakeholder approval of the two read endpoints in `api/admin/openapi.yaml` (Principle X). Decide whether `adrs/038-proactive-token-refresh.md` needs a superseding ADR, because its approved admin API contract names only the sweep endpoint. ADR 038 is on `main`, so Principle II bars an in-place amendment. Ask the stakeholder to confirm in the same approval that the additive endpoints need no ADR. Record the reference in `specs/029-proactive-token-refresh/plan.md` (Constitution Check, User Story 4 amendment).
+- [ ] T081 [US4] Run `just check`, `just test`, `just test-integration-infra`, and `just test-e2e-backend`. Confirm the four US4 scenarios, the PostgreSQL adapter tests, and the four `EXPLAIN` plans pass.
+
+**Checkpoint**: An operator can identify which users connected which services without database access. The endpoints show stored state only and never token material.
+
 ## Phase N: Constitution Compliance & Polish
 
 **Purpose**: Complete the architecture and operator documentation. Then examine every constitution gate and run the project checks.
@@ -220,6 +245,7 @@ Phase 2.5 → US2 tests (P1)
 US1 T039 + US2 tests → US2 T043 → US2 complete
 Phase 2.5 + API sign-off T018 → US3 complete (P2)
 US1 + US2 + US3 → Phase N
+Phase 2.5 → US4 code and tests; US4 is complete after sign-off T080 and the gates in T081 (P3)
 ```
 
 The US3 API work cannot begin without T018. The common foundation supplies the predicate, configuration, expiry port, and locked refresh. All three user journeys have independent tests. US2's log integration follows the US1 shared helper, and builder edits need serial ownership.
@@ -246,4 +272,5 @@ The US3 API work cannot begin without T018. The common foundation supplies the p
 - Deliver US1 after its independent test passes. The broker still handles expired tokens through its existing synchronous path.
 - Deliver US2 as a regression and observability increment. Its test confirms re-authentication and atomic updates.
 - Deliver US3 as an admin-only increment. It scans inactive sessions without adding a scheduler or a distributed coordinator.
+- Deliver US4 as an admin-only, read-only increment. It needs no migration and no new configuration.
 - Run the final documentation, migration, Helm, security, and E2E checks before declaring the feature complete.

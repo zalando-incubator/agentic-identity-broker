@@ -25,6 +25,50 @@ WHERE access_token_expires_at IS NOT NULL
 ORDER BY access_token_expires_at, id
 LIMIT $4`
 
+const adminSummaryColumns = `id, principal, service_id, token_type, scope, initiated_at,
+	access_token_expires_at, refresh_token_expires_at,
+	COALESCE(octet_length(encrypted_refresh_token), 0) > 0 AS has_refresh_token`
+
+// The list queries are separate statements so each can use the unique
+// (principal, service_id) index for its filter, its keyset position, and its ordering.
+const listAdminSummariesAllQuery = `SELECT ` + adminSummaryColumns + `
+FROM user_sessions
+ORDER BY principal, service_id
+LIMIT $1`
+
+const listAdminSummariesAllAfterQuery = `SELECT ` + adminSummaryColumns + `
+FROM user_sessions
+WHERE (principal, service_id) > ($1, $2)
+ORDER BY principal, service_id
+LIMIT $3`
+
+const listAdminSummariesByPrincipalQuery = `SELECT ` + adminSummaryColumns + `
+FROM user_sessions
+WHERE principal = $1
+ORDER BY service_id
+LIMIT $2`
+
+const listAdminSummariesByPrincipalAfterQuery = `SELECT ` + adminSummaryColumns + `
+FROM user_sessions
+WHERE principal = $1 AND service_id > $2
+ORDER BY service_id
+LIMIT $3`
+
+func adminListStatement(principal id.Principal, after storage.SessionAdminCursor, limit int) (string, []any) {
+	switch {
+	case principal.IsZero() && after.IsZero():
+		return listAdminSummariesAllQuery, []any{limit}
+	case principal.IsZero():
+		return listAdminSummariesAllAfterQuery, []any{after.Principal, after.ServiceID, limit}
+	case after.IsZero():
+		return listAdminSummariesByPrincipalQuery, []any{principal, limit}
+	default:
+		return listAdminSummariesByPrincipalAfterQuery, []any{principal, after.ServiceID, limit}
+	}
+}
+
+const getAdminSummaryQuery = `SELECT ` + adminSummaryColumns + ` FROM user_sessions WHERE id = $1`
+
 // userSessionRecord is an adapter-local database record struct for user_sessions.
 // It maps directly to the table schema. The Scope field uses pq.StringArray to
 // correctly handle PostgreSQL TEXT[] scanning via pgx/v5/stdlib — the driver
@@ -43,6 +87,29 @@ type userSessionRecord struct {
 	InitiatedAt           time.Time                 `db:"initiated_at"`
 	CreatedAt             time.Time                 `db:"created_at"`
 	UpdatedAt             time.Time                 `db:"updated_at"`
+}
+
+type sessionAdminSummaryRecord struct {
+	ID                    id.SessionID   `db:"id"`
+	Principal             id.Principal   `db:"principal"`
+	ServiceID             id.ServiceID   `db:"service_id"`
+	TokenType             string         `db:"token_type"`
+	Scope                 pq.StringArray `db:"scope"`
+	InitiatedAt           time.Time      `db:"initiated_at"`
+	AccessTokenExpiresAt  *time.Time     `db:"access_token_expires_at"`
+	RefreshTokenExpiresAt *time.Time     `db:"refresh_token_expires_at"`
+	HasRefreshToken       bool           `db:"has_refresh_token"`
+}
+
+func (rec *sessionAdminSummaryRecord) toSummary(now time.Time) *storage.SessionAdminSummary {
+	summary := &storage.SessionAdminSummary{
+		ID: rec.ID, Principal: rec.Principal, ServiceID: rec.ServiceID, TokenType: rec.TokenType,
+		Scope: []string(rec.Scope), InitiatedAt: rec.InitiatedAt,
+		AccessTokenExpiresAt: rec.AccessTokenExpiresAt, RefreshTokenExpiresAt: rec.RefreshTokenExpiresAt,
+		HasRefreshToken: rec.HasRefreshToken,
+	}
+	summary.Evaluate(now)
+	return summary
 }
 
 type userSessionSummaryRecord struct {
@@ -84,6 +151,7 @@ type PostgresUserSessionRepository struct {
 }
 
 var _ ports.UserSessionExpiryRepository = (*PostgresUserSessionRepository)(nil)
+var _ ports.UserSessionAdminRepository = (*PostgresUserSessionRepository)(nil)
 
 // NewUserSessionRepository creates a new PostgreSQL user session repository.
 func NewUserSessionRepository(adapter *Adapter) *PostgresUserSessionRepository {
@@ -289,6 +357,42 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+func (r *PostgresUserSessionRepository) ListAdminSummaries(ctx context.Context, principal id.Principal, after storage.SessionAdminCursor, limit int) ([]*storage.SessionAdminSummary, error) {
+	if limit < 1 {
+		return nil, storage.NewStorageError("ListAdminSummaries", storage.ErrorKindValidation, nil, "limit must be at least 1")
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	var records []sessionAdminSummaryRecord
+	query, args := adminListStatement(principal, after, limit)
+	if err := r.adapter.db.SelectContext(queryCtx, &records, query, args...); err != nil {
+		return nil, r.wrapError(err, "ListAdminSummaries")
+	}
+	now := time.Now()
+	summaries := make([]*storage.SessionAdminSummary, len(records))
+	for i := range records {
+		summaries[i] = records[i].toSummary(now)
+	}
+	return summaries, nil
+}
+
+func (r *PostgresUserSessionRepository) GetAdminSummary(ctx context.Context, sessionID id.SessionID) (*storage.SessionAdminSummary, error) {
+	if sessionID.IsZero() {
+		return nil, storage.NewStorageError("GetAdminSummary", storage.ErrorKindNotFound, nil, "session not found")
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	var rec sessionAdminSummaryRecord
+	err := r.adapter.db.GetContext(queryCtx, &rec, getAdminSummaryQuery, sessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, storage.NewStorageError("GetAdminSummary", storage.ErrorKindNotFound, err, "session not found")
+	}
+	if err != nil {
+		return nil, r.wrapError(err, "GetAdminSummary")
+	}
+	return rec.toSummary(time.Now()), nil
 }
 
 func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error) {

@@ -757,3 +757,214 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 		})
 	}
 }
+
+func TestUserSessionListAdminSummaries(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	refreshExpiry := now.Add(-time.Hour)
+	for _, tc := range []struct {
+		principal string
+		refresh   []byte
+	}{
+		{"admin-list-b@example.com", nil},
+		{"admin-list-a@example.com", []byte("refresh")},
+		{"admin-list-a@example.com", []byte("refresh")},
+	} {
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		session := &storage.UserSession{
+			ID: id.NewSessionID(), Principal: id.Principal(tc.principal), ServiceID: serviceID,
+			EncryptedAccessToken: []byte("access"), EncryptedRefreshToken: tc.refresh, TokenType: "Bearer",
+			Scope: []string{"repo"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+			InitiatedAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+		if tc.refresh != nil {
+			session.RefreshTokenExpiresAt = &refreshExpiry
+		}
+		require.NoError(t, repo.Create(ctx, session))
+	}
+
+	all, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 100)
+	require.NoError(t, err)
+	require.Len(t, all, 3, "setupMigratedAdapter returns an isolated database")
+	assert.Equal(t, id.Principal("admin-list-a@example.com"), all[0].Principal)
+	assert.Equal(t, id.Principal("admin-list-a@example.com"), all[1].Principal)
+	assert.Equal(t, id.Principal("admin-list-b@example.com"), all[2].Principal)
+	assert.True(t, all[0].ServiceID.String() < all[1].ServiceID.String(), "ties on principal order by service_id")
+	assert.True(t, all[0].HasRefreshToken)
+	assert.True(t, all[0].IsExpired)
+	assert.False(t, all[2].HasRefreshToken)
+	assert.Equal(t, []string{"repo"}, all[0].Scope)
+
+	filtered, err := repo.ListAdminSummaries(ctx, "admin-list-a@example.com", storage.SessionAdminCursor{}, 100)
+	require.NoError(t, err)
+	require.Len(t, filtered, 2)
+	assert.True(t, filtered[0].ServiceID.String() < filtered[1].ServiceID.String())
+
+	caseMismatch, err := repo.ListAdminSummaries(ctx, "ADMIN-LIST-A@example.com", storage.SessionAdminCursor{}, 100)
+	require.NoError(t, err)
+	assert.Empty(t, caseMismatch)
+
+	limited, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 1)
+	require.NoError(t, err)
+	assert.Len(t, limited, 1)
+
+	_, err = repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 0)
+	require.Error(t, err)
+
+	var walked []id.SessionID
+	cursor := storage.SessionAdminCursor{}
+	for range 5 {
+		page, err := repo.ListAdminSummaries(ctx, "", cursor, 1)
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		walked = append(walked, page[0].ID)
+		cursor = storage.SessionAdminCursor{Principal: page[0].Principal, ServiceID: page[0].ServiceID}
+	}
+	require.Len(t, walked, 3)
+	for i := range all {
+		assert.Equal(t, all[i].ID, walked[i], "walking with a one-row keyset page matches the full listing")
+	}
+
+	afterFirstA, err := repo.ListAdminSummaries(ctx, "admin-list-a@example.com", storage.SessionAdminCursor{Principal: all[0].Principal, ServiceID: all[0].ServiceID}, 100)
+	require.NoError(t, err)
+	require.Len(t, afterFirstA, 1)
+	assert.Equal(t, all[1].ID, afterFirstA[0].ID)
+
+	afterLast, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{Principal: all[2].Principal, ServiceID: all[2].ServiceID}, 100)
+	require.NoError(t, err)
+	assert.Empty(t, afterLast)
+}
+
+func TestUserSessionGetAdminSummary(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+
+	serviceID := id.NewServiceID()
+	insertTestService(t, adapter, serviceID)
+	now := time.Now().UTC()
+	accessExpiry := now.Add(-time.Minute)
+	session := &storage.UserSession{
+		ID: id.NewSessionID(), Principal: "admin-get@example.com", ServiceID: serviceID,
+		EncryptedAccessToken: []byte("access"), EncryptedRefreshToken: []byte("refresh"), TokenType: "Bearer",
+		AccessTokenExpiresAt: &accessExpiry, Scope: []string{},
+		EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, repo.Create(ctx, session))
+
+	got, err := repo.GetAdminSummary(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, session.ID, got.ID)
+	assert.Equal(t, id.Principal("admin-get@example.com"), got.Principal)
+	assert.Equal(t, serviceID, got.ServiceID)
+	assert.True(t, got.HasRefreshToken)
+	assert.True(t, got.AccessTokenExpired)
+	assert.False(t, got.IsExpired)
+	assert.NotNil(t, got.Scope)
+
+	for _, missing := range []id.SessionID{id.NewSessionID(), {}} {
+		_, err = repo.GetAdminSummary(ctx, missing)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	}
+}
+
+type adminListPlanShape struct {
+	ordered      bool
+	compositeIdx bool
+	serviceIdx   bool
+	sorts        bool
+	seqScan      bool
+}
+
+func inspectAdminListPlan(plan expiryExplainPlan, shape *adminListPlanShape) {
+	isComposite := plan.IndexName == "user_sessions_principal_service_unique" || plan.IndexName == "idx_user_sessions_principal_service"
+	switch plan.NodeType {
+	case "Sort", "Incremental Sort":
+		shape.sorts = true
+	case "Seq Scan":
+		shape.seqScan = true
+	case "Index Scan", "Index Only Scan":
+		shape.ordered = shape.ordered || isComposite
+		shape.compositeIdx = shape.compositeIdx || isComposite
+		shape.serviceIdx = shape.serviceIdx || plan.IndexName == "idx_user_sessions_service_id"
+	case "Bitmap Index Scan":
+		shape.compositeIdx = shape.compositeIdx || isComposite
+		shape.serviceIdx = shape.serviceIdx || plan.IndexName == "idx_user_sessions_service_id"
+	}
+	for _, child := range plan.Plans {
+		inspectAdminListPlan(child, shape)
+	}
+}
+
+// Listings across all users must read the (principal, service_id) index in order without a sort.
+// Listings for one principal must be bounded by that principal in the composite index. A sort there
+// covers at most one row per service.
+func TestUserSessionAdminListQueriesUseIndex(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	serviceIDs := make([]id.ServiceID, 5)
+	for i := range serviceIDs {
+		serviceIDs[i] = id.MustParseServiceID(fmt.Sprintf("b0000000-0000-4000-8000-%012d", i+1))
+		insertTestService(t, adapter, serviceIDs[i])
+		_, err := adapter.db.ExecContext(ctx, `
+			INSERT INTO user_sessions (principal, service_id, encrypted_access_token)
+			SELECT 'planner-' || n || '@example.com', $1, $2::bytea
+			FROM generate_series(1, 1000) AS n
+		`, serviceIDs[i], []byte{1})
+		require.NoError(t, err)
+	}
+	_, err := adapter.db.ExecContext(ctx, `ANALYZE user_sessions`)
+	require.NoError(t, err)
+
+	midPrincipal := id.Principal("planner-500@example.com")
+	midCursor := storage.SessionAdminCursor{Principal: midPrincipal, ServiceID: serviceIDs[2]}
+	for _, tc := range []struct {
+		name        string
+		principal   id.Principal
+		after       storage.SessionAdminCursor
+		want        string
+		wantOrdered bool
+		wantNoSort  bool
+	}{
+		{"unfiltered", "", storage.SessionAdminCursor{}, listAdminSummariesAllQuery, true, true},
+		{"unfiltered after cursor", "", midCursor, listAdminSummariesAllAfterQuery, true, true},
+		{"by principal", midPrincipal, storage.SessionAdminCursor{}, listAdminSummariesByPrincipalQuery, false, false},
+		{"by principal after cursor", midPrincipal, midCursor, listAdminSummariesByPrincipalAfterQuery, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query, args := adminListStatement(tc.principal, tc.after, 101)
+			require.Equal(t, tc.want, query)
+			var raw []byte
+			require.NoError(t, adapter.db.GetContext(ctx, &raw, `EXPLAIN (FORMAT JSON) `+query, args...))
+			var explain []struct {
+				Plan expiryExplainPlan `json:"Plan"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &explain))
+			require.Len(t, explain, 1)
+			var shape adminListPlanShape
+			inspectAdminListPlan(explain[0].Plan, &shape)
+			assert.True(t, shape.compositeIdx, "plan must use the (principal, service_id) index: %s", raw)
+			assert.False(t, shape.serviceIdx, "plan must not drive from the service_id index: %s", raw)
+			assert.False(t, shape.seqScan, "plan must not scan the whole table: %s", raw)
+			if tc.wantOrdered {
+				assert.True(t, shape.ordered, "plan must read the index in order: %s", raw)
+			}
+			if tc.wantNoSort {
+				assert.False(t, shape.sorts, "plan must not sort: %s", raw)
+			}
+		})
+	}
+}

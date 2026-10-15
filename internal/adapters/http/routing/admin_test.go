@@ -323,6 +323,48 @@ func TestAdminSweepJWTRejectsUnsignedPrincipalHeader(t *testing.T) {
 	require.NotContains(t, logs.String(), `"operator_principal":"forged-operator"`)
 }
 
+func TestSetupAdminRoutes_Sessions(t *testing.T) {
+	t.Parallel()
+	router := newAdminRouter(t, "https://admin.example.com:14000")
+	do := func(method, target, operator, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Host = "admin.example.com:14000"
+		req.Header.Set("Content-Type", "application/json")
+		if operator != "" {
+			req = req.WithContext(principal.WithPrincipal(req.Context(), operator))
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	operator := fixtures.AdminPrincipal().String()
+
+	rec := do(http.MethodGet, "/api/sessions", operator, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.JSONEq(t, `{"items":[],"truncated":false}`, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions?principal=nobody@example.com&limit=5", operator, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions?cursor=not-a-cursor", operator, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions/not-a-uuid", operator, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions/00000000-0000-4000-8000-000000000001", operator, "")
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions", "", "")
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodPost, "/api/sessions/sweep", operator, `{"dry_run":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = do(http.MethodGet, "/api/sessions/sweep", operator, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
 func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 	t.Helper()
 	cfg := fixtures.DefaultOAuth2Config()

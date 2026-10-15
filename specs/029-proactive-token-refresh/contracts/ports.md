@@ -162,3 +162,48 @@ and CORS. The route is registered unconditionally, because the feature has no of
 // is called or the request context ends. release is idempotent.
 func (m *MockUpstreamOAuth2Server) WithTokenResponseGate() (release func())
 ```
+
+## 7. New driven port — `UserSessionAdminRepository` (User Story 4)
+
+**File**: `internal/ports/storage.go`, placed directly after `UserSessionExpiryRepository`.
+
+`SessionAdminSummary` and `SessionAdminCursor` are defined in `internal/domain/storage/user_session.go`.
+
+```go
+// UserSessionAdminRepository serves operator reads of sessions across all principals.
+// It never loads or returns token material, encrypted or plain.
+type UserSessionAdminRepository interface {
+    // ListAdminSummaries returns at most limit summaries ordered by (principal, service_id),
+    // starting strictly after the cursor. A zero cursor starts at the beginning.
+    // A zero principal matches every user; otherwise the match is exact and case-sensitive,
+    // and only after.ServiceID is compared. limit must be at least 1.
+    // No matches return an empty slice and no error.
+    ListAdminSummaries(ctx context.Context, principal id.Principal, after storage.SessionAdminCursor, limit int) ([]*storage.SessionAdminSummary, error)
+
+    // GetAdminSummary returns one session summary by ID.
+    // Returns StorageError with Kind=NotFound if the session does not exist.
+    GetAdminSummary(ctx context.Context, sessionID id.SessionID) (*storage.SessionAdminSummary, error)
+}
+```
+
+**PostgreSQL specifics**: Four fixed statements, one per combination of `principal` filter and cursor, so each can use the `(principal, service_id)` index (migration `004`) for its filter, its keyset position, and its ordering. The statements select summary columns only and compute `has_refresh_token` as `COALESCE(octet_length(encrypted_refresh_token), 0) > 0`. They use the adapter read timeout and the existing `wrapError`. An integration test runs `EXPLAIN` on each production statement and checks that it reads the composite index, does not scan the table, and does not sort a listing across all users.
+
+**Memory specifics**: The adapter filters, orders, and compares by `(principal, service_id)` with a byte-wise string comparison and UUID byte order. PostgreSQL orders `principal` by the database text collation, so the two adapters can differ in the order between users. Within one user, both order by service ID.
+
+**Factory**: `internal/adapters/storage/factory.go` gains `SessionAdmin() ports.UserSessionAdminRepository`. It returns the same instance as `UserSessions()`. Compile-time assertions guard both adapters.
+
+## 8. Domain service and driving adapter (User Story 4)
+
+**Service**: `oauth2session.SessionAdminService` in `internal/domain/oauth2session/admin_sessions.go`.
+
+```go
+func NewSessionAdminService(sessions ports.UserSessionAdminRepository) *SessionAdminService
+func (s *SessionAdminService) ListSessions(ctx context.Context, query SessionListQuery) (SessionList, error)
+func (s *SessionAdminService) GetSession(ctx context.Context, sessionID id.SessionID) (*storage.SessionAdminSummary, error)
+```
+
+`ListSessions` owns the rules: a zero limit means `DefaultSessionListLimit` (100), the limit must be 1 to `MaxSessionListLimit` (1000), `principal` is at most 200 characters of valid UTF-8 without NUL, and a cursor is decoded and rejected when malformed or used with a different `principal`. It reads one row past the limit to set `Truncated`, and sets `NextCursor` exactly when `Truncated` is true. Every rejection wraps `ErrInvalidSessionQuery`. `GetSession` maps a `NotFound` storage error to `ErrSessionNotFound`.
+
+**Handler**: `SessionsHandler` in `internal/adapters/http/handlers/admin/sessions_handler.go`. It parses `principal`, `limit`, and `cursor`, requires an operator principal (`500 server_misconfiguration` if absent), maps `ErrInvalidSessionQuery` to `400`, `ErrSessionNotFound` to `404`, and any other error to `500`. It writes one audit log entry with the operator principal for every request that reaches it with an operator principal, including rejected requests.
+
+**Wiring**: `app.AdminHandlers.Sessions` is built in `Builder.Build()` from `oauth2session.NewSessionAdminService(b.storage.SessionAdmin())`. `routing.SetupAdminRoutes` registers `GET /sessions` and `GET /sessions/{session-id}` in the existing `/api` group, next to the sweep route.

@@ -130,4 +130,4 @@ If `failed` persists across sweeps, examine the refresh failure logs and provide
 
 Users can reconnect through `GET /api/third-party/{serviceId}/oauth2/authorize`. They can end their own session through `DELETE /api/third-party/{serviceId}/session`. Ending a session removes the stored tokens and can interrupt agents. It does not revoke the tokens at the provider.
 
-The sweep response contains counts, not the identities of affected users. Use your approved support process to contact users. Do not delete another user's session to clear a failed count.
+The sweep response contains counts, not the identities of affected users. To find sessions that have no usable refresh token, see [Inspect third-party sessions](session-inspection.md). That page also explains why it cannot find sessions that the provider rejected. For those sessions, use the refresh failure logs. Use your approved support process to contact users. Do not delete another user's session to clear a failed count.

@@ -838,6 +838,7 @@ func (b *Builder) Build() (*App, error) {
 	}
 	app.AdminHandlers.SessionSweep = admin.NewSessionSweepHandler(
 		oauth2session.NewSessionSweepService(b.storage.SessionExpiry(), app.OAuth2SessionService, b.logger), b.logger)
+	app.AdminHandlers.Sessions = admin.NewSessionsHandler(oauth2session.NewSessionAdminService(b.storage.SessionAdmin()), b.logger)
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
 

@@ -285,6 +285,22 @@ type UserSessionExpiryRepository interface {
 	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
 }
 
+// UserSessionAdminRepository serves operator reads of sessions across all principals.
+// It never loads or returns token material, encrypted or plain.
+type UserSessionAdminRepository interface {
+	// ListAdminSummaries returns at most limit summaries ordered by (principal, service_id),
+	// starting strictly after the cursor. A zero cursor starts at the beginning. Principal order
+	// follows the backend's text collation, and the cursor compares under the same order.
+	// A zero principal matches every user; otherwise the match is exact and case-sensitive, and
+	// only after.ServiceID is compared. limit must be at least 1.
+	// No matches return an empty slice and no error.
+	ListAdminSummaries(ctx context.Context, principal id.Principal, after storage.SessionAdminCursor, limit int) ([]*storage.SessionAdminSummary, error)
+
+	// GetAdminSummary returns one session summary by ID.
+	// Returns StorageError with Kind=NotFound if the session does not exist.
+	GetAdminSummary(ctx context.Context, sessionID id.SessionID) (*storage.SessionAdminSummary, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.

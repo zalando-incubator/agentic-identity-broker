@@ -100,6 +100,8 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 		}
 
 		r.Post("/sessions/sweep", h.SessionSweep.Sweep)
+		r.Get("/sessions", h.Sessions.List)             // GET /api/sessions?principal=&limit=&cursor=
+		r.Get("/sessions/{session-id}", h.Sessions.Get) // GET /api/sessions/:session-id
 
 		// Signing key management routes
 		if h.SigningKeys != nil {

@@ -70,6 +70,23 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 
 ---
 
+### User Story 4 - Operator Inspection of Stored Sessions (Priority: P3)
+
+An operator lists and reads stored third-party sessions across all users. The operator uses this to see which users connected which services, and to find sessions that stored state shows the broker cannot refresh. The responses show session metadata and expiry state. They never contain token material, encrypted or plain.
+
+**Why this priority**: A sweep returns counts only. Without a read endpoint, an operator cannot identify affected users without direct database access. The endpoint shows stored state only. It cannot show which sessions failed a refresh at the provider, because the broker does not persist refresh failures.
+
+**Independent Test**: Seed sessions for several users, call the list and get endpoints, and verify the filter, the limit, the truncation flag, paging through every session with the cursor, and that no token material appears in any response.
+
+**Acceptance Scenarios**:
+
+1. **Given** sessions for several users, **When** an operator lists sessions without a filter, **Then** the response contains the sessions ordered by `principal` and `service_id` (the order of `principal` follows the database text collation), with expiry flags and `has_refresh_token`, and with no token material.
+2. **Given** sessions for several users, **When** an operator lists with an exact `principal` filter and a `limit` smaller than the number of matches, **Then** the response contains only that user's sessions up to the limit, `truncated` is `true`, and `next_cursor` is present.
+3. **Given** a stored session, **When** an operator reads it by session ID, **Then** the response contains that session's metadata and no token material. An unknown session ID returns `404`.
+4. **Given** more sessions than one page holds, **When** an operator follows `next_cursor` until `truncated` is `false`, **Then** every session appears exactly once in `principal`, `service_id` order (the order of `principal` follows the database text collation), and the last page has no `next_cursor`.
+
+---
+
 ### Edge Cases
 
 - What happens when the upstream OAuth2 provider is unavailable during a background proactive refresh? The background refresh MUST fail silently (log the error), leave the existing token in place, and not affect the current exchange response which already returned a valid token.
@@ -202,6 +219,8 @@ token_refresh:
 - **API-003**: The sweep response body MUST include: `refreshed` (integer), `skipped` (integer), `failed` (integer), `total_evaluated` (integer), and `dry_run` (boolean). When `dry_run=true`, sessions that would be refreshed MUST still be counted in `refreshed`; the broker simply skips upstream calls and persistence. `skipped` counts only evaluated candidates that no longer require action, not healthy sessions excluded by the repository query.
 - **API-004**: The endpoint MUST return `200 OK` whenever the sweep process itself completes, regardless of per-session refresh outcomes — including the case where every session fails to refresh. The response body counts (`refreshed`, `failed`, `total_evaluated`) convey outcome to the caller. `500` is reserved for infrastructure failures (database unreachable, handler panic).
 - **API-005**: The endpoint MUST be on the admin server (port 14000) and require administrative access enforced at the proxy level.
+- **API-006**: `GET /api/sessions` lists sessions across all users, ordered by `principal` then `service_id`. The order of `principal` follows the database text collation, so a caller MUST NOT depend on a specific order between users. It accepts an optional exact, case-sensitive `principal` filter, an optional `limit` (`1–1000`, default `100`), and an optional opaque `cursor`. The response contains `items` and `truncated`. When `truncated` is `true`, the response also contains `next_cursor`, and an operator passes it as `cursor` (with the same `principal`) to read the next page. A cursor is a key position, so a session created or deleted between pages never repeats or hides another session. The endpoint MUST be documented in `/api/admin/openapi.yaml`.
+- **API-007**: `GET /api/sessions/{session-id}` returns one session or `404`. Neither endpoint returns token material. Both endpoints write an audit log entry with the operator principal for every request that reaches the handler with an operator principal, including requests the handler rejects as invalid.
 
 ### Database Requirements
 

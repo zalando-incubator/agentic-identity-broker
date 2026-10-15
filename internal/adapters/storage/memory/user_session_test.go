@@ -539,3 +539,82 @@ func TestWithLockedSessionPersistsTokenUpdateAtomically(t *testing.T) {
 	assert.Equal(t, newExpiry, *stored.AccessTokenExpiresAt)
 	assert.Equal(t, newExpiry, stored.UpdatedAt)
 }
+
+func TestListAdminSummaries(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	svcA := id.MustParseServiceID("00000000-0000-4000-8000-00000000000a")
+	svcB := id.MustParseServiceID("00000000-0000-4000-8000-00000000000b")
+	for _, s := range []*storage.UserSession{
+		refreshTestSession("b@example.com", svcA),
+		refreshTestSession("a@example.com", svcB),
+		refreshTestSession("a@example.com", svcA),
+	} {
+		require.NoError(t, repo.Create(ctx, s))
+	}
+
+	all, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 10)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	assert.Equal(t, []id.Principal{"a@example.com", "a@example.com", "b@example.com"}, []id.Principal{all[0].Principal, all[1].Principal, all[2].Principal})
+	assert.Equal(t, svcA, all[0].ServiceID)
+	assert.Equal(t, svcB, all[1].ServiceID)
+	assert.True(t, all[0].HasRefreshToken)
+
+	filtered, err := repo.ListAdminSummaries(ctx, "a@example.com", storage.SessionAdminCursor{}, 10)
+	require.NoError(t, err)
+	assert.Len(t, filtered, 2)
+
+	none, err := repo.ListAdminSummaries(ctx, "A@example.com", storage.SessionAdminCursor{}, 10)
+	require.NoError(t, err)
+	assert.NotNil(t, none)
+	assert.Empty(t, none)
+
+	limited, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 2)
+	require.NoError(t, err)
+	assert.Len(t, limited, 2)
+
+	_, err = repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{}, 0)
+	require.Error(t, err)
+
+	afterFirst, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{Principal: "a@example.com", ServiceID: svcA}, 10)
+	require.NoError(t, err)
+	require.Len(t, afterFirst, 2)
+	assert.Equal(t, svcB, afterFirst[0].ServiceID)
+	assert.Equal(t, id.Principal("b@example.com"), afterFirst[1].Principal)
+
+	afterLast, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{Principal: "b@example.com", ServiceID: svcA}, 10)
+	require.NoError(t, err)
+	assert.NotNil(t, afterLast)
+	assert.Empty(t, afterLast)
+
+	betweenPrincipals, err := repo.ListAdminSummaries(ctx, "", storage.SessionAdminCursor{Principal: "a@example.com", ServiceID: id.MustParseServiceID("ffffffff-ffff-4fff-8fff-ffffffffffff")}, 10)
+	require.NoError(t, err)
+	require.Len(t, betweenPrincipals, 1)
+	assert.Equal(t, id.Principal("b@example.com"), betweenPrincipals[0].Principal)
+
+	filteredAfter, err := repo.ListAdminSummaries(ctx, "a@example.com", storage.SessionAdminCursor{Principal: "a@example.com", ServiceID: svcA}, 10)
+	require.NoError(t, err)
+	require.Len(t, filteredAfter, 1)
+	assert.Equal(t, svcB, filteredAfter[0].ServiceID)
+}
+
+func TestGetAdminSummary(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	session := refreshTestSession("a@example.com", id.NewServiceID())
+	require.NoError(t, repo.Create(ctx, session))
+
+	got, err := repo.GetAdminSummary(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, session.ID, got.ID)
+	assert.Equal(t, id.Principal("a@example.com"), got.Principal)
+	assert.True(t, got.HasRefreshToken)
+
+	for _, missing := range []id.SessionID{id.NewSessionID(), {}} {
+		_, err = repo.GetAdminSummary(ctx, missing)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	}
+}
