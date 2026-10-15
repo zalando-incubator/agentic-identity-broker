@@ -89,6 +89,43 @@
 - What happens when [boundary condition]?
 - How does system handle [error scenario]?
 
+## Concrete Example Journeys *(mandatory)*
+
+<!--
+  Constitution Principle XIV: include at least one chronological, end-to-end worked example
+  for each distinct user-facing flow. Link to the user story and its Given/When/Then scenarios
+  above; examples do NOT replace those scenarios or their 1:1 E2E test mapping.
+  Use consistent, representative actors, IDs, times, and values throughout each journey.
+  Replace all placeholders, repeat the journey for other flows, and omit inapplicable blocks.
+  Never include real tokens, credentials, or other secrets.
+-->
+
+### Journey 1 — [User goal] (User Story [N], Acceptance Scenarios [N, ...])
+
+1. **Initial state**: [Actor and concrete starting conditions, with representative values]
+2. **Action**: [What the actor does and the inputs used]
+3. **Observable result**: [What the actor or operator sees, with concrete output values]
+
+[Add intermediate steps as needed. Place or reference each applicable example block beside the
+step it explains so the journey can be reviewed in order.]
+
+**Configuration (if applicable)**: [Include a minimal fenced YAML snippet with real configuration
+keys and representative values; explain how those values affect this journey's outcome.]
+
+**HTTP exchange (if applicable)**: [Show each relevant RFC-style request/response pair in an
+`http` fence: method and target, applicable request headers and body, then status line, applicable
+response headers and body. `...` MAY abbreviate only parameters whose values are clear from
+context and immaterial to the behavior; keep security-critical inputs and observable outcomes
+explicit. Match the applicable OpenAPI contract.]
+
+**UI sequence (if applicable)**: [Show meaningful before/after states as editable `wireloom`
+fences with links to Wireloom-generated SVGs; label the user action between states.] Follow the
+[Wireloom agent authoring guide](https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md).
+
+**JWT output (if applicable)**: [Show a synthetic token marker and decoded claims in a `json`
+fence. Include issuer (`iss`), subject (`sub`), audience (`aud`), expiration (`exp`), and all
+behavior-driving claims where applicable. Never include a real token or secret.]
+
 ## Requirements *(mandatory)*
 
 <!--
