@@ -14,7 +14,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 `ARCHITECTURE.md` | Source of truth for system design
 `adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
-`.specify/memory/constitution.md` | Binding constitution — 13 principles governing all work
+`.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
 
 ### Section-Specific Agent Context
 
@@ -72,7 +72,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `migrations/` | PostgreSQL schema migrations
 `mocks/` | Standalone test services and OAuth2 clients
 
-## Constitution (Binding) — 13 Principles
+## Constitution (Binding) — 14 Principles
 
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
@@ -95,6 +95,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 11. **Design System Compliance** — Use Refined Trust Architecture and WCAG 2.1 AA. Use semantic tokens in `web/src/design-system/`.
 12. **DI via Builder** — Put all wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
+14. **Specification by Example** — In each spec, add concrete user journeys and link them to the Given/When/Then scenarios. Where applicable, show configuration, RFC-style HTTP exchanges, Wireloom wireframes, and decoded JWT claims.
 
 ## Monorepo Structure
 
