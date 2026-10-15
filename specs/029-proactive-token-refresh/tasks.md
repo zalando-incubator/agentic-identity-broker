@@ -199,7 +199,7 @@ description: "Task list for proactive token refresh"
 
 **Checkpoint**: The published API, ADR, docs, migrations, Helm chart, and all acceptance checks agree.
 
-**Sequential release contract**: This PR ships only migration 038 and prepared application code, with default/max target 38 and compatibility true. Fresh installs run direct UP-all; normal upgrades use the guarded wrapper. Before merging or deploying PR2, complete PR1 and drain every unprepared replica and in-flight operation. PR2 supplies only migration 039 with default/max 39 and compatibility true. Before merging or deploying PR3, upgrade the SPA and all external session-API consumers. PR3 supplies migration 040 with default/max 40 and compatibility false after schema dependencies end. Explicit false remains supported for modern consumers during preparation and activation.
+**Sequential release contract**: This activation PR adds only migration 039 to PR1's migration 038 and prepared application code. The default/max target is 39 and compatibility remains true. Fresh installs run direct UP-all through 39. Normal upgrades use the guarded wrapper. Before merging or deploying this activation PR, complete PR1 across every replica. Drain every unprepared replica and in-flight operation first. Migration 039 activates durable rejection on already-running PR1 brokers without restart. Before merging or deploying PR3, upgrade the SPA and all external session-API consumers. PR3 supplies migration 040 with default/max 40 and compatibility false after schema dependencies end. Migration 040 and its tests are not present in this release. Explicit false remains supported for modern consumers during preparation and activation.
 
 ## Dependencies & Execution Order
 

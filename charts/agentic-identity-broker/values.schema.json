@@ -497,9 +497,9 @@
         "targetVersion": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 38,
-          "default": 38,
-          "description": "Forward-only schema target, default and maximum 38 in this preparation release. Fresh installs run all available UP migrations. PostgreSQL upgrades refuse 0 and inspect version/dirty state before advancing to a positive target, never downgrading."
+          "maximum": 39,
+          "default": 39,
+          "description": "Forward-only schema target, default and maximum 39 in this activation release. Complete PR1 and drain unprepared work before deployment. Fresh installs run all available UP migrations. PostgreSQL upgrades refuse 0 and inspect version/dirty state before advancing to a positive target, never downgrading."
         },
         "image": {
           "type": "object",

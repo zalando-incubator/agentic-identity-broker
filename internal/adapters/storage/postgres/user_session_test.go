@@ -35,6 +35,21 @@ func setupUserSessionTestDB(t *testing.T) (*Adapter, func()) {
 	return setupMigratedAdapter(t)
 }
 
+func setupUserSessionTestDBAtVersion(t *testing.T, version int) (*Adapter, func()) {
+	t.Helper()
+	connString, cleanup := setupDatabaseFromTemplate(t, fmt.Sprintf("session_state_%d", version), func(t *testing.T, dbName string) {
+		applyMigrationsUpToDatabase(t, requireSharedTestContainer(t), dbName, version)
+	})
+	adapter, err := NewAdapter(testStorageConfig(connString))
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, adapter.Initialize(ctx))
+	return adapter, func() {
+		require.NoError(t, adapter.Close(ctx))
+		cleanup()
+	}
+}
+
 // insertTestService inserts a minimal thirdparty_oauth2_services row to satisfy the
 // user_sessions FK constraint without going through the full provider adapter.
 func insertTestService(t *testing.T, adapter *Adapter, serviceID id.ServiceID) {
@@ -172,12 +187,15 @@ func TestUserSessionRepository(t *testing.T) {
 			name                     string
 			expiry                   *time.Time
 			hasRefreshToken          bool
+			rejected                 bool
 			requiresReauthentication bool
 		}{
 			{name: "expired access with refresh", expiry: &past, hasRefreshToken: true},
+			{name: "rejected refresh with valid access", expiry: &future, hasRefreshToken: true, rejected: true, requiresReauthentication: true},
 			{name: "valid access only", expiry: &future},
 			{name: "expired access only", expiry: &past, requiresReauthentication: true},
 			{name: "unknown access expiry without refresh"},
+			{name: "rejected refresh without recorded access expiry", hasRefreshToken: true, rejected: true, requiresReauthentication: true},
 		}
 		expected := make(map[id.ServiceID]int, len(tests))
 		var expectedActiveIDs []id.ServiceID
@@ -187,8 +205,8 @@ func TestUserSessionRepository(t *testing.T) {
 			session := &storage.UserSession{
 				ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 				EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer",
-				AccessTokenExpiresAt: tc.expiry,
-				Scope:                []string{"repo", "email"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+				AccessTokenExpiresAt: tc.expiry, RefreshTokenRejected: tc.rejected,
+				Scope: []string{"repo", "email"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
 				InitiatedAt: time.Now().UTC(), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 			}
 			if tc.hasRefreshToken {
@@ -212,7 +230,7 @@ func TestUserSessionRepository(t *testing.T) {
 		assert.ElementsMatch(t, expectedActiveIDs, activeSessionIDs)
 		sessions, err := repo.ListByPrincipal(ctx, principal)
 		require.NoError(t, err)
-		assert.Len(t, sessions, len(tests), "exhausted sessions remain visible")
+		assert.Len(t, sessions, len(tests), "rejected and exhausted sessions remain visible")
 		summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
 		require.NoError(t, err)
 		require.Len(t, summaries, len(tests))
@@ -228,20 +246,12 @@ func TestUserSessionRepository(t *testing.T) {
 	})
 }
 
-func TestUserSessionRepository_HealthyOperationsAtPreparation(t *testing.T) {
-	for _, version := range []int{38} {
+func TestUserSessionRepository_HealthyOperationsAcrossOnlinePhases(t *testing.T) {
+	for _, version := range []int{38, 39} {
 		t.Run(fmt.Sprintf("migration %d", version), func(t *testing.T) {
-			connString, cleanup := setupDatabaseFromTemplate(t, fmt.Sprintf("session_state_%d", version), func(t *testing.T, dbName string) {
-				applyMigrationsUpToDatabase(t, requireSharedTestContainer(t), dbName, version)
-			})
-			adapter, err := NewAdapter(testStorageConfig(connString))
-			require.NoError(t, err)
+			adapter, cleanup := setupUserSessionTestDBAtVersion(t, version)
+			defer cleanup()
 			ctx := context.Background()
-			require.NoError(t, adapter.Initialize(ctx))
-			t.Cleanup(func() {
-				require.NoError(t, adapter.Close(ctx))
-				cleanup()
-			})
 			repo := NewUserSessionRepository(adapter)
 			principal := id.Principal("online-session@example.com")
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -486,80 +496,103 @@ func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {
 }
 
 func TestUserSessionRefreshDoesNotWaitForProviderConnectionInsideTransaction(t *testing.T) {
-	adapter, cleanup := setupUserSessionTestDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	provider := newTestEntity()
-	provider.ID = id.NewServiceID()
-	provider.Secret = model.NewAbsentSecret()
-	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
-	provider.ProtectedResources = nil
-	var rejectRefresh atomic.Bool
-	var providerCalls atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		providerCalls.Add(1)
-		if rejectRefresh.Load() {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(w, `{"error":"invalid_grant"}`)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
-	}))
-	defer upstream.Close()
-	provider.Endpoints.TokenEndpoint = upstream.URL
-	require.NoError(t, NewPostgresThirdpartyOAuth2ProviderRepository(adapter).Create(ctx, provider))
+	for _, version := range []int{38, 39} {
+		t.Run(fmt.Sprintf("migration %d", version), func(t *testing.T) {
+			adapter, cleanup := setupUserSessionTestDBAtVersion(t, version)
+			defer cleanup()
+			ctx := context.Background()
+			provider := newTestEntity()
+			provider.ID = id.NewServiceID()
+			provider.Secret = model.NewAbsentSecret()
+			provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+			provider.ProtectedResources = nil
+			var rejectRefresh atomic.Bool
+			var providerCalls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				providerCalls.Add(1)
+				if rejectRefresh.Load() {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprint(w, `{"error":"invalid_grant"}`)
+					return
+				}
+				_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
+			}))
+			defer upstream.Close()
+			provider.Endpoints.TokenEndpoint = upstream.URL
+			require.NoError(t, NewPostgresThirdpartyOAuth2ProviderRepository(adapter).Create(ctx, provider))
 
-	encryption := testutil.NewTestEncryptionAdapter(t)
-	encryptionContext := domainencryption.NewServiceBranchKeySubject(provider.ID).EncryptionContext()
-	access, err := encryption.Encrypt(ctx, []byte("expired-access"), encryptionContext)
-	require.NoError(t, err)
-	refresh, err := encryption.Encrypt(ctx, []byte("old-refresh"), encryptionContext)
-	require.NoError(t, err)
-	expired := time.Now().Add(-time.Hour)
-	now := time.Now().UTC()
-	sessions := NewUserSessionRepository(adapter)
-	principal := id.Principal("pool-refresh@example.com")
-	require.NoError(t, sessions.Create(ctx, &storage.UserSession{
-		ID: id.NewSessionID(), Principal: principal, ServiceID: provider.ID,
-		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
-		AccessTokenExpiresAt: &expired, Scope: []string{"repo"},
-		EncryptionContext: storage.EncryptionContext{ServiceID: provider.ID},
-		InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
-	}))
-	service := oauth2session.NewOAuth2SessionService(
-		thirdparty.NewThirdpartyOAuth2ProviderService(NewPostgresThirdpartyOAuth2ProviderRepository(adapter), encryption, &noop.BranchKeyManager{}, nil, false, slog.Default()),
-		sessions, sessions, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
-	)
-	adapter.db.SetMaxOpenConns(1)
-	refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	_, token, err := service.GetValidAccessToken(refreshCtx, principal, provider.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "new-access", token)
-	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, provider.ID)
-	require.NoError(t, err)
-	rotated, err := service.DecryptRefreshToken(ctx, persisted)
-	require.NoError(t, err)
-	assert.Equal(t, "new-refresh", rotated)
+			encryption := testutil.NewTestEncryptionAdapter(t)
+			encryptionContext := domainencryption.NewServiceBranchKeySubject(provider.ID).EncryptionContext()
+			access, err := encryption.Encrypt(ctx, []byte("expired-access"), encryptionContext)
+			require.NoError(t, err)
+			refresh, err := encryption.Encrypt(ctx, []byte("old-refresh"), encryptionContext)
+			require.NoError(t, err)
+			expired := time.Now().Add(-time.Hour)
+			now := time.Now().UTC()
+			sessions := NewUserSessionRepository(adapter)
+			principal := id.Principal("pool-refresh@example.com")
+			require.NoError(t, sessions.Create(ctx, &storage.UserSession{
+				ID: id.NewSessionID(), Principal: principal, ServiceID: provider.ID,
+				EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
+				AccessTokenExpiresAt: &expired, Scope: []string{"repo"},
+				EncryptionContext: storage.EncryptionContext{ServiceID: provider.ID},
+				InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+			}))
+			service := oauth2session.NewOAuth2SessionService(
+				thirdparty.NewThirdpartyOAuth2ProviderService(NewPostgresThirdpartyOAuth2ProviderRepository(adapter), encryption, &noop.BranchKeyManager{}, nil, false, slog.Default()),
+				sessions, sessions, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
+			)
+			adapter.db.SetMaxOpenConns(1)
+			refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			_, token, err := service.GetValidAccessToken(refreshCtx, principal, provider.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "new-access", token)
+			persisted, err := sessions.FindByPrincipalAndService(ctx, principal, provider.ID)
+			require.NoError(t, err)
+			rotated, err := service.DecryptRefreshToken(ctx, persisted)
+			require.NoError(t, err)
+			assert.Equal(t, "new-refresh", rotated)
 
-	rejectRefresh.Store(true)
-	summary, err := service.ForceRefreshSession(refreshCtx, principal, provider.ID)
-	require.Error(t, err)
-	assert.Nil(t, summary)
-	var operationError *oauth2session.OperationError
-	require.ErrorAs(t, err, &operationError)
-	assert.Equal(t, oauth2session.DetailPersistenceFailed, operationError.Metadata().Detail())
-	assert.Equal(t, oauth2session.DependencySessionRepository, operationError.Metadata().Dependency())
-	assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected, "preparation cannot claim the provider rejection was persisted")
-	assert.NotErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
-	unchanged, err := sessions.FindByPrincipalAndService(ctx, principal, provider.ID)
-	require.NoError(t, err)
-	assert.Equal(t, persisted, unchanged, "failed rejection writes preserve ciphertext, access expiry, and all row metadata")
-	_, token, err = service.GetValidAccessToken(refreshCtx, principal, provider.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "new-access", token, "the preparation row remains usable because rejection did not commit")
-	assert.Equal(t, int32(2), providerCalls.Load(), "normal acquisition must not retry the provider while the access token is valid")
+			rejectRefresh.Store(true)
+			summary, err := service.ForceRefreshSession(refreshCtx, principal, provider.ID)
+			require.Error(t, err)
+			assert.Nil(t, summary)
+			var operationError *oauth2session.OperationError
+			require.ErrorAs(t, err, &operationError)
+			if version == 38 {
+				assert.Equal(t, oauth2session.DetailPersistenceFailed, operationError.Metadata().Detail())
+				assert.Equal(t, oauth2session.DependencySessionRepository, operationError.Metadata().Dependency())
+				assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected, "preparation cannot claim the provider rejection was persisted")
+				assert.NotErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
+			} else {
+				assert.Equal(t, oauth2session.DetailRefreshRejected, operationError.Metadata().Detail())
+				assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+				assert.ErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
+			}
+			after, err := sessions.FindByPrincipalAndService(ctx, principal, provider.ID)
+			require.NoError(t, err)
+			if version == 38 {
+				assert.Equal(t, persisted, after, "failed rejection writes preserve ciphertext, access expiry, and all row metadata")
+			} else {
+				assert.True(t, after.RefreshTokenRejected)
+				expected := *persisted
+				expected.RefreshTokenRejected = true
+				expected.UpdatedAt = after.UpdatedAt
+				assert.Equal(t, &expected, after, "activation persists only observed rejection and its update timestamp")
+			}
+			_, token, err = service.GetValidAccessToken(refreshCtx, principal, provider.ID)
+			if version == 38 {
+				require.NoError(t, err)
+				assert.Equal(t, "new-access", token, "the preparation row remains usable because rejection did not commit")
+			} else {
+				require.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+				assert.Empty(t, token, "activation must stop issuance even though access has not expired")
+			}
+			assert.Equal(t, int32(2), providerCalls.Load(), "acquisition must not make another provider request in either phase")
+		})
+	}
 }
 
 func TestUserSessionRefreshAllowsUpstreamWorkLongerThanStorageWriteTimeout(t *testing.T) {
@@ -670,12 +703,18 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		early := due.Add(-time.Minute)
 		late := due.Add(time.Minute)
 		for _, item := range []struct {
-			id     int
-			expiry time.Time
+			id       int
+			expiry   time.Time
+			rejected bool
 		}{
-			{5, due}, {4, early}, {3, due}, {2, early}, {1, late},
+			{5, due, false}, {4, early, false}, {3, due, false}, {2, early, false}, {1, late, false},
+			{0, early, true}, {6, early, true}, {7, threshold, true},
 		} {
-			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(item.id), &item.expiry)
+			session := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(item.id), &item.expiry)
+			if item.rejected {
+				session.RefreshTokenRejected = true
+				require.NoError(t, repo.Create(ctx, session))
+			}
 		}
 		expected := []id.SessionID{expiryTestID(2), expiryTestID(4), expiryTestID(3), expiryTestID(5), expiryTestID(1)}
 		all, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1000)
@@ -850,6 +889,36 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		assert.Empty(t, last)
 	})
 
+	t.Run("E9 rejection between pages excludes the row without hiding missing refresh credentials", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		first := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
+		rejected := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &due)
+		last := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(3), &due)
+		last.EncryptedRefreshToken = nil
+		require.NoError(t, repo.Create(ctx, last))
+
+		page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
+		require.NoError(t, err)
+		require.Equal(t, []id.SessionID{first.ID}, expirySessionIDs(page))
+		cursor := expiryCursor(page[0])
+		_, err = repo.WithLockedSession(ctx, rejected.Principal, rejected.ServiceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+			session.RefreshTokenRejected = true
+			return true, nil
+		})
+		require.NoError(t, err)
+
+		page, err = repo.ListExpiringSessions(ctx, threshold, cursor, 2)
+		require.NoError(t, err)
+		require.Equal(t, []id.SessionID{last.ID}, expirySessionIDs(page))
+		assert.Empty(t, page[0].EncryptedRefreshToken)
+		page, err = repo.ListExpiringSessions(ctx, threshold, expiryCursor(page[0]), 2)
+		require.NoError(t, err)
+		assert.Empty(t, page)
+	})
 }
 
 type expiryExplainPlan struct {
@@ -918,23 +987,32 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 	// One sparse due range with distinct expiry tiers among 5000 sessions.
 	_, err := adapter.db.ExecContext(ctx, `
 		INSERT INTO user_sessions
-			(principal, service_id, encrypted_access_token, encrypted_refresh_token, access_token_expires_at)
+			(principal, service_id, encrypted_access_token, encrypted_refresh_token, access_token_expires_at, refresh_token_rejected)
 		SELECT 'planner-' || n || '@example.com', $1, $3::bytea, $4::bytea,
 			CASE WHEN n <= 60 THEN $2::timestamptz - interval '1 day' + n * interval '1 minute'
 			     WHEN n <= 110 THEN NULL
-			     ELSE $2::timestamptz + interval '1 day' END
+			     ELSE $2::timestamptz + interval '1 day' END,
+			n <= 60 AND n % 10 = 0
 		FROM generate_series(1, 5000) AS n
 	`, serviceID, threshold, []byte{0, 255, 17}, []byte{128, 1, 0})
 	require.NoError(t, err)
-	var total, dueCount, nullCount int
+	var total, dueCount, nullCount, rejectedCount int
 	require.NoError(t, adapter.db.QueryRowxContext(ctx, `
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE access_token_expires_at <= $1),
-			COUNT(*) FILTER (WHERE access_token_expires_at IS NULL)
+			COUNT(*) FILTER (WHERE access_token_expires_at IS NULL),
+			COUNT(*) FILTER (WHERE refresh_token_rejected)
 		FROM user_sessions
-	`, threshold).Scan(&total, &dueCount, &nullCount))
+	`, threshold).Scan(&total, &dueCount, &nullCount, &rejectedCount))
 	require.Equal(t, 5000, total)
 	require.Equal(t, 60, dueCount)
 	require.Equal(t, 50, nullCount)
+	require.Equal(t, 6, rejectedCount)
+	candidates, err := NewUserSessionRepository(adapter).ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1000)
+	require.NoError(t, err)
+	require.Len(t, candidates, dueCount-rejectedCount)
+	for _, session := range candidates {
+		require.False(t, session.RefreshTokenRejected, "the indexed view query must exclude recorded rejection")
+	}
 	_, err = adapter.db.ExecContext(ctx, `ANALYZE user_sessions`)
 	require.NoError(t, err)
 
@@ -945,7 +1023,8 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 		cursor *storage.SessionExpiryCursor
 	}{{24, &middleCursor}, {49, &lateCursor}} {
 		require.NoError(t, adapter.db.QueryRowxContext(ctx, `
-			SELECT access_token_expires_at, id FROM user_sessions WHERE access_token_expires_at <= $1
+			SELECT access_token_expires_at, id FROM user_sessions
+			WHERE access_token_expires_at <= $1 AND NOT refresh_token_rejected
 			ORDER BY access_token_expires_at, id OFFSET $2 LIMIT 1
 		`, threshold, page.offset).Scan(&page.cursor.AccessTokenExpiresAt, &page.cursor.ID))
 	}
@@ -983,7 +1062,7 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 	}
 }
 
-func TestUserSessionRepository_PreparationRefusesRejectionWithoutPartialWrites(t *testing.T) {
+func TestUserSessionRepository_RejectionPersistenceAndReauthorization(t *testing.T) {
 	adapter, cleanup := setupUserSessionTestDB(t)
 	defer cleanup()
 	repo := NewUserSessionRepository(adapter)
@@ -1033,20 +1112,92 @@ func TestUserSessionRepository_PreparationRefusesRejectionWithoutPartialWrites(t
 		})
 	}
 
+	returned, err := repo.WithLockedSession(ctx, session.Principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		assert.False(t, current.RefreshTokenRejected)
+		current.RefreshTokenRejected = true
+		current.UpdatedAt = expected.UpdatedAt
+		return true, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &expected, returned)
+	stored, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	assert.True(t, stored.UpdatedAt.After(initial.UpdatedAt), "database trigger records the persisted state change")
+	expected.UpdatedAt = stored.UpdatedAt
+	assert.Equal(t, &expected, stored, "rejection retains ciphertext and real token metadata")
+	found, err := repo.FindByPrincipalAndService(ctx, session.Principal, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, &expected, found)
+	listed, err := repo.ListByPrincipal(ctx, session.Principal)
+	require.NoError(t, err)
+	assert.Equal(t, []*storage.UserSession{&expected}, listed)
+	_, err = repo.WithLockedSession(ctx, session.Principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		assert.True(t, current.RefreshTokenRejected, "subsequent locked reads observe rejection")
+		return false, nil
+	})
+	require.NoError(t, err)
+
+	recovered := *initial
+	recovered.ID = id.NewSessionID()
+	recovered.EncryptedAccessToken = []byte("reauthorized-access")
+	recovered.EncryptedRefreshToken = []byte("reauthorized-refresh")
+	recovered.InitiatedAt = now.Add(time.Minute)
+	recovered.CreatedAt = recovered.InitiatedAt
+	recovered.UpdatedAt = recovered.InitiatedAt
+	require.NoError(t, repo.Create(ctx, &recovered))
+	stored, err = repo.FindByPrincipalAndService(ctx, session.Principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, initial.ID, stored.ID)
+	assert.True(t, initial.InitiatedAt.Equal(stored.InitiatedAt), "upsert preserves the existing initiation time")
+	assert.True(t, initial.CreatedAt.Equal(stored.CreatedAt), "upsert preserves the existing creation time")
+	assert.False(t, stored.RefreshTokenRejected)
+	assert.True(t, stored.CanRefresh())
+	assert.False(t, stored.RequiresReauthentication())
+	assert.Equal(t, recovered.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, recovered.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+	listed, err = repo.ListByPrincipal(ctx, session.Principal)
+	require.NoError(t, err)
+	assert.Len(t, listed, 1)
+	activeIDs, err := repo.ListActiveServiceIDsByPrincipal(ctx, session.Principal)
+	require.NoError(t, err)
+	assert.Equal(t, []id.ServiceID{serviceID}, activeIDs)
+}
+
+func TestUserSessionRepository_PreparationRefusesRejectionWithoutPartialWrites(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDBAtVersion(t, 38)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	insertTestService(t, adapter, serviceID)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expiry := now.Add(time.Hour)
+	session := &storage.UserSession{
+		ID: id.NewSessionID(), Principal: id.Principal("rejected@example.com"), ServiceID: serviceID,
+		EncryptedAccessToken: []byte("old-access"), EncryptedRefreshToken: []byte("old-refresh"),
+		TokenType: "Bearer", AccessTokenExpiresAt: &expiry, Scope: []string{"repo", "email"},
+		EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, repo.Create(ctx, session))
+	initial, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
 	_, err = repo.WithLockedSession(ctx, session.Principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
 		current.EncryptedAccessToken = []byte("discarded-access")
 		current.EncryptedRefreshToken = []byte("discarded-refresh")
 		current.AccessTokenExpiresAt = nil
 		current.RefreshTokenRejected = true
-		current.UpdatedAt = expected.UpdatedAt
+		current.UpdatedAt = now.Add(time.Minute)
 		return true, nil
 	})
 	require.ErrorContains(t, err, "session rejection persistence requires migration 039")
 	stored, err := repo.Get(ctx, session.ID)
 	require.NoError(t, err)
 	assert.Equal(t, initial, stored, "refused locked write must not persist any session changes")
-	replacement := expected
+	replacement := *initial
 	replacement.ID = id.NewSessionID()
+	replacement.RefreshTokenRejected = true
 	replacement.EncryptedAccessToken = []byte("discarded-upsert")
 	replacement.Scope = []string{"discarded"}
 	require.ErrorContains(t, repo.Create(ctx, &replacement), "session rejection persistence requires migration 039")

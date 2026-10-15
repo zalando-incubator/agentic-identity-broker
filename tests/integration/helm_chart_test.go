@@ -75,12 +75,15 @@ func TestHelmTemplate_StagedSessionMigrations(t *testing.T) {
 		name    string
 		args    []string
 		upgrade bool
+		target  string
 	}{
 		{name: "install_default"},
 		{name: "install_zero", args: []string{"--set", "migration.targetVersion=0"}},
 		{name: "install_38", args: []string{"--set", "migration.targetVersion=38"}},
-		{name: "upgrade_default", upgrade: true},
-		{name: "upgrade_38", args: []string{"--set", "migration.targetVersion=38"}, upgrade: true},
+		{name: "install_39", args: []string{"--set", "migration.targetVersion=39"}},
+		{name: "upgrade_default", upgrade: true, target: "39"},
+		{name: "upgrade_38", args: []string{"--set", "migration.targetVersion=38"}, upgrade: true, target: "38"},
+		{name: "upgrade_39", args: []string{"--set", "migration.targetVersion=39"}, upgrade: true, target: "39"},
 	}
 	for _, testCase := range cases {
 		for _, grants := range []string{"true", "false"} {
@@ -107,7 +110,7 @@ func TestHelmTemplate_StagedSessionMigrations(t *testing.T) {
 				require.Contains(t, output, "- name: migrate")
 				if testCase.upgrade {
 					require.Contains(t, output, "command: [\"/bin/sh\", \"-ec\"]")
-					require.Contains(t, output, "target=38")
+					require.Contains(t, output, "target="+testCase.target)
 					require.Contains(t, output, `current="$(/usr/local/bin/migrate "$@" version 2>&1)"`)
 					require.Contains(t, output, "Dirty migration metadata: inspect schema before manual repair")
 					require.Contains(t, output, `if [ "$current" -ge "$target" ]; then`)
@@ -194,9 +197,11 @@ func TestHelmTemplate_StagedMigrationUpgradeGuards(t *testing.T) {
 		{name: "zero target refused", args: []string{"--set", "migration.targetVersion=0"}, errorText: "positive migration.targetVersion"},
 		{name: "negative target rejected", args: []string{"--set", "migration.targetVersion=-1"}, errorText: "targetVersion"},
 		{name: "fractional target rejected", args: []string{"--set", "migration.targetVersion=1.5"}, errorText: "targetVersion"},
-		{name: "string target rejected", args: []string{"--set-string", "migration.targetVersion=38"}, errorText: "targetVersion"},
-		{name: "default preparation target permitted"},
-		{name: "positive target permitted", args: []string{"--set", "migration.targetVersion=38"}},
+		{name: "string target rejected", args: []string{"--set-string", "migration.targetVersion=39"}, errorText: "targetVersion"},
+		{name: "cleanup target unavailable", args: []string{"--set", "migration.targetVersion=40"}, errorText: "targetVersion"},
+		{name: "default activation target permitted"},
+		{name: "preparation target permitted", args: []string{"--set", "migration.targetVersion=38"}},
+		{name: "activation target permitted", args: []string{"--set", "migration.targetVersion=39"}},
 		{name: "disabled migration permits zero", args: []string{"--set", "migration.enabled=false", "--set", "migration.targetVersion=0"}},
 	}
 	for _, testCase := range cases {

@@ -643,17 +643,17 @@ Login uses the real authorization and callback flow. Termination remains optiona
 
 Keep original migration 004 and migration 037 unchanged. Each validity phase preserves rows and real token metadata without interpreting historical refresh dates:
 
-This PR ships only migration 038 and prepared broker/API/UI code. Migrations 039 and 040 belong to following PRs and are not present. PostgreSQL at 38 supports ordinary traffic but refuses true rejection writes as `persistence_failed`. The memory adapter supports the complete rejection lifecycle.
+This PR2 activation release includes migration 038 and adds migration 039 to the prepared broker/API/UI code. Migration 040 belongs to the following cleanup PR and is not present. At 39, already-running PR1 brokers persist rejection through the stable SQL boundary. PostgreSQL at 38 still supports ordinary traffic but refuses true rejection writes as `persistence_failed`. The memory adapter supports the complete rejection lifecycle.
 
 | Phase | Contract |
 |---|---|
-| PR1: 038 prepare (this release) | Keep the legacy table shape unchanged. Add the explicit `user_session_state` view and stable invoker write functions. The view reports rejection=false. True rejection writes fail clearly. |
-| PR2: 039 activate (following PR) | After the PR1 rollout and all unprepared work drain, atomically add the false-default rejection flag and replace the view/functions. Keep the legacy column. Prepared brokers activate durable rejection without restart. |
+| PR1: 038 prepare (preceding PR) | Keep the legacy table shape unchanged. Add the explicit `user_session_state` view and stable invoker write functions. The view reports rejection=false. True rejection writes fail clearly. |
+| PR2: 039 activate (this release) | After the PR1 rollout and all unprepared work drain, atomically add the false-default rejection flag and replace the view/functions. Keep the legacy column. Already-running PR1 brokers activate durable rejection without restart. |
 | PR3: 040 cleanup (following PR) | After schema dependencies and API consumer gates pass, remove only the unused legacy column. The table sample that follows describes this future phase. |
 
 Preparation/new brokers use the same SQL boundary at every phase. Locked view reads lock the underlying row. The legacy column serves storage compatibility only, never provider evidence. Existing unprepared binaries can coexist before 39 but do not enforce the new rejection policy.
 
-PR1 defaults and limits Helm targets to 38. Fresh installs run direct UP-all through 38. Normal upgrades use the guarded forward wrapper. Before merging or deploying PR2, complete PR1 and drain every old replica and in-flight operation. Before merging or deploying PR3, upgrade the embedded SPA and all external session-API consumers. Compatibility defaults true in preparation and activation. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. The temporary alias is only `is_expired=requires_reauthentication`, without refresh dates.
+This release defaults and limits Helm targets to 39. Fresh installs run direct UP-all through 39. Normal upgrades use the guarded forward wrapper. Before merging or deploying this activation PR, complete PR1 across every replica. Drain every unprepared replica and in-flight operation first. Before merging or deploying PR3, upgrade the embedded SPA and all external session-API consumers. Compatibility defaults true in preparation and activation. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. The temporary alias is only `is_expired=requires_reauthentication`, without refresh dates.
 
 Online rollout requires at least two healthy replicas, no unavailable pods, ready surge capacity, a disruption budget, and sufficient traffic-drain time. Enable temporary session API compatibility until the SPA and external consumers support API v2. Fail-fast locks preserve the schema on contention while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee.
 

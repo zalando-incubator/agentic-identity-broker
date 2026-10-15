@@ -287,9 +287,10 @@ postgresql:
 migration:
   # -- Run database migrations (automatically enabled when storage.type=postgres)
   enabled: true
-  # -- Forward-only schema target (maximum 38 in this release). Fresh installs run all available UP migrations.
-  # Upgrades use the guarded target 38. Explicit 0 is refused on PostgreSQL upgrades.
-  targetVersion: 38
+  # -- Forward-only schema target (maximum 39 in this release). Fresh installs run all available UP migrations.
+  # Upgrades use the guarded target 39 after the PR1 rollout and all unprepared work drain.
+  # Explicit 0 is refused on PostgreSQL upgrades.
+  targetVersion: 39
 
   # Migration image configuration (separate from broker image for security)
   image:

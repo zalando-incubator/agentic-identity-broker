@@ -138,7 +138,7 @@ The sweep response contains counts, not the identities of affected users. Use yo
 
 The stakeholder approved staged compatibility on 2026-10-14. This procedure replaces the earlier offline cutover in unmerged ADR 040. Keep the existing separate migration runner. Do not run deployment operations from an implementation or test session.
 
-This PR ships migration 038 and the prepared broker, API, and SPA only. Migrations 039 and 040 are not present. This release defaults to target 38, with maximum 38. A normal Helm upgrade prepares the schema before rolling prepared brokers. Fresh installs run direct UP-all through 38. At 38, ordinary acquisition, refresh, and authorization work normally. True rejection writes fail as `persistence_failed`, not durable rejection. The memory adapter already supports the complete rejection lifecycle.
+This PR2 activation release includes migrations 038 and 039 and the prepared broker, API, and SPA from PR1. Migration 040 belongs to the following cleanup PR and is not present. This release defaults to target 39, with maximum 39. A normal Helm upgrade applies 039 before the application update. Already-running PR1 brokers enforce durable rejection as soon as 039 commits. Fresh installs run direct UP-all through 39. Before merging or deploying this activation PR, complete the PR1 rollout across every replica. Drain every unprepared replica and in-flight operation first.
 
 ### Availability prerequisites
 
@@ -156,7 +156,7 @@ The chart defaults to safe rolling limits but keeps operator strategy overrides.
 
 The existing asset-hosting arrangement must provide continuity through a shared origin, retained bundles, or verified routing. SQL migration proof and `maxUnavailable=0` alone do not prove browser continuity. If assets cannot remain available, do not begin the rollout. Keep the existing release serving. No new deployment stack is required.
 
-Use these chart values for preparation, alongside the deployment's existing credentials, images, ingress, and resource configuration:
+Use these chart values for activation, alongside the deployment's existing credentials, images, ingress, and resource configuration:
 
 ```yaml
 replicaCount: 2
@@ -172,7 +172,7 @@ podDisruptionBudget:
   minAvailable: 2
 terminationGracePeriodSeconds: 60
 migration:
-  targetVersion: 38
+  targetVersion: 39
   backoffLimit: 0
 broker:
   thirdPartyOauth2:
@@ -180,6 +180,8 @@ broker:
 ```
 
 The 60-second example assumes the default 30-second broker shutdown and sufficient remaining time for traffic draining. Increase it for longer shutdown or drain intervals. Keep only one disruption-budget policy: `minAvailable` or `maxUnavailable`.
+
+The target and compatibility values repeat this release's defaults. Normal activation requires no manual stage selector.
 
 ### Prepare, activate, and contract
 
@@ -193,13 +195,13 @@ The 60-second example assumes the default 30-second broker shutdown and sufficie
 
 | Release and target | Effect |
 |---|---|
-| PR1, 38 prepare (this release) | Preserve the original table shape for strict legacy `SELECT *` and old writes. Add the explicit `user_session_state` view and stable write functions. The view reports rejection=false. True rejection writes fail clearly rather than claiming persistence. |
-| PR2, 39 activate (following PR) | Add the false-default rejection flag and replace the view/functions atomically. Keep the legacy column. Prepared replicas activate durable rejection without restart. Unprepared binaries must not coexist. |
+| PR1, 38 prepare (preceding PR) | Preserve the original table shape for strict legacy `SELECT *` and old writes. Add the explicit `user_session_state` view and stable write functions. The view reports rejection=false. True rejection writes fail clearly rather than claiming persistence. |
+| PR2, 39 activate (this release) | Add the false-default rejection flag and replace the view/functions atomically. Keep the legacy column. Already-running PR1 replicas activate durable rejection without restart. Unprepared binaries must not coexist. |
 | PR3, 40 cleanup (following PR) | Remove only the unused legacy column. Prepared and newer replicas keep the same SQL boundary. Default API compatibility becomes false after its consumer gate. |
 
-Do not select targets 39 or 40 with this release. Existing unprepared binaries do not enforce recorded rejection. Schema 38 prepares PostgreSQL but does not activate durable rejection. The temporary legacy column supplies storage compatibility only. Historical dates never indicate provider validity or rejection. All phases preserve rows, ciphertext, real access expiry, and other token metadata. Migration 037 and its access-expiry index remain unchanged.
+Do not select target 40 with this release. Existing unprepared binaries do not enforce recorded rejection. Schema 38 prepares PostgreSQL but does not activate durable rejection. Ordinary acquisition, refresh, and authorization work at 38, but true writes fail as `persistence_failed`. Schema 39 activates rejection through the same SQL boundary. The retained legacy expiry column supplies storage compatibility only. Historical dates never indicate provider validity or rejection. All phases preserve rows, ciphertext, real access expiry, and other token metadata. Migration 037 and its access-expiry index remain unchanged.
 
-Helm `migration.targetVersion` accepts integers from 0 through 38 in this release. The default is 38. Fresh installations use direct `up` for all available migrations, including with the default target. PostgreSQL upgrades with migrations enabled refuse explicit target 0 during rendering. Positive upgrade targets inspect version and dirty state in both grants modes. Dirty, unreadable, or unexpected metadata aborts without `Force`. An equal/newer clean schema is a non-destructive no-op. Only a lower clean version runs `goto`. The wrapper requires an initialized schema and the existing image's `/bin/sh` and `/usr/local/bin/migrate` paths. Keep version-matched images, grants ordering, separate credentials, and serialized runners. Forward Helm stage controls never request DOWN. Use the separate runner's explicit rollback operation instead.
+Helm `migration.targetVersion` accepts integers from 0 through 39 in this release. The default is 39. Fresh installations use direct `up` for all available migrations through 39, including with the default target. PostgreSQL upgrades with migrations enabled refuse explicit target 0 during rendering. Positive upgrade targets inspect version and dirty state in both grants modes. Dirty, unreadable, or unexpected metadata aborts without `Force`. An equal/newer clean schema is a non-destructive no-op. Only a lower clean version runs `goto`. The wrapper requires an initialized schema and the existing image's `/bin/sh` and `/usr/local/bin/migrate` paths. Keep version-matched images, grants ordering, separate credentials, and serialized runners. Forward Helm stage controls never request DOWN. Use the separate runner's explicit rollback operation instead.
 
 API `2.0.0` requires `requires_reauthentication` and removes refresh-expiry dates. Preparation and activation default compatibility to true. Compatibility adds only `is_expired`, equal to the new boolean. Modern consumers can explicitly set compatibility false. Cleanup defaults it to false after its consumer gate passes. Compatibility fabricates no refresh dates and does not change the rejection policy.
 
@@ -217,9 +219,9 @@ Never automate `Force` or infer the actual phase from the dirty version alone. `
 
 ### Roll back by compatible phase
 
-This release supplies DOWN 038 only. The 039 and 040 rollback steps apply after their following PRs ship.
+This release supplies DOWN 038 and guarded DOWN 039. DOWN 040 applies only after the following cleanup PR ships.
 
-1. If schema 40 must return to 39, apply DOWN 040 with preparation or newer replicas still serving.
+1. After PR3 ships, apply DOWN 040 from schema 40 to 39 with preparation or newer replicas still serving.
 2. Before DOWN 039, resolve every rejected row through successful reauthentication or explicit user termination.
 3. Apply DOWN 039 to schema 38 while preparation replicas continue to serve.
 4. If an older broker is required, roll it across every replica only after schema 38 is established.

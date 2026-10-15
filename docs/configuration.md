@@ -713,11 +713,12 @@ When enabled, list, detail, and manual-refresh success responses include depreca
 Both booleans describe the same reauthentication requirement. The broker does not restore refresh-expiry dates or predict opaque-token lifetimes.
 Modern consumers can explicitly set this value to `false`. The cleanup release defaults it to false after the consumer gate passes.
 
-This PR ships migration 038 and the prepared broker only. Helm defaults to target 38 and rejects targets greater than 38.
-Fresh installs run direct UP-all through 38. A normal upgrade uses the guarded forward wrapper before rolling prepared brokers.
-Migration 039 belongs to the following activation PR. Do not merge or deploy it until every old replica and in-flight operation drains.
+This activation release includes migrations 038 and 039. Helm defaults to target 39 and rejects targets greater than 39.
+Fresh installs run direct UP-all through 39. A normal upgrade activates rejection through the guarded wrapper before the application update.
+Before merging or deploying this PR, complete the PR1 rollout across every replica. Drain every unprepared replica and in-flight operation first.
 Migration 040 belongs to the cleanup PR. Upgrade the embedded SPA and all external consumers before merging or deploying cleanup.
-Prepared replicas observe persisted rejection once activation commits. At 38, true rejection writes report persistence failure; ordinary traffic remains supported.
+Already-running PR1 replicas enforce durable rejection when migration 039 commits. The retained legacy expiry column never supplies provider-validity evidence.
+At 38, true rejection writes report persistence failure. Ordinary traffic remains supported.
 The Helm controls are `migration.targetVersion` and `broker.thirdPartyOauth2.sessionAPICompatibility`.
 See the [online rollout procedure](operations/session-sweep.md) for ordering, capacity requirements, and fail-fast lock handling.
 

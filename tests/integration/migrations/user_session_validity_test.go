@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigration038UserSessionRefreshTokenValidity(t *testing.T) {
+func TestMigration039UserSessionRefreshTokenValidity(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 	require.NoError(t, f.Up(t, 37))
@@ -36,26 +36,58 @@ func TestMigration038UserSessionRefreshTokenValidity(t *testing.T) {
 	require.JSONEq(t, before, sessionValiditySnapshot(t, f, ""))
 	defaults, err := f.QuerySQL(t, `SELECT bool_and(NOT refresh_token_rejected) FROM user_session_state`)
 	require.NoError(t, err)
-	require.Equal(t, "true", defaults, "past, future, and NULL legacy expiry must not imply provider rejection")
+	require.Equal(t, "true", defaults)
 	require.ErrorContains(t, f.ExecuteSQL(t, `SELECT update_user_session_state(
 		'38000000-0000-0000-0000-000000000002', '\x01', '\x02', NULL, TRUE, NOW())`),
 		"session rejection persistence requires migration 039")
 	require.JSONEq(t, before, sessionValiditySnapshot(t, f, ""), "preparation must not pretend rejection was persisted")
 
+	require.NoError(t, f.Up(t, 39))
+	requireSessionValidityPhase(t, f, 39)
+	require.JSONEq(t, before, sessionValiditySnapshot(t, f, " - 'refresh_token_rejected'"))
+	defaults, err = f.QuerySQL(t, `SELECT bool_and(NOT refresh_token_rejected) FROM user_sessions`)
+	require.NoError(t, err)
+	require.Equal(t, "true", defaults, "past, future, and NULL legacy expiry must not imply provider rejection")
+	require.Error(t, f.ExecuteSQL(t, `UPDATE user_sessions SET refresh_token_rejected = NULL WHERE principal = 'validity-4@example.com'`))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO user_sessions (id, principal, service_id, encrypted_access_token)
+		VALUES ('38000000-0000-0000-0000-000000000005', 'default-validity@example.com',
+			'38000000-0000-0000-0000-000000000001', '\x03');
+	`))
+	insertDefault, err := f.QuerySQL(t, `SELECT refresh_token_rejected FROM user_sessions WHERE principal = 'default-validity@example.com'`)
+	require.NoError(t, err)
+	require.Equal(t, "false", insertDefault)
+	require.NoError(t, f.ExecuteSQL(t, `DELETE FROM user_sessions WHERE principal = 'default-validity@example.com'`))
+	require.NoError(t, f.ExecuteSQL(t, `UPDATE user_sessions SET refresh_token_rejected = TRUE WHERE principal = 'validity-2@example.com'`))
+	beforeRefusal := sessionValiditySnapshot(t, f, "")
+	err = f.Down(t, 38)
+	require.ErrorContains(t, err, "cannot roll back session validity while rejected sessions remain")
+	requireSessionValidityPhase(t, f, 39)
+	require.JSONEq(t, beforeRefusal, sessionValiditySnapshot(t, f, ""))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(38), version)
+	require.True(t, dirty)
+	// Actual schema and rejection were inspected before metadata-only repair.
+	require.NoError(t, f.Force(t, 39))
+	require.NoError(t, f.ExecuteSQL(t, `DELETE FROM user_sessions WHERE principal = 'validity-2@example.com'`))
+	retained := sessionValiditySnapshot(t, f, " - 'refresh_token_rejected'")
+	require.NoError(t, f.Down(t, 38))
+	requireSessionValidityPhase(t, f, 38)
+	require.JSONEq(t, retained, sessionValiditySnapshot(t, f, ""))
 	require.NoError(t, f.Down(t, 37))
 	removed, err := f.QuerySQL(t, `SELECT to_regclass('public.user_session_state') IS NULL
 		AND to_regprocedure('public.update_user_session_state(uuid,bytea,bytea,timestamptz,boolean,timestamptz)') IS NULL
 		AND to_regprocedure('public.upsert_user_session_state(uuid,text,uuid,bytea,bytea,text,timestamptz,boolean,text[],jsonb,timestamptz,timestamptz,timestamptz)') IS NULL`)
 	require.NoError(t, err)
 	require.Equal(t, "true", removed)
-	require.JSONEq(t, before, sessionValiditySnapshot(t, f, ""), "rollback must preserve every row and its original legacy dates")
-	requireSessionExpiryIndex(t, f, true)
-	require.NoError(t, f.Up(t, 38))
-	requireSessionValidityPhase(t, f, 38)
-	require.JSONEq(t, before, sessionValiditySnapshot(t, f, ""), "reapplication must preserve all token and lifecycle metadata")
-	version, dirty, err := f.Version(t)
+	require.JSONEq(t, retained, sessionValiditySnapshot(t, f, ""))
+	require.NoError(t, f.Up(t, 39))
+	requireSessionValidityPhase(t, f, 39)
+	require.JSONEq(t, retained, sessionValiditySnapshot(t, f, " - 'refresh_token_rejected'"), "reapplication must preserve legacy dates and all retained session metadata")
+	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(38), version)
+	require.Equal(t, uint(39), version)
 	require.False(t, dirty)
 }
 
@@ -70,7 +102,7 @@ func requireSessionValidityPhase(t *testing.T, f *MigrationTestFramework, phase 
 	t.Helper()
 	legacy, err := f.ColumnExists(t, "user_sessions", "refresh_token_expires_at")
 	require.NoError(t, err)
-	require.Equal(t, phase < 40, legacy)
+	require.True(t, legacy, "activation and its rollback must retain the legacy column unchanged")
 	rejected, err := f.ColumnExists(t, "user_sessions", "refresh_token_rejected")
 	require.NoError(t, err)
 	require.Equal(t, phase >= 39, rejected)

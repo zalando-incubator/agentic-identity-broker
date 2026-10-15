@@ -46,12 +46,13 @@ Before implementing, ensure you have:
 ## Phase 1: Database Migration
 
 Migration 004 is immutable history. Do not change its file to match the current model.
-This PR ships migration 038 and the prepared broker only. Migrations 039 and 040 belong to following activation and cleanup PRs.
-Contributor model samples use access expiry and observed refresh rejection only. PostgreSQL at 38 exposes false through the stable view and rejects true writes.
+This activation release includes migrations 038 and 039. Migration 040 belongs to the following cleanup PR and is not present.
+Contributor model samples use access expiry and observed refresh rejection only. At 39, already-running PR1 brokers persist rejection through the stable boundary.
+PostgreSQL at 38 exposes false through the stable view and rejects true writes.
 
 ### Step 1.1: Planned Final Schema Reference (PR3, After Migration 040)
 
-**Historical migration**: `migrations/004_create_user_sessions.up.sql` remains unchanged. This sample describes the planned final table, not this release's phase-38 table.
+**Historical migration**: `migrations/004_create_user_sessions.up.sql` remains unchanged. This sample describes the planned final table, not this release's phase-39 table with its retained legacy column.
 
 ```sql
 -- Current schema reference, not a replacement for migration 004.
@@ -115,18 +116,18 @@ Migration 038 preserves the original table shape for legacy strict readers and w
 
 1. With existing replicas serving, deploy PR1 through a normal Helm upgrade at its default target 38.
 2. Complete the prepared broker and embedded SPA rollout across every replica.
-3. Before merging or deploying PR2, verify that every unprepared replica and in-flight operation drained.
-4. Deploy PR2 at its default target 39 to activate durable rejection without restart.
+3. Before merging or deploying this activation PR, verify that PR1 completed and all unprepared replicas and in-flight operations drained.
+4. Deploy PR2 normally at its default target 39 to activate durable rejection on already-running PR1 brokers.
 5. Before merging or deploying PR3, upgrade the SPA and every external session-API consumer.
 6. After legacy schema dependencies end, deploy PR3 at target 40 and compatibility false.
 
-This release defaults and limits `migration.targetVersion` to 38. Fresh installs run direct UP-all through 38. Normal upgrades use the guarded forward wrapper. Explicit target 0 remains refused on PostgreSQL upgrades. Compatibility defaults true in preparation and activation, adding only `is_expired=requires_reauthentication` without refresh dates. Modern consumers can explicitly set false. Cleanup defaults false after its consumer gate passes.
+This release defaults and limits `migration.targetVersion` to 39. Fresh installs run direct UP-all through 39. Normal upgrades use the guarded forward wrapper. Explicit target 0 remains refused on PostgreSQL upgrades. Compatibility defaults true in preparation and activation, adding only `is_expired=requires_reauthentication` without refresh dates. Modern consumers can explicitly set false. Cleanup defaults false after its consumer gate passes.
 
 Unprepared binaries do not enforce the new rejection policy and cannot coexist at 39 or 40. The temporary legacy column serves storage compatibility only, never provider-validity evidence. Historical dates never imply rejection. All phases preserve rows, ciphertext, access expiry, and other token metadata. Preserve migration 037 and original migration history.
 
 Online rollout requires at least two healthy replicas, `maxUnavailable=0`, ready surge capacity, a disruption budget, and sufficient traffic-drain and termination time. Fail-fast locks abort schema changes on contention while compatible replicas continue to serve. There is no absolute latency guarantee.
 
-DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Successful reauthentication or explicit termination must resolve those rows. Drain preparation/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before deliberate repair. Never automate `Force`, clear rejection, or delete rows automatically. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for phase compatibility and preparation values.
+This release supplies DOWN 038 and guarded DOWN 039. The following cleanup PR supplies DOWN 040, which restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Successful reauthentication or explicit termination must resolve those rows. Drain preparation/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before deliberate repair. Never automate `Force`, clear rejection, or delete rows automatically. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for phase compatibility and activation values.
 
 ### Step 1.3: Test Migration
 

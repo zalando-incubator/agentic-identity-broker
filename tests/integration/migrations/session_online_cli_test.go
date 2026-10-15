@@ -50,9 +50,10 @@ func newOnlineMigrationCLI(t *testing.T, f *MigrationTestFramework) *onlineMigra
 	require.NotEmpty(t, runtime, "the real migration CLI proof requires the same container runtime as disposable PostgreSQL")
 	cli := &onlineMigrationCLI{
 		runtime: runtime, image: onlineMigrationImage(t, runtime, root),
-		containerID: postgres.ContainerID(), commands: make(map[uint]onlineMigrationCommand, 1),
+		containerID: postgres.ContainerID(), commands: make(map[uint]onlineMigrationCommand, 2),
 	}
 	cli.commands[38] = renderedOnlineMigrationCommand(t, root, f.dbName, 38, false)
+	cli.commands[39] = renderedOnlineMigrationCommand(t, root, f.dbName, 39, false)
 	return cli
 }
 

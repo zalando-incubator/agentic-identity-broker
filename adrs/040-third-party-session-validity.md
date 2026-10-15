@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Confirmation**: The stakeholder approved the complete validity plan with “Plan approved.” On 2026-10-14, the stakeholder selected “Allow staged compatibility” in this conversation. This revision of the unmerged ADR replaces only its deployment and compatibility restrictions. API v2, immediate refusal after committed rejection, and the security policy remain approved.
-**Release sequence**: This unmerged revision separates deployment into preparation, activation, and cleanup PRs. PR1 ships only migration 038 and prepared application code. PR2 supplies migration 039. PR3 supplies migration 040. Neither later migration is present in PR1.
+**Release sequence**: Deployment uses preparation, activation, and cleanup PRs. PR1 supplies migration 038 and prepared application code. This PR2 activation release includes 038 and adds migration 039. PR3 supplies migration 040, which is not present here.
 **Supersedes**: Only ADR 038's availability consequence for terminal provider refresh rejection.
 
 ## Context
@@ -30,12 +30,12 @@ Upserts acquire the stable view's `ACCESS SHARE` lock inside their write transac
 
 | Phase | Schema and runtime contract |
 |---|---|
-| PR1: 038 prepare (this release) | Keep the original table shape unchanged for legacy strict `SELECT *` readers and writes. Add the view and stable functions. The view reports rejection=false. True writes fail as `persistence_failed`, not durable rejection. Ordinary acquisition, refresh, and authorization work normally. The memory adapter already supports rejection. |
+| PR1: 038 prepare (preceding PR) | Keep the original table shape unchanged for legacy strict `SELECT *` readers and writes. Add the view and stable functions. The view reports rejection=false. True writes fail as `persistence_failed`, not durable rejection. Ordinary acquisition, refresh, and authorization work normally. The memory adapter already supports rejection. |
 | PR1: prepared broker rollout | Roll prepared brokers across every replica at schema 38. They use the stable SQL boundary and contain rejection-aware logic. Unprepared binaries can coexist only before 39. They do not enforce the new rejection policy. |
-| PR2: 039 activate (following PR) | Atomically add `refresh_token_rejected BOOLEAN NOT NULL DEFAULT FALSE`. Replace the view and functions with real rejection reads and writes. Keep the legacy column. Durable rejection activates without restart. Complete PR1 and drain every unprepared replica and in-flight operation before merging or deploying PR2. |
+| PR2: 039 activate (this release) | Atomically add `refresh_token_rejected BOOLEAN NOT NULL DEFAULT FALSE`. Replace the view and functions with real rejection reads and writes. Keep the legacy column. Already-running PR1 brokers activate durable rejection without restart. Complete PR1 and drain every unprepared replica and in-flight operation before merging or deploying PR2. |
 | PR3: 040 cleanup (following PR) | Remove only the unused legacy column after all legacy schema dependencies end. Upgrade the SPA and every external session-API consumer before merging or deploying PR3. Prepared and newer brokers keep the same SQL boundary. |
 
-The separate migration runner remains the schema authority. This preparation release defaults and limits Helm `migration.targetVersion` to 38. A normal upgrade uses the guarded forward wrapper before rolling prepared brokers. Fresh installs run direct `up` through all available migrations, including with the default target. PostgreSQL upgrade rendering refuses explicit target 0. Positive upgrade targets inspect current version and dirty state. Dirty or unreadable metadata aborts without `Force`. An equal/newer clean schema is a non-destructive no-op. Only a lower clean version runs `goto`. Serialize database migration runners across deployments. Explicit DOWN remains a separate operator action, never a Helm stage side effect. Preparation and activation default `third_party_oauth2.session_api_compatibility` to true. This switch adds only `is_expired=requires_reauthentication`, without refresh-date aliases. Modern consumers can explicitly select false. Cleanup defaults compatibility to false after the SPA and external-consumer gate passes.
+The separate migration runner remains the schema authority. This activation release defaults and limits Helm `migration.targetVersion` to 39. A normal upgrade uses the guarded forward wrapper to activate rejection before the application update. Fresh installs run direct `up` through all available migrations through 39, including with the default target. PostgreSQL upgrade rendering refuses explicit target 0. Positive upgrade targets inspect current version and dirty state. Dirty or unreadable metadata aborts without `Force`. An equal/newer clean schema is a non-destructive no-op. Only a lower clean version runs `goto`. Serialize database migration runners across deployments. Explicit DOWN remains a separate operator action, never a Helm stage side effect. Preparation and activation default `third_party_oauth2.session_api_compatibility` to true. This switch adds only `is_expired=requires_reauthentication`, without refresh-date aliases. Modern consumers can explicitly select false. Cleanup defaults compatibility to false after the SPA and external-consumer gate passes.
 
 Online rollout requires at least two healthy replicas, ready surge capacity, `maxUnavailable=0`, and `maxSurge` of at least one. An HPA must retain at least two replicas. A disruption budget protects the required capacity during voluntary evictions. Readiness, load-balancer draining, and a termination grace longer than broker shutdown are prerequisites. The chart preserves operator strategy overrides. Unsafe overrides do not satisfy these prerequisites.
 
@@ -45,7 +45,7 @@ Each schema step uses one atomic procedural statement with fail-fast locks. Expa
 
 Rollback depends on both the schema phase and the running binary:
 
-PR1 supplies DOWN 038 only. DOWN 039 and DOWN 040 ship with their following PRs.
+This release supplies DOWN 038 and guarded DOWN 039. DOWN 040 ships with the following cleanup PR.
 
 - DOWN 040 restores a nullable legacy column only. It retains every rejection flag and fabricates no dates. Preparation and newer brokers can continue to serve.
 - DOWN 039 refuses while rejected rows remain. Resolve each row through successful reauthentication or explicit user termination. Never clear rejection or automatically delete rows to bypass the guard. Successful DOWN restores preparation view/functions and removes the flag atomically. Keep preparation brokers until schema 38 permits a rolling deployment of an old binary.
