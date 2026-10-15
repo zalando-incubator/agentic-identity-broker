@@ -701,23 +701,23 @@ The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/swe
 
 ### Session API compatibility during online upgrades
 
-Use this temporary setting while legacy session-API consumers upgrade:
+Use the default API v2 configuration after the consumer-upgrade gate:
 
 ```yaml
 third_party_oauth2:
-  session_api_compatibility: true
+  session_api_compatibility: false
 ```
 
-The default is `true` in the preparation and activation releases. The environment override is `IDENTITY_BROKER_SESSION_API_COMPATIBILITY`.
-When enabled, list, detail, and manual-refresh success responses include deprecated `is_expired` alongside `requires_reauthentication`.
+The default is `false` in this cleanup release. Preparation and activation defaulted to true. The environment override is `IDENTITY_BROKER_SESSION_API_COMPATIBILITY`.
+Explicit true remains a deliberate override for legacy consumers. List, detail, and manual-refresh success responses then include deprecated `is_expired` alongside `requires_reauthentication`.
 Both booleans describe the same reauthentication requirement. The broker does not restore refresh-expiry dates or predict opaque-token lifetimes.
-Modern consumers can explicitly set this value to `false`. The cleanup release defaults it to false after the consumer gate passes.
+This override does not waive PR3's SPA and external-consumer upgrade gate. Normal deployment omits the legacy wire field.
 
-This activation release includes migrations 038 and 039. Helm defaults to target 39 and rejects targets greater than 39.
-Fresh installs run direct UP-all through 39. A normal upgrade activates rejection through the guarded wrapper before the application update.
-Before merging or deploying this PR, complete the PR1 rollout across every replica. Drain every unprepared replica and in-flight operation first.
-Migration 040 belongs to the cleanup PR. Upgrade the embedded SPA and all external consumers before merging or deploying cleanup.
-Already-running PR1 replicas enforce durable rejection when migration 039 commits. The retained legacy expiry column never supplies provider-validity evidence.
+This cleanup release includes migrations 038, 039, and 040. Helm defaults to target 40 and rejects targets greater than 40.
+Fresh installs run direct UP-all through 40. A normal upgrade removes the unused legacy column through the guarded wrapper before the application update.
+Before merging or deploying PR2 #225, complete PR1 #224 across every replica. Drain every unprepared replica and in-flight operation first.
+Before merging or deploying PR3, complete PR2 across every replica. End all legacy database dependencies and upgrade the embedded SPA and all external session-API consumers first.
+Already-running PR1 replicas enforce durable rejection when migration 039 commits. Migration 040 preserves that enforcement and removes only the unused legacy column.
 At 38, true rejection writes report persistence failure. Ordinary traffic remains supported.
 The Helm controls are `migration.targetVersion` and `broker.thirdPartyOauth2.sessionAPICompatibility`.
 See the [online rollout procedure](operations/session-sweep.md) for ordering, capacity requirements, and fail-fast lock handling.

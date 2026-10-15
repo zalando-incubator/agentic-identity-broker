@@ -497,9 +497,9 @@
         "targetVersion": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 39,
-          "default": 39,
-          "description": "Forward-only schema target, default and maximum 39 in this activation release. Complete PR1 and drain unprepared work before deployment. Fresh installs run all available UP migrations. PostgreSQL upgrades refuse 0 and inspect version/dirty state before advancing to a positive target, never downgrading."
+          "maximum": 40,
+          "default": 40,
+          "description": "Forward-only schema target, default and maximum 40 in this cleanup release. Complete PR2 and end legacy schema/API/SPA dependencies before deployment. Fresh installs run all available UP migrations. PostgreSQL upgrades refuse 0 and inspect version/dirty state before advancing to a positive target, never downgrading."
         },
         "image": {
           "type": "object",
@@ -647,8 +647,8 @@
           "properties": {
             "sessionAPICompatibility": {
               "type": "boolean",
-              "default": true,
-              "description": "Temporarily include is_expired=requires_reauthentication by default during preparation and activation. Set false explicitly for API v2-only consumers."
+              "default": false,
+              "description": "Default API v2 omits is_expired. Explicit true restores only is_expired=requires_reauthentication for legacy consumers, without refresh dates. Complete consumer upgrades before merging or deploying cleanup."
             },
             "jweSigningKey": {
               "type": "string",

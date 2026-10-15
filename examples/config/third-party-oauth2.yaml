@@ -48,10 +48,9 @@ third_party_oauth2:
   # Higher values provide more entropy but no practical security benefit beyond 32.
   pkce_verifier_length: 32
 
-  # Defaults enabled in preparation and activation while legacy API consumers upgrade.
-  # Adds is_expired equal to requires_reauthentication, without refresh-expiry dates.
-  # Modern consumers can set false explicitly. Cleanup defaults false after the consumer gate.
-  session_api_compatibility: true
+  # Defaults disabled after the PR1/PR2 rollout and all schema/API/SPA consumer upgrades.
+  # Explicit true adds only is_expired=requires_reauthentication for legacy consumers, without refresh-expiry dates.
+  session_api_compatibility: false
 
 # Proactive refresh of third-party access tokens (spec 029).
 # Tokens are refreshed in the background when token exchange serves a token that
@@ -74,7 +73,7 @@ token_refresh:
 # - IDENTITY_BROKER_JWE_SIGNING_KEY (required, no default)
 # - IDENTITY_BROKER_STATE_TOKEN_TTL (optional, default: 10m)
 # - IDENTITY_BROKER_PKCE_VERIFIER_LENGTH (optional, default: 32)
-# - IDENTITY_BROKER_SESSION_API_COMPATIBILITY (optional, default: true)
+# - IDENTITY_BROKER_SESSION_API_COMPATIBILITY (optional, default: false)
 #
 # Example:
 #   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"

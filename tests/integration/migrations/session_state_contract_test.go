@@ -25,13 +25,15 @@ func TestSessionStateWriteContractAcrossPhases(t *testing.T) {
 	for _, step := range []struct {
 		phase uint
 		down  bool
-	}{{38, false}, {39, false}, {38, true}} {
+	}{{38, false}, {39, false}, {40, false}, {39, true}, {38, true}} {
 		phase := step.phase
 		if step.down {
-			require.NoError(t, f.ExecuteSQL(t, `SELECT upsert_user_session_state(
-				id, principal, service_id, '\x0405', '\x0607', token_type,
-				access_token_expires_at, FALSE, scope, encryption_context, initiated_at, created_at, updated_at)
-				FROM user_session_state WHERE principal = 'expiry@example.com'`), "reauthorization upsert must resolve rejection before downgrade")
+			if phase == 38 {
+				require.NoError(t, f.ExecuteSQL(t, `SELECT upsert_user_session_state(
+					id, principal, service_id, '\x0405', '\x0607', token_type,
+					access_token_expires_at, FALSE, scope, encryption_context, initiated_at, created_at, updated_at)
+					FROM user_session_state WHERE principal = 'expiry@example.com'`), "reauthorization upsert must resolve rejection before downgrade")
+			}
 			require.NoError(t, f.Down(t, phase))
 		} else {
 			require.NoError(t, f.Up(t, phase))
@@ -105,7 +107,7 @@ func TestSessionStateWriteContractAcrossPhases(t *testing.T) {
 }
 
 func TestSessionStateSQLBoundaryDoesNotEscalatePrivileges(t *testing.T) {
-	for _, phase := range []uint{38, 39} {
+	for _, phase := range []uint{38, 39, 40} {
 		t.Run(fmt.Sprintf("migration %d", phase), func(t *testing.T) {
 			f := NewMigrationTestFramework(t)
 			defer f.Cleanup(t)

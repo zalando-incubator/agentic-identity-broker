@@ -96,6 +96,7 @@ func TestOnlineSessionValidityAcrossReplicas(t *testing.T) {
 		require.True(t, healthyBefore.InitiatedAt.Equal(after.InitiatedAt))
 		require.True(t, healthyBefore.CreatedAt.Equal(after.CreatedAt))
 		require.NotEqual(t, healthyBefore.EncryptedAccessToken, after.EncryptedAccessToken)
+		require.NotNil(t, after.AccessTokenExpiresAt)
 		require.True(t, after.AccessTokenExpiresAt.After(time.Now()))
 	}
 	probes = onlineSessionProbes(servers, healthy, service.ID, healthyForm, "mock-access-token", false)
@@ -183,18 +184,43 @@ func TestOnlineSessionValidityAcrossReplicas(t *testing.T) {
 		require.Equal(t, "refresh_rejected", result.body["error"])
 	}
 	require.Len(t, upstream.GetTokenRequests(), 1, "no replica may retry provider-rejected authority after activation")
-	beforeStaleStage := sessionValiditySnapshot(t, f, "")
+	beforeStaleActivation := sessionValiditySnapshot(t, f, "")
 	require.NoError(t, cli.Run(38), "a stale preparation target must never downgrade an already-activated database")
 	requireSessionValidityPhase(t, f, 39)
-	require.JSONEq(t, beforeStaleStage, sessionValiditySnapshot(t, f, ""))
+	require.JSONEq(t, beforeStaleActivation, sessionValiditySnapshot(t, f, ""))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
 	require.Equal(t, uint(39), version)
 	require.False(t, dirty)
 	requireOnlineSessionTraffic(t, probes)
+	for _, relation := range []string{"user_sessions", "user_session_state"} {
+		requireBusySessionPhase(t, f, 40, relation, probes, cli.Run)
+	}
+	applySessionPhaseWithTraffic(t, f, 40, probes, cli.Run)
+	requireSessionValidityPhase(t, f, 40)
+	for range 3 {
+		requireOnlineSessionTraffic(t, probes)
+	}
+	for _, server := range servers {
+		response, err := server.AuthenticatedPOST("/api/third-party/"+service.ID.String()+"/session/refresh", rejected, "application/json", nil)
+		result := readOnlineHTTPResult(response, err)
+		require.NoError(t, result.err)
+		require.Equal(t, http.StatusConflict, result.status)
+		require.Equal(t, "refresh_rejected", result.body["error"])
+	}
+	require.Len(t, upstream.GetTokenRequests(), 1, "no replica may retry provider-rejected authority after cleanup")
+	beforeStaleStage := sessionValiditySnapshot(t, f, "")
+	require.NoError(t, cli.Run(38), "a stale preparation target must never downgrade an already-contracted database")
+	requireSessionValidityPhase(t, f, 40)
+	require.JSONEq(t, beforeStaleStage, sessionValiditySnapshot(t, f, ""))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(40), version)
+	require.False(t, dirty)
+	requireOnlineSessionTraffic(t, probes)
 	require.Len(t, upstream.GetTokenRequests(), 1, "stale migration targets must not reactivate rejected authority")
 	require.NoError(t, f.ExecuteSQL(t, `DROP EVENT TRIGGER session_migration_test_gate; DROP FUNCTION session_migration_test_gate()`))
-	t.Log("real migration image and rendered Helm upgrade runner applied 038/039 and treated target038 at039 as a no-op; two preparation replicas served authenticated list/detail and RFC8693 exchanges through activation and a successful provider refresh; NOWAIT table/view contention preserved traffic and dirty metadata; rejection retained ciphertext/access expiry, returned 409 on both replicas, denied later issuance, and made exactly one provider refresh request")
+	t.Log("real migration image and rendered Helm upgrade runner applied 038/039/040 and treated target038 at039/040 as a no-op; two preparation replicas served authenticated list/detail and RFC8693 exchanges through activation, contraction, and a successful provider refresh; NOWAIT table/view contention preserved traffic and dirty metadata; rejection retained ciphertext/access expiry, returned 409 on both replicas, denied later issuance, and made exactly one provider rejection request")
 }
 
 type onlineHTTPResult struct {

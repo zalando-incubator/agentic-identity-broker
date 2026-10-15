@@ -190,7 +190,7 @@ func (l *Loader) setDefaults() {
 	// Set OAuth2 configuration defaults
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "state_token_ttl"), "10m")
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "pkce_verifier_length"), 32)
-	l.v.SetDefault(configutil.Key("third_party_oauth2", "session_api_compatibility"), true)
+	l.v.SetDefault(configutil.Key("third_party_oauth2", "session_api_compatibility"), false)
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.

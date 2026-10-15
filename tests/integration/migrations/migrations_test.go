@@ -46,8 +46,8 @@ func TestMigrationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("After Up: version=%d, dirty=%v", version, dirty)
 	assert.False(t, dirty, "Migration should not be dirty")
-	assert.Equal(t, uint(39), version, "Fresh installation must apply the complete activation release")
-	requireSessionValidityPhase(t, f, 39)
+	assert.Equal(t, uint(40), version, "Fresh installation must apply the complete contract release")
+	requireSessionValidityPhase(t, f, 40)
 
 	// Step 2: Verify representative tables from across the migration history exist.
 	tables := []string{"agents", "thirdparty_oauth2_services", "service_protected_resources", "user_sessions", "authorization_codes"}
@@ -68,8 +68,11 @@ func TestMigrationLifecycle(t *testing.T) {
 	assert.Equal(t, uint(0), version, "Should be at version 0 after rollback")
 	assert.False(t, dirty, "Migration should not be dirty")
 
-	// Note: We skip table deletion verification as go-migrate marks versions as rolled back
-	// but actual SQL execution may be deferred/cached. The important part is version is 0.
+	for _, table := range tables {
+		exists, err := f.TableExists(t, table)
+		require.NoError(t, err)
+		assert.False(t, exists, "Table %s should be absent after rolling back all migrations", table)
+	}
 
 	// Step 5: Reapply all migrations
 	t.Log("Step 5: Reapplying all migrations...")
@@ -80,8 +83,8 @@ func TestMigrationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("After Up again: version=%d, dirty=%v", version, dirty)
 	assert.False(t, dirty, "Migration should not be dirty")
-	assert.Equal(t, uint(39), version, "Reapplication must stop at the activation release")
-	requireSessionValidityPhase(t, f, 39)
+	assert.Equal(t, uint(40), version, "Reapplication must stop at the contract release")
+	requireSessionValidityPhase(t, f, 40)
 
 	// Step 6: Reapply successful
 	t.Log("Step 6: Migrations successfully reapplied")

@@ -81,9 +81,11 @@ func TestHelmTemplate_StagedSessionMigrations(t *testing.T) {
 		{name: "install_zero", args: []string{"--set", "migration.targetVersion=0"}},
 		{name: "install_38", args: []string{"--set", "migration.targetVersion=38"}},
 		{name: "install_39", args: []string{"--set", "migration.targetVersion=39"}},
-		{name: "upgrade_default", upgrade: true, target: "39"},
+		{name: "install_40", args: []string{"--set", "migration.targetVersion=40"}},
+		{name: "upgrade_default", upgrade: true, target: "40"},
 		{name: "upgrade_38", args: []string{"--set", "migration.targetVersion=38"}, upgrade: true, target: "38"},
 		{name: "upgrade_39", args: []string{"--set", "migration.targetVersion=39"}, upgrade: true, target: "39"},
+		{name: "upgrade_40", args: []string{"--set", "migration.targetVersion=40"}, upgrade: true, target: "40"},
 	}
 	for _, testCase := range cases {
 		for _, grants := range []string{"true", "false"} {
@@ -139,8 +141,8 @@ func TestHelmTemplate_SessionAPICompatibility(t *testing.T) {
 	for _, compatibility := range []string{"true", "false"} {
 		t.Run(compatibility, func(t *testing.T) {
 			args := []string{"--show-only", "templates/configmap.yaml"}
-			if compatibility == "false" {
-				args = append(args, "--set", "broker.thirdPartyOauth2.sessionAPICompatibility=false")
+			if compatibility == "true" {
+				args = append(args, "--set", "broker.thirdPartyOauth2.sessionAPICompatibility=true")
 			}
 			output := renderHelmTemplate(t, args...)
 			require.Contains(t, output, "third_party_oauth2:\n      jwe_signing_key: ${IDENTITY_BROKER_JWE_SIGNING_KEY}\n      session_api_compatibility: "+compatibility)
@@ -197,11 +199,12 @@ func TestHelmTemplate_StagedMigrationUpgradeGuards(t *testing.T) {
 		{name: "zero target refused", args: []string{"--set", "migration.targetVersion=0"}, errorText: "positive migration.targetVersion"},
 		{name: "negative target rejected", args: []string{"--set", "migration.targetVersion=-1"}, errorText: "targetVersion"},
 		{name: "fractional target rejected", args: []string{"--set", "migration.targetVersion=1.5"}, errorText: "targetVersion"},
-		{name: "string target rejected", args: []string{"--set-string", "migration.targetVersion=39"}, errorText: "targetVersion"},
-		{name: "cleanup target unavailable", args: []string{"--set", "migration.targetVersion=40"}, errorText: "targetVersion"},
-		{name: "default activation target permitted"},
+		{name: "string target rejected", args: []string{"--set-string", "migration.targetVersion=40"}, errorText: "targetVersion"},
+		{name: "future target unavailable", args: []string{"--set", "migration.targetVersion=41"}, errorText: "targetVersion"},
+		{name: "default cleanup target permitted"},
 		{name: "preparation target permitted", args: []string{"--set", "migration.targetVersion=38"}},
 		{name: "activation target permitted", args: []string{"--set", "migration.targetVersion=39"}},
+		{name: "cleanup target permitted", args: []string{"--set", "migration.targetVersion=40"}},
 		{name: "disabled migration permits zero", args: []string{"--set", "migration.enabled=false", "--set", "migration.targetVersion=0"}},
 	}
 	for _, testCase := range cases {

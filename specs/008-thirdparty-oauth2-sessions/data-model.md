@@ -643,23 +643,23 @@ Login uses the real authorization and callback flow. Termination remains optiona
 
 Keep original migration 004 and migration 037 unchanged. Each validity phase preserves rows and real token metadata without interpreting historical refresh dates:
 
-This PR2 activation release includes migration 038 and adds migration 039 to the prepared broker/API/UI code. Migration 040 belongs to the following cleanup PR and is not present. At 39, already-running PR1 brokers persist rejection through the stable SQL boundary. PostgreSQL at 38 still supports ordinary traffic but refuses true rejection writes as `persistence_failed`. The memory adapter supports the complete rejection lifecycle.
+This PR3 cleanup release includes migrations 038, 039, and 040 and the prepared broker/API/UI code. PR1 #224 supplies preparation. PR2 #225 activates durable rejection on already-running PR1 brokers through the stable SQL boundary. Migration 040 removes only the unused legacy column. PostgreSQL at 38 still supports ordinary traffic but refuses true rejection writes as `persistence_failed`. The memory adapter supports the complete rejection lifecycle.
 
 | Phase | Contract |
 |---|---|
-| PR1: 038 prepare (preceding PR) | Keep the legacy table shape unchanged. Add the explicit `user_session_state` view and stable invoker write functions. The view reports rejection=false. True rejection writes fail clearly. |
-| PR2: 039 activate (this release) | After the PR1 rollout and all unprepared work drain, atomically add the false-default rejection flag and replace the view/functions. Keep the legacy column. Already-running PR1 brokers activate durable rejection without restart. |
-| PR3: 040 cleanup (following PR) | After schema dependencies and API consumer gates pass, remove only the unused legacy column. The table sample that follows describes this future phase. |
+| PR1 #224: 038 prepare (preceding release) | Keep the legacy table shape unchanged. Add the explicit `user_session_state` view and stable invoker write functions. The view reports rejection=false. True rejection writes fail clearly. |
+| PR2 #225: 039 activate (preceding release) | After the PR1 rollout and all unprepared work drain, atomically add the false-default rejection flag and replace the view/functions. Keep the legacy column. Already-running PR1 brokers activate durable rejection without restart. |
+| PR3: 040 cleanup (this release) | After PR2 fully deploys and all legacy database/API/SPA dependencies end, remove only the unused legacy column. The table sample that follows describes this phase. |
 
-Preparation/new brokers use the same SQL boundary at every phase. Locked view reads lock the underlying row. The legacy column serves storage compatibility only, never provider evidence. Existing unprepared binaries can coexist before 39 but do not enforce the new rejection policy.
+Preparation/new brokers use the same SQL boundary at every phase. Locked view reads lock the underlying row. The legacy column at 38 and 39 serves storage compatibility only, never provider evidence. Existing unprepared binaries can coexist before 39 but do not enforce the new rejection policy.
 
-This release defaults and limits Helm targets to 39. Fresh installs run direct UP-all through 39. Normal upgrades use the guarded forward wrapper. Before merging or deploying this activation PR, complete PR1 across every replica. Drain every unprepared replica and in-flight operation first. Before merging or deploying PR3, upgrade the embedded SPA and all external session-API consumers. Compatibility defaults true in preparation and activation. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. The temporary alias is only `is_expired=requires_reauthentication`, without refresh dates.
+This release defaults and limits Helm targets to 40. Fresh installs run direct UP-all through 40. Normal upgrades use the guarded forward wrapper. Before merging or deploying PR2, complete PR1 across every replica. Drain every unprepared replica and in-flight operation first. Before merging or deploying PR3, complete PR2 across every replica. End all legacy database dependencies and upgrade the embedded SPA and all external session-API consumers first. Compatibility defaulted true in preparation and activation. Cleanup defaults false and omits the legacy wire field. Explicit true remains a deliberate override for legacy consumers, adding only `is_expired=requires_reauthentication`, without refresh dates. It does not waive the consumer-upgrade gate.
 
-Online rollout requires at least two healthy replicas, no unavailable pods, ready surge capacity, a disruption budget, and sufficient traffic-drain time. Enable temporary session API compatibility until the SPA and external consumers support API v2. Fail-fast locks preserve the schema on contention while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee.
+Online rollout requires at least two healthy replicas, no unavailable pods, ready surge capacity, a disruption budget, and sufficient traffic-drain time. PR3 requires API v2 support from the SPA and external consumers before merge or deployment. Fail-fast locks preserve the schema on contention while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee.
 
 DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses until successful reauthentication or explicit termination resolves rejected rows. Drain preparation/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before manual repair, never automatic `Force`, rejection clearing, or row deletion. See the [runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040).
 
-### Planned Final user_sessions Table (PR3, After Migration 040)
+### Current user_sessions Table (After Migration 040)
 
 ```sql
 -- Current schema reference, not a replacement for migration 004.

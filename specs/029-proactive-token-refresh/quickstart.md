@@ -121,8 +121,9 @@ just test-integration-infra
 |---|---|---|
 | Migration 037 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | Clean version `37` after UP, a valid B-tree with exactly two ordered keys `(access_token_expires_at, id)`, no index after DOWN, and successful dirty-version recovery. Recovery is not atomic rollback. |
 | PR1: migration 038 preserves legacy continuity and prepared traffic | `tests/integration/migrations/` | Legacy reads/writes survive 38. Prepared acquisition, refresh, and authorization work. True rejection writes report persistence failure. The real migration image executes guarded upgrade 38. Equal/newer clean versions are no-ops. Dirty metadata aborts without Force. Data, locks, permissions, and preparation rollback/reapply remain protected. |
-| PR2: activation 039 (this release) | `tests/integration/migrations/` | Durable rejection activates on serving PR1 brokers. Cover phase-39 rollback/refusal, cross-replica enforcement, actual CLI execution, and view/table `NOWAIT` contention. Cleanup 040 and its tests belong to PR3 and are not present. |
-| `ListExpiringSessions` contract E1–E9 | `internal/adapters/storage/postgres/user_session_test.go` | Supported phase-38/39 expiry/UUID ordering, encrypted snapshots, active filters, and token-free summaries work through the stable view. At 39, rejection persists, authorization resets it, and selectors exclude rejected rows. Memory also covers recorded rejection. |
+| PR2 #225: activation 039 (preceding release) | `tests/integration/migrations/` | Durable rejection activates on serving PR1 brokers. Cover phase-39 rollback/refusal, cross-replica enforcement, actual CLI execution, and view/table `NOWAIT` contention. |
+| PR3: cleanup 040 (this release) | `tests/integration/migrations/` | Preserve the final lifecycle, nullable-column restoration, rejection retention across DOWN 040, reapplication, concurrent HTTP continuity, and dirty/stale forward-stage guards through the actual CLI. |
+| `ListExpiringSessions` contract E1–E9 | `internal/adapters/storage/postgres/user_session_test.go` | Supported phase-38/39/40 expiry/UUID ordering, encrypted snapshots, active filters, and token-free summaries work through the stable view. At 39 and 40, rejection persists, authorization resets it, and selectors exclude rejected rows. Memory also covers recorded rejection. |
 | Index used under normal planning | same file | With sparse due rows and `ANALYZE`, `EXPLAIN (FORMAT JSON)` references the named valid two-key index for first, middle, and late small-limit pages. Keep `enable_seqscan` unchanged. |
 
 The rejection-aware table queries that follow apply at this release's schema 39. Do not run them against a phase-38 table.
@@ -171,26 +172,26 @@ ADR 039 requires inspection of `pg_index.indisvalid` and the migration version b
 
 ### Online validity deployment and rollback (migrations 038–040)
 
-The stakeholder selected staged compatibility on 2026-10-14 in unmerged ADR 040. Preserve migration 037 and its index design. This activation release includes migration 038 and adds migration 039 to the prepared broker/API/UI code. Migration 040 belongs to the following cleanup PR and is not present.
+The stakeholder selected staged compatibility on 2026-10-14 in unmerged ADR 040. Preserve migration 037 and its index design. This cleanup release includes migrations 038, 039, and 040 and the prepared broker/API/UI code.
 
-1. With existing replicas serving, deploy PR1 through a normal Helm upgrade at its default target 38.
+1. With existing replicas serving, deploy PR1 #224 through a normal Helm upgrade at its default target 38.
 2. Complete the prepared broker and embedded SPA rollout across every replica.
-3. Before merging or deploying this activation PR, verify that PR1 completed and all unprepared replicas and in-flight operations drained.
+3. Before merging or deploying PR2 #225, verify that PR1 completed and all unprepared replicas and in-flight operations drained.
 4. Deploy PR2 normally at its default target 39 to activate durable rejection on already-running PR1 brokers.
-5. Before merging or deploying PR3, upgrade the SPA and every external session-API consumer.
-6. After legacy schema dependencies end, deploy PR3 at its default target 40 and compatibility false.
+5. Before merging or deploying PR3, complete PR2 across every replica and upgrade the SPA and every external session-API consumer.
+6. After all legacy database dependencies end, deploy PR3 at its default target 40 and compatibility false.
 
-The stable view reports false at phase 38. True rejection writes report `persistence_failed`, not durable rejection. Ordinary PostgreSQL acquisition, refresh, and authorization work normally. Migration 039 adds real rejection reads/writes through the same boundary. Already-running PR1 brokers enforce rejection as soon as activation commits. Unprepared binaries cannot coexist at activation. The retained legacy expiry column supplies storage compatibility only. Historical dates never imply provider validity or rejection.
+The stable view reports false at phase 38. True rejection writes report `persistence_failed`, not durable rejection. Ordinary PostgreSQL acquisition, refresh, and authorization work normally. Migration 039 adds real rejection reads/writes through the same boundary. Already-running PR1 brokers enforce rejection as soon as activation commits. Unprepared binaries cannot coexist at activation. The legacy expiry column at 38 and 39 supplies storage compatibility only. Migration 040 removes it. Historical dates never imply provider validity or rejection.
 
-This release defaults and limits `migration.targetVersion` to 39. Fresh installs run direct UP-all through 39, including with the default target. Normal upgrades use the guarded forward wrapper. PostgreSQL upgrade rendering refuses explicit target 0 when migrations are enabled. Positive upgrade targets abort on dirty or unreadable metadata. Equal/newer clean versions are no-ops. Only a lower clean version runs `goto`. Serialize database migration runners. Helm stages never request DOWN. Use the separate runner for explicit rollback.
+This release defaults and limits `migration.targetVersion` to 40. Fresh installs run direct UP-all through 40, including with the default target. Normal upgrades use the guarded forward wrapper. PostgreSQL upgrade rendering refuses explicit target 0 when migrations are enabled. Positive upgrade targets abort on dirty or unreadable metadata. Equal/newer clean versions are no-ops. Only a lower clean version runs `goto`. Serialize database migration runners. Helm stages never request DOWN. Use the separate runner for explicit rollback.
 
-Compatibility defaults true in preparation and activation, adding only `is_expired=requires_reauthentication` without refresh dates. Modern consumers can explicitly set `broker.thirdPartyOauth2.sessionAPICompatibility=false`. Cleanup defaults false after its consumer gate passes.
+Compatibility defaulted true in preparation and activation. Cleanup defaults false and omits the legacy wire field. Explicit `broker.thirdPartyOauth2.sessionAPICompatibility=true` remains a deliberate override for legacy consumers. It adds only `is_expired=requires_reauthentication`, without refresh dates, and does not waive the consumer-upgrade gate.
 
 Online rollout requires at least two healthy replicas, `maxUnavailable=0`, ready surge capacity, a disruption budget, sufficient traffic-drain time, and retained SPA assets.
 
 Schema phases use atomic statements and fail-fast locks. Expansion and contraction lock the view, then the table, with `NOWAIT`. Busy locks leave the schema and rows unchanged while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee. Inspect actual schema and dirty metadata before deliberate repair or retry. Never automate `Force`.
 
-This release supplies DOWN 038 and guarded DOWN 039. The following cleanup PR supplies DOWN 040.
+This release supplies DOWN 038, guarded DOWN 039, and DOWN 040.
 
 DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Resolve them through successful reauthentication or explicit termination, not rejection clearing or automatic deletion. At schema 38, old binaries can replace preparation replicas through a rolling deployment. Drain every preparation/new replica before DOWN 038 removes its SQL boundary. Helm image rollback alone does not establish schema compatibility.
 

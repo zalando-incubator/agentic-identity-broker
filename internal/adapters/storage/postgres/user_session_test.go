@@ -247,7 +247,7 @@ func TestUserSessionRepository(t *testing.T) {
 }
 
 func TestUserSessionRepository_HealthyOperationsAcrossOnlinePhases(t *testing.T) {
-	for _, version := range []int{38, 39} {
+	for _, version := range []int{38, 39, 40} {
 		t.Run(fmt.Sprintf("migration %d", version), func(t *testing.T) {
 			adapter, cleanup := setupUserSessionTestDBAtVersion(t, version)
 			defer cleanup()
@@ -496,7 +496,7 @@ func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {
 }
 
 func TestUserSessionRefreshDoesNotWaitForProviderConnectionInsideTransaction(t *testing.T) {
-	for _, version := range []int{38, 39} {
+	for _, version := range []int{38, 39, 40} {
 		t.Run(fmt.Sprintf("migration %d", version), func(t *testing.T) {
 			adapter, cleanup := setupUserSessionTestDBAtVersion(t, version)
 			defer cleanup()

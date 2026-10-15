@@ -141,7 +141,7 @@ and unknown environments reject that development-only bypass.
 | `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
 | `migration.image.repository` | Migration container image repository | `agentic-identity-broker-migrate` |
 | `migration.image.tag` | Migration image tag | Chart appVersion |
-| `migration.targetVersion` | Integer from 0 through 39. Fresh installs run all available UP migrations through 39. Upgrades use a positive forward-only target. Explicit 0 is refused. Equal/newer clean schemas are no-ops. Dirty metadata aborts. | `39` |
+| `migration.targetVersion` | Integer from 0 through 40. Fresh installs run all available UP migrations through 40. Upgrades use a positive forward-only target. Explicit 0 is refused. Equal/newer clean schemas are no-ops. Dirty metadata aborts. | `40` |
 | `storage.type` | Storage backend (`memory` or `postgres`) | `memory` |
 | `serviceAccount.irsa.enabled` | Enable AWS IRSA annotation | `false` |
 | `serviceAccount.irsa.role` | IAM role ARN for IRSA | `""` |
@@ -159,7 +159,7 @@ and unknown environments reject that development-only bypass.
 | `postgresql.operator.secretSuffix` | Operator credentials secret suffix | `postgresql.acid.zalan.do` |
 | `broker.thirdPartyOauth2.jweSigningKeySecret` | Secret ref for JWE signing key | `{name: "", key: signing-key}` |
 | `broker.thirdPartyOauth2.jweSigningKeyBase64` | Base64-encoded JWE signing key (highest precedence) | `""` |
-| `broker.thirdPartyOauth2.sessionAPICompatibility` | Temporary `is_expired=requires_reauthentication` alias, without refresh dates. Defaults enabled during preparation and activation. Set false explicitly for API v2-only consumers. | `true` |
+| `broker.thirdPartyOauth2.sessionAPICompatibility` | Default API v2 omits `is_expired`. Explicit true adds only `is_expired=requires_reauthentication` for legacy consumers, without refresh dates. | `false` |
 | `broker.encryption.memory.rawKey` | Base64-encoded memory encryption key | `""` |
 | `broker.encryption.awsKms.keyArn` | AWS KMS key ARN | `""` |
 | `broker.encryption.awsKms.dynamodbTableName` | DynamoDB table for branch keys | `IdentityBrokerEncryptionBranchKeys` |
@@ -332,19 +332,19 @@ Both images share the same version tag to ensure consistency between migrations 
 
 ### Online Session Validity Upgrade
 
-This activation release includes migrations 038 and 039 and the prepared broker, API, and SPA from PR1. Migration 040 belongs to the following cleanup PR and is not present. A normal Helm upgrade applies 039 before the application update. Already-running PR1 brokers enforce durable rejection as soon as 039 commits. The default and maximum `migration.targetVersion` are 39. Fresh installations use direct UP-all through 39, including with the default target. Explicit target 0 remains available for fresh installs but fails PostgreSQL upgrade rendering.
+This PR3 cleanup release includes all three migrations: 038, 039, and 040. It retains the prepared broker, API, and SPA from PR1 #224 and durable rejection from PR2 #225. A normal Helm upgrade applies 040 before the application update and removes only the unused legacy column. The default and maximum `migration.targetVersion` are 40. Fresh installations use direct UP-all through 40, including with the default target. Explicit target 0 remains available for fresh installs but fails PostgreSQL upgrade rendering.
 
 | Release | Default target | Serving replicas and schema |
 |---|---|---|
-| PR1 preparation (preceding PR) | `38` | Preserve the original table shape. Add the explicit read view and stable write functions. Roll prepared brokers across every replica. |
-| PR2 activation (this release) | `39` | Add the real rejection flag and replace the view/functions atomically. Already-running PR1 replicas activate durable rejection without restart. |
-| PR3 cleanup (following PR) | `40` | Remove only the unused legacy column after schema and API consumer gates pass. |
+| PR1 #224 preparation (preceding release) | `38` | Preserve the original table shape. Add the explicit read view and stable write functions. Roll prepared brokers across every replica. |
+| PR2 #225 activation (preceding release) | `39` | Add the real rejection flag and replace the view/functions atomically. Already-running PR1 replicas activate durable rejection without restart. |
+| PR3 cleanup (this release) | `40` | Remove only the unused legacy column after schema and API consumer gates pass. Default API compatibility becomes false. |
 
-Before merging or deploying this activation PR, verify that the PR1 rollout completed across every replica. Drain every unprepared replica and in-flight operation first. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. End all legacy schema dependencies before cleanup. Do not select target 40 with this release. Normal activation uses the default target 39, without a manual stage selector.
+Before merging or deploying PR2 #225, complete the PR1 #224 rollout across every replica. Drain every unprepared replica and in-flight operation first. Before merging or deploying this PR3 release, complete PR2 across every replica. Upgrade the embedded SPA and every external session-API consumer. End all legacy database dependencies before cleanup. Normal cleanup uses the default target 40 and compatibility false, without a manual stage selector.
 
-At schema 38, ordinary acquisition, refresh, and authorization work normally. The preparation view reports rejection=false, and true writes fail as `persistence_failed`. At schema 39, the same SQL boundary persists rejection and immediately stops subsequent broker issuance. Unprepared binaries do not enforce the new policy and cannot coexist after activation. The retained legacy expiry column supplies storage compatibility only, never provider-validity evidence.
+At schema 38, ordinary acquisition, refresh, and authorization work normally. The preparation view reports rejection=false, and true writes fail as `persistence_failed`. At schemas 39 and 40, the same SQL boundary persists rejection and immediately stops subsequent broker issuance. Unprepared binaries do not enforce the new policy and cannot coexist after activation. The legacy expiry column at 38 and 39 supplies storage compatibility only, never provider-validity evidence. Migration 040 removes it without changing the stable SQL boundary or token metadata.
 
-Session API compatibility defaults to true in preparation and activation. It adds only `is_expired=requires_reauthentication`, without refresh dates. Modern consumers can explicitly set `broker.thirdPartyOauth2.sessionAPICompatibility=false`. PR3 defaults compatibility to false after its consumer gate passes.
+Session API compatibility defaulted to true in preparation and activation. This cleanup release defaults it to false and omits the legacy wire field. Explicit `broker.thirdPartyOauth2.sessionAPICompatibility=true` remains a deliberate override for legacy consumers. It adds only `is_expired=requires_reauthentication`, without refresh dates. This override does not waive PR3's consumer-upgrade gate.
 
 Live rollout requires at least two healthy replicas, including `autoscaling.minReplicas >= 2` when autoscaling is enabled. Keep `strategy.type=RollingUpdate`, `maxUnavailable=0`, and `maxSurge >= 1`. Reserve resources for a ready replacement before an old pod terminates. Enable a disruption budget that protects the required capacity during voluntary evictions. A disruption budget does not control Deployment rolling updates. Set termination grace longer than broker shutdown plus load-balancer drain time. Verify readiness and request draining in the actual deployment.
 
@@ -354,11 +354,11 @@ The chart retains custom strategy and grace values. `Recreate`, positive `maxUna
 
 The migration Job keeps its separate image, credentials, grants image, and migration-before-grants ordering in both grants modes. On upgrades, positive targets inspect the current version and dirty state with the same migration tool. Dirty, unreadable, or unexpected metadata aborts without `Force`. A clean current version equal to or greater than the target is a non-destructive no-op. Only a lower clean version runs `goto`. The stage wrapper requires the existing Alpine image's `/bin/sh` and `/usr/local/bin/migrate`, or those paths in a custom image. An upgrade stage requires an initialized schema. Fresh installs use direct UP-all instead. Serialize all migration runners for the database to prevent a version-check/execution race. Helm stages never request DOWN. Use the separate runner's explicit rollback procedure instead. For live phase changes, set `migration.backoffLimit=0` so operators inspect failures before retry. A failed pre-upgrade hook leaves existing compatible replicas in place.
 
-Schema steps use atomic statements and fail-fast locks. Migration 039 locks the view, then the table, with `NOWAIT`. The following cleanup release keeps this lock order. Busy locks abort without schema or row changes. Short metadata locks can affect latency. There is no absolute latency guarantee. Inspect the actual schema and dirty migration metadata before deliberate repair or retry. Never automate `Force`.
+Schema steps use atomic statements and fail-fast locks. Migrations 039 and 040 lock the view, then the table, with `NOWAIT`. Busy locks abort without schema or row changes. Short metadata locks can affect latency. There is no absolute latency guarantee. Inspect the actual schema and dirty migration metadata before deliberate repair or retry. Never automate `Force`.
 
-This release supports guarded DOWN 039 to schema 38 while prepared replicas continue to serve. It refuses while rejected rows remain. Resolve those rows through successful reauthentication or explicit user termination, not flag clearing or automatic deletion. At schema 38, matching old binaries can replace prepared replicas through a safe rolling deployment. Drain every prepared/new replica before DOWN 038 removes their SQL boundary. DOWN 040 belongs to the following cleanup PR. It restores only a nullable legacy column and retains rejection. Helm image rollback alone does not establish schema compatibility. Do not automatically roll back to an unprepared image after phase 39.
+This release supplies DOWN 040, which restores only a nullable legacy column and retains rejection. Prepared replicas can continue to serve. Guarded DOWN 039 to schema 38 refuses while rejected rows remain. Resolve those rows through successful reauthentication or explicit user termination, not flag clearing or automatic deletion. At schema 38, matching old binaries can replace prepared replicas through a safe rolling deployment. Drain every prepared/new replica before DOWN 038 removes their SQL boundary. Helm image rollback alone does not establish schema compatibility. Do not automatically roll back to an unprepared image after phase 39.
 
-See [the online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for activation values, failure handling, and rollback order.
+See [the online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for cleanup values, failure handling, and rollback order.
 
 
 ### Migration Credentials
