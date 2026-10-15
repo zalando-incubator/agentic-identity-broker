@@ -141,6 +141,7 @@ pipeline:
       paths:
         - /go/pkg/mod
         - /go/bin
+        - ~/.npm
         - ~/.cache/ms-playwright
         - ~/.cache/ms-playwright-go
       size_limit_megabytes: 4096
@@ -149,6 +150,8 @@ pipeline:
         cmd: |
           apt-get update
           apt-get --yes install just curl ca-certificates
+          curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+          apt-get --yes install nodejs
           export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
       - desc: "Run ExtProc E2E suite"
