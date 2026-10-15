@@ -1,0 +1,10 @@
+{
+  "name": "wireloom-render",
+  "private": true,
+  "description": "Renders Wireloom wireframes in spec Markdown to SVG (Constitution Principle XIV)",
+  "type": "module",
+  "dependencies": {
+    "markdown-it": "15.0.2",
+    "wireloom": "0.7.0"
+  }
+}

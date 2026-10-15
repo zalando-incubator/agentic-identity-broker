@@ -95,7 +95,8 @@ review new business logic separately.
 
 ## 🔒 Phase 2: Design Preconditions (Blocking Prerequisites) [MANDATORY]
 
-**Purpose**: Domain model, configuration, API, and database design MUST all be complete before implementation
+**Purpose**: Complete domain, configuration, API, database, concrete spec-journey, and E2E
+design before implementation
 
 **⚠️ CRITICAL**: No code implementation can begin until this entire phase is complete
 
@@ -163,7 +164,8 @@ review new business logic separately.
 
 ### Phase 2f: E2E Acceptance Test Design [MANDATORY]
 
-**Constitution Reference**: Principle XIII (End-to-End Acceptance Testing & Spec Traceability)
+**Constitution Reference**: Principles XIII (End-to-End Acceptance Testing & Spec Traceability),
+XIV (Specification by Example & Reviewable Journeys)
 
 **Required Tasks** (adapt descriptions to your feature):
 - [ ] T010 Write E2E acceptance tests in `tests/e2e/` for all acceptance scenarios from spec.md
@@ -179,9 +181,14 @@ review new business logic separately.
 - [ ] T010h [IF FRONTEND] Use existing page objects in `tests/e2e/pages/` and Playwright harness
 - [ ] T010i [IF FRONTEND] Verify frontend Playwright tests capture screenshots to `tests/e2e/screenshots/`
       using descriptive filenames for each meaningful UI state
+- [ ] T010j Review concrete example journeys in `spec.md` for each distinct user-facing flow:
+      link them to Given/When/Then scenarios and verify applicable configuration, HTTP exchanges,
+      Wireloom source and rendered SVGs, and decoded output JWT claims against requirements and
+      OpenAPI contracts (Principle XIV)
 
-**Checkpoint**: E2E acceptance tests written and verified to fail semantically before implementation;
-frontend Playwright tests added/amended and screenshots configured (if applicable)
+**Checkpoint**: Concrete spec journeys reviewed against scenarios and applicable configuration,
+HTTP, Wireloom UI, and JWT examples; E2E tests written and verified to fail semantically before
+implementation; frontend Playwright tests added/amended and screenshots configured (if applicable)
 
 ---
 
@@ -371,6 +378,9 @@ yet — ready for incremental user story implementation
 - [ ] TXXX Verify user/stakeholder confirmed API designs (document reference in PR) (Principle X)
 - [ ] TXXX Verify database schema design documented (migrations or confirmation of no DB changes) (Principle IX)
 - [ ] TXXX [IF FRONTEND] Verify design system review completed and universal components identified (Principle XI)
+- [ ] TXXX Verify spec.md contains linked concrete example journeys for every distinct user-facing
+      flow, with applicable configuration, HTTP exchanges, Wireloom source and rendered SVGs,
+      and visible decoded JWT claims matching requirements and contracts (Principle XIV)
 - [ ] TXXX Verify E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)
 - [ ] TXXX Verify E2E tests verified to FAIL before implementation (red phase): detailed expectations
       written and failing; no placeholder always-fail assertions; no `XIt`/`PIt`/`Skip()` markers;

@@ -230,7 +230,7 @@ vet:
     @echo "Running go vet..."
     go vet ./...
 
-# Install development tools (air, golangci-lint, go-junit-report)
+# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
 install-tools:
     @echo "Installing development tools..."
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
@@ -242,6 +242,7 @@ install-tools:
     else \
         go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps; \
     fi
+    @npm ci --prefix tools/wireloom --silent
     @echo "Tools installation complete"
 
 # Setup git hooks for quality checks
@@ -851,6 +852,16 @@ docs-clean:
 # Run markdown linting
 docs-lint:
     npx markdownlint-cli2 "docs/**/*.md"
+
+# Render Wireloom wireframes in spec Markdown to SVG (example: just render-wireframes specs/NNN-name/spec.md)
+render-wireframes +files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d tools/wireloom/node_modules/wireloom ]; then
+        echo "Error: wireloom is not installed. Run: just install-tools" >&2
+        exit 1
+    fi
+    node tools/wireloom/render.mjs {{files}}
 
 # Check for broken links
 docs-check-links: docs-build

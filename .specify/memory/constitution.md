@@ -447,6 +447,38 @@ documentation of UI states, making regressions immediately visible during review
 4. Verify test fails before button is implemented (semantic red phase)
 5. Implement button, verify test turns green
 
+### XIV. Specification by Example & Reviewable Journeys
+
+Feature specifications MUST make intended behavior reviewable through concrete examples, not only
+abstract requirements or Given/When/Then acceptance scenarios.
+
+**Rules**:
+- Every new or amended `specs/<feature>/spec.md` MUST include at least one chronological,
+  end-to-end example user journey for each distinct user-facing flow. Show the actors, initial
+  state, actions, and observable outcomes with consistent, representative sample values. Link
+  each journey to its Given/When/Then acceptance scenarios; examples MUST NOT replace those
+  scenarios or the 1:1 E2E test mapping required by Principle XIII.
+- Where configuration affects the journey, the spec MUST include a minimal example configuration
+  snippet with the relevant real key names and sample values, and show its effect on the outcome.
+- Where HTTP interactions occur, the spec MUST show relevant RFC-style request and response pairs:
+  method and target, applicable headers and request body, response status, applicable headers
+  and response body. Parameters MAY be abbreviated with `...` only where their values are clear
+  from context and immaterial to the behavior; security-critical inputs and observable outcomes
+  MUST remain explicit. Examples MUST agree with the applicable OpenAPI contract.
+- For UI changes, the spec MUST include an ordered wireframe sequence generated with
+  [Wireloom](https://github.com/StardockCorp/Wireloom). Authors MUST follow its
+  [agent authoring guide](https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md),
+  retain editable `wireloom` source and rendered SVGs for review, label meaningful before/after
+  states, and identify the user action connecting each state.
+- When an example outputs a JWT, the spec MUST display its decoded claims alongside a synthetic
+  token marker. Show the issuer, subject, audience, expiration, and behavior-driving claims
+  where applicable, so a reviewer can assess the resulting authorization. Examples MUST NOT
+  contain real tokens, credentials, or other secrets.
+
+**Rationale**: Concrete journeys let reviewers follow a feature from its setup through actual
+interactions and visible results. They expose gaps between requirements, API contracts, UI
+states, and security claims before implementation without replacing testable acceptance scenarios.
+
 ## Development Requirements
 
 ### Feature Scope & Deferred Findings
@@ -494,6 +526,9 @@ unrelated findings without silently enlarging the feature.
 - [ ] Database schema designed (migration files and SQL documented, or confirm no DB changes)
 - [ ] Frontend components designed: review [web/src/design-system/docs/INDEX.md](../web/src/design-system/docs/INDEX.md) and ensure design system can be used
 - [ ] Universal components identified: plan to add them to design system in `web/src/design-system/components/` (if applicable)
+- [ ] Spec contains linked example user journeys alongside Given/When/Then scenarios, with
+      applicable configuration, HTTP exchanges, Wireloom UI sequences, and visible JWT claims
+      (Principle XIV)
 - [ ] **E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)**
 - [ ] **E2E tests compile successfully and fail semantically before implementation (red phase — detailed
       expectations written and failing, not placeholder assertions — Principle XIII)**
@@ -650,6 +685,9 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 - Reviewers MUST verify dependency injection uses Builder pattern and routing functions are thin (Principle XII)
 - Reviewers MUST verify TDD was followed: tests written first, compiled successfully, and failed semantically
   before implementation — with detailed expectations, not placeholder assertions (Principle VIII)
+- Reviewers MUST follow the spec's example journeys and verify that applicable configuration,
+  HTTP exchanges, Wireloom UI states, and output JWT claims match requirements and contracts
+  without exposing real secrets (Principle XIV)
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
 - Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
   failing, not trivial always-fail placeholders (Principle XIII)
@@ -669,7 +707,8 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
    - Phase 2c: API Design (Principles IV, X)
    - Phase 2d: Database Design (Principle IX)
    - Phase 2e: Frontend/Design System Review (Principle XI, if applicable)
-   - Phase 2f: E2E Acceptance Test Design (Principle XIII) — includes frontend Playwright tasks if UI changes
+   - Phase 2f: E2E Acceptance Test Design (Principles XIII, XIV) — includes review of concrete
+     spec journeys and frontend Playwright tasks if UI changes
 
 2. **Phase N: Constitution Compliance Verification** - Constitution Implementation Phase checklist
    - Design Phase Verification tasks
@@ -698,4 +737,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
+**Version**: 4.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
