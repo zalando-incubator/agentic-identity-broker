@@ -12,13 +12,18 @@ import (
 	"github.com/lib/pq"
 )
 
-const listExpiringSessionsFirstPageQuery = `SELECT * FROM user_sessions
+const userSessionColumns = `id, principal, service_id, callback_id,
+	encrypted_access_token, encrypted_refresh_token, token_type,
+	access_token_expires_at, refresh_token_expires_at, scope,
+	encryption_context, initiated_at, created_at, updated_at`
+
+const listExpiringSessionsFirstPageQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
 ORDER BY access_token_expires_at, id
 LIMIT $2`
 
-const listExpiringSessionsAfterCursorQuery = `SELECT * FROM user_sessions
+const listExpiringSessionsAfterCursorQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
   AND (access_token_expires_at, id) > ($2, $3)
@@ -177,7 +182,7 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	}
 
 	var rec userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE id = $1`
+	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE id = $1`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -198,7 +203,7 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	}
 
 	var rec userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`
+	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND service_id = $2`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -246,7 +251,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 
 	var rec userSessionRecord
 	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	err = tx.GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	err = tx.GetContext(readCtx, &rec, `SELECT `+userSessionColumns+` FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
 	cancel()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -289,7 +294,7 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
+	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -359,7 +364,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE principal = $1 AND ` + usableSessionPredicate + ` ORDER BY created_at DESC`
+	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND ` + usableSessionPredicate + ` ORDER BY created_at DESC`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()

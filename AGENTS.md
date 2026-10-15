@@ -209,6 +209,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Match surrounding style** — Keep naming, error handling, and file structure consistent with adjacent code.
 - **Explicit over clever** — Make intent clear without tracing abstractions.
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
+- **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
