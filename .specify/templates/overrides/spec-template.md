@@ -102,8 +102,9 @@
     only for values that are clear from context and immaterial to the behavior; keep
     security-critical inputs and observable outcomes explicit.
   - UI: one `wireloom` block per meaningful state, rendered to SVG with the `wireloom` npm package
-    (`wireloom.render`) under `specs/[###-feature-name]/wireframes/` and linked; name the user
-    action between states. Follow https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md
+    (`wireloom.render`), committed under `specs/[###-feature-name]/wireframes/`, and embedded as
+    an image above its source; name the user action between states. Follow
+    https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md
   - JWT: synthetic token marker plus decoded header and claims. Never use real tokens or secrets.
   The journey below is a WORKED EXAMPLE of the expected depth and style. Replace it entirely with
   this feature's journeys, and omit block types that do not apply.
@@ -156,7 +157,9 @@ after 10 minutes. The consent page loads the agent through the existing
 
 **Step 3 — 09:30:12: Alice reviews the consent screen and sets an end date**
 
-State A — consent screen as loaded ([SVG](wireframes/journey-1-a-consent.svg)):
+State A — consent screen as loaded:
+
+![State A: consent screen as loaded](wireframes/journey-1-a-consent.svg)
 
 ```wireloom
 window "Consent Management":
@@ -187,7 +190,9 @@ annotation "Action: Alice checks this box" target="end-date" position=right
 
 Action: Alice checks **Specific end date**. The page pre-fills today + 3 months.
 
-State B — end date set ([SVG](wireframes/journey-1-b-end-date.svg)):
+State B — end date set:
+
+![State B: end date set to January 15, 2027](wireframes/journey-1-b-end-date.svg)
 
 ```wireloom
 window "Consent Management":
