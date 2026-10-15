@@ -20,6 +20,7 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Token Refresh](#token-refresh)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
+- [aibctl configuration](#aibctl-configuration)
 
 ## Overview
 
@@ -1575,3 +1576,68 @@ When tracing is enabled, the following operations emit child spans:
 - Make sure that each configuration path is absolute or relative to the current working directory.
 - Make sure that `GO_ENV` has the expected environment value.
 - Read `adrs/002-configuration-libraries.md` for the configuration library decision.
+
+## aibctl configuration
+
+`aibctl`, the admin CLI, has its own configuration file and environment prefix (ADR 038).
+It never reads the broker's `IDENTITY_BROKER_*` settings.
+
+**Location** (override with `--config` or `AIBCTL_CONFIG`; `aibctl config path` prints it):
+
+| OS | Path |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/aibctl/config.yaml`, default `~/.config/aibctl/config.yaml` |
+| macOS | `~/Library/Application Support/aibctl/config.yaml` |
+| Windows | `%AppData%\aibctl\config.yaml` |
+
+`aibctl context set` writes the file atomically with mode `0600` in a `0700` directory. A
+missing file is not an error; `--server` and `--principal`/`--token` alone are enough.
+
+**Schema** (see `examples/config/aibctl.yaml`):
+
+| Key | Description |
+|---|---|
+| `current_context` | Name of the context used when `--context`/`AIBCTL_CONTEXT` is absent |
+| `defaults.output` | `table` (default), `wide`, `json`, `yaml` |
+| `defaults.show_uuid` | Add a UUID column next to canonical IDs |
+| `defaults.timeout` | Request timeout (default `30s`) |
+| `defaults.token_command_timeout` | Token command timeout (default `10s`) |
+| `contexts[].name` | `[A-Za-z0-9._-]+`, unique |
+| `contexts[].server` | Admin base URL, `http` or `https`, no path |
+| `contexts[].host_header` | `Host` to send when the URL differs from the broker's `server.admin.public_url` |
+| `contexts[].headers` | Extra request headers; values support `${VAR}` |
+| `contexts[].auth.principal` | Value of the principal header (local or combined mode) |
+| `contexts[].auth.principal_header` | Header name, default `X-Remote-User` |
+| `contexts[].auth.token` | Static Bearer token; supports `${VAR}` |
+| `contexts[].auth.token_command` | Argv list that prints the Bearer token; exclusive with `token` |
+| `contexts[].output`, `contexts[].timeout` | Per-context overrides of the defaults |
+
+At least one of `principal`, `token`, or `token_command` is required. A Bearer token is
+meant for the reverse proxy in front of the admin API; the principal header is what the
+broker itself reads.
+
+**Precedence**: flags > `AIBCTL_*` environment variables > selected context > `defaults` >
+built-in defaults. Environment variables map to the global flags:
+
+| Flag | Environment variable |
+|---|---|
+| `--config` | `AIBCTL_CONFIG` |
+| `--context` | `AIBCTL_CONTEXT` |
+| `--server` | `AIBCTL_SERVER` |
+| `--host-header` | `AIBCTL_HOST_HEADER` |
+| `--principal` | `AIBCTL_PRINCIPAL` |
+| `--principal-header` | `AIBCTL_PRINCIPAL_HEADER` |
+| `--token` | `AIBCTL_TOKEN` |
+| `--token-command` | `AIBCTL_TOKEN_COMMAND` (split on whitespace) |
+| `-o`, `--output` | `AIBCTL_OUTPUT` |
+| `--show-uuid` | `AIBCTL_SHOW_UUID` |
+| `--timeout` | `AIBCTL_TIMEOUT` |
+| `-v`, `--verbose` | `AIBCTL_VERBOSE` |
+
+Passing `--token` disables the context's token command for that invocation. Other
+variables: `AIBCTL_ASSUME_YES=1` skips confirmation prompts, `AIBCTL_COMPLETION_TIMEOUT`
+bounds completion lookups (default `2s`).
+
+**Redaction**: `aibctl config view` masks `auth.token` and any header whose name contains
+`authorization`, `token`, `secret`, `cookie`, or `password`; `--show-secrets` disables the
+masking. Tokens are never written to logs.

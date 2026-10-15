@@ -41,6 +41,7 @@ const sidebars = {
       label: 'Guides',
       items: [
         'guides/manage-agents-and-services',
+        'guides/admin-cli',
         'guides/configure-authentication',
         'guides/operate-oauth2-server-modes',
         'guides/token-exchange-gateway',

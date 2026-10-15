@@ -73,7 +73,7 @@ jobs:
         run: just web-ci
 
       - name: Build release artifacts
-        run: just build-linux-amd64 build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
+        run: AIBCTL_VERSION="${TAG#v}" just build-linux-amd64 build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 aibctl-build-all web-build
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -282,11 +282,13 @@ jobs:
           set -euo pipefail
           release_version="${TAG#v}"
           for arch in amd64 arm64; do
-            for bin in agentic-identity-broker extproc-token-exchange; do
+            for bin in agentic-identity-broker extproc-token-exchange aibctl; do
               tar -C "bin/linux/${arch}" -czf "dist/${bin}_${release_version}_linux_${arch}.tar.gz" "${bin}"
             done
+            tar -C "bin/darwin/${arch}" -czf "dist/aibctl_${release_version}_darwin_${arch}.tar.gz" aibctl
           done
-          (cd dist && sha256sum -- *.tar.gz *.tgz > checksums.txt)
+          (cd bin/windows/amd64 && zip -q "../../../dist/aibctl_${release_version}_windows_amd64.zip" aibctl.exe)
+          (cd dist && sha256sum -- *.tar.gz *.zip *.tgz > checksums.txt)
           ls -l dist
 
       - name: Attest release assets
@@ -295,6 +297,7 @@ jobs:
         with:
           subject-path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.tgz
             dist/checksums.txt
 
@@ -316,6 +319,7 @@ jobs:
           - Broker: \`ghcr.io/${REPO}:${TAG}\`
           - Migrations: \`ghcr.io/${REPO}-migrate:${TAG}\`
           - ExtProc: \`ghcr.io/${REPO}-extproc:${TAG}\`
+          - aibctl: see the \`aibctl_*\` archives attached to this release
           - Helm chart: \`oci://ghcr.io/${OWNER}/agentic-identity-broker\`
 
           All images and attached assets carry SLSA build provenance. Follow the

@@ -136,14 +136,16 @@ jobs:
         run: |
           just build-all
           test -f web/dist/index.html
-      - name: Verify broker and ExtProc build flags
+      - name: Verify broker, ExtProc, and aibctl build flags
         run: |
           set -euo pipefail
           scripts/verify-go-binary.sh bin/agentic-identity-broker stripped "$GITHUB_WORKSPACE"
           just extproc-build
           scripts/verify-go-binary.sh bin/extproc-token-exchange stripped "$GITHUB_WORKSPACE"
-          LDFLAGS="" just build extproc-build
-          for binary in agentic-identity-broker extproc-token-exchange; do
+          just aibctl-build
+          scripts/verify-go-binary.sh bin/aibctl stripped "$GITHUB_WORKSPACE"
+          LDFLAGS="" just build extproc-build aibctl-build
+          for binary in agentic-identity-broker extproc-token-exchange aibctl; do
             scripts/verify-go-binary.sh "bin/$binary" debug "$GITHUB_WORKSPACE"
           done
       - name: Upload unit test results

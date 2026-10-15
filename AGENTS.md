@@ -24,6 +24,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `internal/ports/AGENTS.md` | Port interface catalogue, ISP rules, error conventions
 `internal/adapters/AGENTS.md` | Adapter map, cross-adapter ban, storage/encryption/HTTP details
 `internal/extproc/AGENTS.md` | Standalone ExtProc token exchange service, config, architecture
+`internal/aibctl/AGENTS.md` | Standalone admin CLI (`aibctl`): contexts, auth, client, commands
 `web/AGENTS.md` | React SPA, design system, API client, testing
 `infra/AGENTS.md` | AWS CDK encryption stack, IRSA, environment parameterization
 `tests/AGENTS.md` | E2E + integration test suite overview
@@ -35,6 +36,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 `cmd/agentic-identity-broker/` | Broker CLI, configuration, and dual-server startup
 `cmd/extproc-token-exchange/` | ExtProc CLI, telemetry bridge, and gRPC startup
+`cmd/aibctl/` | Admin CLI entry point (see `cmd/aibctl/AGENTS.md`)
 
 ### API Contracts
 
@@ -109,6 +111,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
 | `internal/extproc/` | Standalone gRPC ExtProc service | `internal/extproc/AGENTS.md` |
+| `internal/aibctl/` | Standalone admin CLI over the Admin API | `internal/aibctl/AGENTS.md` |
 
 **Import rules**: Do not let the domain import adapters or app. Define contracts in ports.
 Let driven adapters import ports and domain. HTTP routing receives handlers from app.
@@ -158,6 +161,7 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 038 | `adrs/038-admin-cli-standalone-binary.md` | `aibctl` admin CLI as a standalone binary with per-user contexts |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
 
@@ -190,7 +194,9 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full verification gate with E2E as the final guard layer |
 | `just build-all` | Backend + frontend build |
-| `just test-e2e` | All backend, ExtProc, and frontend E2E suites |
+| `just test-e2e` | All backend, ExtProc, aibctl, and frontend E2E suites |
+| `just aibctl-build` | Build the admin CLI → `./bin/aibctl` |
+| `just aibctl-test` | Admin CLI unit tests |
 | `just test-integration` | Default self-contained integration suites |
 | `just test-integration-infra` | Infra-backed integration suites (Docker/Podman required) |
 | `just test-integration-all` | Both integration layers |

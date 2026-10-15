@@ -9,8 +9,9 @@ This section provides a high-level overview of the project's directory and file 
 ```
 [Project Root]/
 
-├── cmd/                  # Main source code for backend services
+├── cmd/                  # Binaries: agentic-identity-broker, extproc-token-exchange, aibctl (admin CLI)
 ├── internal/             # Code that is internal
+│   └── aibctl/           # Admin CLI implementation (standalone client of the Admin API, ADR 038)
 ├── pkg/                  # Code that is ok to be used when this is
 ├── config/               # Backend configuration files
 ├── test/                 # Backend unit and integration tests
@@ -1226,6 +1227,57 @@ examples/config/
 
 ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 011, ADR 027) for distributed tracing, metrics, and log correlation. The `cmd/extproc-token-exchange/` composition layer imports `internal/adapters/telemetry` to initialize and manage the OTel provider lifecycle. The ExtProc domain and gRPC server use the global OTel tracer and meter patterns; no changes to adapter constructors are required. See ADR 027 for the cross-boundary dependency rationale and implementation approach.
 
+### 3.3. Admin CLI (`aibctl`)
+
+`aibctl` (`cmd/aibctl/`, `internal/aibctl/`) is the command-line client for the Admin API on port 14000. It is a standalone binary governed by [ADR 038](adrs/038-admin-cli-standalone-binary.md) and imports no broker package: its request and response types are re-declared from `api/admin/openapi.yaml`, and `internal/aibctl/architecture_test.go` enforces the boundary.
+
+#### 3.3.1. Command Model
+
+Nouns map to Admin API resources, verbs to operations: `agent` (with `client-credentials`), `service` (with `protected-resource`), `permission-set`, `signing-key`, `cimd-client-key`, `session` (`sweep`), plus `context`, `config`, `health`, `version`, and `completion`. `create` and `update` accept a JSON or YAML document (`-f FILE|-`) or field flags; `-f` is a full replacement, flags fetch the current representation and overlay the given fields. Destructive verbs require `--yes`, `AIBCTL_ASSUME_YES=1`, or an interactive confirmation. Standard output carries data only (`table`, `wide`, `json`, `yaml`); everything else goes to standard error. Exit codes: 0 success, 1 generic, 2 usage, 3 authentication, 4 not found, 5 conflict or precondition, 6 server-side validation.
+
+#### 3.3.2. Authentication Trust Boundary
+
+```
+operator ──aibctl──▶ reverse proxy ──X-Remote-User──▶ admin server :14000
+            │  Authorization: Bearer <token from token_command>
+            └─ (local) X-Remote-User: <principal> ──▶ admin server :14000
+```
+
+The broker keeps reading only the principal header. A context may carry a Bearer token (static or produced by a **token command**, an argv list run without a shell under a timeout) for the proxy, a principal for the broker, or both. Tokens are resolved once per process and never logged.
+
+#### 3.3.3. Configuration
+
+Per-user file at `os.UserConfigDir()/aibctl/config.yaml` with named contexts (`server`, `host_header`, `headers`, `auth`, `output`, `timeout`) and `defaults`. Precedence: flags > `AIBCTL_*` environment > selected context > defaults. Viper carries the flat overlay; the context list is decoded with yaml.v3. Written atomically with mode 0600. Reference: `docs/configuration.md` ("aibctl configuration"), `examples/config/aibctl.yaml`.
+
+#### 3.3.4. Canonical-First Identifiers
+
+Every read sends `Prefer: reference-id=canonical`. Tables show the canonical ID and fall back to the UUID (`--show-uuid` or `-o wide` adds the UUID column). Positional identifiers accept either form. Three-state fields (`canonical_id`, `client_id`) use `client.NullableString` so that omitted, `null`, and a value are encoded distinctly; `--clear-canonical-id` sends `null`.
+
+#### 3.3.5. HTTP Contract Handling
+
+`client.do` sets `Content-Type: application/json` on every POST/PUT/PATCH including body-less ones, `If-Match` on service replacement from the ETag read beforehand (or `--if-match`), the `Host` override for tunnels, and context headers. Errors are parsed from `{error, message}` JSON or plain-text boundary responses (403 Host mismatch, 415) with actionable hints. `service update` refuses to send the redacted `client_secret` placeholder.
+
+#### 3.3.6. Shell Completion
+
+Cobra's `completion` command (bash, zsh, fish, PowerShell) plus dynamic `ValidArgsFunction`s that query the API for agents, services, permission sets, protected resources, and key IDs under `AIBCTL_COMPLETION_TIMEOUT` (default 2s), returning nothing on failure so shell output stays clean.
+
+#### 3.3.7. Deployment
+
+Released as archives for linux amd64/arm64, darwin amd64/arm64, and windows amd64 (`just aibctl-build-all`, `.github/workflows/release.yml`). No container image and no Helm chart changes: it runs on the operator's workstation. Version and commit are injected via `AIBCTL_LDFLAGS`.
+
+#### 3.3.8. Testing
+
+Unit tests per package (`just aibctl-test`), including a re-exec helper process for the token command and `httptest` fake servers for header and body assertions. The E2E suite `tests/e2e/aibctl/` runs `aibctlcmd.Execute` in-process against `bootstrap.NewAdminTestServer` with a temporary config file; each `It()` maps to a scenario in `specs/048-admin-cli/spec.md` (`just test-e2e-aibctl`).
+
+#### 3.3.9. Directory Structure
+
+```
+cmd/aibctl/main.go
+internal/aibctl/
+  version/      config/      auth/      client/      output/      input/      cmd/
+tests/e2e/aibctl/
+```
+
 ## 4. Data Stores
 
 Production state is in PostgreSQL. The development and test storage adapter keeps the same entities in memory without persistence (ADR 004). AWS KMS holds the root encryption key, not application records.
@@ -1303,6 +1355,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
 - [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
 - [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
+- [ADR 038: Admin CLI as a Standalone Binary](adrs/038-admin-cli-standalone-binary.md) - `aibctl` with per-user contexts, token-command authentication, canonical-first output
 
 ### Frontend & User Interface
 
@@ -1345,7 +1398,7 @@ Repository URL: [Insert Repository URL]
 
 Primary Contact/Team: [Insert Lead Developer/Team Name]
 
-Date of Last Update: 2026-06-02
+Date of Last Update: 2026-10-09
 
 ## 12. Glossary / Acronyms
 
@@ -1720,6 +1773,14 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 **Client assertion**: An ephemeral ES256 JWT that authenticates the broker to one configured third-party token endpoint. It uses a CIMD client-authentication key. It is distinct from the RFC 8693 `ClientAssertion` that authenticates a privileged token-exchange client.
 
 **Key domain**: A persisted purpose boundary for asymmetric broker keys. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. `kid` remains globally unique across both domains.
+
+### Admin CLI (`aibctl`) Domain
+
+**Context (aibctl)**: A named entry in the per-user `aibctl` configuration describing one broker admin endpoint: server URL, optional `Host` override and extra headers, credentials, and output defaults. Selected by `current_context`, `--context`, or `AIBCTL_CONTEXT`.
+
+**Token Command**: An argv list in a context's `auth.token_command`, executed by `aibctl` without a shell and under `token_command_timeout`; its trimmed standard output becomes the Bearer token presented to the reverse proxy in front of the admin API. Resolved once per process, never logged.
+
+**Canonical-first display**: The `aibctl` output rule that identifiers are shown as the resource's canonical ID when one exists and as the UUID otherwise, with `--show-uuid` or `-o wide` adding the UUID column; reads send `Prefer: reference-id=canonical` so nested references follow the same rule.
 
 ### General Acronyms
 

@@ -1,0 +1,47 @@
+# aibctl configuration.
+#
+# Location (override with --config or AIBCTL_CONFIG):
+#   Linux:   ~/.config/aibctl/config.yaml
+#   macOS:   ~/Library/Application Support/aibctl/config.yaml
+#   Windows: %AppData%\aibctl\config.yaml
+#
+# Precedence: flags > AIBCTL_* environment variables > selected context > defaults.
+# "aibctl context set NAME ..." writes this file with owner-only permissions.
+
+current_context: local
+
+defaults:
+  output: table                 # table | wide | json | yaml
+  show_uuid: false              # add a UUID column next to canonical IDs
+  timeout: 30s                  # per-request timeout
+  token_command_timeout: 10s    # how long a token_command may run
+
+contexts:
+  # Local development: the admin server trusts the principal header directly.
+  - name: local
+    server: http://localhost:14000
+    auth:
+      principal: admin@example.com
+      principal_header: X-Remote-User   # optional; this is the default
+
+  # Proxied deployment: a reverse proxy validates the Bearer token and sets
+  # the principal header for the broker. The token comes from a helper
+  # command (argv list, executed without a shell, trimmed stdout).
+  - name: staging
+    server: https://broker-admin.staging.example.com
+    auth:
+      token_command: ["ztoken", "--audience", "broker-admin"]
+    output: json
+    timeout: 15s
+
+  # Port-forward or SSH tunnel: the URL differs from the broker's
+  # server.admin.public_url, so send the Host the broker expects. Extra
+  # headers are sent verbatim; ${VAR} is expanded from the environment.
+  - name: tunnel
+    server: http://localhost:14001
+    host_header: broker-admin.internal
+    headers:
+      X-Proxy-Tenant: platform
+    auth:
+      token: ${AIBCTL_TUNNEL_TOKEN}
+      principal: admin@example.com
