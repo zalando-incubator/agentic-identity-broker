@@ -290,7 +290,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		Context("and its refresh token remains valid", func() {
+		Context("and the provider accepts its stored refresh token", func() {
 			BeforeEach(func() { seedSession(fixtures.ExpiredGitHubSessionForPrincipal(principal)) })
 
 			// US2-S1 from specs/029-proactive-token-refresh/spec.md
@@ -309,8 +309,13 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 		})
 
-		Context("and both stored tokens have expired", func() {
-			BeforeEach(func() { seedSession(fixtures.FullyExpiredSessionForPrincipal(principal, serviceID.String())) })
+		Context("and its expired access token has no refresh credentials", func() {
+			BeforeEach(func() {
+				session := fixtures.SessionWithoutRefreshToken(principal, serviceID.String())
+				expiry := time.Now().Add(-2 * time.Hour)
+				session.AccessTokenExpiresAt = &expiry
+				seedSession(session)
+			})
 
 			// US2-S2 from specs/029-proactive-token-refresh/spec.md
 			It("should require reauthentication without contacting the provider", func() {
@@ -333,7 +338,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 		})
 
-		Context("and the provider rejects its valid refresh token", func() {
+		Context("and the provider rejects its stored refresh token", func() {
 			BeforeEach(func() {
 				seedSession(fixtures.ExpiredGitHubSessionForPrincipal(principal))
 				upstream.WithErrorResponse("invalid_grant")
@@ -353,6 +358,13 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(after.EncryptedAccessToken).To(Equal(access))
 				Expect(after.EncryptedRefreshToken).To(Equal(refresh))
 				Expect(*after.AccessTokenExpiresAt).To(Equal(expiry))
+				Expect(after.RefreshTokenRejected).To(BeTrue())
+				Expect(after.UpdatedAt).To(BeTemporally(">", before.UpdatedAt))
+				Expect(after.Scope).To(Equal(before.Scope))
+				Expect(after.TokenType).To(Equal(before.TokenType))
+				Expect(after.EncryptionContext).To(Equal(before.EncryptionContext))
+				Expect(after.InitiatedAt).To(Equal(before.InitiatedAt))
+				Expect(after.CreatedAt).To(Equal(before.CreatedAt))
 				events := proactiveEvents(logs, "session.oauth2.refresh_failed")
 				Expect(events).To(HaveLen(1))
 				Expect(events[0]).To(HaveKeyWithValue("level", "ERROR"))
@@ -360,6 +372,179 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(events[0]).To(HaveKeyWithValue("triggered_by", "on-demand"))
 				Expect(events[0]).To(HaveKeyWithValue("principal", principal))
 			})
+		})
+	})
+
+	Describe("Session recovery: when manual refresh rejects an unexpired access token", func() {
+		var principal string
+		BeforeEach(func() {
+			principal = fixtures.DefaultPrincipal().String()
+			Expect(fixtures.SeedPlaceholderGrantData(ctx, store, serviceID)).To(Succeed())
+			agent = fixtures.ValidAgent()
+			Expect(store.Agents().Create(ctx, agent)).To(Succeed())
+			seedGrant(principal)
+			seedSession(fixtures.GitHubSessionForPrincipal(principal))
+			upstream.WithErrorResponse("invalid_grant")
+			factory = bootstrap.NewServerFactory(config, logger)
+			builder, err := bootstrap.NewTestServerBuilder(config, store, factory, logger)
+			Expect(err).NotTo(HaveOccurred())
+			enduser, err = builder.Build()
+			Expect(err).NotTo(HaveOccurred())
+			admin, err = bootstrap.NewAdminTestServer(enduser.App(), logger)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		// US1-S6 from specs/008-thirdparty-oauth2-sessions/spec.md and
+		// US2-S3 from specs/029-proactive-token-refresh/spec.md.
+		It("should stop token issuance and exclude sweeps until a real OAuth callback restores the session", func() {
+			type sessionListResponse struct {
+				Data struct {
+					Sessions []map[string]any `json:"sessions"`
+				} `json:"data"`
+			}
+			before := storedSession(principal)
+			access, refresh := bytes.Clone(before.EncryptedAccessToken), bytes.Clone(before.EncryptedRefreshToken)
+			expiry := *before.AccessTokenExpiresAt
+			Expect(expiry.After(time.Now())).To(BeTrue())
+			Expect(expiry.Before(time.Now().Add(2 * time.Hour))).To(BeTrue())
+
+			manual, err := enduser.AuthenticatedPOST("/api/third-party/"+serviceID.String()+"/session/refresh", principal, "application/json", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manual.StatusCode).To(Equal(http.StatusConflict))
+			manualError := decodeJSON[map[string]any](manual)
+			Expect(manualError).To(Equal(map[string]any{
+				"error":   "refresh_rejected",
+				"message": "refresh token rejected by provider; reauthentication required",
+			}))
+			after := storedSession(principal)
+			Expect(after.ID).To(Equal(before.ID))
+			Expect(after.RefreshTokenRejected).To(BeTrue())
+			Expect(after.EncryptedAccessToken).To(Equal(access))
+			Expect(after.EncryptedRefreshToken).To(Equal(refresh))
+			Expect(*after.AccessTokenExpiresAt).To(Equal(expiry))
+
+			listed, err := enduser.AuthenticatedGET("/api/third-party/sessions", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listed.StatusCode).To(Equal(http.StatusOK))
+			sessions := decodeJSON[sessionListResponse](listed).Data.Sessions
+			Expect(sessions).To(HaveLen(1))
+			Expect(sessions[0]).To(HaveKeyWithValue("id", before.ID.String()))
+			Expect(sessions[0]).To(HaveKeyWithValue("service_id", serviceID.String()))
+			Expect(sessions[0]).To(HaveKeyWithValue("requires_reauthentication", true))
+			Expect(sessions[0]).To(HaveKeyWithValue("access_token_expired", false))
+			Expect(sessions[0]).To(HaveKeyWithValue("has_refresh_token", true))
+			Expect(sessions[0]).NotTo(HaveKey("is_expired"))
+			Expect(sessions[0]).NotTo(HaveKey("refresh_token_expires_at"))
+			type sessionDetailResponse struct {
+				Data struct {
+					Session map[string]any `json:"session"`
+				} `json:"data"`
+			}
+			detail, err := enduser.AuthenticatedGET("/api/third-party/"+serviceID.String()+"/session", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detail.StatusCode).To(Equal(http.StatusOK))
+			status := decodeJSON[sessionDetailResponse](detail).Data.Session
+			Expect(status).To(HaveKeyWithValue("requires_reauthentication", true))
+			Expect(status).To(HaveKeyWithValue("access_token_expired", false))
+			Expect(status).To(HaveKeyWithValue("has_refresh_token", true))
+			Expect(status).NotTo(HaveKey("is_expired"))
+			Expect(status).NotTo(HaveKey("refresh_token_expires_at"))
+			_, _ = fmt.Fprintf(GinkgoWriter, "Manual refresh HTTP %d: %s; retained session requires_reauthentication=%v access_token_expired=%v has_refresh_token=%v, ciphertext and access expiry unchanged\n", manual.StatusCode, manualError["error"], sessions[0]["requires_reauthentication"], sessions[0]["access_token_expired"], sessions[0]["has_refresh_token"])
+
+			denied := proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent))
+			deniedBody := proactiveExchangeBody(denied, http.StatusBadRequest)
+			Expect(deniedBody).To(HaveKeyWithValue("error", "invalid_grant"))
+			Expect(deniedBody).To(HaveKeyWithValue("error_uri", enduser.BaseURL()+"/sessions"))
+			Expect(deniedBody).NotTo(HaveKey("access_token"))
+			requests := upstream.GetTokenRequests()
+			Expect(requests).To(HaveLen(1))
+			refreshForm, err := url.ParseQuery(requests[0].Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(refreshForm.Get("grant_type")).To(Equal("refresh_token"))
+			_, _ = fmt.Fprintf(GinkgoWriter, "Rejected exchange HTTP %d: %s, recovery=%s, no access token; upstream refresh requests=%d\n", denied.response.StatusCode, deniedBody["error"], deniedBody["error_uri"], len(requests))
+
+			sweep := proactiveSweep(admin, `{"lookahead_duration":"PT2H","page_size":100}`)
+			summary := proactiveSweepBody(sweep)
+			Expect(summary).To(Equal(proactiveSweepSummary{}))
+			Expect(upstream.GetTokenRequests()).To(HaveLen(1))
+			_, _ = fmt.Fprintf(GinkgoWriter, "Admin sweep HTTP %d with PT2H: total_evaluated=%d refreshed=%d skipped=%d failed=%d; upstream refresh requests=%d\n", sweep.response.StatusCode, summary.TotalEvaluated, summary.Refreshed, summary.Skipped, summary.Failed, len(upstream.GetTokenRequests()))
+
+			upstream.WithSuccessfulTokenResponse()
+			authorize, err := enduser.AuthenticatedGET("/api/third-party/"+serviceID.String()+"/oauth2/authorize?redirect_uri="+url.QueryEscape(enduser.BaseURL()+"/sessions"), principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(authorize.StatusCode).To(Equal(http.StatusFound))
+			authorizationURL, err := authorize.Location()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(authorize.Body.Close()).To(Succeed())
+			Expect(authorizationURL.Scheme + "://" + authorizationURL.Host).To(Equal(upstream.URL()))
+			providerClient := &http.Client{
+				Timeout: 5 * time.Second,
+				CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+			provider, err := providerClient.Get(authorizationURL.String())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(provider.StatusCode).To(Equal(http.StatusFound))
+			callbackURL, err := provider.Location()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(provider.Body.Close()).To(Succeed())
+			Expect(upstream.GetAuthorizeCalled()).To(BeTrue())
+			Expect(upstream.GetLastRequest().Header.Get("X-Remote-User")).To(BeEmpty())
+			Expect(callbackURL.Scheme + "://" + callbackURL.Host).To(Equal(enduser.BaseURL()))
+			Expect(callbackURL.Path).To(Equal("/api/third-party/" + serviceID.String() + "/oauth2/callback"))
+			Expect(callbackURL.Query().Get("code")).NotTo(BeEmpty())
+			Expect(callbackURL.Query().Get("state")).To(Equal(authorizationURL.Query().Get("state")))
+
+			callback, err := enduser.AuthenticatedGET(callbackURL.RequestURI(), principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(callback.StatusCode).To(Equal(http.StatusFound))
+			recoveryURL, err := callback.Location()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(callback.Body.Close()).To(Succeed())
+			Expect(recoveryURL.Scheme + "://" + recoveryURL.Host).To(Equal(enduser.BaseURL()))
+			Expect(recoveryURL.Path).To(Equal("/sessions"))
+			Expect(recoveryURL.Query().Get("success")).To(Equal("true"))
+			Expect(recoveryURL.Query().Get("service_id")).To(Equal(serviceID.String()))
+			landing, err := enduser.AuthenticatedGET(recoveryURL.RequestURI(), principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(landing.StatusCode).To(Equal(http.StatusOK))
+			Expect(landing.Body.Close()).To(Succeed())
+
+			requests = upstream.GetTokenRequests()
+			Expect(requests).To(HaveLen(2))
+			codeForm, err := url.ParseQuery(requests[1].Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(codeForm.Get("grant_type")).To(Equal("authorization_code"))
+			Expect(codeForm.Get("code")).To(Equal(callbackURL.Query().Get("code")))
+			Expect(requests[1].Header.Get("X-Remote-User")).To(BeEmpty())
+			recovered := storedSession(principal)
+			Expect(recovered.ID).To(Equal(before.ID))
+			Expect(recovered.RefreshTokenRejected).To(BeFalse())
+			listed, err = enduser.AuthenticatedGET("/api/third-party/sessions", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listed.StatusCode).To(Equal(http.StatusOK))
+			sessions = decodeJSON[sessionListResponse](listed).Data.Sessions
+			Expect(sessions).To(HaveLen(1))
+			Expect(sessions[0]).To(HaveKeyWithValue("id", before.ID.String()))
+			Expect(sessions[0]).To(HaveKeyWithValue("requires_reauthentication", false))
+			Expect(sessions[0]).To(HaveKeyWithValue("access_token_expired", false))
+			Expect(sessions[0]).To(HaveKeyWithValue("has_refresh_token", true))
+			Expect(sessions[0]).NotTo(HaveKey("is_expired"))
+			Expect(sessions[0]).NotTo(HaveKey("refresh_token_expires_at"))
+			detail, err = enduser.AuthenticatedGET("/api/third-party/"+serviceID.String()+"/session", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detail.StatusCode).To(Equal(http.StatusOK))
+			status = decodeJSON[sessionDetailResponse](detail).Data.Session
+			Expect(status).To(HaveKeyWithValue("requires_reauthentication", false))
+			Expect(status).To(HaveKeyWithValue("access_token_expired", false))
+			Expect(status).To(HaveKeyWithValue("has_refresh_token", true))
+			Expect(status).NotTo(HaveKey("is_expired"))
+			Expect(status).NotTo(HaveKey("refresh_token_expires_at"))
+			exchanged := proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent))
+			Expect(proactiveExchangeBody(exchanged, http.StatusOK)).To(HaveKeyWithValue("access_token", "renewed-github-token"))
+			Expect(upstream.GetTokenRequests()).To(HaveLen(2))
+			_, _ = fmt.Fprintf(GinkgoWriter, "OAuth recovery authorize/provider/callback HTTP %d/%d/%d -> %s HTTP %d; authorization_code grants=1, requires_reauthentication=%v; subsequent exchange HTTP %d, total upstream requests=%d (one refresh, one authorization_code)\n", authorize.StatusCode, provider.StatusCode, callback.StatusCode, recoveryURL.Path, landing.StatusCode, sessions[0]["requires_reauthentication"], exchanged.response.StatusCode, len(upstream.GetTokenRequests()))
 		})
 	})
 
@@ -432,12 +617,14 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 		})
 
-		Context("and one candidate cannot use its expired refresh token", func() {
+		Context("and one candidate has no refresh credentials", func() {
 			var failed, succeeding string
 			BeforeEach(func() {
 				failed = fixtures.DefaultPrincipal().String()
 				succeeding = fixtures.AnotherPrincipal().String()
-				failedSession := fixtures.FullyExpiredSessionForPrincipal(failed, serviceID.String())
+				failedSession := fixtures.SessionWithoutRefreshToken(failed, serviceID.String())
+				expiry := time.Now().Add(-2 * time.Hour)
+				failedSession.AccessTokenExpiresAt = &expiry
 				failedSession.ID = id.MustParseSessionID("00000000-0000-0000-0000-000000000001")
 				seedSession(failedSession)
 				succeedingSession := fixtures.ExpiredGitHubSessionForPrincipal(succeeding)
@@ -446,7 +633,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S2 from specs/029-proactive-token-refresh/spec.md
-			It("should count expired refresh tokens as failures and continue the sweep", func() {
+			It("should count missing refresh credentials as failures and continue the sweep", func() {
 				oldFailedRefresh := bytes.Clone(storedSession(failed).EncryptedRefreshToken)
 				oldFailedExpiry := *storedSession(failed).AccessTokenExpiresAt
 				oldFailed := bytes.Clone(storedSession(failed).EncryptedAccessToken)
@@ -564,7 +751,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 					after := storedSession(principal)
 					Expect(after.EncryptedAccessToken).To(Equal(before[principal].EncryptedAccessToken), fmt.Sprintf("access token for %s", principal))
 					Expect(after.EncryptedRefreshToken).To(Equal(before[principal].EncryptedRefreshToken))
-					Expect(after.RefreshTokenExpiresAt).To(Equal(before[principal].RefreshTokenExpiresAt))
+					Expect(after.RefreshTokenRejected).To(Equal(before[principal].RefreshTokenRejected))
 					Expect(after.UpdatedAt).To(Equal(before[principal].UpdatedAt))
 					Expect(after.AccessTokenExpiresAt).To(Equal(before[principal].AccessTokenExpiresAt))
 				}

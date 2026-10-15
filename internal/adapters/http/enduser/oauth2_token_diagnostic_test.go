@@ -149,7 +149,7 @@ func TestTokenExchangeFailureTelemetryAndProtocol(t *testing.T) {
 		{"invalid client", tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid, tokenexchange.NewInvalidClientError, http.StatusUnauthorized, "invalid_client", false},
 		{"missing consent", tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing, tokenexchange.NewAccessDeniedError, http.StatusForbidden, "access_denied", true},
 		{"missing session", tokenexchange.StageSessionLookup, tokenexchange.DetailSessionMissing, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
-		{"local refresh expiry", tokenexchange.StageRefresh, tokenexchange.DetailRefreshTokenExpired, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
+		{"access expired without refresh authority", tokenexchange.StageSessionLookup, tokenexchange.DetailAccessTokenExpired, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
 		{"provider refresh rejected", tokenexchange.StageRefresh, tokenexchange.DetailRefreshRejected, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
 		{"provider client rejected", tokenexchange.StageRefresh, tokenexchange.DetailProviderClientRejected, tokenexchange.NewServerError, http.StatusInternalServerError, "server_error", false},
 		{"provider unavailable", tokenexchange.StageRefresh, tokenexchange.DetailProviderUnavailable, tokenexchange.NewServerError, http.StatusInternalServerError, "server_error", false},
@@ -193,11 +193,23 @@ func TestTokenExchangeFailureTelemetryAndProtocol(t *testing.T) {
 }
 
 func TestTokenExchangeTelemetryUsesSessionMetadataOnly(t *testing.T) {
-	for _, code := range []string{"invalid_grant", "PROVIDER_CODE_SENTINEL", ""} {
-		t.Run(code, func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		code   string
+		status int
+	}{
+		{"provider invalid_grant", "invalid_grant", http.StatusBadRequest},
+		{"unrecognized provider code", "PROVIDER_CODE_SENTINEL", http.StatusBadRequest},
+		{"provider omits code", "", http.StatusBadRequest},
+		{"recorded rejection has no provider response", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			spans := captureTokenExchangeSpans(t)
 			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
-			metadata := oauth2session.NewErrorMetadata(oauth2session.OperationRefresh, oauth2session.DetailRefreshRejected).WithProviderResponse(http.StatusBadRequest, code)
+			metadata := oauth2session.NewErrorMetadata(oauth2session.OperationRefresh, oauth2session.DetailRefreshRejected)
+			if tc.status != 0 {
+				metadata = metadata.WithProviderResponse(tc.status, tc.code)
+			}
 			operationErr := oauth2session.NewOperationError(metadata, errors.New("RAW_SESSION_CAUSE_SENTINEL"))
 			diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageRefresh, tokenexchange.DetailRefreshRejected)
 			err := tokenexchange.NewInvalidGrantError("RAW_SESSION_DESCRIPTION_SENTINEL").WithCause(operationErr).WithDiagnostic(diagnostic)
@@ -211,7 +223,11 @@ func TestTokenExchangeTelemetryUsesSessionMetadataOnly(t *testing.T) {
 			assert.Equal(t, string(metadata.Operation()), attrs["token_exchange.session.operation"])
 			assert.Equal(t, string(metadata.Kind()), attrs["token_exchange.session.kind"])
 			assert.Equal(t, string(metadata.Dependency()), attrs["token_exchange.session.dependency"])
-			assert.EqualValues(t, metadata.StatusCode(), attrs["token_exchange.session.status_code"])
+			if metadata.StatusCode() == 0 {
+				assert.NotContains(t, attrs, "token_exchange.session.status_code")
+			} else {
+				assert.EqualValues(t, metadata.StatusCode(), attrs["token_exchange.session.status_code"])
+			}
 			if metadata.OAuthCode() == "" {
 				assert.NotContains(t, attrs, "token_exchange.session.oauth_code")
 			} else {

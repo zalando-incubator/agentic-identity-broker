@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-08
+**Partial supersession**: [ADR 040](040-third-party-session-validity.md) supersedes only the availability consequence for terminal provider refresh rejection. Transient background failure and dropped work still permit an otherwise valid access token.
 
 ## Context
 
@@ -31,7 +32,7 @@ The stakeholder approved all four choices in writing in this conversation on 202
 
 ## Consequences
 
-- A valid token remains available to an exchange even if background work fails or the pool is full. An operator can schedule sweeps for inactive sessions without adding a broker scheduler.
+- A valid token remains available to an exchange after transient background failure or a full pool, but not after committed terminal provider refresh rejection (ADR 040). An operator can schedule sweeps for inactive sessions without adding a broker scheduler.
 - The row lock protects updates and prevents duplicate provider calls when another replica has already moved the token beyond the refresh threshold. The sweep re-checks under the lock and counts a no-longer-due candidate as skipped.
 - Each locked refresh holds a database connection during the upstream call. The background worker cap protects capacity for request traffic. Synchronous sweeps limit provider and database load, but their duration depends on the number of candidates and provider latency.
 - The external caller must set a suitable timeout. A shutdown deadline that expires during a provider call can still interrupt the update of a rotated refresh token.

@@ -2057,8 +2057,8 @@ func TestExchange_PermissionSetRepositoryFailureBeforeSessionLookup(t *testing.T
 	assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls)
 }
 
-// US5-S4 / US5-S5: only a parsed provider HTTP 400 invalid_grant refresh rejection is a
-// user-recoverable re-authentication; every other retrieval failure stays a server error.
+// US5-S4 / US5-S5: a parsed provider HTTP 4xx invalid_grant refresh rejection, except
+// 429, requires reauthentication; other refresh failures remain server errors.
 func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 	t.Parallel()
 
@@ -2090,8 +2090,11 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		wantCode          string
 		wantReauthURI     bool
 		wantRefreshErr    bool
+		wantRejectWrite   bool
 	}{
-		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true, wantRejectWrite: true},
+		{name: "provider 401 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_grant"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true, wantRejectWrite: true},
+		{name: "provider 429 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusTooManyRequests, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 401 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 400 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 500 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
@@ -2100,7 +2103,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		{name: "decryption failure", session: refreshableSession(), encryptionErr: errors.New("kms unavailable"), wantCode: "server_error"},
 		{name: "storage failure", repoErr: errors.New("database unavailable"), wantCode: "server_error"},
 		{name: "missing session", wantCode: "invalid_grant", wantReauthURI: true},
-		{name: "expired session without refresh token", session: &storagedomain.UserSession{ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), EncryptedAccessToken: []byte("expired"), AccessTokenExpiresAt: &expired}, wantCode: "invalid_grant", wantReauthURI: true},
+		{name: "expired access without refresh token", session: &storagedomain.UserSession{ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), EncryptedAccessToken: []byte("expired"), AccessTokenExpiresAt: &expired}, wantCode: "invalid_grant", wantReauthURI: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2144,7 +2147,16 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 				assert.ErrorAs(t, err, &retrieveErr)
 			}
 			if tt.session != nil {
-				assert.Same(t, tt.session, sessionRepo.session, "a rejected refresh must not persist session changes")
+				if tt.wantRejectWrite {
+					assert.True(t, sessionRepo.session.RefreshTokenRejected)
+					assert.True(t, sessionRepo.session.UpdatedAt.After(before.UpdatedAt))
+					assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+					assert.ErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
+					before.RefreshTokenRejected = true
+					before.UpdatedAt = sessionRepo.session.UpdatedAt
+				} else {
+					assert.Same(t, tt.session, sessionRepo.session, "non-terminal refresh failures must not persist session changes")
+				}
 				assert.Equal(t, before, *sessionRepo.session)
 			}
 		})

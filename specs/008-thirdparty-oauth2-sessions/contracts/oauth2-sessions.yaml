@@ -7,12 +7,13 @@ info:
     Users can:
     - View available third-party services and their session status
     - Initiate OAuth2 authorization flows with PKCE
+    - Refresh access tokens or use Login to recover rejected credentials
     - Terminate existing sessions
     
     All endpoints require authenticated principal (X-Remote-User header from reverse proxy).
     
     Follows Zalando RESTful API and Event Guidelines.
-  version: 1.0.0
+  version: 2.0.0
   contact:
     name: Identity Broker Team
 
@@ -33,9 +34,9 @@ paths:
         Returns a list of all configured third-party OAuth2 services along with
         the current user's session status for each service.
         
-        For services where the user has an active session, includes:
+        Retained sessions, including provider-rejected sessions, include:
         - Session initiation timestamp
-        - Token expiration status
+        - Access-token expiry status and required reauthentication
         - Number of agents depending on this session
         - Encryption status indicator
       tags:
@@ -68,17 +69,19 @@ paths:
                         - scope_value: "user:email"
                           description: "Access user email addresses"
                     session:
-                      session_id: "660e8400-e29b-41d4-a716-446655440001"
+                      id: "660e8400-e29b-41d4-a716-446655440001"
+                      service_id: "550e8400-e29b-41d4-a716-446655440000"
+                      service_display_name: "GitHub"
+                      token_type: "Bearer"
                       initiated_at: "2025-12-20T10:30:00Z"
-                      access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      is_expired: false
+                      requires_reauthentication: false
+                      access_token_expired: false
                       has_refresh_token: true
                       scope:
                         - "repo"
                         - "user:email"
                       dependent_agent_count: 3
-                      tokens_encrypted: true
+                      is_encrypted: true
                   - service:
                       id: "550e8400-e29b-41d4-a716-446655440002"
                       display_name: "Google Workspace"
@@ -179,7 +182,7 @@ paths:
         On success:
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
-        - Stores session in database
+        - Upserts the session and clears recorded refresh rejection after successful authorization
         - Redirects user to original redirect_uri with success status
         
         On error:
@@ -309,15 +312,17 @@ paths:
               example:
                 data:
                   session:
-                    session_id: "660e8400-e29b-41d4-a716-446655440001"
+                    id: "660e8400-e29b-41d4-a716-446655440001"
+                    service_id: "550e8400-e29b-41d4-a716-446655440000"
+                    service_display_name: "GitHub"
+                    token_type: "Bearer"
                     initiated_at: "2025-12-20T10:30:00Z"
-                    access_token_expires_at: "2025-12-20T11:30:00Z"
-                    refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                    is_expired: false
+                    requires_reauthentication: false
+                    access_token_expired: false
                     has_refresh_token: true
                     scope: ["repo", "user:email"]
                     dependent_agent_count: 2
-                    tokens_encrypted: true
+                    is_encrypted: true
                   dependent_agents:
                     - agent_id: "770e8400-e29b-41d4-a716-446655440000"
                       display_name: "Code Assistant"
@@ -396,6 +401,81 @@ paths:
               example:
                 error: "not_found"
                 message: "No session exists for this service"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/third-party/{serviceId}/session/refresh:
+    post:
+      operationId: refreshThirdPartySession
+      summary: Force refresh of a third-party session access token
+      description: |
+        Attempts refresh even when the access token is unexpired. Requires stored
+        refresh credentials with no recorded provider rejection.
+        HTTP 4xx invalid_grant, excluding 429, commits rejection and immediately
+        stops future broker token issuance. The broker retains the session row,
+        ciphertext, access expiry, and other token metadata.
+        Later attempts return refresh_rejected without another provider request.
+        Other upstream errors do not record rejection. Successful authorization
+        and callback clear rejection through upsert. Termination is optional.
+      tags:
+        - Third-Party Sessions
+      security:
+        - preAuth: []
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          description: UUID of the third-party OAuth2 service
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Access token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserSessionSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Session not found for this service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: not_found
+                message: session not found
+        '409':
+          description: Refresh credentials absent or rejected by the provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                refresh_unavailable:
+                  value:
+                    error: refresh_unavailable
+                    message: no valid refresh token available for this session
+                refresh_rejected:
+                  value:
+                    error: refresh_rejected
+                    message: refresh token rejected by provider; reauthentication required
+        '502':
+          description: Non-terminal upstream refresh failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: refresh_failed
+                message: failed to refresh token with the third-party provider
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -516,55 +596,66 @@ components:
           type: string
           description: Human-readable scope description
 
-    SessionStatus:
+    UserSessionSummary:
       type: object
+      description: Flat session summary returned after manual refresh
       required:
-        - session_id
-        - initiated_at
-        - is_expired
-        - has_refresh_token
+        - id
+        - service_id
+        - service_display_name
+        - token_type
         - scope
+        - initiated_at
+        - requires_reauthentication
+        - access_token_expired
+        - has_refresh_token
         - dependent_agent_count
-        - tokens_encrypted
+        - is_encrypted
       properties:
-        session_id:
+        id:
           type: string
           format: uuid
-          description: Session identifier
-        initiated_at:
+        service_id:
           type: string
-          format: date-time
-          description: When the OAuth2 flow was completed
-        access_token_expires_at:
+          format: uuid
+        service_display_name:
           type: string
-          format: date-time
-          nullable: true
-          description: When the access token expires (null if unknown)
-        refresh_token_expires_at:
+        token_type:
           type: string
-          format: date-time
-          nullable: true
-          description: When the refresh token expires (null if never or unknown)
-        is_expired:
-          type: boolean
-          description: |
-            True if the refresh token has expired. Session is only marked expired
-            when refresh token expires, not access token (access tokens can be refreshed).
-        has_refresh_token:
-          type: boolean
-          description: Whether a refresh token is stored for this session
         scope:
           type: array
           items:
             type: string
-          description: OAuth2 scopes granted in this session
+        initiated_at:
+          type: string
+          format: date-time
+        requires_reauthentication:
+          type: boolean
+          description: |
+            True after recorded provider refresh rejection, or after access expiry
+            without stored refresh credentials. Stored credentials with no recorded
+            rejection permit a refresh attempt after access expiry.
+        access_token_expired:
+          type: boolean
+          description: Whether recorded access expiry passed. Unknown expiry is not permanent validity.
+        is_expired:
+          type: boolean
+          deprecated: true
+          description: Temporary legacy-client compatibility field emitted only when third_party_oauth2.session_api_compatibility is enabled. Equals requires_reauthentication; it is not a refresh-expiry prediction.
+        has_refresh_token:
+          type: boolean
+          description: Whether refresh-token ciphertext is stored, including rejected credentials
         dependent_agent_count:
           type: integer
           minimum: 0
-          description: Number of agents that have grants referencing this service
-        tokens_encrypted:
+          description: Number of agents whose grants reference this service
+        is_encrypted:
           type: boolean
-          description: Indicates tokens are stored encrypted (always true)
+          description: Indicates tokens are stored encrypted
+
+    SessionStatus:
+      allOf:
+        - $ref: '#/components/schemas/UserSessionSummary'
 
     AffectedAgent:
       type: object

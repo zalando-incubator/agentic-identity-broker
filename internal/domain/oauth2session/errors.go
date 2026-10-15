@@ -44,15 +44,10 @@ var (
 	// ErrInvalidConfiguration is returned when OAuth2 service configuration is invalid.
 	ErrInvalidConfiguration = errors.New("invalid OAuth2 service configuration")
 
-	// ErrSessionExpired indicates the access token expired and no usable refresh token remains;
-	// ErrRefreshTokenExpired is also wrapped when a stored refresh token has expired.
-	ErrSessionExpired = errors.New("session expired: both access and refresh tokens expired")
+	ErrReauthenticationRequired = errors.New("session requires reauthentication")
 
 	// ErrRefreshFailed indicates token refresh operation failed with upstream provider.
 	ErrRefreshFailed = errors.New("failed to refresh access token with upstream provider")
-
-	// ErrRefreshTokenExpired indicates that a stored refresh token's recorded expiry has passed.
-	ErrRefreshTokenExpired = errors.New("refresh token expired")
 
 	// ErrRefreshRejected indicates that a provider rejected a refresh with invalid_grant.
 	ErrRefreshRejected = errors.New("refresh token rejected by provider")
@@ -73,7 +68,7 @@ func (e *RefreshRejectedError) Error() string {
 	return fmt.Sprintf("third-party token endpoint returned error status %d", e.StatusCode)
 }
 
-// Unwrap distinguishes provider rejection from a locally recorded token expiry.
+// Unwrap identifies terminal refresh rejection without trusting provider descriptions.
 func (e *RefreshRejectedError) Unwrap() error {
 	if e.OAuthError == "invalid_grant" && e.StatusCode >= 400 && e.StatusCode <= 499 && e.StatusCode != http.StatusTooManyRequests {
 		return ErrRefreshRejected
@@ -96,7 +91,6 @@ type ErrorDetail string
 const (
 	DetailSessionMissing          ErrorDetail = "session_missing"
 	DetailAccessTokenExpired      ErrorDetail = "access_token_expired"
-	DetailRefreshTokenExpired     ErrorDetail = "refresh_token_expired"
 	DetailRefreshUnavailable      ErrorDetail = "refresh_unavailable"
 	DetailRefreshRejected         ErrorDetail = "refresh_rejected"
 	DetailProviderClientRejected  ErrorDetail = "provider_client_rejected"
@@ -153,7 +147,7 @@ func NewErrorMetadata(operation Operation, detail ErrorDetail) ErrorMetadata {
 	}
 	metadata := ErrorMetadata{operation: operation, detail: detail, dependency: DependencyNone}
 	switch detail {
-	case DetailSessionMissing, DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable:
+	case DetailSessionMissing, DetailAccessTokenExpired, DetailRefreshUnavailable:
 		metadata.kind, metadata.dependency = KindSession, DependencySessionRepository
 	case DetailRefreshRejected, DetailProviderRejected, DetailProviderResponseInvalid:
 		metadata.kind, metadata.dependency = KindProvider, DependencyProvider

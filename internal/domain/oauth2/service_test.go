@@ -313,7 +313,7 @@ func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, p
 	return nil, nil
 }
 
-// ListByPrincipal supports session expiry checks in the authorization flow.
+// ListByPrincipal exposes all sessions, including ones requiring reauthentication.
 // Uses listFunc if set; returns empty slice otherwise.
 func (m *MockSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if m.listFunc != nil {
@@ -580,9 +580,9 @@ func TestService_HandleAuthorization_AllowsOfflineAccessReservedScope(t *testing
 	assert.Equal(t, "redirect_to_consent", decision.Action)
 }
 
-// TestService_HandleAuthorization_SessionExpiry tests that expired delegated sessions
-// redirect back to consent even when the grant itself is still active.
-func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
+// TestService_HandleAuthorization_RequiresReauthentication tests that exhausted or
+// rejected delegated sessions redirect to consent even when the grant is active.
+func TestService_HandleAuthorization_RequiresReauthentication(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
 	permissionSetID := id.NewPermissionSetID()
@@ -630,26 +630,68 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 			wantAction: "proceed",
 		},
 		{
-			name: "active grant with expired session redirects to consent",
+			name: "active grant with expired access-only session redirects to consent",
 			setupSession: func(r *MockSessionRepository) {
 				expiredAt := time.Now().Add(-1 * time.Hour)
 				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
 					return &storage.UserSession{
-						ID:                    id.NewSessionID(),
-						Principal:             id.Principal("user@example.com"),
-						ServiceID:             serviceID,
-						TokenType:             "Bearer",
-						RefreshTokenExpiresAt: &expiredAt,
+						ID:                   id.NewSessionID(),
+						Principal:            id.Principal("user@example.com"),
+						ServiceID:            serviceID,
+						TokenType:            "Bearer",
+						AccessTokenExpiresAt: &expiredAt,
 					}, nil
 				}
 			},
 			wantAction: "redirect_to_consent",
 		},
 		{
+			name: "active grant with expired access and available refresh proceeds",
+			setupSession: func(r *MockSessionRepository) {
+				expiredAt := time.Now().Add(-time.Hour)
+				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
+					return &storage.UserSession{
+						ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID,
+						AccessTokenExpiresAt: &expiredAt, EncryptedRefreshToken: []byte("refresh-token"),
+					}, nil
+				}
+			},
+			wantAction: "proceed",
+		},
+		{
+			name: "active grant with rejected refresh and unexpired access redirects to consent",
+			setupSession: func(r *MockSessionRepository) {
+				future := time.Now().Add(time.Hour)
+				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
+					return &storage.UserSession{
+						ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID,
+						AccessTokenExpiresAt: &future, EncryptedRefreshToken: []byte("refresh-token"), RefreshTokenRejected: true,
+					}, nil
+				}
+			},
+			wantAction: "redirect_to_consent",
+		},
+		{
+			name: "unrelated rejected session does not redirect to consent",
+			setupSession: func(r *MockSessionRepository) {
+				unrelated := &storage.UserSession{ServiceID: id.NewServiceID(), RefreshTokenRejected: true}
+				r.listFunc = func(_ context.Context, _ id.Principal) ([]*storage.UserSession, error) {
+					return []*storage.UserSession{unrelated}, nil
+				}
+				r.findFunc = func(_ context.Context, _ id.Principal, requestedService id.ServiceID) (*storage.UserSession, error) {
+					if requestedService == serviceID {
+						return &storage.UserSession{ServiceID: serviceID}, nil
+					}
+					return unrelated, nil
+				}
+			},
+			wantAction: "proceed",
+		},
+		{
 			name: "active grant with no session yet still redirects to upstream",
 			setupSession: func(r *MockSessionRepository) {
 				// findFunc returns nil, nil — no session established yet.
-				// Absence of a session is not an expiry; mandatory-requirements
+				// Absence of a session is not known rejection; mandatory-requirements
 				// validation (Step 5) handles that case separately.
 			},
 			wantAction: "proceed",
@@ -1342,7 +1384,7 @@ func TestService_HandleAuthorization_MandatoryRequirements(t *testing.T) {
 	}
 
 	// activeGrant sets up an agent with a mandatory service requirement and an active grant.
-	// DelegatedOAuth2Tokens is empty so step 4 (session expiry) does not interfere.
+	// GrantedPermissionSets is empty so step 4 (delegated reauthentication) does not interfere.
 	setupAgent := func(agentRepo *MockAgentRepository, scopeLess bool) {
 		requiredScopes := []string{"repo", "user:email"}
 		if scopeLess {
@@ -1452,16 +1494,44 @@ func TestService_HandleAuthorization_MandatoryRequirements(t *testing.T) {
 			wantAction: "redirect_to_consent",
 		},
 		{
-			name: "expired session redirects to consent",
+			name: "expired access-only session redirects to consent",
 			setupSess: func(r *MockSessionRepository) {
 				expiredAt := time.Now().Add(-1 * time.Hour)
 				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
 					return &storage.UserSession{
-						ID:                    id.NewSessionID(),
-						Principal:             id.Principal("user@example.com"),
-						ServiceID:             serviceID,
-						Scope:                 []string{"repo", "user:email"},
-						RefreshTokenExpiresAt: &expiredAt,
+						ID:                   id.NewSessionID(),
+						Principal:            id.Principal("user@example.com"),
+						ServiceID:            serviceID,
+						Scope:                []string{"repo", "user:email"},
+						AccessTokenExpiresAt: &expiredAt,
+					}, nil
+				}
+			},
+			wantAction: "redirect_to_consent",
+		},
+		{
+			name: "expired access with available refresh satisfies mandatory requirement",
+			setupSess: func(r *MockSessionRepository) {
+				expiredAt := time.Now().Add(-time.Hour)
+				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
+					return &storage.UserSession{
+						ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID,
+						Scope: []string{"repo", "user:email"}, AccessTokenExpiresAt: &expiredAt,
+						EncryptedRefreshToken: []byte("refresh-token"),
+					}, nil
+				}
+			},
+			wantAction: "proceed",
+		},
+		{
+			name: "rejected refresh with unexpired access does not satisfy mandatory requirement",
+			setupSess: func(r *MockSessionRepository) {
+				future := time.Now().Add(time.Hour)
+				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
+					return &storage.UserSession{
+						ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID,
+						Scope: []string{"repo", "user:email"}, AccessTokenExpiresAt: &future,
+						EncryptedRefreshToken: []byte("refresh-token"), RefreshTokenRejected: true,
 					}, nil
 				}
 			},

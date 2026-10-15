@@ -45,7 +45,7 @@ interface AlertState {
  * - View all their active sessions with status information
  * - See which agents depend on each session
  * - Terminate sessions (with confirmation warning)
- * - Re-authenticate if a session has expired
+ * - Re-authenticate when required
  * - View OAuth2 callback success/error messages
  *
  * @example
@@ -189,6 +189,11 @@ export const ThirdPartySessionsPage: React.FC = () => {
     setTerminationError(null);
   };
 
+  const handleLogin = (serviceId: string): void => {
+    const redirectURI = new URL('/sessions', window.location.origin).toString();
+    window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
+  };
+
   const handleRefresh = async (serviceId: string) => {
     try {
       setRefreshingServiceIds((prev) => new Set(prev).add(serviceId));
@@ -201,13 +206,12 @@ export const ThirdPartySessionsPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to refresh session token', err);
-      setAlert({
-        type: 'error',
-        message: extractApiError(
-          err,
-          'Failed to refresh session token. Please try again.',
-        ),
-      });
+      const message = extractApiError(
+        err,
+        'Failed to refresh session token. Please try again.',
+      );
+      await refetch();
+      setAlert({ type: 'error', message });
     } finally {
       setRefreshingServiceIds((prev) => {
         const next = new Set(prev);
@@ -398,6 +402,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
                   session={session}
                   onTerminate={handleTerminate}
                   onRefresh={handleRefresh}
+                  onLogin={handleLogin}
                   refreshing={refreshingServiceIds.has(session.service_id)}
                   loading={
                     terminatingLoading &&

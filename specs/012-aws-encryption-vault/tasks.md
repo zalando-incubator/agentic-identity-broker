@@ -281,7 +281,7 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
   func (s *OAuth2SessionService) CreateSession(
       ctx context.Context,
       principal, serviceID, accessToken, refreshToken string,
-      accessExpiry, refreshExpiry time.Time,
+      accessExpiry time.Time,
   ) (*UserSession, error) {
       // Construct encryption context
       encCtx := map[string]string{"service_id": serviceID}

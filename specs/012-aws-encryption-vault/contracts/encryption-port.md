@@ -262,7 +262,7 @@ type OAuth2SessionService struct {
 func (s *OAuth2SessionService) CreateSession(
     ctx context.Context,
     principal, serviceID, accessToken, refreshToken string,
-    accessExpiry, refreshExpiry time.Time,
+    accessExpiry time.Time,
 ) (*UserSession, error) {
     encryptionContext := map[string]string{
         "service_id": serviceID,
@@ -304,7 +304,6 @@ func (s *OAuth2SessionService) CreateSession(
         EncryptedRefreshToken:    encryptedRefresh,
         EncryptionContext:        EncryptionContext{ServiceID: serviceID},
         AccessTokenExpiry:        accessExpiry,
-        RefreshTokenExpiry:       refreshExpiry,
     }
 
     if err := s.repository.Create(ctx, session); err != nil {
@@ -371,7 +370,7 @@ func (s *OAuth2SessionService) GetSession(
         AccessToken:          string(plainAccessToken),      // Decrypted for caller
         RefreshToken:         string(plainRefreshToken),     // Decrypted for caller
         AccessTokenExpiry:    encryptedSession.AccessTokenExpiry,
-        RefreshTokenExpiry:   encryptedSession.RefreshTokenExpiry,
+        RefreshTokenRejected: encryptedSession.RefreshTokenRejected,
         EncryptionContext:    encryptedSession.EncryptionContext,
     }, nil
 }

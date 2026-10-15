@@ -74,14 +74,16 @@ token_exchange:
       #   - '"admin" in subject_token.claims.roles'                     # Only admin users
       expression: 'true'
 
-  # Refresh configures automatic token refresh behavior
+  # Refresh configures automatic third-party access-token refresh behavior
   refresh:
-    # enabled determines whether expired access tokens should be automatically refreshed
-    # using the stored refresh_token.
+    # enabled determines whether to refresh expired third-party access tokens
+    # with a stored refresh_token that has no recorded provider rejection.
     # Default: true (enable automatic refresh)
     # Options:
-    #   - true: If access_token is expired but refresh_token is valid, attempt refresh
-    #   - false: Never attempt refresh; return invalid_grant error for expired tokens
+    #   - true: Attempt refresh after access-token expiry when refresh authority is available
+    #   - false: Never attempt refresh; return invalid_grant for expired access tokens
+    # Refresh-token presence does not prove provider validity; no refresh expiry is predicted.
+    # A recorded terminal provider rejection requires reauthentication, even before access expiry.
     enabled: true
 
 # EXTERNAL CONFIGURATION REFERENCE

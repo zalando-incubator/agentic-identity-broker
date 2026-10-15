@@ -38,7 +38,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 		{name: "expired grant", code: "access_denied", detail: DetailGrantExpired},
 		{name: "no session", code: "invalid_grant", detail: DetailSessionMissing},
 		{name: "access token expired, no refresh token", code: "invalid_grant", detail: DetailAccessTokenExpired},
-		{name: "stored refresh token expired", code: "invalid_grant", detail: DetailRefreshTokenExpired},
+		{name: "stored refresh token rejected", code: "invalid_grant", detail: DetailRefreshRejected},
 		{name: "service invalid_grant", code: "invalid_grant", detail: DetailRefreshRejected, status: 400, body: `{"error":"invalid_grant"}`},
 		{name: "service rejects otherwise", code: "server_error", detail: DetailProviderUnavailable, status: 502, body: "unavailable"},
 		{name: "service unreachable", code: "server_error", detail: DetailProviderUnavailable},
@@ -101,12 +101,12 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 				sessionRepo.session = nil
 			case "access token expired, no refresh token":
 				sessionRepo.session.AccessTokenExpiresAt = &past
-			case "stored refresh token expired", "service invalid_grant", "service rejects otherwise", "service unreachable":
+			case "stored refresh token rejected":
+				sessionRepo.session.RefreshTokenRejected = true
+				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
+			case "service invalid_grant", "service rejects otherwise", "service unreachable":
 				sessionRepo.session.AccessTokenExpiresAt = &past
 				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
-				if tc.name == "stored refresh token expired" {
-					sessionRepo.session.RefreshTokenExpiresAt = &past
-				}
 			case "insufficient scope":
 				sessionRepo.session.Scope = []string{}
 			}
@@ -145,6 +145,17 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
 			assert.Equal(t, tc.code, tokenErr.Code())
 			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+			if tc.name == "stored refresh token rejected" {
+				assert.Nil(t, response)
+				assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+				assert.ErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
+				assert.Equal(t, OutcomeReauthRequired, tokenErr.Diagnostic().Outcome())
+				assert.Equal(t, "https://broker.example.com/sessions", tokenErr.ErrorURI())
+				var operationErr *oauth2session.OperationError
+				require.ErrorAs(t, err, &operationErr)
+				assert.Zero(t, operationErr.Metadata().StatusCode())
+				assert.Empty(t, operationErr.Metadata().OAuthCode())
+			}
 			if tc.detail == DetailGrantMissing || tc.detail == DetailGrantExpired {
 				assert.Nil(t, response)
 				assert.Equal(t, http.StatusForbidden, tokenErr.HTTPStatus())

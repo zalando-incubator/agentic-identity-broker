@@ -512,13 +512,16 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			upstream.WithErrorResponse("invalid_grant")
 
 			response := refresh(serviceID)
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
-			Expect(response.Body.Close()).To(Succeed())
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
+			Expect(decodeJSON[map[string]any](response)).To(Equal(map[string]any{
+				"error": "refresh_rejected", "message": "refresh token rejected by provider; reauthentication required",
+			}))
 			credentialFreeTokenRequests(upstream)
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), serviceID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(after.EncryptedAccessToken).To(Equal(previousAccess))
 			Expect(after.EncryptedRefreshToken).To(Equal(previousRefresh))
+			Expect(after.RefreshTokenRejected).To(BeTrue())
 		})
 	})
 

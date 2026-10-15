@@ -45,12 +45,16 @@ Before implementing, ensure you have:
 
 ## Phase 1: Database Migration
 
-### Step 1.1: Create Up Migration
+Migration 004 is immutable history. Do not change its file to match the current model.
+This PR ships migration 038 and the prepared broker only. Migrations 039 and 040 belong to following activation and cleanup PRs.
+Contributor model samples use access expiry and observed refresh rejection only. PostgreSQL at 38 exposes false through the stable view and rejects true writes.
 
-**File**: `migrations/004_create_user_sessions.up.sql`
+### Step 1.1: Planned Final Schema Reference (PR3, After Migration 040)
+
+**Historical migration**: `migrations/004_create_user_sessions.up.sql` remains unchanged. This sample describes the planned final table, not this release's phase-38 table.
 
 ```sql
--- Migration: 004_create_user_sessions.up.sql
+-- Current schema reference, not a replacement for migration 004.
 -- Feature: 008-thirdparty-oauth2-sessions
 
 CREATE TABLE user_sessions (
@@ -61,7 +65,7 @@ CREATE TABLE user_sessions (
     encrypted_refresh_token BYTEA,
     token_type VARCHAR(50) NOT NULL DEFAULT 'Bearer',
     access_token_expires_at TIMESTAMPTZ,
-    refresh_token_expires_at TIMESTAMPTZ,
+    refresh_token_rejected BOOLEAN NOT NULL DEFAULT FALSE,
     scope TEXT[] NOT NULL DEFAULT '{}',
     encryption_context JSONB NOT NULL DEFAULT '{}',
     initiated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -95,7 +99,7 @@ CREATE TRIGGER trigger_user_sessions_updated_at
     EXECUTE FUNCTION update_user_sessions_updated_at();
 ```
 
-### Step 1.2: Create Down Migration
+### Step 1.2: Original Down Migration (History)
 
 **File**: `migrations/004_create_user_sessions.down.sql`
 
@@ -105,7 +109,28 @@ DROP FUNCTION IF EXISTS update_user_sessions_updated_at();
 DROP TABLE IF EXISTS user_sessions;
 ```
 
+### Sequential Validity Releases: 038, Then 039, Then 040
+
+Migration 038 preserves the original table shape for legacy strict readers and writes. It adds `user_session_state` and stable invoker write functions. The view reports rejection=false. True rejection writes report `persistence_failed`, not durable rejection. Ordinary acquisition, refresh, and authorization remain supported. The memory adapter already supports rejection.
+
+1. With existing replicas serving, deploy PR1 through a normal Helm upgrade at its default target 38.
+2. Complete the prepared broker and embedded SPA rollout across every replica.
+3. Before merging or deploying PR2, verify that every unprepared replica and in-flight operation drained.
+4. Deploy PR2 at its default target 39 to activate durable rejection without restart.
+5. Before merging or deploying PR3, upgrade the SPA and every external session-API consumer.
+6. After legacy schema dependencies end, deploy PR3 at target 40 and compatibility false.
+
+This release defaults and limits `migration.targetVersion` to 38. Fresh installs run direct UP-all through 38. Normal upgrades use the guarded forward wrapper. Explicit target 0 remains refused on PostgreSQL upgrades. Compatibility defaults true in preparation and activation, adding only `is_expired=requires_reauthentication` without refresh dates. Modern consumers can explicitly set false. Cleanup defaults false after its consumer gate passes.
+
+Unprepared binaries do not enforce the new rejection policy and cannot coexist at 39 or 40. The temporary legacy column serves storage compatibility only, never provider-validity evidence. Historical dates never imply rejection. All phases preserve rows, ciphertext, access expiry, and other token metadata. Preserve migration 037 and original migration history.
+
+Online rollout requires at least two healthy replicas, `maxUnavailable=0`, ready surge capacity, a disruption budget, and sufficient traffic-drain and termination time. Fail-fast locks abort schema changes on contention while compatible replicas continue to serve. There is no absolute latency guarantee.
+
+DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Successful reauthentication or explicit termination must resolve those rows. Drain preparation/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before deliberate repair. Never automate `Force`, clear rejection, or delete rows automatically. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for phase compatibility and preparation values.
+
 ### Step 1.3: Test Migration
+
+Use a disposable database for these commands. DOWN 039 requires the rejection guard to pass. Live rollout must select explicit phase targets.
 
 ```bash
 # Apply migration
@@ -148,7 +173,7 @@ type UserSession struct {
     EncryptedRefreshToken  []byte            `json:"-" db:"encrypted_refresh_token"`
     TokenType              string            `json:"token_type" db:"token_type"`
     AccessTokenExpiresAt   *time.Time        `json:"access_token_expires_at,omitempty" db:"access_token_expires_at"`
-    RefreshTokenExpiresAt  *time.Time        `json:"refresh_token_expires_at,omitempty" db:"refresh_token_expires_at"`
+    RefreshTokenRejected   bool              `json:"-" db:"refresh_token_rejected"`
     Scope                  StringSlice       `json:"scope" db:"scope"`
     EncryptionContext      EncryptionContext `json:"encryption_context" db:"encryption_context"`
     InitiatedAt            time.Time         `json:"initiated_at" db:"initiated_at"`
@@ -201,22 +226,29 @@ func (s *UserSession) Validate() error {
     return nil
 }
 
-// IsExpired returns true if refresh token has expired.
-func (s *UserSession) IsExpired() bool {
-    if s.RefreshTokenExpiresAt == nil {
-        return false
-    }
-    return time.Now().After(*s.RefreshTokenExpiresAt)
+// RequiresReauthentication reports recorded rejection or exhausted access-only credentials.
+func (s *UserSession) RequiresReauthentication() bool {
+    return s.RefreshTokenRejected || (!s.HasValidAccessToken() && !s.CanRefresh())
 }
 
-// HasValidAccessToken returns true if access token has not expired.
+// CanRefresh reports stored credentials with no recorded provider rejection.
+func (s *UserSession) CanRefresh() bool {
+    return !s.RefreshTokenRejected && len(s.EncryptedRefreshToken) > 0
+}
+
+// HasValidAccessToken checks recorded access expiry only, not provider acceptance.
 func (s *UserSession) HasValidAccessToken() bool {
     if s.AccessTokenExpiresAt == nil {
-        return true
+        return true // Expiry is unknown, not permanent validity.
     }
     return time.Now().Before(*s.AccessTokenExpiresAt)
 }
 ```
+
+`RefreshTokenRejected=false` means no observed terminal rejection, not proven provider validity.
+HTTP 4xx `invalid_grant`, excluding 429, records rejection and immediately stops future broker token issuance.
+The row and its ciphertext, access expiry, and other token metadata remain. Transient errors do not record rejection.
+Locked callback errors never persist changes. The service commits rejection through `(true, nil)` before it returns the captured provider error.
 
 ### Step 2.2: Add StringSlice Type (if not exists)
 
@@ -318,14 +350,18 @@ func (s *userSessionStore) Create(ctx context.Context, session *storage.UserSess
     
     key := session.Principal + ":" + session.ServiceID
     
-    // Upsert: delete old session if exists
+    // Successful authorization supplies RefreshTokenRejected=false.
+    // Preserve the existing identity and lifecycle timestamps on upsert.
+    updated := session.Copy()
     if oldID, exists := s.byKey[key]; exists {
-        delete(s.sessions, oldID)
+        existing := s.sessions[oldID]
+        updated.ID = existing.ID
+        updated.InitiatedAt = existing.InitiatedAt
+        updated.CreatedAt = existing.CreatedAt
     }
-    
-    // Store new session
-    s.sessions[session.ID] = session.Copy()
-    s.byKey[key] = session.ID
+
+    s.sessions[updated.ID] = updated
+    s.byKey[key] = updated.ID
     
     return nil
 }
@@ -393,7 +429,7 @@ func newUserSessionRepository(db *sqlx.DB) *userSessionRepository {
 const createSessionSQL = `
 INSERT INTO user_sessions (
     id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
-    token_type, access_token_expires_at, refresh_token_expires_at, scope,
+    token_type, access_token_expires_at, refresh_token_rejected, scope,
     encryption_context, initiated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
@@ -403,10 +439,9 @@ ON CONFLICT (principal, service_id) DO UPDATE SET
     encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
     token_type = EXCLUDED.token_type,
     access_token_expires_at = EXCLUDED.access_token_expires_at,
-    refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
+    refresh_token_rejected = EXCLUDED.refresh_token_rejected,
     scope = EXCLUDED.scope,
     encryption_context = EXCLUDED.encryption_context,
-    initiated_at = EXCLUDED.initiated_at,
     updated_at = NOW()
 `
 
@@ -419,7 +454,7 @@ func (r *userSessionRepository) Create(ctx context.Context, session *storage.Use
         session.EncryptedRefreshToken,
         session.TokenType,
         session.AccessTokenExpiresAt,
-        session.RefreshTokenExpiresAt,
+        session.RefreshTokenRejected,
         session.Scope,
         session.EncryptionContext,
         session.InitiatedAt,
@@ -432,7 +467,7 @@ func (r *userSessionRepository) Create(ctx context.Context, session *storage.Use
 
 const findByPrincipalAndServiceSQL = `
 SELECT id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
-       token_type, access_token_expires_at, refresh_token_expires_at, scope,
+       token_type, access_token_expires_at, refresh_token_rejected, scope,
        encryption_context, initiated_at, created_at, updated_at
 FROM user_sessions
 WHERE principal = $1 AND service_id = $2
@@ -452,6 +487,9 @@ func (r *userSessionRepository) FindByPrincipalAndService(ctx context.Context, p
 
 // ... implement remaining methods following pattern
 ```
+
+Successful authorization calls this upsert with `RefreshTokenRejected=false`. It replaces rejected credentials while it retains the row identity and initiation time.
+Normal refresh cannot clear rejection. Rejected rows cannot enter the provider refresh path.
 
 ---
 
@@ -782,6 +820,7 @@ func (s *Service) exchangeCodeWithRetry(
     return nil, fmt.Errorf("%w: %v", ErrTokenExchangeFailed, lastErr)
 }
 
+// createSession is the authorization callback path, not a normal refresh path.
 func (s *Service) createSession(
     ctx context.Context,
     principal string,
@@ -814,12 +853,11 @@ func (s *Service) createSession(
         }
     }
     
-    // Calculate expiration times
-    var accessExpires, refreshExpires *time.Time
+    // Record the provider's access-token expiry only.
+    var accessExpires *time.Time
     if !token.Expiry.IsZero() {
         accessExpires = &token.Expiry
     }
-    // Note: OAuth2 library doesn't expose refresh token expiry; may need service-specific handling
     
     session := &storage.UserSession{
         ID:                    sessionID,
@@ -829,7 +867,7 @@ func (s *Service) createSession(
         EncryptedRefreshToken: encryptedRefresh,
         TokenType:             token.TokenType,
         AccessTokenExpiresAt:  accessExpires,
-        RefreshTokenExpiresAt: refreshExpires,
+        RefreshTokenRejected:  false, // Successful authorization clears recorded rejection.
         Scope:                 extractScopes(token),
         EncryptionContext: storage.EncryptionContext{
             Principal: principal,
@@ -1127,14 +1165,15 @@ export interface SessionSummary {
   token_type: string;
   scope: string[];
   initiated_at: string;
-  is_expired: boolean;
+  requires_reauthentication: boolean;
   access_token_expired: boolean;
-  refresh_token_expires_at?: string;
+  has_refresh_token: boolean;
   dependent_agent_count: number;
   is_encrypted: boolean;
 }
 
-export interface SessionDetails extends SessionSummary {
+export interface SessionDetails {
+  session: SessionSummary;
   dependent_agents: { id: string; display_name: string }[];
 }
 
@@ -1152,13 +1191,14 @@ export const sessionsApi = {
   terminate: async (serviceId: string): Promise<void> => {
     await apiClient.delete(`/api/third-party/${serviceId}/session`);
   },
-  
-  getAuthorizeUrl: (serviceId: string, redirectUri: string): string => {
-    const params = new URLSearchParams({ redirect_uri: redirectUri });
-    return `/api/third-party/${serviceId}/oauth2/authorize?${params}`;
-  },
 };
 ```
+
+`has_refresh_token` reports stored ciphertext, including provider-rejected credentials. It does not prove validity.
+The card shows "Reauthentication required" first, then "Access Token Expired", then "Active".
+Show Login when reauthentication is required. Show Refresh only with stored refresh credentials and no required reauthentication.
+Keep Terminate available for every retained session. Do not show refresh-expiry dates, seven-day lifetime warnings, or permanent-validity claims.
+After a manual refresh error, refetch the list before showing the saved error message. Rejection changes persisted state despite HTTP 409.
 
 ### Step 8.2: Sessions Page
 
@@ -1195,8 +1235,8 @@ export const ThirdPartySessionsPage: React.FC = () => {
   };
 
   const handleLogin = (serviceId: string) => {
-    const redirectUri = window.location.href;
-    window.location.href = sessionsApi.getAuthorizeUrl(serviceId, redirectUri);
+    const redirectURI = new URL('/sessions', window.location.origin).toString();
+    window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
   };
 
   const handleTerminate = async () => {
@@ -1234,7 +1274,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
           <SessionCard
             key={session.id}
             session={session}
-            onLogin={() => handleLogin(session.service_id)}
+            onLogin={handleLogin}
             onTerminate={() => setTerminatingService(session.service_id)}
           />
         ))}
@@ -1250,6 +1290,9 @@ export const ThirdPartySessionsPage: React.FC = () => {
   );
 };
 ```
+
+Login completes the real authorize/callback flow for the same principal and service. Successful callback upsert clears rejection and restores the "Active" card.
+Manual refresh returns 409 `refresh_rejected` for terminal rejection, 409 `refresh_unavailable` for missing credentials, or 502 `refresh_failed` for transient errors.
 
 ---
 

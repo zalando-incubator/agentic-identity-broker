@@ -3341,7 +3341,7 @@ components:
           type: integer
           format: int32
           minimum: 0
-          description: Candidates that needed a refresh but could not be refreshed (refresh token missing or expired, upstream error, provider misconfiguration). Their stored sessions are unchanged.
+          description: Candidates that needed refresh but failed because credentials were missing, the provider rejected refresh, or an upstream/configuration error occurred. Newly observed terminal rejection persists the flag without replacing tokens; later sweeps exclude that row.
         total_evaluated:
           type: integer
           format: int32

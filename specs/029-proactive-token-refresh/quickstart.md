@@ -13,6 +13,7 @@ the observable pass condition. Implementation details are in `tasks.md` (generat
 | `ginkgo` v2.33.0 | E2E | `just setup` installs it; `ginkgo version` |
 | Docker or Podman | PostgreSQL integration (testcontainers) | `docker info` |
 | `jq` | manual API checks | `jq --version` |
+| Node >=24 and frontend dependencies | Backend E2E builds the embedded SPA | `node --version` |
 
 ## 1. Static gate
 
@@ -24,7 +25,7 @@ just check
 
 ## 2. Acceptance scenarios (E2E, Principle XIII)
 
-All spec scenarios live in `tests/e2e/proactive_token_refresh_test.go`. Run only this feature:
+The ten scenario identifiers map to `tests/e2e/proactive_token_refresh_test.go`. US2-S3 includes the full HTTP rejection and callback-recovery journey. Domain and repository tests cover rejection races and sweep classification. Run this feature:
 
 ```bash
 ginkgo -v --label-filter="!performance" --focus="Proactive Token Refresh" ./tests/e2e/
@@ -35,18 +36,42 @@ ginkgo -v --label-filter="!performance" --focus="Proactive Token Refresh" ./test
 | US1-S1 | Two due sessions, one healthy session, one background slot, and a gated provider | Each exchange returns its stored valid token. The second due refresh is dropped with one WARN `session.oauth2.proactive_refresh_dropped` event. The healthy exchange causes no upstream call. |
 | US1-S2 | Session expires in +2 min; token endpoint gated with `WithTokenResponseGate` | `200` with the **old** token **while** the gate is closed and exactly one refresh request has been recorded. After `release()`, the stored `AccessTokenExpiresAt` moves forward (`Eventually`), and a second exchange returns the new token with no second upstream request. |
 | US1-S3 | Gate closed with a refresh in flight; second exchange | Second `200` with the old token while the gate is closed; the upstream request count stays at 1 before and after `release()` |
-| US2-S1 | Access token expired, refresh token valid | `200` with the refreshed token; exactly one upstream call and one INFO `session.oauth2.token_refreshed` event after commit with `session_id` and `triggered_by=on-demand` |
-| US2-S2 | Both tokens expired | `400 invalid_grant` with recovery `error_uri`, zero upstream calls, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
-| US2-S3 | Provider answers `invalid_grant` | `400` re-auth error, stored ciphertext and expiry unchanged, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
-| US3-S1 | Seed: +2 min, expired-with-refresh, +2 h, `NULL` expiry; sweep `{"lookahead_duration":"PT10M","page_size":1}` | `200` `{refreshed:2, skipped:0, failed:0, total_evaluated:2, dry_run:false}`; the +2 h and `NULL` rows are unchanged; two upstream requests |
-| US3-S2 | One due session with an expired refresh token plus one refreshable, swept twice | First `200`: `{refreshed:1, failed:1, total_evaluated:2}`. Second `200`: `{failed:1, total_evaluated:1}`. The failed row's ciphertext and expiry do not change; there is only one upstream request. |
-| US3-S3 | Two `App`s on one storage; concurrent sweeps on both admin servers | Both `200`; `refreshed` summed across responses equals the seeded count; upstream requests equal the seeded count; a follow-up exchange returns the refreshed token |
-| US3-S4 | `{"dry_run":true}` | `refreshed` equals the due count, `dry_run:true`, zero upstream requests, rows unchanged |
+| US2-S1 | Expired access, stored refresh credentials without recorded rejection | `200` with the refreshed token, one upstream request, and one INFO `session.oauth2.token_refreshed` event after commit with `session_id` and `triggered_by=on-demand`. |
+| US2-S2 | Expired access without refresh credentials | `400 invalid_grant` with `/sessions` recovery URI, no token or upstream call, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand`. |
+| US2-S3 | Forced refresh rejects an unexpired one-hour access token, followed by real OAuth recovery | Manual 409, retained rejected list state, exchange 400 without another provider request, `PT2H` sweep with zero evaluated rows, real callback upsert, and successful exchange. The full lifecycle appears next. |
+| US3-S1 | +2 min, expired-with-refresh, +2 h, and unknown-expiry rows; sweep `{"lookahead_duration":"PT10M","page_size":1}` | `200` with `{refreshed:2, skipped:0, failed:0, total_evaluated:2, dry_run:false}`. Healthy and unknown-expiry rows remain unchanged. Two upstream requests occur. Known rejection exclusion also has repository coverage. |
+| US3-S2 | One due row without refresh credentials and one refreshable row, swept twice | First `200`: `{refreshed:1, failed:1, total_evaluated:2}`. Second `200`: `{failed:1, total_evaluated:1}`. Missing-credential ciphertext and access expiry stay unchanged. Only the healthy refresh makes an upstream request. A new rejection instead fails once and is excluded later, as domain tests prove. |
+| US3-S3 | Two `App`s on shared storage; concurrent admin sweeps | Both return `200`. Summed `refreshed` and upstream requests equal the seeded count. A later exchange returns the refreshed token. Domain regressions also cover stale rejection skips. |
+| US3-S4 | `{"dry_run":true}` | Due refreshable rows count as `refreshed`, with no provider calls or writes. Missing credentials count as failed. Known rejected rows are excluded. A rejected stale snapshot counts as skipped in domain tests. |
 
-**Red-phase check** (before implementation): All ten scenarios compile and fail on concrete
-feature expectations. US1-S1 lacks a saturation-drop event. US1-S2/S3 lack background refresh.
-US2-S1..S3 lack trigger-aware success or failure events. US3-S1..S4 receive `404` instead of
-the specified summary. The existing token behaviors remain regression assertions in US1 and US2.
+### US2-S3: observed rejection and real recovery
+
+The recovery fixture uses production bootstrap with token exchange enabled. `NewTestServerBuilder(...).Build()` binds the callback URL before `app.Builder.Build()`. `NewAdminTestServer(enduser.App(), logger)` adds the separate admin listener.
+
+1. Configure the provider to return HTTP 400 `invalid_grant` for a forced refresh of an unexpired one-hour access token.
+2. Send `POST /api/third-party/{serviceId}/session/refresh`.
+   The response is HTTP 409 with `{"error":"refresh_rejected","message":"refresh token rejected by provider; reauthentication required"}`.
+3. Fetch `GET /api/third-party/sessions`.
+   The retained row reports `requires_reauthentication=true`, `access_token_expired=false`, and `has_refresh_token=true`.
+   Ciphertext, access expiry, and token metadata remain unchanged. The rejection flag commits, and `updated_at` advances.
+4. Exchange the agent credential.
+   The response is HTTP 400 `invalid_grant` with a `/sessions` recovery URI and no access token.
+   The provider request count remains one.
+5. Send `{"lookahead_duration":"PT2H","page_size":100}` to `POST /api/sessions/sweep` on the authenticated admin listener.
+   The response is HTTP 200 with `refreshed=0`, `skipped=0`, `failed=0`, and `total_evaluated=0`.
+   The unchanged one-hour access expiry lies within the threshold. Zero evaluated rows proves repository exclusion, not a locked no-op.
+   The provider request count remains one.
+6. Configure provider success and start `GET /api/third-party/{serviceId}/oauth2/authorize` with `/sessions` as the redirect URI.
+7. Follow the real provider and broker callback redirects.
+   The authorization callback upserts the same session and clears rejection. The provider receives one `authorization_code` grant.
+   The list reports `requires_reauthentication=false`, and a subsequent exchange returns the renewed access token.
+
+Broker authentication headers never reach the provider. The journey does not inject a recovery session or rewrite a callback URL.
+Rejection emits no `session.oauth2.token_refreshed` event or refresh-success counter. Dropped work and transient provider errors still permit an otherwise valid access token. Missing access expiry is unknown, not permanent validity.
+
+### Historical red phase
+
+**Original red-phase check**: All ten proactive cases compiled and failed on concrete feature expectations before implementation. US1-S1 lacked a saturation-drop event. US1-S2/S3 lacked background refresh. US2-S1..S3 lacked trigger-aware events. US3-S1..S4 received `404` instead of the specified summary. The later validity regression forces rejection before access expiry, then proves that acquisition returns no token. Under the obsolete model, that regression fails behaviorally, not at compilation.
 
 Full backend regression, including the existing 013 token-exchange suite:
 
@@ -71,12 +96,15 @@ Key assertions to look for in `-v` output:
 | Valid near-expiry token with an absent or expired refresh token | The stored access token returns unchanged, with zero provider lookups and zero background admissions. |
 | Background refresh: session deleted mid-flight | No error and no row re-created (L2) |
 | Background refresh: upstream 503 | The caller's token is unaffected; `proactive_refresh_failed_total` +1; the row is unchanged |
-| `SessionSweepService` | `refreshed+skipped+failed == total_evaluated` for unique IDs; a refreshed row that moves forward within the fixed threshold is not evaluated twice; nil or non-increasing cursor tuples abort; provider-unavailable → `failed`; repository-unavailable → abort; cancellation is checked between sessions |
+| Forced terminal rejection before access expiry | HTTP 4xx `invalid_grant`, excluding 429, persists rejection without token changes. Later acquisition refuses without another request or refresh-success event. |
+| Rejection persistence failure | A write or commit error returns `persistence_failed`, not durable rejection. A callback with an error never writes, even after snapshot mutation. |
+| Shared rejected result | An on-demand joiner receives no decrypted token. A background joiner starts no metadata lookup or locked follow-up. |
+| `SessionSweepService` | `refreshed+skipped+failed == total_evaluated` for unique IDs; a refreshed row that moves forward within the fixed threshold is not evaluated twice; nil or non-increasing cursor tuples abort; provider-unavailable → `failed`; repository-unavailable → abort; cancellation is checked between sessions. New rejection fails once, stale rejection skips, and missing credentials fail repeatedly. |
 | Real sweep after a delayed lock | A session whose new expiry falls between the original and recomputed cutoffs is skipped without an upstream request or token changes. The lock delay uses virtual time. |
 | `parseISO8601Duration` table | Accepts `PT5M`, `P1D`, `PT1.5S`; rejects `P1Y`, `P1W`, `PT`, `P`, `5m`, overflow, and zero |
 | Admin `responseWriter.Unwrap` + real `http.Server{WriteTimeout: 200ms}` | A sweep handler that sleeps 500 ms still delivers `200` through the full `NewHandler` chain |
 | Config loader and validator | Rejects lookahead ≤ 0, workers outside 1–20, and page sizes outside 1–1000. CLI flags override environment variables, file values, and defaults for all three keys. |
-| `ListExpiringSessions` (memory) | Contract E1–E8: expiry then UUID-byte order, zero-ID and zero-expiry cursor handling, small-page mutations, and full ciphertext snapshots ([contracts/ports.md](contracts/ports.md)) |
+| `ListExpiringSessions` (memory) | E1–E9: expiry/UUID order, cursor boundaries, bounded snapshots, and known rejection exclusion ([contracts/ports.md](contracts/ports.md)). |
 
 The tests are deterministic. The background tests synchronize on the gated fake provider and
 `Close`, not on sleeps.
@@ -92,10 +120,13 @@ just test-integration-infra
 | Check | Location | Pass condition |
 |---|---|---|
 | Migration 037 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | Clean version `37` after UP, a valid B-tree with exactly two ordered keys `(access_token_expires_at, id)`, no index after DOWN, and successful dirty-version recovery. Recovery is not atomic rollback. |
-| `ListExpiringSessions` contract E1–E7 | `internal/adapters/storage/postgres/user_session_test.go` | The same expiry-then-UUID and ciphertext behavior as the memory adapter. |
+| PR1: migration 038 preserves legacy continuity and prepared traffic | `tests/integration/migrations/` | Legacy reads/writes survive 38. Prepared acquisition, refresh, and authorization work. True rejection writes report persistence failure. The real migration image executes guarded upgrade 38. Equal/newer clean versions are no-ops. Dirty metadata aborts without Force. Data, locks, permissions, and preparation rollback/reapply remain protected. |
+| Following PRs: activation 039, then cleanup 040 | `tests/integration/migrations/` | PR2 adds durable rejection, phase-39 rollback/refusal, and contention proof. PR3 adds the final phase-40 lifecycle, nullable-column restoration, and reapply. Neither migration nor tests that call it are present in PR1. |
+| `ListExpiringSessions` contract E1–E9 | `internal/adapters/storage/postgres/user_session_test.go` | Phase-38 expiry/UUID ordering, encrypted snapshots, active filters, and token-free summaries work through the stable view. Durable rejection persistence, reset, and exclusion cases ship with PR2. Memory already covers recorded rejection. |
 | Index used under normal planning | same file | With sparse due rows and `ANALYZE`, `EXPLAIN (FORMAT JSON)` references the named valid two-key index for first, middle, and late small-limit pages. Keep `enable_seqscan` unchanged. |
 
-For a manual check on a **dev** database, seed at least 61 due rows among many non-due rows.
+The rejection-aware table queries that follow describe PR2/schema 39 and later. Do not run them against this release's phase-38 table.
+For a manual check after activation on a **dev** database, seed at least 61 due rows among many non-due rows.
 Run this script with `psql`. It captures one cutoff and samples two composite cursor values.
 The `OFFSET` clauses select sample cursors only. The production page queries use no `OFFSET`:
 
@@ -104,30 +135,30 @@ ANALYZE user_sessions;
 SELECT now() + interval '5 minutes' AS cutoff \gset
 SELECT access_token_expires_at AS middle_expiry, id AS middle_id
 FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+WHERE NOT refresh_token_rejected AND access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
 ORDER BY access_token_expires_at, id OFFSET 20 LIMIT 1 \gset
 SELECT access_token_expires_at AS late_expiry, id AS late_id
 FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+WHERE NOT refresh_token_rejected AND access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
 ORDER BY access_token_expires_at, id OFFSET 60 LIMIT 1 \gset
 
 -- First page: the zero/zero SessionExpiryCursor uses the query without a tuple predicate.
 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 SELECT * FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+WHERE NOT refresh_token_rejected AND access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
 ORDER BY access_token_expires_at, id LIMIT 2;
 
 -- Middle page: use the expiry and ID from the same row.
 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 SELECT * FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+WHERE NOT refresh_token_rejected AND access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
   AND (access_token_expires_at, id) > (:'middle_expiry'::timestamptz, :'middle_id'::uuid)
 ORDER BY access_token_expires_at, id LIMIT 2;
 
 -- Late page: keep the same cutoff and move both cursor fields forward.
 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
 SELECT * FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+WHERE NOT refresh_token_rejected AND access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
   AND (access_token_expires_at, id) > (:'late_expiry'::timestamptz, :'late_id'::uuid)
 ORDER BY access_token_expires_at, id LIMIT 2;
 ```
@@ -137,6 +168,33 @@ index. Inspect actual rows and buffers for all three pages. The later pages must
 full due set. Do not disable sequential scans or set a wall-clock performance limit.
 
 ADR 039 requires inspection of `pg_index.indisvalid` and the migration version before manual recovery. This procedure handles the accepted non-atomic failure mode. It does not make the concurrent build atomic.
+
+### Online validity deployment and rollback (migrations 038–040)
+
+The stakeholder selected staged compatibility on 2026-10-14 in unmerged ADR 040. Preserve migration 037 and its index design. This PR ships migration 038 and prepared broker/API/UI code only. Migrations 039 and 040 belong to following activation and cleanup PRs and are not present.
+
+1. With existing replicas serving, deploy PR1 through a normal Helm upgrade at its default target 38.
+2. Complete the prepared broker and embedded SPA rollout across every replica.
+3. Before merging or deploying PR2, verify that every unprepared replica and in-flight operation drained.
+4. Deploy PR2 at its default target 39 to activate durable rejection without restart.
+5. Before merging or deploying PR3, upgrade the SPA and every external session-API consumer.
+6. After legacy schema dependencies end, deploy PR3 at its default target 40 and compatibility false.
+
+The stable view reports false at phase 38. True rejection writes report `persistence_failed`, not durable rejection. Ordinary PostgreSQL acquisition, refresh, and authorization work normally. Memory already supports recorded rejection. PR2 adds real rejection reads/writes. Unprepared binaries cannot coexist at activation. The legacy column supplies storage compatibility only. Historical dates never imply provider validity or rejection.
+
+This release defaults and limits `migration.targetVersion` to 38. Fresh installs run direct UP-all through 38, including with the default target. Normal upgrades use the guarded forward wrapper. PostgreSQL upgrade rendering refuses explicit target 0 when migrations are enabled. Positive upgrade targets abort on dirty or unreadable metadata. Equal/newer clean versions are no-ops. Only a lower clean version runs `goto`. Serialize database migration runners. Helm stages never request DOWN. Use the separate runner for explicit rollback.
+
+Compatibility defaults true in preparation and activation, adding only `is_expired=requires_reauthentication` without refresh dates. Modern consumers can explicitly set `broker.thirdPartyOauth2.sessionAPICompatibility=false`. Cleanup defaults false after its consumer gate passes.
+
+Online rollout requires at least two healthy replicas, `maxUnavailable=0`, ready surge capacity, a disruption budget, sufficient traffic-drain time, and retained SPA assets.
+
+Schema phases use atomic statements and fail-fast locks. Expansion and contraction lock the view, then the table, with `NOWAIT`. Busy locks leave the schema and rows unchanged while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee. Inspect actual schema and dirty metadata before deliberate repair or retry. Never automate `Force`.
+
+This release supplies DOWN 038 only. The following activation and cleanup PRs supply their corresponding rollback migrations.
+
+DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Resolve them through successful reauthentication or explicit termination, not rejection clearing or automatic deletion. At schema 38, old binaries can replace preparation replicas through a rolling deployment. Drain every preparation/new replica before DOWN 038 removes its SQL boundary. Helm image rollback alone does not establish schema compatibility.
+
+See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040) for the exact prerequisites and rollback order.
 
 ## 5. Manual sweep against a running broker
 

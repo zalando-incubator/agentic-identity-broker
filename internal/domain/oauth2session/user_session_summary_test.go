@@ -12,15 +12,13 @@ import (
 
 func TestNewUserSessionSummary(t *testing.T) {
 	now := time.Now()
-	refreshExp := now.Add(24 * time.Hour)
 
 	session := &storage.UserSession{
-		ID:                    id.NewSessionID(),
-		ServiceID:             id.NewServiceID(),
-		TokenType:             "Bearer",
-		Scope:                 []string{"repo", "user"},
-		InitiatedAt:           now.Add(-1 * time.Hour),
-		RefreshTokenExpiresAt: &refreshExp,
+		ID:          id.NewSessionID(),
+		ServiceID:   id.NewServiceID(),
+		TokenType:   "Bearer",
+		Scope:       []string{"repo", "user"},
+		InitiatedAt: now.Add(-1 * time.Hour),
 	}
 
 	summary := storage.NewUserSessionSummary(session, "GitHub", 3)
@@ -32,40 +30,44 @@ func TestNewUserSessionSummary(t *testing.T) {
 	assert.Equal(t, []string{"repo", "user"}, summary.Scope)
 	assert.Equal(t, 3, summary.DependentAgentCount)
 	assert.True(t, summary.IsEncrypted)
-	assert.False(t, summary.IsExpired)
+	assert.False(t, summary.RequiresReauthentication)
 }
 
-func TestUserSessionSummary_WithExpiredSession(t *testing.T) {
-	now := time.Now()
-	refreshExp := now.Add(-1 * time.Hour) // Expired
-
+func TestUserSessionSummary_WithRejectedRefreshToken(t *testing.T) {
 	session := &storage.UserSession{
-		ID:                    id.NewSessionID(),
-		ServiceID:             id.NewServiceID(),
-		RefreshTokenExpiresAt: &refreshExp,
+		ID: id.NewSessionID(), ServiceID: id.NewServiceID(),
+		AccessTokenExpiresAt:  ptrTime(time.Now().Add(time.Hour)),
+		EncryptedRefreshToken: []byte("ciphertext"), RefreshTokenRejected: true,
 	}
-
 	summary := storage.NewUserSessionSummary(session, "GitHub", 0)
-
-	assert.True(t, summary.IsExpired)
+	assert.True(t, summary.RequiresReauthentication)
+	assert.True(t, summary.HasRefreshToken, "rejection does not erase the stored credential")
+	assert.False(t, summary.AccessTokenExpired)
 }
 
 func TestUserSessionSummary_WithExpiredAccessToken(t *testing.T) {
 	now := time.Now()
-	accessExp := now.Add(-1 * time.Hour)  // Expired access token
-	refreshExp := now.Add(24 * time.Hour) // Valid refresh token
+	accessExp := now.Add(-1 * time.Hour) // Expired access token
 
 	session := &storage.UserSession{
 		ID:                    id.NewSessionID(),
 		ServiceID:             id.NewServiceID(),
 		AccessTokenExpiresAt:  &accessExp,
-		RefreshTokenExpiresAt: &refreshExp,
+		EncryptedRefreshToken: []byte("ciphertext"),
 	}
 
 	summary := storage.NewUserSessionSummary(session, "GitHub", 2)
 
 	assert.True(t, summary.AccessTokenExpired)
-	assert.False(t, summary.IsExpired) // Session not expired if refresh token valid
+	assert.False(t, summary.RequiresReauthentication)
+}
+
+func TestUserSessionSummary_ExpiredAccessWithoutRefreshRequiresReauthentication(t *testing.T) {
+	session := &storage.UserSession{AccessTokenExpiresAt: ptrTime(time.Now().Add(-time.Hour))}
+	summary := storage.NewUserSessionSummary(session, "GitHub", 0)
+	assert.True(t, summary.AccessTokenExpired)
+	assert.True(t, summary.RequiresReauthentication)
+	assert.False(t, summary.HasRefreshToken)
 }
 
 func TestUserSessionSummary_HasRefreshToken(t *testing.T) {

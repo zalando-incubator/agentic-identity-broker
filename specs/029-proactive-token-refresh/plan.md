@@ -30,6 +30,14 @@ refreshed it. All three triggers therefore share one locked-refresh function,
 uses the current time, background uses current time plus lookahead, and the sweep keeps a fixed
 `sweepStart + lookahead` threshold (research R1, R5).
 
+ADR 040 corrects the shared session-validity model. Access expiry is recorded, refresh ciphertext presence is observable, and terminal rejection is learned from the provider. Missing access expiry is unknown, not permanent validity. `RefreshTokenRejected=false` means no observed rejection, not proven provider validity. Only HTTP 4xx `invalid_grant`, excluding 429, records rejection.
+
+The locked callback captures terminal rejection, sets the flag and `UpdatedAt`, and returns `(true, nil)`. The repository commits before the service returns the saved error with `refreshed=false`. Callback errors never write. Write or commit failure returns `persistence_failed`, not durable rejection. Rejection leaves ciphertext and other token metadata unchanged and emits no refresh-success event or counter.
+
+Recorded rejection stops subsequent issuance even before access expiry. Acquisition checks it before the valid-token branch and again after a shared refresh result. Background follow-up ignores a rejected shared result. Successful OAuth authorization and callback clear rejection through the existing upsert. Explicit termination deletes the retained row. Transient errors and dropped work still permit an otherwise valid access token.
+
+Sweep repositories exclude known rejected rows. A rejection after listing makes a candidate stale and skipped, including rejected dry-run snapshots. A newly observed rejection fails once after its state commits. Due rows without refresh credentials remain failures on later sweeps. The count invariant and expiry/UUID cursor remain unchanged.
+
 Two codebase facts shape the design:
 - **Admin `WriteTimeout` is 15 s.** A realistic sweep (hundreds of upstream calls) would be cut off.
   The sweep handler lifts its own write deadline through `http.ResponseController`. That requires
@@ -47,7 +55,9 @@ Two codebase facts shape the design:
 (already a direct dependency, `go.mod:62`), OpenTelemetry Go v1.46 (`metric`, `trace`; global providers per
 ADR 011), Viper/Cobra (config). **No new module dependency**; the ISO 8601 parser uses the Go standard library (R10).
 
-**Storage**: PostgreSQL (production) and in-memory (dev/test). There is no table or column change.
+**Storage**: PostgreSQL (production) and in-memory (dev/test). This preparation PR ships only migration 038 and prepared broker/API/UI code. Migrations 039 and 040 belong to following PRs and are not present. Phase 38 preserves the legacy table shape and adds the stable view and invoker write functions. The view reports false. True rejection writes fail as `persistence_failed`, while ordinary traffic works normally. The memory adapter already supports rejection. PR1 defaults and limits Helm targets to 38. Fresh installs run direct UP-all, while normal upgrades use the guarded wrapper.
+
+Before merging or deploying PR2, complete PR1 and drain every unprepared replica and in-flight operation. PR2 adds migration 039 and the real false-default rejection flag, activating durable rejection without restart. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. PR3 supplies migration 040 and removes only the unused legacy column after schema dependencies end. Historical dates never imply provider validity. All phases preserve rows and real token metadata. Compatibility defaults true in preparation and activation, supports explicit false, and defaults false in cleanup after its consumer gate passes. Phase-compatible rollback retains rejection at DOWN 040 and guards DOWN 039. Drain prepared/new replicas before DOWN 038. Inspect actual schema and dirty metadata before deliberate repair, never automatic `Force` or row deletion. See [quickstart.md](quickstart.md#online-validity-deployment-and-rollback-migrations-038040).
 Accepted ADR 039 keeps the two-key concurrent index on `(access_token_expires_at, id)` and the narrow non-atomic exception. Its same-PR amendment removes the guard. The image and Go runners execute migrations directly (research R4).
 
 **Testing**: stdlib `testing` + testify (unit, table-driven). Ginkgo/Gomega E2E in `tests/e2e/`.
@@ -56,7 +66,7 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
 **Target Platform**: Linux container. The broker binary is `cmd/agentic-identity-broker` (dual server
 :8000/:14000, ADR 004), deployed by `charts/agentic-identity-broker/`.
 
-**Project Type**: Single Go service within the monorepo. Backend only; no frontend change.
+**Project Type**: Single Go service within the monorepo. The proactive mechanism is backend-only. Its shared validity cutover coordinates end-user API v2 and session-page Login recovery with feature 008.
 
 **Performance Goals**:
 - Exchange hot path: zero upstream calls for tokens outside the window (SC-001). For tokens inside
@@ -81,9 +91,7 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
 - The per-route write-deadline lift applies to `POST /api/sessions/sweep` only. The caller owns the
   sweep timeout (R8).
 
-**Scale/Scope**: ADR 038 governs refresh. Amended ADR 039 governs direct migration execution. One concurrent migration pair, one new port method (two adapters), three new domain files
-(`refresh_trigger.go`, `background_refresh.go`, `sweep.go`), one admin handler and parser, config,
-Helm, docs, one E2E file (10 scenarios), and about 250 lines changed in `oauth2session/service.go`.
+**Scale/Scope**: ADR 038 governs proactive refresh. ADR 040 supersedes only its availability consequence for terminal provider rejection. Its 2026-10-14 revision records the stakeholder's staged-compatibility choice. Amended ADR 039 governs concurrent migration 037. Online validity phases 038–040 do not change that index design. The mechanism uses one expiry port, both storage adapters, the session service and background pool, the admin sweep, configuration, Helm, and regression coverage. The shared validity cutover also updates the end-user contract and session recovery UI.
 
 Research R1–R13 resolve the design questions. R4 records the named non-atomic exception, the informational directive, direct runners, and manual recovery. The direct migration paths require fresh verification after guard removal.
 
@@ -124,15 +132,14 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
   those choices. This is user approval in this conversation, not a claim of a PR review comment.
   T018 records this approval before endpoint implementation.
 - [x] **Database Design and Migration — VERIFIED**: Amended ADR 039 keeps the non-atomic exception for migration `037` without a guard. Before renumbering, direct Go-runner PostgreSQL 15 tests passed UP, DOWN, reapply, interrupted invalid-index recovery, and dirty-version repair. The direct image passed the same lifecycle on disposable PostgreSQL (as migration `036`, before the `main` merge renumbered it to `037`). First, middle, and late sparse-due pages used the valid two-key index under normal planner settings.
-- [x] **E2E Acceptance Tests**: All 10 acceptance scenarios get E2E tests in
-  `tests/e2e/proactive_token_refresh_test.go` before implementation (Testing Strategy).
-- [x] **E2E Test Mapping**: 1:1 scenario-to-`It()` mapping, tabulated below.
+- [x] **E2E Acceptance Tests**: The ten original scenario identifiers map to `tests/e2e/proactive_token_refresh_test.go`. US2-S3 also includes the full manual-rejection and OAuth callback recovery journey. Domain and repository regressions cover rejection races and sweep classification.
+- [x] **E2E Test Mapping**: Scenario-to-journey mappings appear below. The expanded rejection scenario has both on-demand and full HTTP recovery cases.
 - [x] **E2E Red-Phase Design**: All ten scenarios now include an expectation that fails semantically
   before implementation. US1-S1 observes a missing saturation-drop WARN event. US2-S1..S3
   require new trigger-aware success or failure events. US1-S2/S3 and US3-S1..S4 already target
   missing proactive refresh or sweep behavior. T025 records the actual red results below.
-- [x] **Frontend Playwright E2E**: N/A. No React UI change.
-- [x] **Frontend Screenshots**: N/A. No React UI change.
+- [x] **Frontend Playwright E2E**: The shared validity cutover uses feature 008's built-browser session journey for Login recovery. This remains separate from backend token-exchange proof.
+- [x] **Frontend Screenshots**: The original proactive mechanism adds no UI. The shared session validity status and recovery controls belong to feature 008.
 
 **Implementation Considerations**:
 
@@ -141,6 +148,7 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
   (`:463-533`), worker shutdown (`:538-556`), session refresh and concurrency (`:664-726`, including
   the existing singleflight description at `:721-723`), and the glossary.
 - [x] **ADRs — ACCEPTED FOR FEATURE 029**: On 2026-10-09, the user separately accepted ADRs 038 and 039 in writing for PR #196. On 2026-10-12, the user amended ADR 039 in this unmerged PR to remove its guard requirement. This same-PR approval applies only to feature 029. ADR 009 still governs the dedicated migration image.
+- [x] **Session Validity ADR**: The stakeholder approved the corrected validity plan recorded by ADR 040. It narrowly supersedes ADR 038 for terminal rejection. Transient background errors and dropped work retain the original valid-access-token availability policy.
 - [x] **Library-First Security**: No cryptography is introduced. Encryption stays behind
   `ports.EncryptionPort` (AWS Encryption SDK / memory). The ISO 8601 parser is not a security
   primitive.
@@ -202,13 +210,20 @@ specs/029-proactive-token-refresh/
 ```text
 adrs/
 ├── 038-proactive-token-refresh.md                       # ACCEPTED — feature 029 refresh behavior
-└── 039-concurrent-session-expiry-index.md                # ACCEPTED — feature 029 Principle IX exception
+├── 039-concurrent-session-expiry-index.md                # ACCEPTED — feature 029 Principle IX exception
+└── 040-third-party-session-validity.md                   # ACCEPTED — observed rejection and recovery
 
 api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
 
 migrations/
 ├── 037_user_sessions_access_token_expiry_index.up.sql   # concurrent two-key index; informational directive
-└── 037_user_sessions_access_token_expiry_index.down.sql # concurrent drop; informational directive
+├── 037_user_sessions_access_token_expiry_index.down.sql # concurrent drop; informational directive
+├── 038_user_sessions_refresh_token_validity.up.sql      # prepare stable view/functions; original table unchanged
+├── 038_user_sessions_refresh_token_validity.down.sql    # remove boundary after prepared replicas drain
+├── 039_user_sessions_refresh_token_rejection.up.sql     # expand actual rejection; retain legacy column
+├── 039_user_sessions_refresh_token_rejection.down.sql   # guarded rollback to preparation boundary
+├── 040_user_sessions_remove_refresh_token_expiry.up.sql # contract unused legacy column only
+└── 040_user_sessions_remove_refresh_token_expiry.down.sql # restore nullable legacy column; retain rejection
 
 internal/ports/
 ├── config.go                                            # MODIFIED — TokenRefreshConfig, Config.TokenRefresh
@@ -220,8 +235,8 @@ internal/config/
 └── *_test.go                                            # MODIFIED — defaults, env, bounds
 
 internal/domain/storage/
-├── user_session.go                                      # MODIFIED — AccessTokenExpiresBy
-└── user_session_test.go                                 # MODIFIED — boundary table + equivalence
+├── user_session.go                                      # MODIFIED — access expiry, rejection, reauthentication
+└── user_session_test.go                                 # MODIFIED — access boundaries and observed rejection
 
 internal/domain/oauth2session/
 ├── service.go                                           # MODIFIED — Config, NewConfigFromPorts, GetValidAccessToken,
@@ -237,9 +252,9 @@ internal/domain/oauth2session/
 internal/adapters/storage/
 ├── factory.go                                           # MODIFIED — SessionExpiry()
 ├── memory/user_session.go                               # MODIFIED — ListExpiringSessions
-├── memory/user_session_test.go                          # MODIFIED — contract E1–E7
-├── postgres/user_session.go                             # MODIFIED — ListExpiringSessions (+ exported-to-test query const)
-└── postgres/user_session_test.go                        # MODIFIED — contract E1–E7, SC-006 EXPLAIN (integration tag)
+├── memory/user_session_test.go                          # MODIFIED — expiry and rejection contracts
+├── postgres/user_session.go                             # MODIFIED — rejection persistence and filtered paging
+└── postgres/user_session_test.go                        # MODIFIED — repository contracts, SC-006 EXPLAIN
 
 internal/adapters/http/
 ├── middleware.go                                        # MODIFIED (Phase 0) — responseWriter.Unwrap
@@ -300,12 +315,11 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
      Confirm that every other wrapper on the admin chain (otelchi, `tokenEndpointTelemetry`) passes
      `http.ResponseController` through. Add the `NewHandler` + real `http.Server{WriteTimeout}` test
      that proves a handler can lift its deadline. This changes nothing for existing routes.
-  2. Replace `refreshExpiredSession` with `refreshDueSession(ctx, principal, serviceID, threshold, trigger)`,
-     called only as `(…, time.Now(), RefreshTriggerOnDemand)`. Add `UserSession.AccessTokenExpiresBy`
-     and use it in the lock callback (equivalent to the current `HasValidAccessToken` check, asserted
-     by test). Return a ciphertext-bearing session through singleflight and decrypt per joiner.
-     The final shared result also records whether the leader refreshed and which trigger ran, so a
-     background joiner does not refresh a short-lived token again. Existing token-exchange tests pass.
+  2. Extract `refreshDueSession(ctx, principal, serviceID, dueBy func() time.Time, trigger)` for threshold-aware refresh.
+     On-demand passes `time.Now`; the callback evaluates it only after acquiring the session lock.
+     Use `UserSession.AccessTokenExpiresBy` for the access-expiry re-check. Return ciphertext-bearing sessions through singleflight and decrypt per joiner.
+     The shared result records whether the leader refreshed and which trigger ran, preventing another background refresh of newly issued tokens.
+     The later validity cutover also guards rejected shared results before decryption or background follow-up.
 
   Reason: Both are structural prerequisites that reviewers can approve without understanding
   proactive refresh. Item 2 is the seam that US1 and US3 plug into.
@@ -340,7 +354,9 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 **2d — Database (DIRECT RUNNERS VERIFIED)**
 8. ADR 039 keeps the named non-atomic exception for migration `037` and removes the guard. The separate image and both Helm Job modes remain under ADR 009. Before renumbering, direct Go v4.20.1 runners passed PostgreSQL 15 lifecycle and invalid-index/dirty-version recovery tests. The direct v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database (as migration `036`, before the `main` merge renumbered it to `037`). The `-- migrate:no-transaction` comment is informational.
 
-**2e — Frontend**: N/A.
+The validity cutover uses atomic migrations `038` prepare, `039` expand, and `040` contract. Preparation preserves the old table shape and adds the stable read view and write functions. Roll compatible preparation brokers across every replica before expansion activates durable rejection. Keep the unused legacy column until contraction is safe. NOWAIT contention aborts without schema or data changes while existing replicas continue serving; inspect dirty metadata before deliberate repair. DOWN 039 refuses while rejected rows remain. Reauthorize or explicitly terminate them first. Preserve migration `037` and historical SQL. No historical dates imply rejection, and rollback fabricates no expiry dates.
+
+**2e — Frontend**: The original proactive mechanism adds no UI. Coordinate the shared validity cutover with feature 008's reauthentication status and Login recovery.
 
 **2f — E2E red phase**
 9. Add `WithTokenResponseGate` to `tests/e2e/helpers/mock_upstream.go`.
@@ -354,8 +370,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 11. `ports.UserSessionExpiryRepository`, `storage.SessionExpiryCursor{AccessTokenExpiresAt time.Time, ID id.SessionID}`,
     the memory and PostgreSQL `ListExpiringSessions`, and the factory `SessionExpiry()`. A zero ID
     and zero expiry start a scan. An expiry without an ID is invalid. A cursor with an ID can have
-    a zero expiry. Both adapters order by expiry and then UUID bytes. Test E1–E8 with mutations
-    and ciphertext snapshots (contracts/ports.md §1).
+    a zero expiry. Both adapters order by expiry and then UUID bytes, excluding known rejected rows.
+    Test E1–E9 with mutations, ciphertext snapshots, and rejection filtering (contracts/ports.md §1).
 12. Test the named valid two-key index with normal-planner `EXPLAIN (FORMAT JSON)` for first, middle, and late small-limit pages. Seed sparse due rows and run `ANALYZE`. Do not disable sequential scans (R4, SC-006).
 13. `RefreshTrigger` and the five counters. Instruments are created once in constructors.
 
@@ -377,8 +393,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 19. Move failure logging from `refreshSessionTokens` into the trigger-aware caller. On-demand keeps
     ERROR and gains `session_id` and `triggered_by=on-demand`. Route `ForceRefreshSession` success
     and failure logs through the same helper.
-20. Extend `service_refresh_concurrency_test.go` with commit-before-success-log checks for all
-    three triggers. The US2 E2E cases turn green when the trigger-aware log fields are implemented.
+20. Extend refresh regression coverage for all three triggers. Preserve commit-before-success-log checks. Force refresh before access expiry against HTTP 400 `invalid_grant`, then require no token from acquisition. Assert the rejection flag commits without token changes or refresh success. Callback errors never persist. Commit failure returns `persistence_failed`. Guard shared rejected results before decryption and background follow-up. Extend US2-S3 with manual 409, retained list state, exchange 400 `invalid_grant` plus `/sessions`, and no second provider request. A `PT2H` sweep must evaluate zero rows before real authorize/callback upsert recovery and a successful exchange.
 
 ### Phase 5: US3 — Admin sweep (P2)
 
@@ -387,9 +402,9 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
     Hold one threshold and advance `SessionExpiryCursor` from the last raw page row, even if that
     page contains only previously seen IDs. Track visited IDs per invocation for real and dry runs.
     A row whose refresh moves it forward within the threshold is evaluated once. Reject a nil
-    expiry or non-increasing tuple as a repository failure. Also cover the count invariant,
-    classification (R11), dry runs without writes, upstream calls, or metrics, cancellation between
-    sessions, and bounded detached refresh.
+    expiry or non-increasing tuple as a repository failure. Cover known rejected candidate exclusion,
+    stale rejection skips, newly committed rejection failing once, and repeated missing-credential failures.
+    Preserve classification (R11), dry runs without calls or writes, and bounded detached refresh.
 23. `SessionSweepHandler`: operator-principal requirement, 4 KiB limit, unknown-field rejection,
     write-deadline lift, error mapping, audit line. Handler unit tests use a fake `sessionSweeper`.
 24. Add the route in `SetupAdminRoutes` and update the route-tree comment. Wire
@@ -420,9 +435,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 **Framework**: Ginkgo/Gomega following [tests/e2e/README.md](../../tests/e2e/README.md). Setup mirrors
 `tests/e2e/token_exchange_test.go:44-157`.
 
-**Test Organization**: `Describe("Proactive Token Refresh")` → one `Describe` per user story →
-`Context` per precondition → one `It` per scenario. Each `It` carries
-`// Scenario X.Y from specs/029-proactive-token-refresh/spec.md`.
+**Test Organization**: `Describe("Proactive Token Refresh")` contains story contexts and scenario cases. Existing cases retain their scenario identifiers. US2-S3 adds a separate full HTTP recovery context. Each case references this specification.
 
 **Scenario Mapping**:
 
@@ -432,12 +445,12 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 | US1-S2 | same | Returns the old token before a background renewal commits. |
 | US1-S3 | same | Deduplicates exchanges during an in-flight refresh. |
 | US2-S1 | same | Renews once and logs success after persistence. |
-| US2-S2 | same | Requires reauthentication without an upstream call. |
-| US2-S3 | same | Preserves encrypted tokens after provider rejection. |
-| US3-S1 | same | Paginates due rows and excludes healthy and timeless rows. |
-| US3-S2 | same | Counts an expired refresh token as a failure and continues. |
+| US2-S2 | same | Requires reauthentication for an expired access token without refresh credentials, with no upstream call. |
+| US2-S3 | same | Persists terminal rejection without changing tokens. Forces rejection of unexpired access, observes manual 409 and retained list state, refuses exchange with 400 `invalid_grant` plus `/sessions`, excludes a `PT2H` sweep, then restores exchange through real OAuth callback upsert. |
+| US3-S1 | same | Paginates due rows and excludes healthy, unknown-access-expiry, and known rejected rows. |
+| US3-S2 | same | Counts due rows without refresh credentials as failures on repeated sweeps and continues. New terminal rejection fails once, then later sweeps exclude it. Domain and repository tests cover that transition. |
 | US3-S3 | same | Refreshes a shared session once across concurrent replicas. |
-| US3-S4 | same | Counts due rows without provider calls or writes. |
+| US3-S4 | same | Counts due refreshable rows without calls or writes. Rejected stale snapshots skip, and missing credentials fail. Domain tests cover stale classification. |
 
 See [quickstart.md §2](quickstart.md#2-acceptance-scenarios-e2e-principle-xiii) for pass conditions.
 
@@ -448,6 +461,7 @@ See [quickstart.md §2](quickstart.md#2-acceptance-scenarios-e2e-principle-xiii)
 - US2-S1 fails on the missing `session_id` and `triggered_by=on-demand` success fields.
 - US2-S2 and US2-S3 fail on the missing single ERROR `session.oauth2.refresh_failed` event
   with `session_id` and `triggered_by=on-demand`. Assert the existing error and storage behavior.
+- The later validity regression forces a refresh rejection before access expiry, then requests a token. Under the obsolete model, acquisition returns a token and fails the assertion. It remains a behavioral regression, not a compilation failure.
 - US3-S1..S4 fail on the absent route and the exact expected counts.
 - `XIt`, `PIt`, `XDescribe`, `PDescribe`, `XContext`, `PContext`, and `Skip()` are forbidden. No
   red-phase comments.
@@ -476,8 +490,8 @@ At red-phase capture, the existing success and provider-rejection events include
 - Fixtures: `fixtures.DefaultPrincipal()`, `fixtures.ValidAgent()`, `fixtures.GitHubService()`
   (token endpoint pointed at the mock), `fixtures.ActiveGrant(...)`,
   `fixtures.SeedPlaceholderGrantData(...)`, `fixtures.GitHubSessionForPrincipal`,
-  `ExpiredGitHubSessionForPrincipal`, and `FullyExpiredSessionForPrincipal`
-  (`tests/e2e/fixtures/sessions.go:10-80`).
+  `ExpiredGitHubSessionForPrincipal`, and `SessionWithoutRefreshToken` with a past access expiry.
+  Refresh fixtures never manufacture expiry for opaque third-party refresh tokens.
 - Expiry offsets: seed sessions at `+2m` (inside the window), `+2h` (outside), or with `nil` expiry (FR-013). Use `UserSessions().Create` only for fixture setup. US1-S1 uses two due sessions and one healthy session with one background slot. US3 uses several principals for one service.
 - No new fixture file. If more than two tests need it, a small `SessionForPrincipalExpiringIn`
   helper may be added to `fixtures/sessions.go`.
@@ -490,6 +504,7 @@ fixture-only changes during implementation.
 - US3-S3 builds two `App`s over the **same** `testStorage` to model two replicas (shared database,
   per-process singleflight and pools). Both servers are closed in `AfterEach`. `App.Shutdown`
   idempotency covers the double close.
+- The real rejection-recovery journey uses `bootstrap.NewTestServerBuilder(config, store, factory, logger).Build()`. This binds the callback URL before `app.Builder.Build()`. The admin listener uses `bootstrap.NewAdminTestServer(enduser.App(), logger)`. Follow real authorization redirects explicitly. Send `X-Remote-User` on broker requests only. Do not rewrite callback URLs or inject recovery sessions.
 
 **Helper Utilities**:
 - New: `MockUpstreamOAuth2Server.WithTokenResponseGate() (release func())` (contracts/ports.md §6).
@@ -503,13 +518,11 @@ fixture-only changes during implementation.
 ### Unit & Integration Tests
 
 **Unit Tests** (TDD: write first, see them fail, then implement):
-- `internal/domain/storage/user_session_test.go`: `AccessTokenExpiresBy` boundary table and its
-  equivalence with `!HasValidAccessToken()`.
+- `internal/domain/storage/user_session_test.go`: access-expiry boundaries and equivalence, rejection precedence, ciphertext presence, and reauthentication for exhausted access-only sessions.
+- `internal/domain/oauth2session/service_refresh_classification_test.go` and `service_refresh_concurrency_test.go`: terminal versus transient errors, rejection commit failure, no future issuance even before access expiry, and no success event after rejection.
 - `internal/domain/oauth2session/background_refresh_test.go`: pool and lifecycle behavior (Phase 3,
   step 14). A gated fake provider makes the tests deterministic, with no sleeps.
-- `internal/domain/oauth2session/sweep_test.go`: classification table (R11), invariants, dry run,
-  cancellation, abort, visited-ID dedup after an expiry moves forward, and rejection of nil or
-  non-increasing cursor tuples.
+- `internal/domain/oauth2session/sweep_test.go`: classification (R11), count invariants, known rejection exclusion, stale skips, one failure for new rejection, and repeated missing-credential failures. Preserve dry-run, cancellation, abort, visited-ID, and cursor regressions.
 - `internal/adapters/http/handlers/admin/iso8601_duration_test.go`: accepted and rejected grammar,
   overflow.
 - `internal/adapters/http/handlers/admin/session_sweep_handler_test.go`: input parsing, error
@@ -519,18 +532,16 @@ fixture-only changes during implementation.
 - `internal/config/*_test.go`: defaults, environment, and bounds.
 
 **Integration Tests** (`-tags=integration`, testcontainers PostgreSQL 15):
-- `internal/adapters/storage/postgres/user_session_test.go`: `ListExpiringSessions` contract E1–E7,
-  and the SC-006 normal-planner `EXPLAIN (FORMAT JSON)` assertion for first, middle, and late pages
-  against the named valid two-key index. Inspect `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for
-  actual rows and buffers without turning off sequential scans.
+- `internal/adapters/storage/postgres/user_session_test.go`: rejection persistence, upsert reset, active filters, token-free summary correctness, and ListExpiringSessions E1–E9. Preserve SC-006 normal-planner assertions for first, middle, and late pages against the existing two-key index. Do not disable sequential scans.
 - `tests/integration/migrations/`: Verify direct migration `037` UP, DOWN, reapply, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree keys, `(access_token_expires_at, id)`.
+- `tests/integration/migrations/`: Migration `038` preserves rows and metadata without inferred rejection. Its guarded DOWN refuses unchanged schema while rejected rows remain, even when migration metadata becomes dirty. After inspection and explicit rejected-row resolution, DOWN restores NULL legacy dates and reapply preserves retained data.
 
 **Test Coverage Goals**:
 - Unit: every branch of `backgroundRefresher.submit` and `Close`, every R11 classification row,
   every parser rule.
-- Integration: the full repository contract on both adapters, plus migration 037.
-- E2E: 100% of the 10 acceptance scenarios.
-- Frontend E2E: N/A.
+- Integration: the repository contract on both adapters, migration 037 index behavior, and the online 038/039/040 lifecycle with real concurrent HTTP traffic and the rendered migration CLI.
+- E2E: the ten scenario identifiers, including the full US2-S3 rejection and real callback recovery lifecycle.
+- Frontend E2E: feature 008's built-browser recovery journey. Post-recovery token exchange remains a separate backend assertion.
 
 ## Complexity Tracking
 

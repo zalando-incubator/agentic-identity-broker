@@ -1153,7 +1153,7 @@ func (b *Builder) Build() (*App, error) {
 		Agents:         consent.NewAgentsHandler(app.ConsentService, b.logger),
 		AgentDetail:    agentDetailHandler,
 		Grants:         consent.NewGrantsHandler(app.ConsentService, b.logger, app.SessionTokenService),
-		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService),
+		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService, b.config.ThirdPartyOAuth2.SessionAPICompatibility),
 		OAuth2Authorize: &enduser.OAuth2AuthorizeHandler{
 			Service:        app.OAuth2Service,
 			Logger:         b.logger,

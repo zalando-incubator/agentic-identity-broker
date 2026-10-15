@@ -1169,7 +1169,7 @@ func TestHandleCallback_TokenEncryptionFailure(t *testing.T) {
 func TestHandleCallback_SessionAlreadyExists(t *testing.T) {
 	// Test upsert semantics: if session exists, update it
 	ctx := context.Background()
-	service, _, providerService := setupService(t)
+	service, _, sessions, _, _, providerService := setupServiceWithConfig(t, nil)
 
 	serviceID := id.NewServiceID()
 	thirdPartyService := createTestService(serviceID)
@@ -1209,6 +1209,14 @@ func TestHandleCallback_SessionAlreadyExists(t *testing.T) {
 	require.NotNil(t, result1)
 	session1ID := result1.Session.ID
 	session1CreatedAt := result1.Session.CreatedAt
+	_, err = sessions.(ports.UserSessionRefreshRepository).WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		current.RefreshTokenRejected = true
+		return true, nil
+	})
+	require.NoError(t, err)
+	_, token, err := service.GetValidAccessToken(ctx, principal, serviceID)
+	require.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+	assert.Empty(t, token)
 
 	// Wait a tiny bit to ensure UpdatedAt changes
 	time.Sleep(10 * time.Millisecond)
@@ -1234,6 +1242,13 @@ func TestHandleCallback_SessionAlreadyExists(t *testing.T) {
 	assert.Equal(t, session1ID, session2ID, "Session ID should remain the same (upsert)")
 	assert.Equal(t, session1CreatedAt, result2.Session.CreatedAt, "CreatedAt should not change")
 	assert.Greater(t, session2UpdatedAt, session1CreatedAt, "UpdatedAt should be more recent than CreatedAt")
+	assert.False(t, result2.Session.RefreshTokenRejected)
+	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	assert.False(t, persisted.RefreshTokenRejected)
+	_, token, err = service.GetValidAccessToken(ctx, principal, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, "test-access-token-xyz", token)
 }
 
 func TestHandleCallback_PKCEValidationFailure(t *testing.T) {
@@ -1504,7 +1519,7 @@ func (batchOnlyProviderRepository) Get(context.Context, id.ServiceID) (*model.Th
 	return nil, errors.New("scalar provider lookup is not available")
 }
 
-func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing.T) {
+func TestListUserSessions_BatchesProvidersAndPreservesRejectedSessions(t *testing.T) {
 	ctx := context.Background()
 	principal := id.Principal("user@example.com")
 	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -1516,11 +1531,10 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 		batchOnlyProviderRepository{providerRepo}, newTestEncryption(t), newNoopBranchKeyManager(), nil, false, slog.Default())
 	sessions := memory.NewInMemoryUserSessionRepository()
 	for _, serviceID := range []id.ServiceID{provider.ID, id.NewServiceID()} {
-		past := time.Now().Add(-time.Minute)
 		require.NoError(t, sessions.Create(ctx, &storage.UserSession{
 			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
-			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenRejected: true,
 		}))
 	}
 	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,
@@ -1531,7 +1545,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 	assert.Equal(t, provider.ID, summaries[0].ServiceID)
 	assert.Equal(t, provider.DisplayName, summaries[0].ServiceDisplayName)
 	assert.True(t, summaries[0].HasRefreshToken)
-	assert.True(t, summaries[0].IsExpired)
+	assert.True(t, summaries[0].RequiresReauthentication)
 }
 
 func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
@@ -2067,7 +2081,7 @@ func TestForceRefreshSession(t *testing.T) {
 		assert.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
 		assert.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
 		assert.Equal(t, before.AccessTokenExpiresAt, after.AccessTokenExpiresAt)
-		assert.Equal(t, before.RefreshTokenExpiresAt, after.RefreshTokenExpiresAt)
+		assert.True(t, after.RefreshTokenRejected)
 	})
 }
 

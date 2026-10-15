@@ -210,7 +210,7 @@ Administrators need to configure authorization rules that validate client_assert
 
 ### User Story 5 - No Valid Session Returns Appropriate Error (Priority: P2)
 
-When a user has not established a session with a third-party service (no tokens in vault), or their session has expired (both access and refresh tokens expired), the system must return an appropriate error that privileged clients/agents can handle programmatically to trigger re-authentication flows.
+A missing third-party session, recorded provider refresh rejection, or expired access token without refresh authority requires reauthentication. The broker retains rejected records until successful authorization/callback recovery or explicit termination. It does not predict third-party refresh expiry.
 
 **Why this priority**: This enables agents to detect when users need to re-authenticate with third-party services. It depends on P1 (basic exchange) and provides essential error handling.
 
@@ -219,9 +219,9 @@ When a user has not established a session with a third-party service (no tokens 
 **Acceptance Scenarios**:
 
 1. **Given** user has no stored session for the target service, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri addressing the sessions landing page (`<public URL>/sessions`).
-2. **Given** user's stored tokens have all expired (both access and refresh), **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_description="User session has expired, re-authentication required"
+2. **Given** the access token has expired and no refresh credentials exist, **When** a privileged client requests token exchange, **Then** the system returns 400 `invalid_grant` with the sessions landing page as `error_uri`, without calling the provider or returning a token.
 3. **Given** a recoverable provider-session error response is returned, **When** the privileged client receives it, **Then** error_uri points to the sessions landing page rather than the authorization API that requires redirect parameters.
-4. **Given** user's stored access_token has expired and the third-party service rejects the stored refresh_token with HTTP 400 and error=invalid_grant, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri set to the sessions landing page (`<public URL>/sessions`), never returns the provider's error_description, and leaves the stored session unchanged so that a later accepted refresh succeeds
+4. **Given** the provider rejects stored refresh credentials with HTTP 4xx `invalid_grant`, except 429, **When** a privileged client requests token exchange, **Then** rejection persists before the 400 `invalid_grant` response with `/sessions` recovery. Ciphertext and access expiry remain unchanged. Later requests require reauthentication without another provider call. Successful authorization/callback upsert clears rejection and restores exchange; another refresh attempt cannot recover the recorded rejection.
 5. **Given** user's stored access_token has expired and the third-party service rejects the refresh request with error=invalid_client (or any non-invalid_grant code, provider 5xx, or unparseable response), **When** privileged client requests token exchange, **Then** system returns 500 Internal Server Error with error=server_error and no error_uri, and records the safe third-party HTTP status and OAuth error code in telemetry
 
 ---
@@ -293,8 +293,8 @@ The broker can issue local subject tokens while still requiring privileged-clien
 - **FR-011**: System MUST retrieve stored third-party OAuth2 tokens from token vault using principal and service ID
 - **FR-012**: System MUST return RFC 8693 compliant response with access_token, token_type (pass-through from stored third-party token response), issued_token_type, and optional expires_in
 - **FR-013**: System MUST set issued_token_type to the original token type from the third-party service (typically urn:ietf:params:oauth:token-type:access_token)
-- **FR-014**: System MUST automatically refresh expired access_tokens if refresh_token is available and valid
-- **FR-014a**: When token refresh fails with invalid_grant from third-party service, system MUST return error=invalid_grant with error_description indicating re-authentication required
+- **FR-014**: System MUST refresh expired access tokens when refresh credentials are stored and not known rejected.
+- **FR-014a**: HTTP 4xx provider refresh `invalid_grant`, except 429, MUST persist rejection and stop subsequent token issuance, even while access remains unexpired. Recovery uses successful authorization/callback or explicit termination.
 - **FR-015**: System MUST return appropriate RFC 8693 error responses (invalid_request, invalid_client, invalid_grant, invalid_target, access_denied)
 - **FR-016**: System MUST support CEL-based authorization for client_assertion (privileged client) validation
 - **FR-017**: System MUST validate all CEL expressions at startup (authorization and claim extraction) and fail fast on syntax errors

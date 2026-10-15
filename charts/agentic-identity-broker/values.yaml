@@ -5,6 +5,16 @@
 # -- Number of broker pod replicas
 replicaCount: 1
 
+# -- Deployment strategy. Online upgrades require maxUnavailable=0 and maxSurge at least 1.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+# -- Pod termination grace must exceed broker.server.shutdown.timeout and allow traffic draining.
+terminationGracePeriodSeconds: 60
+
 # Image configuration
 image:
   # -- Container image repository
@@ -277,6 +287,9 @@ postgresql:
 migration:
   # -- Run database migrations (automatically enabled when storage.type=postgres)
   enabled: true
+  # -- Forward-only schema target (maximum 38 in this release). Fresh installs run all available UP migrations.
+  # Upgrades use the guarded target 38. Explicit 0 is refused on PostgreSQL upgrades.
+  targetVersion: 38
 
   # Migration image configuration (separate from broker image for security)
   image:
@@ -409,6 +422,8 @@ broker:
 
   # OAuth2 configuration
   thirdPartyOauth2:
+    # -- Temporarily include is_expired=requires_reauthentication. Disable explicitly for API v2-only consumers.
+    sessionAPICompatibility: true
     # -- Raw 32-byte JWE signing key for state tokens (required, load from secret)
     # The chart base64-encodes this value before storing it as the broker-facing Secret string.
     # Set via environment variable or Kubernetes Secret

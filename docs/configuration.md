@@ -699,6 +699,29 @@ Keep `background_workers` between 1 and 20 per replica. A locked refresh holds o
 
 The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
 
+### Session API compatibility during online upgrades
+
+Use this temporary setting while legacy session-API consumers upgrade:
+
+```yaml
+third_party_oauth2:
+  session_api_compatibility: true
+```
+
+The default is `true` in the preparation and activation releases. The environment override is `IDENTITY_BROKER_SESSION_API_COMPATIBILITY`.
+When enabled, list, detail, and manual-refresh success responses include deprecated `is_expired` alongside `requires_reauthentication`.
+Both booleans describe the same reauthentication requirement. The broker does not restore refresh-expiry dates or predict opaque-token lifetimes.
+Modern consumers can explicitly set this value to `false`. The cleanup release defaults it to false after the consumer gate passes.
+
+This PR ships migration 038 and the prepared broker only. Helm defaults to target 38 and rejects targets greater than 38.
+Fresh installs run direct UP-all through 38. A normal upgrade uses the guarded forward wrapper before rolling prepared brokers.
+Migration 039 belongs to the following activation PR. Do not merge or deploy it until every old replica and in-flight operation drains.
+Migration 040 belongs to the cleanup PR. Upgrade the embedded SPA and all external consumers before merging or deploying cleanup.
+Prepared replicas observe persisted rejection once activation commits. At 38, true rejection writes report persistence failure; ordinary traffic remains supported.
+The Helm controls are `migration.targetVersion` and `broker.thirdPartyOauth2.sessionAPICompatibility`.
+See the [online rollout procedure](operations/session-sweep.md) for ordering, capacity requirements, and fail-fast lock handling.
+
+
 ### Encryption Backend Configuration
 
 The broker requires encryption in every environment.

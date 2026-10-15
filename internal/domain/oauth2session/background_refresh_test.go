@@ -234,15 +234,14 @@ func submitBackground(t *testing.T, pool *backgroundRefresher, ctx context.Conte
 }
 
 func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *testing.T) {
-	for _, name := range []string{"absent refresh token", "expired refresh token"} {
+	for _, name := range []string{"absent refresh token", "provider-rejected refresh token"} {
 		t.Run(name, func(t *testing.T) {
 			reader := backgroundMetrics(t)
 			session := backgroundSession(id.NewServiceID(), "unrefreshable-user")
 			if name == "absent refresh token" {
 				session.EncryptedRefreshToken = nil
 			} else {
-				expired := time.Now().Add(-time.Minute)
-				session.RefreshTokenExpiresAt = &expired
+				session.RefreshTokenRejected = true
 			}
 			service, store, _ := newBackgroundFixture(t, session)
 			var providerLookups atomic.Int32
@@ -256,9 +255,16 @@ func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *t
 			defer func() { assert.NoError(t, service.Close(context.Background())) }()
 
 			got, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
-			require.NoError(t, err)
-			assert.Equal(t, session.ID, got.ID)
-			assert.Equal(t, "old-unrefreshable-user", token)
+			if session.RefreshTokenRejected {
+				require.ErrorIs(t, err, ErrRefreshRejected)
+				require.ErrorIs(t, err, ErrReauthenticationRequired)
+				assert.Nil(t, got)
+				assert.Empty(t, token, "known rejection must refuse even an unexpired access token")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, session.ID, got.ID)
+				assert.Equal(t, "old-unrefreshable-user", token)
+			}
 			require.NoError(t, service.Close(context.Background()))
 			assert.Zero(t, providerLookups.Load())
 			assertBackgroundMetrics(t, reader, map[string]int64{
@@ -642,7 +648,7 @@ func TestBackgroundRefresh_OpenPoolAdmitsWorkAfterEachCompletion(t *testing.T) {
 		wantFailed    int64
 	}{
 		{name: "after success"},
-		{name: "after provider error", providerError: true, wantFailed: 1},
+		{name: "after transient provider error", providerError: true, wantFailed: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -659,7 +665,7 @@ func TestBackgroundRefresh_OpenPoolAdmitsWorkAfterEachCompletion(t *testing.T) {
 					principal := strings.TrimPrefix(r.Form.Get("refresh_token"), "refresh-")
 					call := calls.Add(1)
 					if tc.providerError && call == 1 {
-						return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+						return operationTokenResponse(http.StatusServiceUnavailable, `{"error":"invalid_grant"}`), nil
 					}
 					return operationTokenResponse(http.StatusOK, fmt.Sprintf(`{"access_token":"new-%s-%d","refresh_token":"refresh-%s","expires_in":3600}`, principal, call, principal)), nil
 				})
@@ -742,18 +748,24 @@ func TestBackgroundRefresh_OnDemandJoinReportsSynchronousFailure(t *testing.T) {
 	caller := &joinedFlightContext{Context: context.Background(), joined: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := service.GetValidAccessToken(caller, session.Principal, session.ServiceID)
+		_, token, err := service.GetValidAccessToken(caller, session.Principal, session.ServiceID)
+		assert.Empty(t, token)
 		done <- err
 	}()
 	receiveBackground(t, caller.joined)
 	close(release)
-	require.Error(t, receiveBackground(t, done))
+	err := receiveBackground(t, done)
+	require.ErrorIs(t, err, ErrRefreshRejected)
+	assert.ErrorIs(t, err, ErrReauthenticationRequired)
 	require.NoError(t, pool.Close(context.Background()))
 	assert.EqualValues(t, 1, requests.Load())
 	stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
 	require.NoError(t, err)
 	assert.Equal(t, session.EncryptedAccessToken, stored.EncryptedAccessToken)
 	assert.Equal(t, session.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+	assert.True(t, stored.RefreshTokenRejected)
+	assert.Equal(t, session.AccessTokenExpiresAt, stored.AccessTokenExpiresAt)
+	assert.Empty(t, logs.events(t, "session.oauth2.token_refreshed"))
 	events := logs.events(t, "session.oauth2.refresh_failed")
 	require.Len(t, events, 2, "both failed background refresh and synchronous caller need an event")
 	triggers := make(map[string]string, len(events))
@@ -905,6 +917,9 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 			require.NoError(t, err)
 			assert.Equal(t, session.EncryptedAccessToken, unchanged.EncryptedAccessToken)
 			assert.Equal(t, session.EncryptedRefreshToken, unchanged.EncryptedRefreshToken)
+			assert.Equal(t, tc.name == "provider rejection", unchanged.RefreshTokenRejected)
+			assert.Equal(t, session.AccessTokenExpiresAt, unchanged.AccessTokenExpiresAt)
+			assert.Empty(t, logs.events(t, "session.oauth2.token_refreshed"))
 			failures := logs.events(t, "session.oauth2.refresh_failed")
 			require.Len(t, failures, 1, "a background attempt must classify its failure exactly once")
 			assert.Equal(t, tc.level, failures[0]["level"])
@@ -917,4 +932,120 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 			assertBackgroundMetrics(t, reader, map[string]int64{"proactive_refresh_triggered_total": 1, "proactive_refresh_dropped_total": 0, "proactive_refresh_failed_total": 1})
 		})
 	}
+}
+
+func TestBackgroundRefresh_OnDemandJoinRefusesAlreadyRejectedNoOpResult(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reader := backgroundMetrics(t)
+		session := backgroundSession(id.NewServiceID(), "rejected-shared-row")
+		service, store, logs := newBackgroundFixture(t, session)
+		gate := make(chan struct{})
+		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			<-gate
+			return store.withLocked(ctx, principal, serviceID, callback)
+		})
+		var requests atomic.Int32
+		service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return operationTokenResponse(http.StatusOK, `{"access_token":"unexpected-access"}`), nil
+		})
+		pool := newBackgroundRefresher(service, 1)
+		submitBackground(t, pool, context.Background(), session)
+		synctest.Wait()
+		_, err := store.withLocked(context.Background(), session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			current.RefreshTokenRejected = true
+			return true, nil
+		})
+		require.NoError(t, err)
+		service.sessionRepo = operationSessionRepository{find: func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
+			stale := *session
+			expired := time.Now().Add(-time.Minute)
+			stale.AccessTokenExpiresAt = &expired
+			return &stale, nil
+		}}
+		var decryptions atomic.Int32
+		service.encryption = operationEncryption{decrypt: func(context.Context, []byte, map[string]string) ([]byte, error) {
+			decryptions.Add(1)
+			return []byte("must-not-be-issued"), nil
+		}}
+		type result struct {
+			token string
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			_, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
+			done <- result{token, err}
+		}()
+		synctest.Wait()
+		close(gate)
+		got := <-done
+		metadata := requireOperationError(t, got.err, OperationRefresh, DetailRefreshRejected)
+		assert.Zero(t, metadata.StatusCode())
+		assert.Empty(t, metadata.OAuthCode())
+		assert.ErrorIs(t, got.err, ErrRefreshRejected)
+		assert.ErrorIs(t, got.err, ErrReauthenticationRequired)
+		assert.Empty(t, got.token)
+		require.NoError(t, pool.Close(context.Background()))
+		assert.Zero(t, requests.Load())
+		assert.Zero(t, decryptions.Load(), "a rejected shared row must be guarded before decryption")
+		assert.Empty(t, logs.events(t, "session.oauth2.token_refreshed"))
+		assertBackgroundMetrics(t, reader, map[string]int64{
+			"proactive_refresh_triggered_total": 1,
+			"proactive_refresh_failed_total":    0,
+		})
+	})
+}
+
+func TestRefreshLockedSession_CrossReplicaRejectionStopsWaitingBackgroundRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		session := backgroundSession(id.NewServiceID(), "cross-replica-rejection")
+		first, store, logs := newBackgroundFixture(t, session)
+		second, _, _ := newBackgroundFixture(t, session)
+		waiting := make(chan struct{})
+		second.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			close(waiting)
+			return store.withLocked(ctx, principal, serviceID, callback)
+		})
+		gate := make(chan struct{})
+		var requests atomic.Int32
+		transport := operationTransport(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			<-gate
+			return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+		})
+		first.httpClient.Transport = transport
+		second.httpClient.Transport = transport
+		type result struct {
+			session   *storage.UserSession
+			refreshed bool
+			err       error
+		}
+		firstDone, secondDone := make(chan result, 1), make(chan result, 1)
+		go func() {
+			current, refreshed, _, err := first.refreshLockedSession(context.Background(), session.Principal, session.ServiceID, nil, RefreshTriggerOnDemand)
+			firstDone <- result{current, refreshed, err}
+		}()
+		synctest.Wait()
+		go func() {
+			current, refreshed, _, err := second.refreshLockedSession(context.Background(), session.Principal, session.ServiceID, nil, RefreshTriggerBackground)
+			secondDone <- result{current, refreshed, err}
+		}()
+		<-waiting
+		close(gate)
+		rejected := <-firstDone
+		require.ErrorIs(t, rejected.err, ErrRefreshRejected)
+		assert.ErrorIs(t, rejected.err, ErrReauthenticationRequired)
+		assert.False(t, rejected.refreshed)
+		noop := <-secondDone
+		require.NoError(t, noop.err)
+		require.NotNil(t, noop.session)
+		assert.True(t, noop.session.RefreshTokenRejected)
+		assert.False(t, noop.refreshed)
+		assert.Equal(t, session.EncryptedAccessToken, noop.session.EncryptedAccessToken)
+		assert.Equal(t, session.EncryptedRefreshToken, noop.session.EncryptedRefreshToken)
+		assert.Equal(t, session.AccessTokenExpiresAt, noop.session.AccessTokenExpiresAt)
+		assert.EqualValues(t, 1, requests.Load())
+		assert.Empty(t, logs.events(t, "session.oauth2.token_refreshed"))
+	})
 }

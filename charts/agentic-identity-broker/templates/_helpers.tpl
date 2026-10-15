@@ -161,3 +161,44 @@ PostgreSQL connection URL for broker
 {{- printf "postgres://$(DB_USERNAME):$(DB_PASSWORD)@%s-%s:%d/%s?sslmode=require" .Values.postgresql.operator.teamId (include "agentic-identity-broker.fullname" .) 5432 .Values.postgresql.operator.database }}
 {{- end }}
 {{- end }}
+
+{{/* Forward-only migration stages. Fresh installs retain the direct UP entrypoint. */}}
+{{- define "agentic-identity-broker.migrationCommand" -}}
+{{- if and .Release.IsUpgrade (gt (int .Values.migration.targetVersion) 0) }}
+command: ["/bin/sh", "-ec"]
+args:
+  - |
+    current="$(/usr/local/bin/migrate "$@" version 2>&1)" || {
+      printf '%s\n' "$current" >&2
+      exit 1
+    }
+    case "$current" in
+      *"(dirty)"*)
+        printf '%s\n' 'Dirty migration metadata: inspect schema before manual repair' >&2
+        exit 1
+        ;;
+      ''|*[!0-9]*)
+        printf 'Unexpected migration version: %s\n' "$current" >&2
+        exit 1
+        ;;
+    esac
+    target={{ .Values.migration.targetVersion }}
+    if [ "$current" -ge "$target" ]; then
+      printf 'Migration stage %s already satisfied at version %s: no schema changes\n' "$target" "$current"
+      exit 0
+    fi
+    exec /usr/local/bin/migrate "$@" goto "$target"
+  - "session-migration-stage"
+  - "-path"
+  - "/app/migrations"
+  - "-database"
+  - {{ include "agentic-identity-broker.postgresURL" . | quote }}
+{{- else }}
+args:
+  - "-path"
+  - "/app/migrations"
+  - "-database"
+  - {{ include "agentic-identity-broker.postgresURL" . | quote }}
+  - "up"
+{{- end }}
+{{- end }}

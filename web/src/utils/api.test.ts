@@ -20,6 +20,15 @@ describe('extractApiError', () => {
     expect(extractApiError(err, 'fallback')).toBe('something broke');
   });
 
+  it('preserves the normalized conflict message from the API interceptor', () => {
+    const err = {
+      status: 409,
+      code: 'CONFLICT',
+      message: 'refresh token rejected by provider; reauthentication required',
+    };
+    expect(extractApiError(err, 'fallback')).toBe(err.message);
+  });
+
   it('returns fallback for unrecognized value', () => {
     expect(extractApiError('not an error', 'fallback')).toBe('fallback');
     expect(extractApiError(null, 'fallback')).toBe('fallback');

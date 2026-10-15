@@ -14,20 +14,35 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
 // Handler handles HTTP requests for OAuth2 sessions.
 type Handler struct {
-	service *oauth2session.OAuth2SessionService
-	logger  *slog.Logger
+	service                 *oauth2session.OAuth2SessionService
+	logger                  *slog.Logger
+	sessionAPICompatibility bool
 }
 
 // NewHandler creates a new handler.
-func NewHandler(service *oauth2session.OAuth2SessionService) *Handler {
+func NewHandler(service *oauth2session.OAuth2SessionService, sessionAPICompatibility bool) *Handler {
 	return &Handler{
-		service: service,
-		logger:  slog.Default(),
+		service:                 service,
+		logger:                  slog.Default(),
+		sessionAPICompatibility: sessionAPICompatibility,
 	}
+}
+
+type compatibilitySessionSummary struct {
+	*storage.UserSessionSummary
+	IsExpired bool `json:"is_expired"`
+}
+
+func (h *Handler) sessionResponse(summary *storage.UserSessionSummary) any {
+	if h.sessionAPICompatibility {
+		return compatibilitySessionSummary{summary, summary.RequiresReauthentication}
+	}
+	return summary
 }
 
 func writeJSONError(w http.ResponseWriter, status int, code, message string) {
@@ -70,11 +85,19 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info("listed sessions", "principal", principalValue, "count", len(summaries))
+	var sessionsResponse any = summaries
+	if h.sessionAPICompatibility {
+		legacy := make([]compatibilitySessionSummary, len(summaries))
+		for i, summary := range summaries {
+			legacy[i] = compatibilitySessionSummary{summary, summary.RequiresReauthentication}
+		}
+		sessionsResponse = legacy
+	}
 
 	// Return response
 	resp := map[string]interface{}{
 		"data": map[string]interface{}{
-			"sessions": summaries,
+			"sessions": sessionsResponse,
 		},
 	}
 
@@ -483,7 +506,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 	// Return response
 	resp := map[string]interface{}{
 		"data": map[string]interface{}{
-			"session":               sessionWithAgents.Session,
+			"session":               h.sessionResponse(sessionWithAgents.Session),
 			"dependent_agents":      sessionWithAgents.DependentAgents,
 			"dependent_agent_count": len(sessionWithAgents.DependentAgents),
 		},
@@ -613,6 +636,13 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 				"error":   "refresh_unavailable",
 				"message": "no valid refresh token available for this session",
 			})
+		case errors.Is(err, oauth2session.ErrRefreshRejected):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":   "refresh_rejected",
+				"message": "refresh token rejected by provider; reauthentication required",
+			})
 		case errors.Is(err, oauth2session.ErrRefreshFailed):
 			h.logger.Error("force refresh failed at upstream",
 				"principal", principalValue,
@@ -641,7 +671,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": summary})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": h.sessionResponse(summary)})
 }
 
 // RegisterRoutes registers all OAuth2 session routes with the router.

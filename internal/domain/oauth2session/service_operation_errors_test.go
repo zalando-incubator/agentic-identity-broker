@@ -108,7 +108,10 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 		})},
 		refreshRepo: operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 			current := *session
-			_, err := refresh(ctx, &current)
+			changed, err := refresh(ctx, &current)
+			if err == nil && changed {
+				*session = current
+			}
 			return &current, err
 		}),
 	}
@@ -208,6 +211,7 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			metadata := requireOperationError(t, err, tc.operation, tc.detail)
 			assert.Equal(t, tc.dependency, metadata.Dependency())
 			assert.ErrorIs(t, err, cause)
+			assert.False(t, session.RefreshTokenRejected, "dependency failures must not invalidate refresh authority")
 			assert.NotContains(t, err.Error(), cause.Error())
 			assert.NotContains(t, logs.String(), cause.Error())
 		})
@@ -370,8 +374,7 @@ func TestForceRefreshValidAccessWithoutRefreshIsUnavailableNotExpired(t *testing
 	_, err := service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
 	requireOperationError(t, err, OperationRefresh, DetailRefreshUnavailable)
 	assert.ErrorIs(t, err, ErrRefreshNotAvailable)
-	assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
-	assert.NotErrorIs(t, err, ErrSessionExpired)
+	assert.NotErrorIs(t, err, ErrReauthenticationRequired)
 }
 
 type operationFailingReader struct{ cause error }

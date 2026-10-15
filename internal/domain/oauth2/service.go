@@ -271,9 +271,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ConsentDecision(consentURL), nil
 	}
 
-	// Step 4: Check that sessions for all delegated services are not expired.
+	// Step 4: Check that no delegated service session requires reauthentication.
 	// Only sessions whose service ID is included in the grant's permission sets are checked.
-	expired, err := s.anyDelegatedSessionExpired(ctx, principal, grant.GrantedPermissionSets)
+	requiresReauthentication, err := s.anyDelegatedSessionRequiresReauthentication(ctx, principal, grant.GrantedPermissionSets)
 	if err != nil {
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
@@ -286,10 +286,10 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			RedirectURL: errRedirect,
 		}, nil
 	}
-	if expired {
+	if requiresReauthentication {
 		if s.logger != nil {
 			s.logger.Warn(
-				"DelegatedSessionExpired",
+				"DelegatedSessionRequiresReauthentication",
 				"agent_id", agent.ID,
 				"principal", principal,
 			)
@@ -543,11 +543,11 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 	return metadata, nil
 }
 
-// anyDelegatedSessionExpired returns true if any OAuth2 session relevant to the
-// grant's permission sets has expired. Only sessions whose service ID appears in
+// anyDelegatedSessionRequiresReauthentication returns true if any OAuth2 session relevant to the
+// grant's permission sets requires reauthentication. Only sessions whose service ID appears in
 // the IncludedServiceIDs of a granted permission set entry are checked, preventing
-// false-positive consent redirects caused by unrelated expired sessions.
-func (s *AuthorizationService) anyDelegatedSessionExpired(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (bool, error) {
+// false-positive consent redirects caused by unrelated sessions requiring reauthentication.
+func (s *AuthorizationService) anyDelegatedSessionRequiresReauthentication(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (bool, error) {
 	// Build the set of service IDs covered by the grant's permission sets.
 	relevantServices := make(map[id.ServiceID]bool)
 	for _, entry := range grantEntries {
@@ -556,20 +556,20 @@ func (s *AuthorizationService) anyDelegatedSessionExpired(ctx context.Context, p
 		}
 	}
 
-	// If no services are referenced, nothing can be expired.
+	// If no services are referenced, no session needs to be checked.
 	if len(relevantServices) == 0 {
 		return false, nil
 	}
 
-	// Use per-service lookup so we see expired sessions. ListByPrincipal filters
-	// to active-only (for FR-020); FindByPrincipalAndService returns all sessions
-	// including expired ones, which is exactly what expiry detection requires.
+	// Use per-service lookup so we see sessions requiring reauthentication.
+	// ListByPrincipal filters to active-only (for FR-020), while
+	// FindByPrincipalAndService returns all sessions, including rejected ones.
 	for svcID := range relevantServices {
 		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
 		if err != nil {
 			return false, fmt.Errorf("failed to find session for service %s: %w", svcID, err)
 		}
-		if session != nil && session.IsExpired() {
+		if session != nil && session.RequiresReauthentication() {
 			return true, nil
 		}
 	}
@@ -615,17 +615,17 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 			return fmt.Errorf("session_required: user does not have required session for service %s", req.ServiceID)
 		}
 
-		// Check if session is expired
-		if session.IsExpired() {
+		// Check if session requires reauthentication.
+		if session.RequiresReauthentication() {
 			if s.logger != nil {
 				s.logger.Warn(
 					"MandatoryRequirementNotMet",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
-					"reason", "session_expired",
+					"reason", "session_requires_reauthentication",
 				)
 			}
-			return fmt.Errorf("session_expired: user session has expired for service %s", req.ServiceID)
+			return fmt.Errorf("session_requires_reauthentication: user session requires reauthentication for service %s", req.ServiceID)
 		}
 
 		// Check if session scopes include all required scopes (superset check)

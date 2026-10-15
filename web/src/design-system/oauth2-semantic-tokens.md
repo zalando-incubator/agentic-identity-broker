@@ -19,15 +19,25 @@ This document defines semantic token usage for OAuth2 session status indicators,
 
 ## Session Status States
 
-OAuth2 sessions have the following status states:
+For retained sessions, evaluate `requires_reauthentication` before `access_token_expired`. The default status is Active.
 
 | Status            | Meaning                                 | Visual Treatment           |
 | ----------------- | --------------------------------------- | -------------------------- |
-| **Active**        | Valid session with unexpired tokens     | Success colors (green)     |
-| **Expiring Soon** | Session expires within 7 days           | Warning colors (amber)     |
-| **Expired**       | Session tokens have expired             | Error colors (red)         |
+| **Reauthentication required** | `requires_reauthentication` is true | Error colors (red) |
+| **Access Token Expired** | Access expired without required reauthentication | Warning colors (amber) |
+| **Active** | Neither condition applies | Success colors (green) |
 | **No Session**    | User has not established a session      | Neutral colors (warm gray) |
 | **Encrypted**     | Tokens are encrypted at rest (metadata) | Default colors (neutral)   |
+
+`requires_reauthentication` is true after terminal refresh rejection or after access-token expiry without stored refresh credentials.
+Refresh ciphertext shows credential presence, including rejected credentials. It does not prove provider validity.
+
+A transient refresh error does not record rejection. A false rejection flag means no observed rejection, not proven provider validity.
+An unknown access-token expiry does not mean permanent validity. These indicators show no expiry dates or lifetime estimates.
+
+Login appears only for required reauthentication when `onLogin` exists.
+Refresh appears only when `has_refresh_token` is true, `requires_reauthentication` is false, and `onRefresh` exists.
+Terminate remains available for every retained session, including rejected sessions. The page keeps its termination confirmation dialog.
 
 ---
 
@@ -35,7 +45,7 @@ OAuth2 sessions have the following status states:
 
 ### 1. Active Session Status
 
-**Use Case**: Session is established and tokens are valid.
+**Use Case**: Neither `requires_reauthentication` nor `access_token_expired` is true.
 
 **Token**: `success-primary`
 **Hex Value**: `#059669` (Emerald 600)
@@ -59,7 +69,7 @@ OAuth2 sessions have the following status states:
 // Custom element
 <div className="text-success-primary">Active</div>
 <div className="bg-success-light border border-success-primary">
-  Session is active and valid
+  Session status: Active
 </div>
 ```
 
@@ -73,9 +83,9 @@ OAuth2 sessions have the following status states:
 
 ---
 
-### 2. Expiring Soon Status
+### 2. Access Token Expired Status
 
-**Use Case**: Session expires within 7 days (requires user attention).
+**Use Case**: `access_token_expired` is true and `requires_reauthentication` is false. A stored refresh credential is available for an attempt.
 
 **Token**: `warning-primary` (alias: `cta`)
 **Hex Value**: `#D97706` (Amber 600)
@@ -86,20 +96,20 @@ OAuth2 sessions have the following status states:
 ```tsx
 // Badge component with dot indicator
 <Badge variant="warning" size="sm" shape="pill" showDot>
-  Expiring Soon
+  Access Token Expired
 </Badge>
 
 // StatusIndicator component
 <StatusIndicator
   icon={<AlertTriangleIcon />}
-  label="Expires in 3 days"
+  label="Access Token Expired"
   variant="warning"
 />
 
 // Custom element
-<div className="text-warning-primary">Expiring Soon</div>
+<div className="text-warning-primary">Access Token Expired</div>
 <div className="bg-warning-light border border-warning-primary">
-  Session expires in 3 days
+  A stored refresh credential is available for a refresh attempt.
 </div>
 ```
 
@@ -116,9 +126,9 @@ OAuth2 sessions have the following status states:
 
 ---
 
-### 3. Expired Session Status
+### 3. Reauthentication Required Status
 
-**Use Case**: Session tokens have expired and session is invalid.
+**Use Case**: `requires_reauthentication` is true after terminal refresh rejection or access-token expiry without stored refresh credentials.
 
 **Token**: `error-primary`
 **Hex Value**: `#DC2626` (Red 600)
@@ -129,20 +139,20 @@ OAuth2 sessions have the following status states:
 ```tsx
 // Badge component
 <Badge variant="error" size="sm" shape="pill">
-  Expired
+  Reauthentication required
 </Badge>
 
 // StatusIndicator component
 <StatusIndicator
   icon={<XCircleIcon />}
-  label="Expired"
+  label="Reauthentication required"
   variant="error"
 />
 
 // Custom element
-<div className="text-error-primary">Expired</div>
+<div className="text-error-primary">Reauthentication required</div>
 <div className="bg-error-light border border-error-primary">
-  Session has expired. Please re-authenticate.
+  Reauthentication required. Login to restore broker token issuance.
 </div>
 ```
 
@@ -231,8 +241,8 @@ OAuth2 sessions have the following status states:
 | Status            | Token Name        | Hex Value | On White (Contrast) | WCAG AA Pass      |
 | ----------------- | ----------------- | --------- | ------------------- | ----------------- |
 | Active            | `success-primary` | `#059669` | 4.89:1              | Yes               |
-| Expiring          | `warning-primary` | `#D97706` | 5.12:1              | Yes               |
-| Expired           | `error-primary`   | `#DC2626` | 5.89:1              | Yes               |
+| Access Token Expired | `warning-primary` | `#D97706` | 5.12:1 | Yes |
+| Reauthentication required | `error-primary` | `#DC2626` | 5.89:1 | Yes |
 | No Session (bg)   | `neutral-300`     | `#ddd8d1` | 1.42:1              | No (borders only) |
 | No Session (text) | `neutral-600`     | `#6b6561` | 4.76:1              | Yes               |
 | Metadata          | `neutral-500`     | `#9a9591` | 3.14:1              | Yes (large text)  |
@@ -248,12 +258,12 @@ Badge component automatically applies correct semantic tokens based on `variant`
 <Badge variant="success">Active</Badge>
 // → bg-success-primary text-white border-success-primary
 
-// Expiring soon
-<Badge variant="warning">Expiring Soon</Badge>
+// Expired access token with available refresh authority
+<Badge variant="warning">Access Token Expired</Badge>
 // → bg-warning-primary text-trust-deep border-warning-primary
 
-// Expired
-<Badge variant="error">Expired</Badge>
+// Reauthentication required
+<Badge variant="error">Reauthentication required</Badge>
 // → bg-error-primary text-white border-error-primary
 
 // No session
@@ -275,11 +285,11 @@ StatusIndicator component applies text colors only (no backgrounds):
 // → text-success-primary
 
 // Warning metadata
-<StatusIndicator variant="warning" label="Expires in 3 days" />
+<StatusIndicator variant="warning" label="Access Token Expired" />
 // → text-warning-primary
 
 // Error metadata
-<StatusIndicator variant="error" label="Expired" />
+<StatusIndicator variant="error" label="Reauthentication required" />
 // → text-error-primary
 
 // Default metadata (encryption, timestamps, agent count)
@@ -326,7 +336,7 @@ StatusIndicator component applies text colors only (no backgrounds):
 
 ---
 
-### Expiring Session Warning
+### Access Token Expired Warning
 
 ```tsx
 <Card
@@ -334,15 +344,15 @@ StatusIndicator component applies text colors only (no backgrounds):
     <Stack direction="row" align="center" justify="between">
       <h3>Google Drive</h3>
       <Badge variant="warning" showDot>
-        Expiring Soon
+        Access Token Expired
       </Badge>
     </Stack>
   }
 >
   <Stack gap="sm" direction="column">
     <StatusIndicator
-      icon={<ClockIcon />}
-      label="Expires in 3 days"
+      icon={<AlertTriangleIcon />}
+      label="Refresh available"
       variant="warning"
     />
     <StatusIndicator icon={<UsersIcon />} label="5 agents" variant="default" />
@@ -353,27 +363,32 @@ StatusIndicator component applies text colors only (no backgrounds):
 **Token Usage**:
 
 - Primary status (header): `warning-primary` (Badge with dot)
-- Expiration metadata: `warning-primary` (StatusIndicator)
+- Refresh availability: `warning-primary` (StatusIndicator)
 - Agent count: `neutral-500` (StatusIndicator default)
 
 ---
 
-### Expired Session Alert
+### Reauthentication Required Alert
 
 ```tsx
 <Card
   header={
     <Stack direction="row" align="center" justify="between">
       <h3>Dropbox</h3>
-      <Badge variant="error">Expired</Badge>
+      <Badge variant="error">Reauthentication required</Badge>
     </Stack>
   }
 >
   <Alert variant="error" size="sm">
-    Session expired. Re-authenticate to restore access.
+    Reauthentication required. Login to restore broker token issuance.
   </Alert>
-  <Button variant="primary" size="sm">
-    Re-authenticate
+  {onLogin && session.requires_reauthentication && (
+    <Button variant="primary" size="sm" onClick={() => onLogin(session.service_id)}>
+      Login
+    </Button>
+  )}
+  <Button variant="danger" size="sm" onClick={() => onTerminate(session.service_id)}>
+    Terminate
   </Button>
 </Card>
 ```
@@ -405,7 +420,7 @@ StatusIndicator component applies text colors only (no backgrounds):
 
 Never rely on color alone. Always combine color with:
 
-1. **Text labels**: "Active", "Expired", "Expiring Soon"
+1. **Text labels**: "Active", "Access Token Expired", "Reauthentication required"
 2. **Icons**: CheckCircle, XCircle, AlertTriangle
 3. **Dot indicators**: `showDot` prop on Badge for additional visual signal
 
@@ -473,10 +488,13 @@ Currently, the design system uses a light theme. When dark mode is implemented:
 
 ## Implementation Example: Complete Session Card
 
+This example uses the page's existing action callbacks. `onTerminate` starts the termination confirmation flow.
+
 ```tsx
 import { Card } from '@design-system/components/data-display/Card';
 import { Avatar } from '@design-system/components/primitives/Avatar';
 import { Badge } from '@design-system/components/primitives/Badge';
+import { Button } from '@design-system/components/primitives/Button';
 import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
 import { Stack } from '@design-system/components/layout/Stack';
 import { LockIcon, UsersIcon, ClockIcon } from 'lucide-react';
@@ -490,18 +508,18 @@ function getSessionStatusBadge(session) {
     );
   }
 
-  if (session.is_expired) {
+  if (session.requires_reauthentication) {
     return (
       <Badge variant="error" size="sm" shape="pill">
-        Expired
+        Reauthentication required
       </Badge>
     );
   }
 
-  if (session.expires_within_days <= 7) {
+  if (session.access_token_expired) {
     return (
       <Badge variant="warning" size="sm" shape="pill" showDot>
-        Expiring Soon
+        Access Token Expired
       </Badge>
     );
   }
@@ -513,7 +531,7 @@ function getSessionStatusBadge(session) {
   );
 }
 
-export function SessionCard({ service, session }) {
+export function SessionCard({ service, session, onLogin, onRefresh, onTerminate, loading = false, refreshing = false }) {
   return (
     <Card
       padding="default"
@@ -554,6 +572,38 @@ export function SessionCard({ service, session }) {
             label={formatRelativeTime(session.initiated_at)}
             variant="default"
           />
+          <Stack direction="row" gap="sm">
+            {onLogin && session.requires_reauthentication && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onLogin(session.service_id)}
+                disabled={loading || refreshing}
+              >
+                Login
+              </Button>
+            )}
+            {onRefresh && session.has_refresh_token && !session.requires_reauthentication && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onRefresh(session.service_id)}
+                isLoading={refreshing}
+                disabled={loading || refreshing}
+              >
+                Refresh
+              </Button>
+            )}
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => onTerminate(session.service_id)}
+              isLoading={loading}
+              disabled={loading || refreshing}
+            >
+              Terminate
+            </Button>
+          </Stack>
         </Stack>
       ) : (
         <p className="text-neutral-600 text-sm">
@@ -568,8 +618,8 @@ export function SessionCard({ service, session }) {
 **Token Usage in Example**:
 
 - Active session: `success-primary` (Badge)
-- Expiring session: `warning-primary` (Badge) + dot indicator
-- Expired session: `error-primary` (Badge)
+- Expired access token with available refresh authority: `warning-primary` (Badge) + dot indicator
+- Reauthentication required: `error-primary` (Badge)
 - No session: `neutral-300` background + `neutral-600` text (Badge)
 - Metadata: `neutral-500` (StatusIndicator default variant)
 

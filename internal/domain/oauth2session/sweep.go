@@ -119,7 +119,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 			seen[candidate.ID] = struct{}{}
 			if req.DryRun {
 				switch {
-				case !candidate.AccessTokenExpiresBy(threshold):
+				case candidate.RefreshTokenRejected || !candidate.AccessTokenExpiresBy(threshold):
 					result.Skipped++
 				case !candidate.CanRefresh():
 					result.Failed++

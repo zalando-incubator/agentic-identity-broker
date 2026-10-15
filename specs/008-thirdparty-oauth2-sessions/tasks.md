@@ -65,7 +65,7 @@
 
 **Constitution Reference**: Principle IX (Persistence Pattern Consistency & Database Migration Management)
 
-- [x] T013 Create migration migrations/004_create_user_sessions.up.sql with schema from data-model.md
+- [x] T013 Create original migration migrations/004_create_user_sessions.up.sql. Preserve this migration and migration 037 unchanged. This preparation PR ships only migration 038 and prepared code, with default/max target 38 and API compatibility true. Fresh installs run direct UP-all; normal upgrades use the guarded wrapper. Final contributor table samples describe the following cleanup PR, not the phase-38 table. PR2 supplies 039 only after the PR1 rollout and all old work drain. PR3 supplies 040 only after SPA/external consumers upgrade and schema dependencies end. Compatibility defaults true in preparation/activation, supports explicit false, and defaults false in cleanup. Preserve rows and rejection through phase-compatible rollback. Inspect dirty metadata before deliberate repair, never automatic `Force` or row deletion.
 - [x] T014 [P] Create migration migrations/004_create_user_sessions.down.sql
 - [x] T015 [P] Document unique constraint (principal, service_id) and foreign key to thirdparty_oauth2_services
 
@@ -77,7 +77,7 @@
 
 - [x] T016 Review web/src/design-system/docs/INDEX.md for session card component patterns
 - [x] T017 [P] Identify design system components to use: Card, Button, Dialog, Badge for status indicators
-- [x] T018 [P] Document semantic token usage: success-primary (active), warning-primary (expiring), error-primary (expired)
+- [x] T018 [P] Document semantic token usage: success-primary (Active), warning-primary (Access Token Expired), error-primary (Reauthentication required)
 
 **Checkpoint**: Design system usage planned
 
@@ -89,7 +89,7 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [x] T019 Create UserSession entity in internal/domain/storage/user_session.go with Validate(), IsExpired(), HasValidAccessToken() methods
+- [x] T019 Create UserSession in internal/domain/storage/user_session.go with RefreshTokenRejected, Validate(), RequiresReauthentication(), CanRefresh(), and HasValidAccessToken(). False rejection means no observed rejection, not proven validity.
 - [x] T020 [P] Create EncryptionContext type in internal/domain/storage/user_session.go with Value()/Scan() for JSONB
 - [x] T021 [P] Create UserSessionRepository interface in internal/ports/storage.go (Create, Get, FindByPrincipalAndService, ListByPrincipal, Delete, DeleteByPrincipalAndService, CountByService)
 - [x] T021a [P] Extend UserGrantRepository interface with CountAgentsByServiceID(ctx, serviceID) method to query delegated_oauth2_tokens JSONB for agent count per FR-016
@@ -99,7 +99,7 @@
 - [x] T024 [P] Create domain errors in internal/domain/oauth2session/errors.go (ErrStateTokenExpired, ErrPrincipalMismatch, ErrServiceNotFound, etc.)
 - [x] T025 Create OAuth2SessionService struct in internal/domain/oauth2session/service.go with Config, dependencies (repos, encryption, jweKey, logger)
 - [x] T026 [P] Create in-memory UserSessionRepository adapter in internal/adapters/storage/memory/user_session.go
-- [x] T027 Create PostgreSQL UserSessionRepository adapter in internal/adapters/storage/postgres/user_session.go with upsert semantics
+- [x] T027 Create PostgreSQL UserSessionRepository in internal/adapters/storage/postgres/user_session.go. Authorization upsert replaces credentials and clears recorded rejection. Normal refresh cannot recover rejected sessions.
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -107,20 +107,20 @@
 
 ## Phase 3: User Story 1 - View Available Third-Party Sessions (Priority: P1) 🎯 MVP
 
-**Goal**: Users can see which third-party services have active sessions with status indicators showing initiation time, dependent agent count, encryption status, and expiration status.
+**Goal**: Users can see retained sessions, including rejected sessions. Cards show initiation time, dependent-agent count, encryption status, access-token expiry status, and required reauthentication.
 
 **Independent Test**: User navigates to "Third-party Sessions" page and sees list of services with established sessions showing status information.
 
 ### Tests for User Story 1 [MANDATORY - Principle VIII] ⚠️
 
-- [x] T028 [P] [US1] Unit tests for UserSession.IsExpired(), HasValidAccessToken(), Validate() in tests/unit/oauth2session/user_session_test.go
-- [x] T029 [P] [US1] Unit tests for UserSessionSummary projection in tests/unit/oauth2session/user_session_summary_test.go
+- [x] T028 [P] [US1] Cover RequiresReauthentication(), CanRefresh(), HasValidAccessToken(), and Validate(). Include rejected refresh with unexpired access and expired access without refresh credentials.
+- [x] T029 [P] [US1] Cover UserSessionSummary with requires_reauthentication, independent access_token_expired, and ciphertext-based has_refresh_token. Include rejected credentials and the token-free PostgreSQL projection.
 - [x] T030 [P] [US1] Integration tests for UserSessionRepository.ListByPrincipal() in tests/integration/user_sessions_test.go
 - [x] T031 [P] [US1] Integration tests for GET /api/third-party/sessions endpoint in tests/integration/oauth2_sessions_api_test.go
 
 ### Implementation for User Story 1
 
-- [x] T032 [US1] Create UserSessionSummary read model in internal/domain/storage/user_session.go with NewUserSessionSummary()
+- [x] T032 [US1] Create UserSessionSummary with NewUserSessionSummary() in internal/domain/storage/user_session.go. Do not expose a refresh-expiry field.
 - [x] T033 [US1] Implement OAuth2SessionService.ListUserSessions() in internal/domain/oauth2session/service.go
 - [x] T034 [US1] Implement dependent agent count query using UserGrantRepository (query delegated_oauth2_tokens JSONB)
 - [x] T035 [P] [US1] Create HTTP handler Handler struct in internal/adapters/http/oauth2_sessions/handler.go
@@ -128,11 +128,15 @@
 - [x] T037 [P] [US1] Register routes with Chi router in internal/adapters/http/oauth2_sessions/handler.go RegisterRoutes()
 - [x] T038 [P] [US1] Create frontend API client sessionsApi in web/src/services/api/sessions.ts
 - [x] T039 [P] [US1] Create useSessions hook in web/src/hooks/useSessions.ts
-- [x] T040 [US1] Create SessionCard component in web/src/components/sessions/SessionCard.tsx
-- [x] T041 [US1] Create ThirdPartySessionsPage in web/src/pages/ThirdPartySessionsPage.tsx
+- [x] T040 [US1] Implement SessionCard with Reauthentication required / Access Token Expired / Active precedence. Show Login for required reauthentication, Refresh only with available refresh authority, and Terminate for every retained row. Remove refresh-expiry dates and permanent-validity claims.
+- [x] T041 [US1] Implement ThirdPartySessionsPage. After a refresh error, refetch before showing the saved message. Login completes the real authorize/callback flow and restores Active status.
 - [x] T042 [US1] Add structured logging for session list operations
 
 **Checkpoint**: User Story 1 fully functional - users can view their sessions
+
+**Current recovery acceptance**: With an unexpired access token, manual Refresh that receives HTTP 400 `invalid_grant` retains the session and immediately shows Reauthentication required. Login is available, Terminate is optional, and later token acquisition returns no token. Successful authorize/callback clears rejection and returns the card to Active. A transient refresh error does not record rejection.
+
+**Persistence contract**: Locked callback errors never persist changes. Terminal rejection commits through `(true, nil)` before the service returns the captured provider error. Rejection leaves token metadata unchanged. Sweep queries exclude recorded rejection, and stale rejected candidates are skipped.
 
 ---
 
@@ -161,7 +165,7 @@
 - [x] T054 [US2] Implement redirect URI same-origin validation in handler
 - [x] T055 [US2] Implement exchangeCodeWithRetry() with exponential backoff (1s, 2s, 4s) in internal/domain/oauth2session/service.go
 - [x] T056 [US2] Implement token encryption using EncryptionPort in createSession() helper
-- [x] T057 [US2] Implement OAuth2SessionService.HandleCallback() in internal/domain/oauth2session/service.go
+- [x] T057 [US2] Implement OAuth2SessionService.HandleCallback() in internal/domain/oauth2session/service.go. Successful authorization supplies RefreshTokenRejected=false through the existing session upsert.
 - [x] T058 [P] [US2] Implement InitiateFlow handler GET /api/third-party/{serviceId}/oauth2/authorize in internal/adapters/http/oauth2_sessions/handler.go
 - [x] T059 [US2] Implement HandleCallback handler GET /api/third-party/{serviceId}/oauth2/callback in internal/adapters/http/oauth2_sessions/handler.go
 - [x] T060 [US2] Handle OAuth2 error responses (access_denied, invalid_scope) in callback with user-friendly redirect

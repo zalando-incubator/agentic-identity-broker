@@ -19,7 +19,6 @@ func TestErrorMetadataBoundsAndClassification(t *testing.T) {
 	}{
 		{DetailSessionMissing, KindSession, DependencySessionRepository},
 		{DetailAccessTokenExpired, KindSession, DependencySessionRepository},
-		{DetailRefreshTokenExpired, KindSession, DependencySessionRepository},
 		{DetailRefreshUnavailable, KindSession, DependencySessionRepository},
 		{DetailRefreshRejected, KindProvider, DependencyProvider},
 		{DetailProviderClientRejected, KindConfiguration, DependencyProvider},
@@ -63,7 +62,6 @@ func TestOperationErrorPreservesCausesWithoutSerializingThem(t *testing.T) {
 	err := NewOperationError(NewErrorMetadata(OperationRefresh, DetailRefreshRejected), errors.Join(cause, rejected))
 	assert.ErrorIs(t, err, cause)
 	assert.ErrorIs(t, err, ErrRefreshRejected)
-	assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
 	var found *RefreshRejectedError
 	require.ErrorAs(t, err, &found)
 	assert.Same(t, rejected, found)
@@ -101,6 +99,5 @@ func TestRefreshRejectedErrorDistinguishesTransientStatus(t *testing.T) {
 		} else {
 			assert.NotErrorIs(t, err, ErrRefreshRejected)
 		}
-		assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
 	}
 }

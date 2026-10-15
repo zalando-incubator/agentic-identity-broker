@@ -46,7 +46,8 @@ func TestMigrationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("After Up: version=%d, dirty=%v", version, dirty)
 	assert.False(t, dirty, "Migration should not be dirty")
-	assert.Greater(t, version, uint(0), "Should have applied at least one migration")
+	assert.Equal(t, uint(38), version, "Fresh installation must apply the complete preparation release")
+	requireSessionValidityPhase(t, f, 38)
 
 	// Step 2: Verify representative tables from across the migration history exist.
 	tables := []string{"agents", "thirdparty_oauth2_services", "service_protected_resources", "user_sessions", "authorization_codes"}
@@ -79,7 +80,8 @@ func TestMigrationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("After Up again: version=%d, dirty=%v", version, dirty)
 	assert.False(t, dirty, "Migration should not be dirty")
-	assert.Greater(t, version, uint(0), "Should have applied migrations again")
+	assert.Equal(t, uint(38), version, "Reapplication must stop at the preparation release")
+	requireSessionValidityPhase(t, f, 38)
 
 	// Step 6: Reapply successful
 	t.Log("Step 6: Migrations successfully reapplied")

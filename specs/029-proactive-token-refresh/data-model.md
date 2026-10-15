@@ -2,12 +2,12 @@
 
 **Feature**: `029-proactive-token-refresh` | **Date**: 2026-10-08 | **Research**: [research.md](research.md)
 
-The feature adds no table, no column, and no new persisted entity. It adds:
-- one index,
-- one predicate on the existing `UserSession` aggregate,
-- request and result value objects for the sweep,
-- one trigger enumeration,
-- one in-memory, process-scoped component, `backgroundRefresher`.
+The feature uses the existing `UserSession` aggregate. Its corrected validity model adds observed rejection through online phases 038 prepare, 039 expand, and 040 contract. It also adds:
+- One access-expiry index from migration `037`.
+- Access-expiry and reauthentication predicates on `UserSession`.
+- Request and result value objects for the sweep.
+- One trigger enumeration.
+- One in-memory, process-scoped component, `backgroundRefresher`.
 
 Interface signatures are in [contracts/ports.md](contracts/ports.md).
 
@@ -15,7 +15,7 @@ Interface signatures are in [contracts/ports.md](contracts/ports.md).
 
 **Location**: `internal/domain/storage/user_session.go:15-46` | **Table**: `user_sessions` (`migrations/004_create_user_sessions.up.sql`)
 
-The fields this feature reads and writes are unchanged (spec "Key Entities"):
+The refresh paths read and write these fields:
 
 | Field | Type | Read by | Written by |
 |---|---|---|---|
@@ -25,14 +25,14 @@ The fields this feature reads and writes are unchanged (spec "Key Entities"):
 | `EncryptedAccessToken` | `[]byte` | `DecryptAccessToken` | `setSessionTokens` (all triggers) |
 | `EncryptedRefreshToken` | `[]byte` | `DecryptRefreshToken`, `CanRefresh` | `setSessionTokens` when the provider rotates it |
 | `AccessTokenExpiresAt` | `*time.Time` | `AccessTokenExpiresBy`, sweep query and cursor | `setSessionTokens` |
-| `RefreshTokenExpiresAt` | `*time.Time` | `CanRefresh` | — (unchanged; current behavior, out of scope) |
-| `UpdatedAt` | `time.Time` | — | `setSessionTokens` |
+| `RefreshTokenRejected` | `bool` | `CanRefresh`, `RequiresReauthentication`, acquisition guards, active selectors, sweep filters | Terminal provider rejection sets true. Successful OAuth authorization upsert resets false. |
+| `UpdatedAt` | `time.Time` | — | Token refresh or recorded rejection |
 
 ### New predicate
 
 ```go
 // AccessTokenExpiresBy reports whether the access token's recorded expiry is at or before t.
-// A session without an access-token expiry never expires and is never due (FR-013).
+// A missing access expiry is unknown and is not due for expiry-based refresh (FR-013).
 func (s *UserSession) AccessTokenExpiresBy(t time.Time) bool
 ```
 
@@ -46,6 +46,24 @@ func (s *UserSession) AccessTokenExpiresBy(t time.Time) bool
 Invariant: `AccessTokenExpiresBy(now) == !HasValidAccessToken()` for every session evaluated at the
 same `now`. The unit test asserts this equivalence so the on-demand path's behavior does not change
 when the lock callback switches predicates.
+
+### Observed refresh authority and reauthentication
+
+`CanRefresh()` is `!RefreshTokenRejected && len(EncryptedRefreshToken) > 0`. False rejection state means no observed terminal rejection, not proven provider validity. The broker records no refresh-token expiry prediction.
+
+`RequiresReauthentication()` is `RefreshTokenRejected || (!HasValidAccessToken() && !CanRefresh())`. Known rejection takes precedence over an unexpired access token or unknown access expiry. Public summaries expose this as `requires_reauthentication`. `has_refresh_token` reports ciphertext presence even after rejection. `access_token_expired` remains an independent access-token fact.
+
+Only HTTP 4xx `invalid_grant`, excluding 429, records terminal rejection. The service captures the provider error, sets `RefreshTokenRejected=true` and `UpdatedAt`, then returns `(true, nil)` from the locked callback. The repository commits before the service returns that saved error with `refreshed=false`. Ciphertext, scope, token type, initiation time, and access expiry remain unchanged. Callback errors never persist state. A write or commit error returns `persistence_failed`, not a claim of durable rejection.
+
+Recorded rejection stops subsequent issuance and causes no refresh-success event or counter increment. A transient error leaves state unchanged and permits an otherwise valid access token. Successful authorization and callback clear rejection through the existing upsert. Explicit termination deletes the retained row.
+
+This PR ships only migration 038 and prepared broker/API/UI code. Migrations 039 and 040 belong to following PRs and are not present. Migration 038 preserves the original table shape and adds the explicit `user_session_state` view and stable invoker write functions. The preparation view reports false. True rejection writes fail as `persistence_failed`, not durable rejection. Ordinary acquisition, refresh, and authorization work at 38. The memory adapter already supports the complete rejection lifecycle.
+
+PR1 defaults and limits Helm targets to 38. Fresh installs run direct UP-all through 38, while normal upgrades use the guarded wrapper. Before merging or deploying PR2, complete PR1 and drain every unprepared replica and in-flight operation. PR2 adds migration 039 and the real false-default rejection flag. Durable rejection activates without restart. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. PR3 adds migration 040 and removes only the unused legacy column after schema dependencies end. The legacy column supplies storage compatibility only, never provider evidence. All phases preserve rows and real token metadata. Migration 037 and historical migrations remain unchanged.
+
+Session API compatibility defaults true in preparation and activation. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. Compatibility adds only `is_expired=requires_reauthentication`, without refresh dates.
+
+Online rollout requires compatible binaries, at least two healthy replicas, no unavailable pods, ready surge capacity, a disruption budget, sufficient draining time, and retained SPA assets. Enable temporary session API compatibility until consumers support API v2. Fail-fast locks leave the schema unchanged on contention while compatible replicas continue to serve. There is no absolute latency guarantee. DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses while rejected rows remain. Reauthenticate or explicitly terminate those rows, never clear rejection or delete them automatically. Drain preparation/new replicas before DOWN 038 removes their boundary. Inspect actual schema and dirty metadata before deliberate repair, never automatic `Force`. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040).
 
 ### New index
 
@@ -64,7 +82,7 @@ type SessionExpiryCursor struct {
 }
 ```
 
-A zero ID and zero expiry start the scan. An expiry without an ID is a validation error. A cursor with an ID continues strictly after its `(access_token_expires_at, id)` tuple, including a zero expiry. The order compares expiry first and UUID bytes second. Rows without an expiry never enter the scan. A stored zero expiry is due.
+A zero ID and zero expiry start the scan. An expiry without an ID is a validation error. A cursor with an ID continues strictly after its `(access_token_expires_at, id)` tuple, including a zero expiry. The order compares expiry first and UUID bytes second. Rows without recorded access expiry and known rejected rows never enter the scan. A stored zero access expiry is due.
 
 ## New enumeration: `RefreshTrigger`
 
@@ -104,8 +122,8 @@ A violation returns an error that wraps `ErrInvalidSweepRequest`, and the handle
 | Field | Type | Meaning |
 |---|---|---|
 | `Refreshed` | `int` | Candidates refreshed. In dry-run mode: candidates that would be refreshed (lock-free evaluation shows them due and `CanRefresh`). |
-| `Skipped` | `int` | Candidates that no longer required action when evaluated: not due under the lock (refreshed concurrently by another trigger or replica), or deleted mid-sweep. |
-| `Failed` | `int` | Candidates that required action but could not be refreshed: no usable refresh token, upstream error, provider misconfiguration, or encryption failure. |
+| `Skipped` | `int` | Candidates no longer actionable: deleted, no longer due, or rejected after listing. Dry-run rejected stale snapshots also count as skipped. |
+| `Failed` | `int` | Due candidates without refresh credentials, newly observed terminal rejection, other upstream errors, provider misconfiguration, or encryption failure. Rejection fails once, then later listings exclude it. Missing credentials can fail on each sweep. |
 | `TotalEvaluated` | `int` | Unique session IDs returned by `ListExpiringSessions` and evaluated during this invocation. |
 | `DryRun` | `bool` | Echo of the effective `DryRun`. |
 | `EffectiveLookahead` | `time.Duration` | Resolved lookahead after configuration defaults; used only in the operator audit. |
@@ -113,7 +131,7 @@ A violation returns an error that wraps `ErrInvalidSweepRequest`, and the handle
 
 Only the first five fields appear in the HTTP `SessionSweepResult` response. The two effective controls remain internal metadata.
 
-**Invariant** (SC-004): `Refreshed + Skipped + Failed == TotalEvaluated`. A per-invocation visited-ID set classifies each candidate once in both real and dry runs. A moved row with a visited ID does not cause another lock, upstream call, metric, log, or count. The visited set uses O(unique candidates) broker memory. Pages hold at most `page_size` full session snapshots. Healthy sessions, `NULL` expiries, and rows behind the cursor do not contribute to counts unless evaluated earlier.
+**Invariant** (SC-004): `Refreshed + Skipped + Failed == TotalEvaluated`. A per-invocation visited-ID set classifies each candidate once in real and dry runs. A moved row with a visited ID causes no second lock, call, metric, log, or count. The visited set uses O(unique candidates) broker memory. Pages hold at most `page_size` full session snapshots. Healthy sessions, known rejected rows, `NULL` expiries, and rows behind the cursor do not contribute unless evaluated earlier.
 
 ## Sweep candidate classification (state transitions)
 
@@ -128,10 +146,12 @@ stateDiagram-v2
     AlreadySeen --> [*]
     Listed --> Skipped: locked row missing (deleted mid-sweep)
     Listed --> Skipped: !AccessTokenExpiresBy(threshold) (already refreshed)
-    Listed --> Failed: !CanRefresh() (refresh token absent/expired)
+    Listed --> Skipped: RefreshTokenRejected (stale candidate)
+    Listed --> Failed: refresh token absent while still due
     Listed --> DryRunRefreshed: dry_run ∧ CanRefresh()
     Listed --> Refreshing: ¬dry_run ∧ CanRefresh()
     Refreshing --> Refreshed: upstream OK ∧ encrypt OK ∧ UPDATE committed
+    Refreshing --> Failed: terminal rejection flag committed (no refresh success)
     Refreshing --> Failed: provider / session / config / encryption failure
     Refreshing --> Aborted: session or provider repository unavailable
     Aborted --> [*]: sweep returns 500
@@ -141,9 +161,7 @@ stateDiagram-v2
     DryRunRefreshed --> [*]: counted as refreshed
 ```
 
-The full outcome table, with log levels, is in research R11. A `Failed` candidate leaves the stored
-row byte-for-byte unchanged, because the locked callback returns `false` and there is no partial
-write (US2-S3, US3-S2).
+The full outcome table, with log levels, is in research R11. Most per-session errors leave the row unchanged because the callback returns an error without a write. Terminal rejection instead commits the flag and `UpdatedAt` through `(true, nil)` before the service returns the saved provider error. It counts as failed once. Later sweeps exclude the retained row. This preserves L3/L4 in [contracts/ports.md](contracts/ports.md).
 
 **Sweep threshold**: `threshold = sweepStart + effectiveLookahead`, computed once. It is used for
 both the query and the locked re-check, so a candidate's classification never depends on how long
@@ -173,7 +191,7 @@ stateDiagram-v2
     [*] --> Dropped: no free slot (inflight key removed)
     [*] --> Triggered: slot acquired → goroutine started
     Triggered --> Refreshed: refreshDueSession → refreshed
-    Triggered --> NotDue: refreshDueSession → not due / session deleted
+    Triggered --> NotDue: refreshDueSession → not due / session deleted / already rejected
     Triggered --> FailedBg: refreshDueSession → error
     Refreshed --> [*]: release slot, delete inflight key
     NotDue --> [*]: release slot, delete inflight key
@@ -193,6 +211,8 @@ stateDiagram-v2
 | `NotDue` | — | DEBUG |
 | `FailedBg` | `proactive_refresh_failed_total{triggered_by=background}` +1 | Per research R11 (WARN or ERROR) |
 
+A new terminal rejection counts as `FailedBg`, not `Refreshed`, after its state commits. Future acquisition refuses that row before decrypting a token. Already-rejected background work is an unchanged no-op. A shared rejected result cannot trigger background follow-up or give an on-demand joiner a token.
+
 **Lifecycle**: Constructed in `NewOAuth2SessionService`. It has no long-lived goroutines. Goroutines
 exist only while a flight runs. `Close(ctx)`: set `closed` → `wg.Wait()` racing `ctx.Done()` →
 `cancel()` → return `nil` or `ctx.Err()` (research R7).
@@ -204,7 +224,7 @@ access token.
 ## Domain event: `SessionTokensRefreshed`
 
 The broker records this domain event as the structured `session.oauth2.token_refreshed` log.
-There is no event bus. After a locked update commits, the log contains:
+There is no event bus. After a successful token refresh commits, the log contains:
 
 | Attribute | Value |
 |---|---|
@@ -244,7 +264,7 @@ parameter, and every caller must be updated, confirmed with `lsp references` dur
 |---|---|---|
 | **Refresh Lookahead Window** | The interval before access-token expiry, `token_refresh.lookahead_duration`, in which a token is still served but is refreshed proactively. | Evaluated on `UserSession.AccessTokenExpiresAt`; drives Proactive Refresh and the default Session Sweep window. |
 | **Proactive Refresh** | A non-blocking background refresh of a `UserSession`, triggered when token exchange serves a token inside the Refresh Lookahead Window. It is bounded per replica and dropped on saturation. | Shares per-replica deduplication with on-demand refresh; persists through the locked session update. |
-| **Session Sweep** | An admin-triggered, externally scheduled pass that refreshes every `UserSession` whose access token expires within a lookahead window, in keyset pages. | Produces a `SweepResult`; scheduled by an operator CronJob. |
+| **Session Sweep** | An admin-triggered, externally scheduled pass over due access-token expiries in keyset pages. Known rejected rows are excluded. | Produces a `SweepResult`. New rejection fails once, stale rejection skips, and missing refresh credentials can fail repeatedly. |
 | **SessionExpiryCursor** | The internal `(AccessTokenExpiresAt, ID)` keyset value for Session Sweep, ordered by expiry then UUID bytes. | A zero ID and zero expiry start `ListExpiringSessions`; an expiry without an ID is invalid. A nonzero ID can pair with a zero expiry. |
 | **SweepRequest** | The input value object for a Session Sweep: lookahead, dry-run flag, and page size. | Applies the configured defaults and validation before the sweep evaluates a `UserSession`. |
 | **SweepResult** | The value object summarizing a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, `dry_run`. | `refreshed + skipped + failed = total_evaluated`. |

@@ -132,7 +132,7 @@ func sweepSessionID(n int) id.SessionID {
 	return id.MustParseSessionID(fmt.Sprintf("00000000-0000-4000-8000-%012x", n))
 }
 
-func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRefresh bool) *storage.UserSession {
+func (f *sweepFixture) seed(n int, accessExpiry *time.Time, hasRefresh bool) *storage.UserSession {
 	f.t.Helper()
 	ctx := context.Background()
 	encryptionContext := domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext()
@@ -146,8 +146,8 @@ func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRe
 	session := &storage.UserSession{
 		ID: sweepSessionID(n), Principal: id.Principal(fmt.Sprintf("user-%d@example.com", n)), ServiceID: f.serviceID,
 		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
-		AccessTokenExpiresAt: accessExpiry, RefreshTokenExpiresAt: refreshExpiry,
-		EncryptionContext: storage.EncryptionContext{ServiceID: f.serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now(),
+		AccessTokenExpiresAt: accessExpiry,
+		EncryptionContext:    storage.EncryptionContext{ServiceID: f.serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now(),
 	}
 	require.NoError(f.t, f.repo.Create(ctx, session))
 	return session
@@ -240,8 +240,8 @@ func TestSessionSweepRequestOverridesBothConfiguredDefaults(t *testing.T) {
 	f := newSweepFixture(t)
 	f.resetService(oauth2session.Config{RefreshLookahead: time.Minute, SweepDefaultPageSize: 100}, f.seedEncryption)
 	inside, outside := time.Now().Add(6*time.Minute), time.Now().Add(time.Hour)
-	f.seed(1, &inside, nil, true)
-	f.seed(2, &outside, nil, true)
+	f.seed(1, &inside, true)
+	f.seed(2, &outside, true)
 	before := time.Now()
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{
 		Lookahead: 10 * time.Minute, PageSize: 1, DryRun: true,
@@ -273,11 +273,11 @@ func TestSessionSweepDryRunClassifiesSnapshotsWithoutSideEffects(t *testing.T) {
 	})
 	soon, expired := time.Now().Add(time.Minute), time.Now().Add(-time.Minute)
 	later := time.Now().Add(time.Hour)
-	f.seed(1, &soon, nil, true)
-	f.seed(2, &expired, nil, false)
-	f.seed(3, &expired, &expired, true)
-	f.seed(4, &later, nil, true)
-	f.seed(5, nil, nil, true)
+	f.seed(1, &soon, true)
+	f.seed(2, &expired, false)
+	f.seed(3, &expired, false)
+	f.seed(4, &later, true)
+	f.seed(5, nil, true)
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: true})
 	require.NoError(t, err)
 	assertSweepCounts(t, result, 1, 0, 2, true)
@@ -298,7 +298,7 @@ func TestSessionSweepFixedThresholdAndCompositeCursorAcrossChangingPages(t *test
 	f := newSweepFixture(t)
 	soon := time.Now().Add(time.Minute)
 	for n := 1; n <= 5; n++ {
-		f.seed(n, &soon, nil, true)
+		f.seed(n, &soon, true)
 	}
 	f.expiry.afterList = func(page int, _ []*storage.UserSession) {
 		if page == 1 {
@@ -333,7 +333,7 @@ func TestSessionSweepLockedRefreshUsesOriginalCutoff(t *testing.T) {
 		require.NoError(t, f.providers.Create(context.Background(), provider))
 		const lookahead = 5 * time.Minute
 		soon := time.Now().Add(time.Minute)
-		original := f.seed(1, &soon, nil, true)
+		original := f.seed(1, &soon, true)
 		var renewedExpiry time.Time
 		f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
 			renewedExpiry = f.expiry.calls[0].threshold.Add(15 * time.Second)
@@ -373,8 +373,8 @@ func TestSessionSweepContinuesAfterZeroExpiryCandidate(t *testing.T) {
 				sweepSuccess(w)
 			})
 			due := time.Now().Add(time.Minute)
-			f.seed(1, &time.Time{}, nil, true)
-			f.seed(2, &due, nil, true)
+			f.seed(1, &time.Time{}, true)
+			f.seed(2, &due, true)
 			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: dryRun, PageSize: 1})
 			require.NoError(t, err)
 			assertSweepCounts(t, result, 2, 0, 0, dryRun)
@@ -407,8 +407,8 @@ func TestSessionSweepEvaluatesMovedSessionOnce(t *testing.T) {
 		}
 	})
 	firstExpiry, secondExpiry := time.Now().Add(-time.Minute), time.Now().Add(time.Minute)
-	f.seed(1, &firstExpiry, nil, true)
-	f.seed(2, &secondExpiry, nil, true)
+	f.seed(1, &firstExpiry, true)
+	f.seed(2, &secondExpiry, true)
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{Lookahead: 90 * time.Minute, PageSize: 1})
 	require.NoError(t, err)
 	assertSweepCounts(t, result, 2, 0, 0, false)
@@ -430,8 +430,8 @@ func TestSessionSweepEvaluatesMovedSessionOnce(t *testing.T) {
 func TestSessionSweepDryRunSkipsMovedCandidateID(t *testing.T) {
 	f := newSweepFixture(t)
 	firstExpiry, movedExpiry, secondExpiry := time.Now().Add(time.Minute), time.Now().Add(2*time.Minute), time.Now().Add(3*time.Minute)
-	first := f.seed(1, &firstExpiry, nil, true)
-	second := f.seed(2, &secondExpiry, nil, true)
+	first := f.seed(1, &firstExpiry, true)
+	second := f.seed(2, &secondExpiry, true)
 	moved := *first
 	moved.AccessTokenExpiresAt = &movedExpiry
 	f.expiry.list = func(_ context.Context, _ time.Time, _ storage.SessionExpiryCursor, _ int) ([]*storage.UserSession, error) {
@@ -459,8 +459,8 @@ func TestSessionSweepRejectsInvalidExpiryPages(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newSweepFixture(t)
 			firstExpiry, secondExpiry := time.Now().Add(time.Minute), time.Now().Add(2*time.Minute)
-			first := f.seed(1, &firstExpiry, nil, true)
-			second := f.seed(2, &secondExpiry, nil, true)
+			first := f.seed(1, &firstExpiry, true)
+			second := f.seed(2, &secondExpiry, true)
 			f.expiry.list = func(_ context.Context, _ time.Time, _ storage.SessionExpiryCursor, _ int) ([]*storage.UserSession, error) {
 				switch name {
 				case "nil expiry":
@@ -507,7 +507,7 @@ func TestSessionSweepRealRefreshCommitsBeforeSuccessAndMetrics(t *testing.T) {
 		sweepSuccess(w)
 	})
 	soon := time.Now().Add(time.Minute)
-	f.seed(1, &soon, nil, true)
+	f.seed(1, &soon, true)
 	f.refresh.invoke = func(ctx context.Context, p id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 		return f.repo.WithLockedSession(ctx, p, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
 			changed, err := callback(ctx, session)
@@ -552,7 +552,6 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 		wantDependency oauth2session.Dependency
 	}{
 		{name: "no refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshUnavailable, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
-		{name: "expired refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshTokenExpired, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
 		{name: "deleted after listing", modify: func(f *sweepFixture, s *storage.UserSession) {
 			f.expiry.afterList = func(_ int, _ []*storage.UserSession) { require.NoError(f.t, f.repo.Delete(context.Background(), s.ID)) }
 		}, wantSkip: 1},
@@ -588,17 +587,9 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				}
 				sweepSuccess(w)
 			})
-			soon, past := time.Now().Add(time.Minute), time.Now().Add(-time.Minute)
-			var refreshExpiry *time.Time
-			hasRefresh := true
-			switch tc.name {
-			case "no refresh token":
-				hasRefresh = false
-			case "expired refresh token":
-				refreshExpiry = &past
-			}
-			first := f.seed(1, &soon, refreshExpiry, hasRefresh)
-			f.seed(2, &soon, nil, true)
+			soon := time.Now().Add(time.Minute)
+			first := f.seed(1, &soon, tc.name != "no refresh token")
+			f.seed(2, &soon, true)
 			if tc.modify != nil {
 				tc.modify(f, first)
 			}
@@ -626,6 +617,67 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 	}
 }
 
+func TestSessionSweepProviderRejectionFailsOnceThenExcludesRetainedRow(t *testing.T) {
+	f := newSweepFixture(t)
+	var calls atomic.Int32
+	f.provider(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+	})
+	expiry := time.Now().Add(time.Hour)
+	before := f.seed(1, &expiry, true)
+	request := oauth2session.SweepRequest{Lookahead: 2 * time.Hour}
+	result, err := f.sweeper().Sweep(context.Background(), request)
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 0, 0, 1, false)
+	persisted, err := f.repo.Get(context.Background(), before.ID)
+	require.NoError(t, err)
+	assert.True(t, persisted.RefreshTokenRejected)
+	assert.Equal(t, before.EncryptedAccessToken, persisted.EncryptedAccessToken)
+	assert.Equal(t, before.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+	assert.Equal(t, expiry, *persisted.AccessTokenExpiresAt)
+	result, err = f.sweeper().Sweep(context.Background(), request)
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 0, 0, 0, false)
+	assert.EqualValues(t, 1, calls.Load())
+	assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.token_refreshed"`)
+}
+
+func TestSessionSweepSkipsRejectionObservedAfterListing(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dryRun     bool
+		hasRefresh bool
+	}{
+		{"refreshable stale row", false, true},
+		{"unrefreshable stale row", false, false},
+		{"dry-run rejected snapshot", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSweepFixture(t)
+			expiry := time.Now().Add(time.Minute)
+			before := f.seed(1, &expiry, tc.hasRefresh)
+			f.provider(func(_ http.ResponseWriter, _ *http.Request) { t.Error("rejected row must not contact provider") })
+			f.expiry.afterList = func(_ int, page []*storage.UserSession) {
+				_, err := f.repo.WithLockedSession(context.Background(), before.Principal, before.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+					current.RefreshTokenRejected = true
+					return true, nil
+				})
+				require.NoError(t, err)
+				if tc.dryRun {
+					page[0].RefreshTokenRejected = true
+				}
+			}
+			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: tc.dryRun})
+			require.NoError(t, err)
+			assertSweepCounts(t, result, 0, 1, 0, tc.dryRun)
+			assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.refresh_failed"`)
+		})
+	}
+}
+
 func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderLookup(t *testing.T) {
 	f := newSweepFixture(t)
 	providerRepo := &countingSweepProviderRepository{
@@ -638,12 +690,12 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
 	failedServiceID := id.NewServiceID()
 	f.serviceID = failedServiceID
-	accessExpiry, refreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	failed := f.seed(1, &accessExpiry, &refreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	failed := f.seed(1, &accessExpiry, false)
 	failedAccess := bytes.Clone(failed.EncryptedAccessToken)
 	failedRefresh := bytes.Clone(failed.EncryptedRefreshToken)
 	f.serviceID = validServiceID
-	f.seed(2, &accessExpiry, nil, true)
+	f.seed(2, &accessExpiry, true)
 
 	for invocation := 1; invocation <= 2; invocation++ {
 		result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{PageSize: 1})
@@ -655,7 +707,7 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 		assert.Equal(t, failedRefresh, persisted.EncryptedRefreshToken)
 		require.NotNil(t, persisted.AccessTokenExpiresAt)
 		assert.True(t, accessExpiry.Equal(*persisted.AccessTokenExpiresAt))
-		assert.Zero(t, providerRepo.gets[failedServiceID], "expired refresh tokens must not load provider credentials")
+		assert.Zero(t, providerRepo.gets[failedServiceID], "missing refresh credentials must not load provider credentials")
 	}
 	assert.Equal(t, 1, providerRepo.gets[validServiceID])
 	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.refresh_failed"`))
@@ -670,15 +722,13 @@ func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
 		assert.Equal(t, "reauthorized-refresh", r.Form.Get("refresh_token"))
 		sweepSuccess(w)
 	})
-	accessExpiry, oldRefreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	current := f.seed(1, &accessExpiry, &oldRefreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	current := f.seed(1, &accessExpiry, false)
 	refresh, err := f.seedEncryption.Encrypt(context.Background(), []byte("reauthorized-refresh"), domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext())
 	require.NoError(t, err)
 	f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
-		validUntil := time.Now().Add(time.Hour)
 		_, err := f.repo.WithLockedSession(context.Background(), current.Principal, current.ServiceID, func(_ context.Context, latest *storage.UserSession) (bool, error) {
 			latest.EncryptedRefreshToken = refresh
-			latest.RefreshTokenExpiresAt = &validUntil
 			return true, nil
 		})
 		require.NoError(t, err)
@@ -706,8 +756,8 @@ func TestSessionSweepRepositoryFailuresAbortInsteadOfMiscounting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSweepFixture(t)
 			soon := time.Now().Add(time.Minute)
-			f.seed(1, &soon, nil, !tc.terminal)
-			f.seed(2, &soon, nil, true)
+			f.seed(1, &soon, !tc.terminal)
+			f.seed(2, &soon, true)
 			failure := errors.New("session repository disconnected")
 			if tc.listFails {
 				f.expiry.list = func(context.Context, time.Time, storage.SessionExpiryCursor, int) ([]*storage.UserSession, error) {
@@ -753,8 +803,8 @@ func TestSessionSweepCommitFailureDoesNotRecordSuccess(t *testing.T) {
 	f := newSweepFixture(t)
 	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
 	soon := time.Now().Add(time.Minute)
-	f.seed(1, &soon, nil, true)
-	f.seed(2, &soon, nil, true)
+	f.seed(1, &soon, true)
+	f.seed(2, &soon, true)
 	commitFailure := errors.New("failed to commit encrypted tokens")
 	f.refresh.invoke = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 		return f.repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
@@ -797,8 +847,8 @@ func TestSessionSweepEncryptionFailureIsRecordedAndNextSessionRuns(t *testing.T)
 		sweepSuccess(w)
 	})
 	soon := time.Now().Add(time.Minute)
-	f.seed(1, &soon, nil, true)
-	f.seed(2, &soon, nil, false)
+	f.seed(1, &soon, true)
+	f.seed(2, &soon, false)
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 	require.NoError(t, err)
 	assertSweepCounts(t, result, 0, 0, 2, false)
@@ -830,8 +880,8 @@ func TestSessionSweepCancellationWaitsForAdmittedRefreshAndStopsBeforeNext(t *te
 		}
 	})
 	soon := time.Now().Add(time.Minute)
-	f.seed(1, &soon, nil, true)
-	f.seed(2, &soon, nil, true)
+	f.seed(1, &soon, true)
+	f.seed(2, &soon, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	type outcome struct {

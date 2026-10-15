@@ -14,10 +14,11 @@ import (
 
 func TestGetSessionWithAgentsSecurity_PrincipalIsolation(t *testing.T) {
 	ctx := context.Background()
-	service, _, sessionRepo, grantRepo, agentRepo, _ := setupServiceWithConfig(t, nil)
+	service, _, sessionRepo, grantRepo, agentRepo, providers := setupServiceWithConfig(t, nil)
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
 	serviceID := id.NewServiceID()
+	require.NoError(t, providers.Create(ctx, createTestService(serviceID)))
 	permissionSetAID := id.NewPermissionSetID()
 	permissionSetBID := id.NewPermissionSetID()
 	now := time.Now()

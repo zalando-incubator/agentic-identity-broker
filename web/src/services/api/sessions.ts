@@ -31,17 +31,14 @@ export interface SessionSummary {
   /** ISO 8601 timestamp when session was initiated */
   initiated_at: string;
 
-  /** Whether the entire session is expired */
-  is_expired: boolean;
+  /** Whether provider rejection or exhausted access-only credentials require login */
+  requires_reauthentication: boolean;
 
   /** Whether the access token specifically is expired */
   access_token_expired: boolean;
 
   /** Whether a refresh token is stored for this session */
   has_refresh_token: boolean;
-
-  /** ISO 8601 timestamp when refresh token expires (if applicable) */
-  refresh_token_expires_at?: string;
 
   /** Number of agents depending on this session */
   dependent_agent_count: number;
@@ -163,21 +160,21 @@ export class SessionsApiService {
 
   /**
    * Refresh an OAuth2 session (renew access token using refresh token).
-   * Invalidates relevant caches after successful refresh.
+   * Invalidates relevant caches even when provider rejection changes session state.
    *
    * @param serviceId - Third-party service identifier
    * @returns Updated session information
    * @throws {ApiError} if request fails or refresh token is invalid
    */
   async refreshSession(serviceId: string): Promise<SessionSummary> {
-    const response = await apiClient.post<{ data: SessionSummary }>(
-      `/third-party/${serviceId}/session/refresh`,
-    );
-
-    // Invalidate caches since data changed
-    apiCache.invalidatePattern('/third-party/*');
-
-    return response.data.data;
+    try {
+      const response = await apiClient.post<{ data: SessionSummary }>(
+        `/third-party/${serviceId}/session/refresh`,
+      );
+      return response.data.data;
+    } finally {
+      apiCache.invalidatePattern('/third-party/*');
+    }
   }
 }
 

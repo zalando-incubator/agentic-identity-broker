@@ -72,7 +72,6 @@ const (
 	DetailGrantRepositoryUnavailable      FailureDetail = "grant_repository_unavailable"
 	DetailSessionMissing                  FailureDetail = "session_missing"
 	DetailAccessTokenExpired              FailureDetail = "access_token_expired"
-	DetailRefreshTokenExpired             FailureDetail = "refresh_token_expired"
 	DetailRefreshUnavailable              FailureDetail = "refresh_unavailable"
 	DetailRefreshRejected                 FailureDetail = "refresh_rejected"
 	DetailProviderClientRejected          FailureDetail = "provider_client_rejected"
@@ -138,7 +137,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage = StageGrantAuthorization
 	case DetailSessionMissing:
 		d.stage, d.outcome, d.action, d.target = StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
-	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable:
+	case DetailAccessTokenExpired, DetailRefreshUnavailable:
 		d.outcome, d.action, d.target = OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
 	case DetailRefreshRejected:
 		d.stage, d.outcome, d.action, d.target = StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession

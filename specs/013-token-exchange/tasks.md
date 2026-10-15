@@ -125,7 +125,7 @@ This feature implements RFC 8693 OAuth 2.0 Token Exchange via the existing `/oau
 | US4-S5 | US4 | "should provide client_assertion claims in CEL context" |
 | US4-S6 | US4 | "should provide request context in CEL context" |
 | US5-S1 | US5 | "should return 400 invalid_grant when no session exists" |
-| US5-S2 | US5 | "should return 400 invalid_grant when tokens fully expired" |
+| US5-S2 | US5 | "should return 400 invalid_grant when expired access has no refresh credentials" |
 | US5-S3 | US5 | "should include sufficient info for re-auth flow" |
 | US6-S1 | US6 | "should accept protected_resources in PUT /api/services/{id}" |
 | US6-S2 | US6 | "should return 400 for invalid URI in protected_resources" |
@@ -311,7 +311,7 @@ This feature implements RFC 8693 OAuth 2.0 Token Exchange via the existing `/oau
 ### Implementation for User Story 5
 
 - [x] T075 [US5] Return 400 invalid_grant when no UserSession exists for principal+service (service.go lines 228-241)
-- [x] T076 [US5] Return 400 invalid_grant when both access_token and refresh_token expired (service.go lines 254-270)
+- [x] T076 [US5] Return 400 invalid_grant when the access token is expired without available refresh authority (service.go lines 254-270)
 - [x] T077 [US5] Include service_id and re-auth hint in error_description (service.go lines 233-237, 264-268)
 - [x] T078 [US5] Distinguish between access_denied (no grant) and invalid_grant (no session) for grant-exists-but-session-missing edge case; ensure grant check occurs before session check in implementation order (service.go lines 207-224 occur BEFORE lines 228-252, per T078 CRITICAL security requirement)
 

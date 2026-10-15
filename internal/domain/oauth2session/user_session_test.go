@@ -102,38 +102,42 @@ func TestUserSession_Validate(t *testing.T) {
 	}
 }
 
-func TestUserSession_IsExpired(t *testing.T) {
-	tests := []struct {
+func TestUserSession_RequiresReauthentication(t *testing.T) {
+	future := ptrTime(time.Now().Add(time.Hour))
+	past := ptrTime(time.Now().Add(-time.Hour))
+	for _, tc := range []struct {
 		name    string
-		session *storage.UserSession
+		session storage.UserSession
 		want    bool
 	}{
-		{
-			name: "no expiration set",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: nil,
-			},
-			want: false,
-		},
-		{
-			name: "not expired",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: ptrTime(time.Now().Add(24 * time.Hour)),
-			},
-			want: false,
-		},
-		{
-			name: "expired",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: ptrTime(time.Now().Add(-1 * time.Hour)),
-			},
-			want: true,
-		},
+		{name: "unknown access expiry", session: storage.UserSession{}},
+		{name: "valid access only", session: storage.UserSession{AccessTokenExpiresAt: future}},
+		{name: "expired access only", session: storage.UserSession{AccessTokenExpiresAt: past}, want: true},
+		{name: "expired access with refresh authority", session: storage.UserSession{AccessTokenExpiresAt: past, EncryptedRefreshToken: []byte("refresh")}},
+		{name: "rejected with valid access", session: storage.UserSession{AccessTokenExpiresAt: future, EncryptedRefreshToken: []byte("refresh"), RefreshTokenRejected: true}, want: true},
+		{name: "rejected with unknown access expiry", session: storage.UserSession{RefreshTokenRejected: true}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.session.RequiresReauthentication())
+		})
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.session.IsExpired())
+func TestUserSession_CanRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		token    []byte
+		rejected bool
+		want     bool
+	}{
+		{name: "absent"},
+		{name: "empty", token: []byte{}},
+		{name: "stored", token: []byte("ciphertext"), want: true},
+		{name: "stored but rejected", token: []byte("ciphertext"), rejected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := storage.UserSession{EncryptedRefreshToken: tc.token, RefreshTokenRejected: tc.rejected}
+			assert.Equal(t, tc.want, session.CanRefresh())
 		})
 	}
 }

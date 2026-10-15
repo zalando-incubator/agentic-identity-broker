@@ -77,6 +77,7 @@ data:
     # Third-party OAuth2 configuration
     third_party_oauth2:
       jwe_signing_key: ${IDENTITY_BROKER_JWE_SIGNING_KEY}
+      session_api_compatibility: {{ .Values.broker.thirdPartyOauth2.sessionAPICompatibility }}
 
     # Proactive third-party token refresh configuration
     token_refresh:

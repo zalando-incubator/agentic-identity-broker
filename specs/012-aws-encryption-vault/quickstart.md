@@ -76,13 +76,16 @@ func NewOAuth2SessionService(
 
 ### Create Session (with encryption)
 
+The provider supplies the access-token expiry. Stored refresh ciphertext shows credential presence, not provider validity.
+The broker records terminal provider rejection instead of a refresh-token expiry date.
+
 ```go
 func (s *OAuth2SessionService) CreateSession(
     ctx context.Context,
     principal string,
     serviceID string,
     accessToken, refreshToken string,
-    accessExpiry, refreshExpiry time.Time,
+    accessExpiry time.Time,
 ) (*UserSession, error) {
     // Step 1: Construct encryption context
     encryptionContext := map[string]string{
@@ -126,7 +129,6 @@ func (s *OAuth2SessionService) CreateSession(
         EncryptedRefreshToken:    encryptedRefresh,
         EncryptionContext:        encryptionContext,
         AccessTokenExpiry:        accessExpiry,
-        RefreshTokenExpiry:       refreshExpiry,
         CreatedAt:                time.Now(),
         UpdatedAt:                time.Now(),
     }
@@ -197,7 +199,7 @@ func (s *OAuth2SessionService) GetSession(
         AccessToken:     string(plainAccessToken),
         RefreshToken:    string(plainRefreshToken),
         AccessExpiry:    encryptedSession.AccessTokenExpiry,
-        RefreshExpiry:   encryptedSession.RefreshTokenExpiry,
+        RefreshTokenRejected: encryptedSession.RefreshTokenRejected,
     }
 
     // Step 5: Publish success event
@@ -375,7 +377,6 @@ func TestServiceEncryptionRoundtrip(t *testing.T) {
         "access-token-xyz",
         "refresh-token-xyz",
         time.Now().Add(time.Hour),
-        time.Now().Add(24*time.Hour),
     )
     require.NoError(t, err)
     require.NotNil(t, session)

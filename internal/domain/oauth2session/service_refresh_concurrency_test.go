@@ -272,7 +272,7 @@ func TestGetValidAccessToken_DoesNotAuditRefreshSuccessBeforePersistence(t *test
 		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
 	}))
 	defer upstream.Close()
-	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(-time.Hour), nil, nil,
+	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(-time.Hour), nil,
 		func(repo ports.UserSessionRefreshRepository) ports.UserSessionRefreshRepository {
 			return failedCommitRefreshRepo{underlying: repo}
 		})
@@ -398,7 +398,7 @@ type loggedRefreshFixture struct {
 	logs      *refreshLogSink
 }
 
-func newLoggedRefreshFixture(t *testing.T, endpoint string, accessExpiry time.Time, refreshExpiry *time.Time, configure func(*oauth2session.Config), wrap ...func(ports.UserSessionRefreshRepository) ports.UserSessionRefreshRepository) loggedRefreshFixture {
+func newLoggedRefreshFixture(t *testing.T, endpoint string, accessExpiry time.Time, configure func(*oauth2session.Config), wrap ...func(ports.UserSessionRefreshRepository) ports.UserSessionRefreshRepository) loggedRefreshFixture {
 	t.Helper()
 	_, _, sessions, grants, agents, providers := setupServiceWithConfig(t, nil)
 	ctx := context.Background()
@@ -417,8 +417,8 @@ func newLoggedRefreshFixture(t *testing.T, endpoint string, accessExpiry time.Ti
 	session := &storage.UserSession{
 		ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
-		AccessTokenExpiresAt: &accessExpiry, RefreshTokenExpiresAt: refreshExpiry,
-		Scope: []string{"repo"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+		AccessTokenExpiresAt: &accessExpiry,
+		Scope:                []string{"repo"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
 		InitiatedAt: time.Now(), CreatedAt: time.Now(),
 	}
 	require.NoError(t, sessions.Create(ctx, session))
@@ -457,9 +457,13 @@ func assertRefreshFailureMetadata(t *testing.T, fixture loggedRefreshFixture, de
 	assert.Equal(t, string(detail), metadata["failure_detail"])
 	assert.Equal(t, string(kind), metadata["error_kind"])
 	assert.Equal(t, string(dependency), metadata["dependency"])
-	if detail == oauth2session.DetailRefreshRejected {
+	switch detail {
+	case oauth2session.DetailRefreshRejected:
 		assert.EqualValues(t, http.StatusBadRequest, metadata["http_status_code"])
 		assert.Equal(t, "invalid_grant", metadata["oauth_error_code"])
+	case oauth2session.DetailPersistenceFailed:
+		assert.EqualValues(t, 0, metadata["http_status_code"])
+		assert.Equal(t, "", metadata["oauth_error_code"])
 	}
 }
 
@@ -483,7 +487,7 @@ func TestRefreshSuccessEvent_FollowsCommittedUpdateForOnDemandPaths(t *testing.T
 			if tc.force {
 				expiry = time.Now().Add(time.Hour)
 			}
-			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, nil, nil)
+			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, nil)
 			ctx := context.Background()
 			if tc.force {
 				summary, err := fixture.service.ForceRefreshSession(ctx, fixture.principal, fixture.serviceID)
@@ -505,19 +509,9 @@ func TestRefreshSuccessEvent_FollowsCommittedUpdateForOnDemandPaths(t *testing.T
 	}
 }
 
-func TestRefreshFailureEvent_ClassifiesOnDemandAttemptsWithoutChangingCiphertext(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		force          bool
-		refreshExpired bool
-		detail         oauth2session.ErrorDetail
-		providerCalls  int32
-	}{
-		{name: "provider rejects read-path refresh", detail: oauth2session.DetailRefreshRejected, providerCalls: 1},
-		{name: "provider rejects forced refresh", force: true, detail: oauth2session.DetailRefreshRejected, providerCalls: 1},
-		{name: "stored refresh token expired", refreshExpired: true, detail: oauth2session.DetailRefreshTokenExpired},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestRefreshFailureEvent_PersistsRejectionWithoutChangingTokenMetadata(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
 			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
@@ -527,40 +521,34 @@ func TestRefreshFailureEvent_ClassifiesOnDemandAttemptsWithoutChangingCiphertext
 			}))
 			defer upstream.Close()
 			expiry := time.Now().Add(-time.Minute)
-			if tc.force {
+			if force {
 				expiry = time.Now().Add(time.Hour)
 			}
-			var refreshExpiry *time.Time
-			if tc.refreshExpired {
-				refreshExpiry = &expiry
-			}
-			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, refreshExpiry, nil)
+			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, nil)
 			ctx := context.Background()
 			var err error
-			if tc.force {
+			if force {
 				_, err = fixture.service.ForceRefreshSession(ctx, fixture.principal, fixture.serviceID)
 			} else {
-				_, _, err = fixture.service.GetValidAccessToken(ctx, fixture.principal, fixture.serviceID)
+				_, token, failure := fixture.service.GetValidAccessToken(ctx, fixture.principal, fixture.serviceID)
+				assert.Empty(t, token)
+				err = failure
 			}
-			metadata := assertOperationMetadata(t, err, oauth2session.OperationRefresh, tc.detail)
-			assert.EqualValues(t, tc.providerCalls, calls.Load())
-			if tc.providerCalls > 0 {
-				assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
-				assert.Equal(t, "invalid_grant", metadata.OAuthCode())
-				assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
-			} else {
-				assert.ErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
-			}
-			assert.False(t, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "ERROR", oauth2session.RefreshTriggerOnDemand), "failed refresh must not commit")
-			if tc.providerCalls > 0 {
-				assertRefreshFailureMetadata(t, fixture, tc.detail, oauth2session.KindProvider, oauth2session.DependencyProvider)
-			} else {
-				assertRefreshFailureMetadata(t, fixture, tc.detail, oauth2session.KindSession, oauth2session.DependencySessionRepository)
-			}
+			metadata := assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailRefreshRejected)
+			assert.EqualValues(t, 1, calls.Load())
+			assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
+			assert.Equal(t, "invalid_grant", metadata.OAuthCode())
+			assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+			assert.ErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
+			assert.True(t, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "ERROR", oauth2session.RefreshTriggerOnDemand), "rejection must be logged after the state commit")
+			assert.Zero(t, fixture.logs.eventCount("session.oauth2.token_refreshed"))
+			assertRefreshFailureMetadata(t, fixture, oauth2session.DetailRefreshRejected, oauth2session.KindProvider, oauth2session.DependencyProvider)
 			persisted, findErr := fixture.sessions.FindByPrincipalAndService(ctx, fixture.principal, fixture.serviceID)
 			require.NoError(t, findErr)
+			assert.True(t, persisted.RefreshTokenRejected)
 			assert.Equal(t, fixture.session.EncryptedAccessToken, persisted.EncryptedAccessToken)
 			assert.Equal(t, fixture.session.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+			assert.Equal(t, fixture.session.AccessTokenExpiresAt, persisted.AccessTokenExpiresAt)
 		})
 	}
 }
@@ -579,7 +567,7 @@ func TestBackgroundRefreshSuccessEvent_FollowsCommitWithoutDelayingValidToken(t 
 	}))
 	defer upstream.Close()
 	defer release()
-	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), nil, func(config *oauth2session.Config) {
+	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), func(config *oauth2session.Config) {
 		config.RefreshLookahead = 5 * time.Minute
 		config.BackgroundRefreshWorkers = 1
 	})
@@ -624,7 +612,7 @@ func TestBackgroundRefreshFailureEvent_ClassifiesRejectionWithoutChangingCiphert
 		_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"private-refresh-principal@example.com"}`)
 	}))
 	defer upstream.Close()
-	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), nil, func(config *oauth2session.Config) {
+	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), func(config *oauth2session.Config) {
 		config.RefreshLookahead = 5 * time.Minute
 		config.BackgroundRefreshWorkers = 1
 	})
@@ -633,12 +621,19 @@ func TestBackgroundRefreshFailureEvent_ClassifiesRejectionWithoutChangingCiphert
 	assert.Equal(t, "old-access", token)
 	fixture.logs.waitForEvent(t, "session.oauth2.refresh_failed")
 	assert.EqualValues(t, 1, calls.Load())
-	assert.False(t, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "WARN", oauth2session.RefreshTriggerBackground))
+	assert.True(t, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "WARN", oauth2session.RefreshTriggerBackground))
 	assertRefreshFailureMetadata(t, fixture, oauth2session.DetailRefreshRejected, oauth2session.KindProvider, oauth2session.DependencyProvider)
 	persisted, err := fixture.sessions.FindByPrincipalAndService(context.Background(), fixture.principal, fixture.serviceID)
 	require.NoError(t, err)
+	assert.True(t, persisted.RefreshTokenRejected)
+	assert.Zero(t, fixture.logs.eventCount("session.oauth2.token_refreshed"))
 	assert.Equal(t, fixture.session.EncryptedAccessToken, persisted.EncryptedAccessToken)
 	assert.Equal(t, fixture.session.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+	assert.Equal(t, fixture.session.AccessTokenExpiresAt, persisted.AccessTokenExpiresAt)
+	_, token, err = fixture.service.GetValidAccessToken(context.Background(), fixture.principal, fixture.serviceID)
+	assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+	assert.Empty(t, token)
+	assert.EqualValues(t, 1, calls.Load())
 }
 
 func TestSweepRefreshSuccessEvent_FollowsCommittedUpdate(t *testing.T) {
@@ -649,7 +644,7 @@ func TestSweepRefreshSuccessEvent_FollowsCommittedUpdate(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
 	}))
 	defer upstream.Close()
-	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), nil, nil)
+	fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), nil)
 	sweeper := oauth2session.NewSessionSweepService(fixture.sessions.(ports.UserSessionExpiryRepository), fixture.service, slog.New(slog.NewJSONHandler(fixture.logs, nil)))
 	result, err := sweeper.Sweep(context.Background(), oauth2session.SweepRequest{Lookahead: 5 * time.Minute, PageSize: 2})
 	require.NoError(t, err)
@@ -666,14 +661,14 @@ func TestSweepRefreshSuccessEvent_FollowsCommittedUpdate(t *testing.T) {
 func TestSweepRefreshFailureEvent_ClassifiesEachFailedCandidate(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
-		refreshExpired bool
+		missingRefresh bool
 		calls          int32
 		detail         oauth2session.ErrorDetail
 		kind           oauth2session.ErrorKind
 		dependency     oauth2session.Dependency
 	}{
 		{name: "provider rejection", calls: 1, detail: oauth2session.DetailRefreshRejected, kind: oauth2session.KindProvider, dependency: oauth2session.DependencyProvider},
-		{name: "expired refresh token", refreshExpired: true, detail: oauth2session.DetailRefreshTokenExpired, kind: oauth2session.KindSession, dependency: oauth2session.DependencySessionRepository},
+		{name: "missing refresh token", missingRefresh: true, detail: oauth2session.DetailRefreshUnavailable, kind: oauth2session.KindSession, dependency: oauth2session.DependencySessionRepository},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -684,21 +679,26 @@ func TestSweepRefreshFailureEvent_ClassifiesEachFailedCandidate(t *testing.T) {
 				_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"private-refresh-principal@example.com"}`)
 			}))
 			defer upstream.Close()
-			var refreshExpiry *time.Time
-			if tc.refreshExpired {
-				expired := time.Now().Add(-time.Minute)
-				refreshExpiry = &expired
+			fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), nil)
+			if tc.missingRefresh {
+				_, err := fixture.sessions.(ports.UserSessionRefreshRepository).WithLockedSession(context.Background(), fixture.principal, fixture.serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+					current.EncryptedRefreshToken = nil
+					return true, nil
+				})
+				require.NoError(t, err)
+				fixture.session.EncryptedRefreshToken = nil
 			}
-			fixture := newLoggedRefreshFixture(t, upstream.URL, time.Now().Add(time.Minute), refreshExpiry, nil)
 			sweeper := oauth2session.NewSessionSweepService(fixture.sessions.(ports.UserSessionExpiryRepository), fixture.service, slog.New(slog.NewJSONHandler(fixture.logs, nil)))
 			result, err := sweeper.Sweep(context.Background(), oauth2session.SweepRequest{Lookahead: 5 * time.Minute, PageSize: 2})
 			require.NoError(t, err)
 			assertSweepCounts(t, result, 0, 0, 1, false)
 			assert.EqualValues(t, tc.calls, calls.Load())
-			assert.False(t, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "WARN", oauth2session.RefreshTriggerSweep))
+			assert.Equal(t, !tc.missingRefresh, assertRefreshEvent(t, fixture, "session.oauth2.refresh_failed", "WARN", oauth2session.RefreshTriggerSweep))
 			assertRefreshFailureMetadata(t, fixture, tc.detail, tc.kind, tc.dependency)
 			persisted, err := fixture.sessions.FindByPrincipalAndService(context.Background(), fixture.principal, fixture.serviceID)
 			require.NoError(t, err)
+			assert.Equal(t, !tc.missingRefresh, persisted.RefreshTokenRejected)
+			assert.Zero(t, fixture.logs.eventCount("session.oauth2.token_refreshed"))
 			assert.Equal(t, fixture.session.EncryptedAccessToken, persisted.EncryptedAccessToken)
 			assert.Equal(t, fixture.session.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
 		})
@@ -707,18 +707,27 @@ func TestSweepRefreshFailureEvent_ClassifiesEachFailedCandidate(t *testing.T) {
 
 func TestRefreshFailureEvent_CommitFailureNeverReportsSuccess(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		trigger oauth2session.RefreshTrigger
+		name     string
+		trigger  oauth2session.RefreshTrigger
+		rejected bool
 	}{
 		{name: "forced refresh", trigger: oauth2session.RefreshTriggerOnDemand},
 		{name: "background refresh", trigger: oauth2session.RefreshTriggerBackground},
 		{name: "sweep refresh", trigger: oauth2session.RefreshTriggerSweep},
+		{name: "forced rejection", trigger: oauth2session.RefreshTriggerOnDemand, rejected: true},
+		{name: "background rejection", trigger: oauth2session.RefreshTriggerBackground, rejected: true},
+		{name: "sweep rejection", trigger: oauth2session.RefreshTriggerSweep, rejected: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
 				w.Header().Set("Content-Type", "application/json")
+				if tc.rejected {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprint(w, `{"error":"invalid_grant"}`)
+					return
+				}
 				_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
 			}))
 			defer upstream.Close()
@@ -726,7 +735,7 @@ func TestRefreshFailureEvent_CommitFailureNeverReportsSuccess(t *testing.T) {
 			if tc.trigger == oauth2session.RefreshTriggerOnDemand {
 				expiry = time.Now().Add(time.Hour)
 			}
-			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, nil, func(config *oauth2session.Config) {
+			fixture := newLoggedRefreshFixture(t, upstream.URL, expiry, func(config *oauth2session.Config) {
 				config.RefreshLookahead = 5 * time.Minute
 				config.BackgroundRefreshWorkers = 1
 			}, func(repo ports.UserSessionRefreshRepository) ports.UserSessionRefreshRepository {
@@ -737,6 +746,8 @@ func TestRefreshFailureEvent_CommitFailureNeverReportsSuccess(t *testing.T) {
 			case oauth2session.RefreshTriggerOnDemand:
 				_, err := fixture.service.ForceRefreshSession(ctx, fixture.principal, fixture.serviceID)
 				assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailPersistenceFailed)
+				assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
+				assert.NotErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
 			case oauth2session.RefreshTriggerBackground:
 				_, token, err := fixture.service.GetValidAccessToken(ctx, fixture.principal, fixture.serviceID)
 				require.NoError(t, err)
@@ -746,6 +757,8 @@ func TestRefreshFailureEvent_CommitFailureNeverReportsSuccess(t *testing.T) {
 				sweeper := oauth2session.NewSessionSweepService(fixture.sessions.(ports.UserSessionExpiryRepository), fixture.service, slog.New(slog.NewJSONHandler(fixture.logs, nil)))
 				_, err := sweeper.Sweep(ctx, oauth2session.SweepRequest{Lookahead: 5 * time.Minute, PageSize: 2})
 				assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailPersistenceFailed)
+				assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
+				assert.NotErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
 			}
 			assert.EqualValues(t, 1, calls.Load())
 			assert.Zero(t, fixture.logs.eventCount("session.oauth2.token_refreshed"), "a failed commit cannot produce a success event")
@@ -764,6 +777,8 @@ func TestRefreshFailureEvent_CommitFailureNeverReportsSuccess(t *testing.T) {
 			}
 			persisted, err := fixture.sessions.FindByPrincipalAndService(ctx, fixture.principal, fixture.serviceID)
 			require.NoError(t, err)
+			assert.False(t, persisted.RefreshTokenRejected, "an unsuccessful rejection commit must preserve prior authority")
+			assert.Equal(t, fixture.session.AccessTokenExpiresAt, persisted.AccessTokenExpiresAt)
 			assert.Equal(t, fixture.session.EncryptedAccessToken, persisted.EncryptedAccessToken)
 			assert.Equal(t, fixture.session.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
 		})

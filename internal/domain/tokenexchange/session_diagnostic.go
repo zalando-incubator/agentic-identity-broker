@@ -25,8 +25,6 @@ func sessionDiagnostic(err error) Diagnostic {
 		detail = DetailSessionMissing
 	case oauth2session.DetailAccessTokenExpired:
 		detail = DetailAccessTokenExpired
-	case oauth2session.DetailRefreshTokenExpired:
-		detail = DetailRefreshTokenExpired
 	case oauth2session.DetailRefreshUnavailable:
 		detail = DetailRefreshUnavailable
 	case oauth2session.DetailRefreshRejected:

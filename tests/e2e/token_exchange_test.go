@@ -905,11 +905,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US5-S2 from specs/013-token-exchange/spec.md
-		It("[US5-S2] should return 400 invalid_grant when tokens fully expired", func() {
-			// Given: Both access and refresh tokens expired
+		It("[US5-S2] should return 400 invalid_grant when expired access has no refresh credentials", func() {
+			// Given: An expired access token without refresh credentials
 			ctx := context.Background()
-			fullyExpiredSession := fixtures.FullyExpiredSessionForPrincipal(principal, fixtures.GitHubService().ID.String())
-			err := testStorage.UserSessions().Create(ctx, fullyExpiredSession)
+			expiredAccessOnlySession := fixtures.SessionWithoutRefreshToken(principal, fixtures.GitHubService().ID.String())
+			expiry := time.Now().Add(-2 * time.Hour)
+			expiredAccessOnlySession.AccessTokenExpiresAt = &expiry
+			err := testStorage.UserSessions().Create(ctx, expiredAccessOnlySession)
 			Expect(err).NotTo(HaveOccurred())
 
 			data := url.Values{
@@ -921,7 +923,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 				"resource":              {"https://api.github.com"},
 			}
 
-			// When: Token exchange requested with expired tokens
+			// When: Token exchange requested without usable access or refresh credentials
 			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -1026,24 +1028,35 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.failure_detail=refresh_rejected"))
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.recovery_target=provider_session"))
 
-			// And: The stored session is unchanged.
+			// And: Rejection persists while the stored tokens and metadata are retained.
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(after.EncryptedAccessToken).To(Equal(before.EncryptedAccessToken))
 			Expect(after.EncryptedRefreshToken).To(Equal(before.EncryptedRefreshToken))
 			Expect(after.AccessTokenExpiresAt).To(Equal(before.AccessTokenExpiresAt))
+			Expect(after.RefreshTokenRejected).To(BeTrue())
+			Expect(after.UpdatedAt).To(BeTemporally(">", before.UpdatedAt))
+			Expect(after.Scope).To(Equal(before.Scope))
+			Expect(after.TokenType).To(Equal(before.TokenType))
+			Expect(after.EncryptionContext).To(Equal(before.EncryptionContext))
+			Expect(after.InitiatedAt).To(Equal(before.InitiatedAt))
+			Expect(after.CreatedAt).To(Equal(before.CreatedAt))
+			Expect(mockUpstream.GetTokenRequests()).To(HaveLen(1))
 
-			// When: The provider accepts the preserved refresh token again
+			// When: The provider would accept a refresh, but reauthentication has not occurred
 			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("recovered-token")
 			retry, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = retry.Body.Close() }()
 
-			// Then: The exchange succeeds with the refreshed token.
-			Expect(retry).To(matchers.HaveStatusCode(http.StatusOK))
-			var tokenResponse map[string]interface{}
-			Expect(json.NewDecoder(retry.Body).Decode(&tokenResponse)).To(Succeed())
-			Expect(tokenResponse["access_token"]).To(Equal("recovered-token"))
+			// Then: The recorded rejection still blocks issuance without a new provider request.
+			Expect(retry).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			var retryResponse map[string]interface{}
+			Expect(json.NewDecoder(retry.Body).Decode(&retryResponse)).To(Succeed())
+			Expect(retryResponse["error"]).To(Equal("invalid_grant"))
+			Expect(retryResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+			Expect(retryResponse).NotTo(HaveKey("access_token"))
+			Expect(mockUpstream.GetTokenRequests()).To(HaveLen(1))
 		})
 
 		// Spec Reference: US5-S5 from specs/013-token-exchange/spec.md

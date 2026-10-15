@@ -155,7 +155,7 @@ func TestService_ExpiredGrantRenewalInvalidatesRefreshSessions(t *testing.T) {
 			agents := memory.NewAgentRepository()
 			require.NoError(t, agents.Create(ctx, &storage.Agent{ID: agentID, DisplayName: "Agent", Description: "Lifecycle test", PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: psID, RequirementType: storage.RequirementTypeOptional}}, ServiceRequirements: []storage.ServiceRequirement{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}}))
 			sessions := memory.NewInMemoryUserSessionRepository()
-			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), TokenType: "Bearer", RefreshTokenExpiresAt: &future}))
+			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), TokenType: "Bearer", AccessTokenExpiresAt: &future}))
 			psRepo := memory.NewPermissionSetRepository()
 			require.NoError(t, psRepo.Create(ctx, &storage.PermissionSet{ID: psID, Name: "Access", Description: "Lifecycle test", ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}}))
 			psService := permissionset.NewPermissionSetService(psRepo, grants, slog.Default())

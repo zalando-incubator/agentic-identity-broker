@@ -46,7 +46,7 @@ gets a one-line mention in the existing third-party OAuth2 entry (`README.md:120
 # Tokens are refreshed in the background when token exchange serves a token that
 # expires within lookahead_duration, and by POST /api/sessions/sweep on the admin server.
 token_refresh:
-  # Refresh tokens this long before they expire. Must be shorter than the access-token
+  # Refresh access tokens this long before they expire. Must be shorter than the access-token
   # lifetime your providers issue; otherwise every exchange triggers a refresh.
   lookahead_duration: 5m
   # Concurrent background refreshes per broker replica (1-20). Requests beyond this
@@ -56,6 +56,10 @@ token_refresh:
     # Sessions read per page by the admin sweep when the request omits page_size (1-1000).
     default_page_size: 100
 ```
+
+The lookahead uses only recorded access-token expiry. Missing expiry is unknown, not permanent validity, and does not trigger expiry-based refresh. Refresh ciphertext permits an attempt only when no provider rejection is recorded. Terminal HTTP 4xx `invalid_grant`, excluding 429, persists rejection and stops subsequent issuance even before access expiry. Dropped work and transient errors leave an otherwise valid access token usable.
+
+Sweeps exclude known rejected rows, skip rejected stale candidates, and count a newly recorded rejection as failed once. Missing refresh credentials remain a per-sweep failure while the access token stays due.
 
 ## Documentation
 
@@ -77,6 +81,14 @@ chart artifacts MUST change:
 | `values.schema.json` | New `broker.tokenRefresh` object with `additionalProperties: false`, `lookaheadDuration` (string, pattern `^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$`), `backgroundWorkers` (integer 1–20), `sweep.defaultPageSize` (integer 1–1000). The `broker` object already disallows unknown properties (`:522-526`). |
 | `templates/configmap.yaml` | Render a `token_refresh:` block after `third_party_oauth2` (`:77-79`) from `.Values.broker.tokenRefresh.*`. Always rendered, because the values have defaults. |
 | `README.md` | Three rows in the parameter table (`:112-177`). |
+
+This preparation PR ships only migration 038 and prepared broker/API/UI code. Migrations 039 and 040 belong to following PRs and are not present. `migration.targetVersion` is an integer from 0 through 38, default 38. `broker.thirdPartyOauth2.sessionAPICompatibility` is a boolean, default true. Fresh installs MUST run direct UP-all through 38, including with the default target. Normal PostgreSQL upgrades MUST use the guarded forward wrapper at 38. Upgrades with migrations enabled MUST refuse explicit target 0 during rendering.
+
+Positive upgrade targets MUST inspect version and dirty state. Dirty or unreadable metadata aborts without `Force`. Equal/newer clean schemas are non-destructive no-ops. Only a lower clean version runs `goto`. Serialize migration runners. Forward Helm stages MUST NOT request DOWN. Keep the separate image, credentials, grants ordering, and listener ports. Rolling upgrades require `maxUnavailable=0`, ready surge capacity, at least two healthy replicas, a disruption budget, sufficient traffic-drain time, and retained SPA assets.
+
+Before merging or deploying PR2, complete PR1 and drain every unprepared replica and in-flight operation. PR2 supplies migration 039 with default/max target 39 and activates durable rejection. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. PR3 supplies migration 040 after legacy schema dependencies end, with default/max target 40.
+
+The ConfigMap maps compatibility to `third_party_oauth2.session_api_compatibility`. Preparation and activation default true. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. Compatibility adds only `is_expired=requires_reauthentication`, never refresh dates. See the [runbook](../../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040).
 
 ```yaml
 # values.yaml

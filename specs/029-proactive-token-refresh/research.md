@@ -7,15 +7,14 @@ decision, the evidence from the current codebase, and the alternatives considere
 
 ## Baseline: what already exists
 
-The spec was written on 2026-05-07. The read path has evolved since, and several spec
-requirements are already partly satisfied. The plan builds on that code and does not duplicate it.
+The spec was written on 2026-05-07. This table records the original proactive-refresh baseline, except the corrected validity contract in FR-005. ADR 040 governs that later correction. Original red-phase evidence remains historical, not the current validity contract.
 
 | Spec item | Current state | Evidence |
 |---|---|---|
 | US2 (expired token → synchronous refresh) | **Implemented.** `GetValidAccessToken` refreshes expired access tokens synchronously. | `internal/domain/oauth2session/service.go:1294-1355` |
 | FR-003 per-replica dedup | **Implemented for the expired path only.** `refreshGroup singleflight.Group` is keyed by `principal|serviceID`. | `service.go:65`, `:1329-1341` |
 | DB-002 "no resurrection" | **Implemented.** `UserSessionRefreshRepository.WithLockedSession` re-reads under `SELECT … FOR UPDATE`, returns `nil` for a missing row, and persists with `UPDATE … WHERE id` only. | `internal/ports/storage.go:255-261`; `internal/adapters/storage/postgres/user_session.go:150-205`; memory per-key lock `internal/adapters/storage/memory/user_session.go:97-134` |
-| FR-005 refresh token absent/expired → re-auth error | **Implemented.** Returns `ErrSessionExpired` joined with `ErrRefreshTokenExpired` or `ErrRefreshNotAvailable`. The exchange maps it to `invalid_grant` with a recovery URI. | `service.go:1367-1377`; `internal/domain/tokenexchange/service.go:342-350` |
+| FR-005 absent or provider-rejected refresh authority | Missing refresh credentials require reauthentication after access expiry. Recorded terminal rejection stops issuance even before access expiry. Errors include `ErrReauthenticationRequired` and the specific refresh classification. Exchange returns `invalid_grant` with a `/sessions` recovery URI. | `internal/domain/oauth2session/service.go`: `GetValidAccessToken`, `refreshUnavailableError`, `refreshLockedSession` |
 | SR-001 / SR-004 | **Implemented.** `setSessionTokens` encrypts with `{"service_id"}`. `GetForTokenAcquisition` decrypts a static confidential client's secret at call time; public and CIMD confidential clients have no secret. | `service.go:988-1023`; `internal/domain/thirdparty/service.go:271-286` |
 | FR-001/FR-002 lookahead + background refresh | **Missing.** `HasValidAccessToken()` has no lookahead. | `internal/domain/storage/user_session.go:106-111` |
 | FR-006..FR-011 admin sweep | **Missing.** There is no admin `/api/sessions` route. | `internal/adapters/http/routing/admin.go:36-112` |
@@ -40,6 +39,18 @@ triggers (on-demand, background, sweep). Do **not** add an `UpdateTokensIfExists
 **Spec alignment**: DB-002 now names the existing `UserSessionRefreshRepository.WithLockedSession`
 operation. The clarification, FR-003, FR-009, and domain diagrams also describe the locked
 re-check and update-only write.
+
+The same locked operation persists terminal rejection without a second write path. The service captures HTTP 4xx `invalid_grant`, excluding 429, and changes only `RefreshTokenRejected` and `UpdatedAt`. It returns `(true, nil)` from the callback so the adapter commits. Only after commit does the service return the saved rejection error with `refreshed=false`.
+
+Callback errors still write nothing, including after snapshot mutation. Write or commit failure returns `persistence_failed`, not a claim that rejection persisted. This preserves L3/L4 in [contracts/ports.md](contracts/ports.md).
+
+The rejection flag means observed invalidity. False means no observed rejection, not proven validity. The broker retains ciphertext and all token metadata, then refuses subsequent issuance even before access expiry. Successful OAuth authorization and callback clear rejection through the existing upsert. Explicit termination deletes the row. Rejection never emits refresh-success events or increments refresh-success counters.
+
+The stakeholder selected “Allow staged compatibility” on 2026-10-14 in the unmerged ADR 040 revision. The release sequence separates preparation, activation, and cleanup into deployable PRs. This PR ships only migration 038 and prepared code. Migrations 039 and 040 are not present. Migration 038 preserves the original table shape and adds the explicit view and stable invoker write functions. The view reports false. True writes report `persistence_failed`, while ordinary PostgreSQL traffic works normally. The memory adapter already supports rejection. PR1 defaults and limits Helm targets to 38. Fresh installs run direct UP-all through 38, while upgrades use the guarded wrapper.
+
+Before merging or deploying PR2, complete PR1 and drain every unprepared replica and in-flight operation. PR2 adds migration 039 and the real false-default flag, activating durable rejection without restart. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. PR3 adds migration 040 and removes only the unused legacy column after schema dependencies end. The column supplies storage compatibility only, never provider evidence. All phases preserve sessions and real metadata. Compatibility defaults true in preparation and activation, supports explicit false, and defaults false in cleanup after its consumer gate passes. DOWN 040 retains rejection and restores only a nullable legacy column. DOWN 039 guards rejected rows. Resolve them through reauthentication or explicit termination, never flag clearing or automatic deletion. Drain prepared/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before deliberate repair, never automatic `Force`.
+
+Migration 037, its index, and historical migrations remain unchanged. See [quickstart.md](quickstart.md#online-validity-deployment-and-rollback-migrations-038040) for availability prerequisites, fail-fast lock handling, and phase-compatible rollback.
 
 **Alternatives considered**:
 - *New `UpdateTokensIfExists(ctx, session) (bool, error)`*: This creates a second write path with
@@ -85,6 +96,7 @@ The first page uses the zero-time, zero-ID cursor and this query:
 SELECT * FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND NOT refresh_token_rejected
 ORDER BY access_token_expires_at, id
 LIMIT $2
 ```
@@ -95,6 +107,7 @@ Later pages use a complete cursor and this query:
 SELECT * FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND NOT refresh_token_rejected
   AND (access_token_expires_at, id) > ($2, $3)
 ORDER BY access_token_expires_at, id
 LIMIT $4
@@ -108,7 +121,7 @@ The sweep advances its cursor from the last raw row of every full page, even if 
 - A prior row that expires after the threshold or is deleted disappears without shifting later keyset pages. Rows inserted behind the cursor are not included. Remaining rows ahead of the cursor stay eligible.
 - A refreshed row can remain within the threshold and move ahead of its old key. A per-invocation `map[id.SessionID]struct{}` skips its later occurrence without another lock, upstream call, metric, log, or count. The same rule applies to dry runs.
 - This visited-ID set costs O(unique candidates) broker memory. The limit bounds only the session snapshots in one page, not total broker memory. The fixed threshold excludes new rows with later expiries.
-- `IS NOT NULL` satisfies FR-013. The tuple predicate and order match the two-key index, so late pages can seek instead of sorting and rescanning all due rows.
+- `IS NOT NULL` satisfies FR-013. Both queries exclude known rejection with `NOT refresh_token_rejected`. The tuple predicate and order retain migration 037's two-key index design.
 
 **Alternatives considered**:
 - *UUID-only keyset*: A one-key `id` cursor does not follow the expiry index's sort order. It can require sorting or scanning the full due set on later pages. Rejected by the approved amendment.
@@ -122,7 +135,7 @@ On 2026-10-12, merging `main` into this unmerged PR renumbered the migration fro
 
 **Why the exception is necessary**: A blocking index build can stop writes to the session table. PostgreSQL 15 cannot run `CREATE INDEX CONCURRENTLY` inside a transaction. A failed build can leave an invalid index and dirty version. This does not meet Constitution Principle IX's normal atomic migration rule. The named exception applies only to migration `037`.
 
-**Runner behavior**: `build/docker/Dockerfile.migrate` packages `golang-migrate` v4.17.0, its direct entrypoint, and the migration SQL. Both Helm grants modes pass `-path /app/migrations -database ... up`. Go v4.20.1 test runners use their existing migration paths without a shared preflight. Neither runner interprets the no-transaction comment. Their PostgreSQL drivers execute migration SQL without a migration-wide transaction. Version updates do not make concurrent DDL atomic.
+**Runner behavior**: `build/docker/Dockerfile.migrate` packages `golang-migrate` v4.17.0, its direct entrypoint, and the migration SQL. Both Helm grants modes retain direct `-path /app/migrations -database ... up` for fresh-install target 0. PostgreSQL upgrades with migrations enabled refuse target 0 during rendering. Positive stages use a scoped shell wrapper in the existing Alpine image. The same tool inspects version and dirty state. Dirty or unreadable metadata aborts without `Force`. Equal/newer clean schemas are non-destructive no-ops. Only a lower clean version runs `goto <version>`. Serialize database migration runners to prevent a version-check/execution race. Helm stages never request DOWN. Explicit rollback uses the separate runner after phase compatibility is established. Go v4.20.1 test runners use their existing migration paths. Neither runner interprets the no-transaction comment. PostgreSQL drivers execute migration SQL without a migration-wide transaction. Version updates do not make concurrent DDL atomic. This stage guard does not restore the removed migration-037 preflight.
 
 **Removed preflight**: There is no check of the SQL pair, exact statement, URL options, or alternate image migration paths before SQL. A missing DOWN can go unnoticed until after UP applies and rollback is needed. Incorrect SQL can execute or leave a dirty version. The user selected this tradeoff after reviewing it.
 
@@ -151,18 +164,14 @@ All three triggers evaluate it under the row lock with a trigger-specific thresh
 | background | `time.Now() + lookahead` read after the lock is acquired | Another replica already refreshed. Make no upstream call. |
 | sweep | `sweepStart + lookahead` (fixed per sweep) | Counted as `skipped`. |
 
-On the read path, `GetValidAccessToken` evaluates `AccessTokenExpiresBy(now + lookahead) && CanRefresh()`
-after the valid-token check, and only in that case submits a background refresh.
+`GetValidAccessToken` rejects recorded rejection before its valid-token branch. Otherwise, `AccessTokenExpiresBy(now + lookahead) && CanRefresh()` permits background submission. `CanRefresh()` means ciphertext exists without recorded rejection, not proven provider validity.
 
 **Rationale**:
 - One predicate expresses "due for refresh at threshold T" for every trigger. The current inline
   `HasValidAccessToken()` check in the lock callback becomes `AccessTokenExpiresBy(now)`, which is
   equivalent by construction (`!exp.After(now)` ⇔ `!now.Before(exp)`).
-- NULL expiry → `false` implements FR-013 in one place.
-- `CanRefresh()` gates submission. A session without a usable refresh token is never submitted, so
-  it never occupies a worker slot and never inflates `proactive_refresh_triggered_total`. The token
-  is still served, and the expired path reports re-authentication when the token finally expires
-  (FR-005).
+- NULL access expiry returns `false` for FR-013. Expiry is unknown, not permanently valid. Recorded rejection still prevents issuance.
+- `CanRefresh()` prevents background submission without refresh authority. Missing ciphertext permits an otherwise valid access token until its recorded expiry. Recorded rejection instead requires immediate reauthentication, even before access expiry.
 
 **Alternatives considered**: Use a separate `NeedsProactiveRefresh(lookahead)` that reads
 `time.Now()` internally. It is not testable at the boundary, and the sweep needs a fixed threshold.
@@ -177,8 +186,9 @@ Rejected.
   (NFR-002) and `proactive_refresh_dropped_total`.
 - `inflight sync.Map` keyed by `principal|serviceID`. `LoadOrStore` runs **before** slot acquisition.
   A key already in flight returns at once with no slot consumed, no counter, and a DEBUG log only.
-- An accepted submission runs `go func() { defer release; s.refreshGroup.Do(key, flight) }`. The
-  flight is `refreshDueSession(bgCtx, principal, serviceID, time.Now()+lookahead, RefreshTriggerBackground)`.
+- An accepted submission enters the shared flight after acquiring a slot.
+  The flight calls `refreshDueSession(bgCtx, principal, serviceID, backgroundDue, RefreshTriggerBackground)`.
+  `backgroundDue` computes current time plus lookahead under the lock.
 - It shares `refreshGroup` (the existing singleflight) with the on-demand path. An on-demand caller
   whose token expires while a background flight is running joins that flight instead of starting a
   second upstream call.
@@ -196,19 +206,12 @@ Rejected.
   re-check (R1, R5) prevents duplicate upstream calls even when two flights race. Singleflight and
   the in-flight map are latency and resource optimizations.
 
-**Flight result shape**: The flight returns `refreshFlightResult{session, refreshed, trigger, client}`.
-The session contains encrypted tokens, never the decrypted token. Each on-demand joiner decrypts
-its own copy after the flight resolves. The `refreshed` flag prevents a background joiner from
-renewing a freshly issued short-lived token again. If an on-demand leader made no change and the
-session remains due within lookahead, the background joiner re-checks under the row lock.
-This narrows SR-003 exposure. Each joiner decrypts locally with the branch-key cache.
-The shared value carries only the provider's known/public boolean, never decrypted provider credentials.
+**Flight result shape**: The flight returns `refreshFlightResult{session, refreshed, trigger, client}`. The session contains encrypted tokens, never the decrypted token. Each on-demand joiner checks rejection before decrypting its own copy. The `refreshed` flag prevents another background refresh of a newly issued short-lived token.
+
+A background joiner retries only after an on-demand no-op that remains due and is not rejected. A rejected shared result causes no metadata lookup or locked follow-up. This narrows SR-003 exposure. The shared value carries only the provider's known/public boolean, never decrypted provider credentials.
 
 **Known operational behavior**:
-- If the provider keeps failing, each request in the window can start a new background attempt once
-  the previous one finishes. At most one attempt runs per session per replica, so the load is
-  bounded. Backoff is out of scope, because the spec requires only that failures be silent to the
-  caller.
+- Transient provider errors permit another background attempt after the previous attempt finishes. At most one runs per session per replica. Backoff is outside this feature. Transient errors and dropped work leave session state unchanged and permit an otherwise valid access token. A committed terminal rejection instead prevents future issuance and refresh attempts. It cannot recall a token already returned by the current exchange.
 - If a provider issues access tokens shorter than the lookahead, every exchange falls inside the
   window and refreshes continuously. The spec Assumptions direct operators to lower
   `lookahead_duration` for such providers. The quickstart and `docs/configuration.md` state this.
@@ -259,8 +262,7 @@ The shared value carries only the provider's known/public boolean, never decrypt
 ## R8 — Sweep execution model and the admin server write timeout (FR-006..FR-011, API-004)
 
 **Decision**:
-- The sweep runs **synchronously** in the request. It processes sessions **sequentially** in id
-  order, one page at a time.
+- The sweep runs synchronously in the request. It processes candidates sequentially in access-expiry, then UUID-byte order, one page at a time. Both adapters exclude known rejected rows before selection.
 - Before it starts, the handler lifts the per-request write deadline with
   `http.NewResponseController(w).SetWriteDeadline(time.Time{})`. The caller owns the overall timeout
   (the CronJob's HTTP client timeout and the admin proxy timeout), which matches the spec's
@@ -269,9 +271,7 @@ The shared value carries only the provider's known/public boolean, never decrypt
   sessions. Each per-session refresh runs under
   `refreshOperationContext(context.WithoutCancel(ctx))`, so a disconnect can never interrupt a refresh
   between the upstream response and the persisting `UPDATE` (R7 rotation hazard).
-- The sweep does **not** use `refreshGroup`. It calls the locked refresh directly. Under the row lock,
-  if a concurrent background or on-demand flight in the same process already refreshed the session,
-  the sweep's `AccessTokenExpiresBy(threshold)` re-check returns `false` and counts it as `skipped`.
+- The sweep does not use `refreshGroup`. It calls the locked refresh directly. A no-longer-due row counts as skipped. A row rejected after listing also counts as skipped without another token request. A newly observed rejection commits the flag and counts as failed once. Later sweeps exclude it. Due rows without refresh credentials remain failures on later sweeps. Dry runs skip rejected stale snapshots without a lock or provider call.
 
 **Rationale**:
 - The admin server applies a global `WriteTimeout: 15s` (`internal/adapters/http/server.go:189-194`).
@@ -364,12 +364,13 @@ The rows are evaluated in order, and the first match wins:
 | Condition | Example details | Sweep effect | Sweep log | Background log |
 |---|---|---|---|---|
 | `DetailSessionMissing` under lock (deleted mid-refresh) | `session_missing` | `skipped++` | DEBUG | DEBUG |
+| Already rejected under the lock | unchanged no-op, no new provider error | `skipped++` | DEBUG | DEBUG |
 | `KindCanceled` | `caller_canceled` | stop the sweep (client gone) | INFO | — |
 | `KindInfrastructure` ∧ dependency ∈ {`session_repository`, `provider_repository`} | `repository_unavailable`, `persistence_failed` | **abort → 500** | ERROR | ERROR |
 | `KindInfrastructure` ∧ dependency = `encryption` | `decryption_failed`, `encryption_failed` | `failed++`, continue | ERROR | ERROR |
 | `KindInfrastructure` ∧ dependency = `provider` | `provider_unavailable` | `failed++`, continue | WARN | WARN |
-| `KindSession` | `refresh_token_expired`, `refresh_unavailable` | `failed++`, continue | WARN | WARN |
-| `KindProvider` | `refresh_rejected`, `provider_rejected`, `provider_response_invalid` | `failed++`, continue | WARN | WARN |
+| `KindSession` | `refresh_unavailable`, `access_token_expired` | `failed++`, continue | WARN | WARN |
+| `KindProvider` | newly observed `refresh_rejected`, `provider_rejected`, `provider_response_invalid` | `failed++`, continue. Only terminal refresh rejection commits its flag. | WARN | WARN |
 | `KindConfiguration` | `provider_client_rejected`, `configuration` | `failed++`, continue | WARN | WARN |
 | `KindInternal` | `internal_unclassified` | `failed++`, continue | ERROR | ERROR |
 
@@ -393,6 +394,8 @@ so NFR-003's WARN for per-session sweep failures is met without double-logging.
 `event=session.oauth2.token_refreshed` INFO line with `triggered_by` (`background` | `on-demand` |
 `sweep`), `session_id`, and the session owner's `principal`. Log it only after commit.
 `ForceRefreshSession` (the end-user `POST /api/third-party/{serviceId}/session/refresh`) reports `triggered_by=on-demand`. No token material appears in the event.
+
+A rejection-state commit is not a successful token refresh. Return `refreshed=false`, log the failure, and do not emit `session.oauth2.token_refreshed` or increment a refresh-success counter. Later recorded-rejection errors contain no fabricated provider status or code. Manual refresh returns HTTP 409 `refresh_rejected` with `refresh token rejected by provider; reauthentication required`. Missing refresh credentials remain HTTP 409 `refresh_unavailable`. Non-terminal upstream errors remain HTTP 502 `refresh_failed`.
 
 *Metrics* (NFR-004): five monotonic `metric.Int64Counter` instruments are created once in the
 constructors from `otel.Meter("oauth2session")`, following the broker precedent of instruments
@@ -427,10 +430,12 @@ duplicate it.
 - US3-S3 (concurrent replicas) builds **two** `App`s from one shared `testStorage` and fires the
   sweeps concurrently at both admin servers.
 - US1-S1 uses a one-slot pool with a gated in-flight refresh. A second due exchange returns its valid token and emits a dropped-refresh WARN event. A healthy exchange still makes no upstream call. The baseline has no pool or drop event.
-- US2-S1 checks the new `session_id` and `triggered_by=on-demand` fields on an INFO success event after commit. US2-S2 and US2-S3 check exactly one ERROR failure event with those fields. The existing logs do not provide these fields, and the expired-refresh-token path has no failure event today.
-- Capture structured events with the existing `bootstrap.NewBufferedJSONLogger`. Each of the ten E2E cases must compile and fail on a concrete assertion before its feature implementation starts. Do not change working behavior to force failure.
+- US2-S1 checks `session_id` and `triggered_by=on-demand` on INFO success after commit. US2-S2 uses an expired access token without refresh credentials. US2-S3 checks one ERROR failure event and retained ciphertext after a new provider rejection.
+- US2-S3 also covers the real HTTP recovery lifecycle. A forced refresh of an unexpired one-hour access token returns 409 `refresh_rejected`. The retained list entry reports reauthentication required, unexpired access, and refresh ciphertext present. The next exchange returns 400 `invalid_grant`, a `/sessions` recovery URI, and no token without another provider request. A `PT2H` sweep evaluates zero rows even though the unchanged access expiry falls within its threshold. A real authorize/provider/callback flow clears rejection through upsert. The next exchange succeeds after one `authorization_code` grant.
+- The recovery context uses `bootstrap.NewTestServerBuilder(...).Build()` so the real callback URL exists before `app.Builder.Build()`. The separate admin listener uses `bootstrap.NewAdminTestServer(enduser.App(), logger)`. Redirects are followed explicitly. Broker authentication headers never reach the provider.
+- Capture structured events with `bootstrap.NewBufferedJSONLogger`. The original ten cases compiled and failed semantically before proactive implementation. The later validity regression forces rejection before access expiry, then asserts that acquisition returns no token. It fails behaviorally under the obsolete model, not at compilation.
 
-**Rationale**: Each case still maps to one scenario in this spec. The four baseline behaviors remain regression assertions, but every case also verifies a missing feature behavior and starts red.
+**Rationale**: The ten scenario identifiers remain stable. Rejection coverage extends US2-S3 with the full recovery journey. US3-S2 preserves repeated missing-credential failures. Repository and domain tests cover known rejection exclusion, stale rejection skips, and newly observed rejection failing once.
 
 ## R13 — ADR
 
@@ -445,7 +450,7 @@ implementation). It records:
 4. The rejected alternatives: internal ticker scheduler, distributed lease, async job API, and a new
    `UpdateTokensIfExists` write path.
 
-Number 038 is the next free number (`037-*` is the current maximum, and two ADRs share 037).
+ADR 038 records the original proactive-refresh design. ADR 040 narrowly supersedes its availability consequence for terminal provider rejection. Dropped work and transient background errors still permit an otherwise valid access token.
 
 **Rationale**: These are binding architectural choices that later features (for example, any
 internal scheduler) would have to supersede. Principle II requires them to be recorded.

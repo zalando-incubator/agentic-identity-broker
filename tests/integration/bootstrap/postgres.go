@@ -169,6 +169,11 @@ func (pg *SharedPostgres) ConnectionString(dbName string) string {
 	return fmt.Sprintf("postgres://testuser:testpass@%s:%s/%s?sslmode=disable", pg.host, pg.port, dbName)
 }
 
+// ContainerID lets integration tools join this disposable PostgreSQL network namespace.
+func (pg *SharedPostgres) ContainerID() string {
+	return pg.container.GetContainerID()
+}
+
 func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
 

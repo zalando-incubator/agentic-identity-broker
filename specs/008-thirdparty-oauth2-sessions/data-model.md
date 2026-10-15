@@ -29,7 +29,7 @@ The OAuth2 Session domain enables users to authenticate with third-party OAuth2 
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │ • Owns encrypted tokens                              │   │
 │  │ • Manages session lifecycle                          │   │
-│  │ • Tracks expiration status                           │   │
+│  │ • Tracks access expiry and refresh rejection         │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                           │                                  │
 │                           ▼                                  │
@@ -70,7 +70,7 @@ ThirdpartyOAuth2Service (existing)        UserGrant (existing)
 
 ### UserSession (Aggregate Root)
 
-Represents an authenticated OAuth2 session between a user (principal) and a third-party service. Owns the encrypted tokens and manages session lifecycle.
+Represents a retained OAuth2 session between a user and a third-party service. It stores encrypted tokens, access expiry, and observed refresh rejection.
 
 **Location**: `internal/domain/storage/user_session.go`
 
@@ -95,7 +95,7 @@ type UserSession struct {
     EncryptedRefreshToken  []byte             `json:"-" db:"encrypted_refresh_token"`
     TokenType              string             `json:"token_type" db:"token_type"`
     AccessTokenExpiresAt   *time.Time         `json:"access_token_expires_at,omitempty" db:"access_token_expires_at"`
-    RefreshTokenExpiresAt  *time.Time         `json:"refresh_token_expires_at,omitempty" db:"refresh_token_expires_at"`
+    RefreshTokenRejected   bool               `json:"-" db:"refresh_token_rejected"`
     Scope                  []string           `json:"scope" db:"scope"`
     EncryptionContext      EncryptionContext  `json:"encryption_context" db:"encryption_context"`
     InitiatedAt            time.Time          `json:"initiated_at" db:"initiated_at"`
@@ -136,6 +136,11 @@ func (ec *EncryptionContext) Scan(value interface{}) error {
 - `EncryptedAccessToken` must be non-empty (access token required)
 - `TokenType` defaults to "Bearer"
 - `InitiatedAt` set on creation, immutable
+- `RefreshTokenRejected=false` means no observed terminal rejection, not proven provider validity.
+- A qualifying provider rejection sets the flag without changing ciphertext, access expiry, scope, token type, or initiation time.
+- Recorded rejection stops future token issuance, even with an unexpired access token. The row remains until reauthorization or explicit termination.
+- Successful authorization callbacks clear rejection through upsert. Normal refresh cannot recover a rejected session.
+- Locked callback errors never persist changes. Rejection commits through `(true, nil)` before the service returns the captured provider error.
 
 **Business Methods**:
 
@@ -163,33 +168,22 @@ func (s *UserSession) Validate() error {
     return nil
 }
 
-// IsExpired returns true if the session's refresh token has expired.
-// Access token expiration does not mark session as expired (future auto-refresh).
-// Session without refresh token expiration is considered non-expiring.
-func (s *UserSession) IsExpired() bool {
-    if s.RefreshTokenExpiresAt == nil {
-        return false // No expiration set
-    }
-    return time.Now().After(*s.RefreshTokenExpiresAt)
+// RequiresReauthentication reports recorded rejection or exhausted access-only credentials.
+func (s *UserSession) RequiresReauthentication() bool {
+    return s.RefreshTokenRejected || (!s.HasValidAccessToken() && !s.CanRefresh())
 }
 
-// HasValidAccessToken returns true if access token has not expired.
+// HasValidAccessToken checks recorded access expiry only, not provider acceptance.
 func (s *UserSession) HasValidAccessToken() bool {
     if s.AccessTokenExpiresAt == nil {
-        return true // No expiration set
+        return true // Expiry is unknown, not permanent validity.
     }
     return time.Now().Before(*s.AccessTokenExpiresAt)
 }
 
-// CanRefresh returns true if session has a refresh token that hasn't expired.
+// CanRefresh reports stored credentials with no recorded provider rejection.
 func (s *UserSession) CanRefresh() bool {
-    if len(s.EncryptedRefreshToken) == 0 {
-        return false // No refresh token
-    }
-    if s.RefreshTokenExpiresAt == nil {
-        return true // No expiration set
-    }
-    return time.Now().Before(*s.RefreshTokenExpiresAt)
+    return !s.RefreshTokenRejected && len(s.EncryptedRefreshToken) > 0
 }
 ```
 
@@ -197,7 +191,7 @@ func (s *UserSession) CanRefresh() bool {
 
 ### UserSessionSummary (Read Model)
 
-A projection of UserSession for API responses, including dependent agent count.
+A projection of UserSession for API responses, including dependent-agent count. `HasRefreshToken` reports ciphertext presence, even after rejection.
 
 ```go
 // UserSessionSummary is a read model for displaying session information.
@@ -209,9 +203,9 @@ type UserSessionSummary struct {
     TokenType             string              `json:"token_type"`
     Scope                 []string            `json:"scope"`
     InitiatedAt           time.Time           `json:"initiated_at"`
-    IsExpired             bool                `json:"is_expired"`
-    AccessTokenExpired    bool                `json:"access_token_expired"`
-    RefreshTokenExpiresAt *time.Time          `json:"refresh_token_expires_at,omitempty"`
+    RequiresReauthentication bool            `json:"requires_reauthentication"`
+    AccessTokenExpired       bool            `json:"access_token_expired"`
+    HasRefreshToken          bool            `json:"has_refresh_token"`
     DependentAgentCount   int                 `json:"dependent_agent_count"`
     IsEncrypted           bool                `json:"is_encrypted"` // Always true
 }
@@ -225,14 +219,24 @@ func NewUserSessionSummary(session *UserSession, serviceDisplayName string, agen
         TokenType:             session.TokenType,
         Scope:                 session.Scope,
         InitiatedAt:           session.InitiatedAt,
-        IsExpired:             session.IsExpired(),
-        AccessTokenExpired:    !session.HasValidAccessToken(),
-        RefreshTokenExpiresAt: session.RefreshTokenExpiresAt,
+        RequiresReauthentication: session.RequiresReauthentication(),
+        AccessTokenExpired:       !session.HasValidAccessToken(),
+        HasRefreshToken:          len(session.EncryptedRefreshToken) > 0,
         DependentAgentCount:   agentCount,
         IsEncrypted:           true,
     }
 }
 ```
+
+The PostgreSQL summary query does not load token blobs. It uses SQL ciphertext presence and the recorded rejection flag for these booleans:
+
+```go
+summary.HasRefreshToken = record.HasRefreshToken
+summary.RequiresReauthentication = record.RefreshTokenRejected ||
+    (summary.AccessTokenExpired && !record.HasRefreshToken)
+```
+
+Missing access expiry means unknown expiry. It does not prove that the provider accepts the access token indefinitely.
 
 ---
 
@@ -519,7 +523,8 @@ type StateValidationFailedEvent struct {
 // One session per (principal, service_id) pair.
 type UserSessionRepository interface {
     // Create creates a new user session.
-    // Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
+    // Uses upsert semantics: successful authorization replaces tokens and clears rejection.
+    // Preserves the existing row identity and initiation time.
     // Returns error if:
     // - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
     // - Storage connection fails (StorageError with Kind=Connection)
@@ -549,7 +554,7 @@ type UserSessionRepository interface {
     DeleteByPrincipalAndService(ctx context.Context, principal, serviceID string) error
     
     // CountByService counts sessions referencing a service.
-    // Used to enforce deletion protection (cannot delete service with active sessions).
+    // Used for deletion protection, including retained sessions that require reauthentication.
     CountByService(ctx context.Context, serviceID string) (int, error)
 }
 ```
@@ -560,36 +565,18 @@ type UserSessionRepository interface {
 
 ### Session Lifecycle
 
+```text
+No session -- authorize / successful callback --> Session
+Session -- expired access + available refresh --> Refresh attempt available
+Session -- provider refresh rejection --> Reauthentication required (row retained)
+Session -- expired access + no refresh --> Reauthentication required (row retained)
+Reauthentication required -- Login / successful callback --> Active
+Any retained session -- explicit Terminate --> No session
 ```
-┌─────────────┐                              ┌─────────────┐
-│   No        │  InitiateOAuth2Flow()        │   Flow      │
-│   Session   │ ───────────────────────────► │   Started   │
-└─────────────┘                              └──────┬──────┘
-                                                    │
-                                         User approves at OAuth2 provider
-                                                    │
-                                                    ▼
-                                             ┌──────────────┐
-                         HandleCallback()   │   Active     │
-                         ◄──────────────────│   Session    │
-                                             └──────┬──────┘
-                                                    │
-                    ┌───────────────────────────────┼───────────────────────────────┐
-                    │                               │                               │
-                    ▼                               ▼                               ▼
-            ┌──────────────┐              ┌──────────────┐              ┌──────────────┐
-            │   Expired    │              │  Terminated  │              │   Active     │
-            │   Session    │              │   Session    │              │   Session    │
-            │ (refresh     │              │   (deleted)  │              │ (re-auth)    │
-            │  token exp)  │              └──────────────┘              └──────────────┘
-            └──────┬───────┘                                                    │
-                   │                                                            │
-                   ▼                                                            │
-         User must terminate                                                    │
-         and re-authenticate                                                    │
-                   │                                                            │
-                   └────────────────────────────────────────────────────────────┘
-```
+
+HTTP 4xx `invalid_grant`, excluding 429, records terminal refresh rejection. Later acquisition returns no token and does not call the provider again.
+Other provider or transport errors do not change the rejection flag. An otherwise valid access token remains usable.
+Login uses the real authorization and callback flow. Termination remains optional before reauthorization.
 
 ### OAuth2 Flow State Machine
 
@@ -652,10 +639,30 @@ type UserSessionRepository interface {
 
 ## Database Schema
 
-### Migration: 004_create_user_sessions.up.sql
+### Release Sequence: Preparation 038, Activation 039, Cleanup 040
+
+Keep original migration 004 and migration 037 unchanged. Each validity phase preserves rows and real token metadata without interpreting historical refresh dates:
+
+This PR ships only migration 038 and prepared broker/API/UI code. Migrations 039 and 040 belong to following PRs and are not present. PostgreSQL at 38 supports ordinary traffic but refuses true rejection writes as `persistence_failed`. The memory adapter supports the complete rejection lifecycle.
+
+| Phase | Contract |
+|---|---|
+| PR1: 038 prepare (this release) | Keep the legacy table shape unchanged. Add the explicit `user_session_state` view and stable invoker write functions. The view reports rejection=false. True rejection writes fail clearly. |
+| PR2: 039 activate (following PR) | After the PR1 rollout and all unprepared work drain, atomically add the false-default rejection flag and replace the view/functions. Keep the legacy column. Prepared brokers activate durable rejection without restart. |
+| PR3: 040 cleanup (following PR) | After schema dependencies and API consumer gates pass, remove only the unused legacy column. The table sample that follows describes this future phase. |
+
+Preparation/new brokers use the same SQL boundary at every phase. Locked view reads lock the underlying row. The legacy column serves storage compatibility only, never provider evidence. Existing unprepared binaries can coexist before 39 but do not enforce the new rejection policy.
+
+PR1 defaults and limits Helm targets to 38. Fresh installs run direct UP-all through 38. Normal upgrades use the guarded forward wrapper. Before merging or deploying PR2, complete PR1 and drain every old replica and in-flight operation. Before merging or deploying PR3, upgrade the embedded SPA and all external session-API consumers. Compatibility defaults true in preparation and activation. Modern consumers can explicitly select false. Cleanup defaults false after its consumer gate passes. The temporary alias is only `is_expired=requires_reauthentication`, without refresh dates.
+
+Online rollout requires at least two healthy replicas, no unavailable pods, ready surge capacity, a disruption budget, and sufficient traffic-drain time. Enable temporary session API compatibility until the SPA and external consumers support API v2. Fail-fast locks preserve the schema on contention while compatible replicas continue to serve. Short metadata locks can affect latency. There is no absolute latency guarantee.
+
+DOWN 040 restores only a nullable legacy column and retains rejection. DOWN 039 refuses until successful reauthentication or explicit termination resolves rejected rows. Drain preparation/new replicas before DOWN 038 removes their SQL boundary. Inspect actual schema and dirty metadata before manual repair, never automatic `Force`, rejection clearing, or row deletion. See the [runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-038040).
+
+### Planned Final user_sessions Table (PR3, After Migration 040)
 
 ```sql
--- Migration: 004_create_user_sessions.up.sql
+-- Current schema reference, not a replacement for migration 004.
 -- Purpose: Create user_sessions table for storing OAuth2 session data
 -- Feature: 008-thirdparty-oauth2-sessions
 
@@ -667,7 +674,7 @@ CREATE TABLE user_sessions (
     encrypted_refresh_token BYTEA,
     token_type VARCHAR(50) NOT NULL DEFAULT 'Bearer',
     access_token_expires_at TIMESTAMPTZ,
-    refresh_token_expires_at TIMESTAMPTZ,
+    refresh_token_rejected BOOLEAN NOT NULL DEFAULT FALSE,
     scope TEXT[] NOT NULL DEFAULT '{}',
     encryption_context JSONB NOT NULL DEFAULT '{}',
     initiated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -675,14 +682,14 @@ CREATE TABLE user_sessions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     
     -- Foreign key to thirdparty_oauth2_services (ON DELETE RESTRICT)
-    -- Cannot delete service with active sessions
+    -- Cannot delete a service while retained session rows reference it.
     CONSTRAINT fk_user_sessions_service 
         FOREIGN KEY (service_id) 
         REFERENCES thirdparty_oauth2_services(id) 
         ON DELETE RESTRICT,
     
     -- Unique constraint: one session per user per service
-    -- Prevents race conditions; first callback wins
+    -- Successful callbacks replace credentials through upsert.
     CONSTRAINT user_sessions_principal_service_unique 
         UNIQUE (principal, service_id)
 );
@@ -736,7 +743,7 @@ The following terms should be added to `ARCHITECTURE.md` Glossary section:
 
 | Term | Definition |
 |------|------------|
-| **UserSession** | An authenticated OAuth2 session between a user (principal) and a third-party service. Contains encrypted access/refresh tokens, scope, and expiration metadata. One session per (principal, service_id) pair. |
+| **UserSession** | A retained OAuth2 session between a user and a third-party service. Stores encrypted tokens, scope, access expiry, and observed refresh rejection. One row per principal and service. |
 | **OAuth2StateToken** | A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. Contains principal, PKCE verifier, service_id, and redirect_uri. Short-lived (10 min TTL) to limit exposure. |
 | **PKCE** | Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random secret) and code_challenge (SHA256 hash of verifier). |
 | **Token Vault** | Secure storage for encrypted OAuth2 tokens. Tokens are encrypted using AES-GCM with encryption context binding them to principal, service, and session. |

@@ -57,10 +57,8 @@ func TestDiagnosticClassificationContract(t *testing.T) {
 		{DetailGrantRepositoryUnavailable, StageGrantAuthorization, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailSessionMissing, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailAccessTokenExpired, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
-		{DetailRefreshTokenExpired, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailRefreshUnavailable, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailAccessTokenExpired, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
-		{DetailRefreshTokenExpired, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailRefreshUnavailable, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailRefreshRejected, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailProviderClientRejected, StageRefresh, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
@@ -106,7 +104,6 @@ func TestSessionDiagnosticPreservesOriginAndCause(t *testing.T) {
 	}{
 		{oauth2session.DetailSessionMissing, StageSessionLookup, DetailSessionMissing},
 		{oauth2session.DetailAccessTokenExpired, StageSessionLookup, DetailAccessTokenExpired},
-		{oauth2session.DetailRefreshTokenExpired, StageSessionLookup, DetailRefreshTokenExpired},
 		{oauth2session.DetailRefreshUnavailable, StageSessionLookup, DetailRefreshUnavailable},
 		{oauth2session.DetailRefreshRejected, StageRefresh, DetailRefreshRejected},
 		{oauth2session.DetailProviderClientRejected, StageRefresh, DetailProviderClientRejected},

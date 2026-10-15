@@ -8,6 +8,40 @@
       "minimum": 1,
       "description": "Number of broker pod replicas"
     },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Deployment strategy. Online upgrades require RollingUpdate with maxUnavailable=0 and maxSurge at least 1.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["RollingUpdate", "Recreate"]
+        },
+        "rollingUpdate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxUnavailable": {
+              "anyOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^(100|[1-9]?\\d)%$" }
+              ]
+            },
+            "maxSurge": {
+              "anyOf": [
+                { "type": "integer", "minimum": 0 },
+                { "type": "string", "pattern": "^(100|[1-9]?\\d)%$" }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Pod termination grace. Must exceed broker shutdown timeout and allow traffic draining."
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -460,6 +494,13 @@
           "type": "boolean",
           "description": "Run database migrations"
         },
+        "targetVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 38,
+          "default": 38,
+          "description": "Forward-only schema target, default and maximum 38 in this preparation release. Fresh installs run all available UP migrations. PostgreSQL upgrades refuse 0 and inspect version/dirty state before advancing to a positive target, never downgrading."
+        },
         "image": {
           "type": "object",
           "additionalProperties": false,
@@ -604,6 +645,11 @@
           "additionalProperties": false,
           "description": "OAuth2 third-party service configuration",
           "properties": {
+            "sessionAPICompatibility": {
+              "type": "boolean",
+              "default": true,
+              "description": "Temporarily include is_expired=requires_reauthentication by default during preparation and activation. Set false explicitly for API v2-only consumers."
+            },
             "jweSigningKey": {
               "type": "string",
               "description": "Raw 32-byte JWE signing key; the chart base64-encodes it into the broker-facing Secret string"

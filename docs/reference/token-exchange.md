@@ -211,10 +211,12 @@ No service has the requested URI in its `protected_resources`.
 ```
 
 Rejected subject credentials do not require provider-session recovery.
-A missing, expired, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
-This URI opens the existing session-management page. It does not automatically start provider login.
-The page's Refresh action uses an existing refresh token. It cannot replace a missing or rejected token.
-Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
+A missing, exhausted access-only, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
+This URI opens session management. It does not automatically start provider login.
+Refresh uses stored, not-known-rejected credentials. Recorded rejection offers Login for reauthentication and optional explicit Terminate.
+HTTP 4xx `invalid_grant`, except 429, persists the rejection flag while retaining ciphertext and access expiry.
+Subsequent broker token issuance stops even while access remains unexpired. Successful authorization/callback upsert clears rejection.
+Absent refresh credentials and observed provider rejection are distinct causes. The broker does not predict third-party refresh expiry.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
@@ -287,9 +289,10 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
-Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
+Missing, exhausted access-only, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
 Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
-Provider refresh rejection and recorded local expiry are distinct causes.
+Access-token expiry, absent refresh credentials, and recorded provider rejection have distinct diagnostics.
+Later attempts on recorded rejection contain no new provider status or code. Unknown access expiry does not imply permanent validity.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
 

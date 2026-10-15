@@ -98,7 +98,7 @@ func (r *InMemoryUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return session, nil
 }
 
-// WithLockedSession serializes refreshes for one session while leaving other sessions available.
+// WithLockedSession serializes persisted state changes for one session while leaving other sessions available.
 func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
@@ -159,7 +159,7 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 		if err := ctx.Err(); err != nil {
 			return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 		}
-		if session.AccessTokenExpiresAt == nil || session.AccessTokenExpiresAt.After(threshold) {
+		if session.RefreshTokenRejected || session.AccessTokenExpiresAt == nil || session.AccessTokenExpiresAt.After(threshold) {
 			continue
 		}
 		if hasCursor && compareSessionExpiryKey(session, cursor.AccessTokenExpiresAt, cursor.ID) <= 0 {
@@ -212,10 +212,6 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 			expiry := *session.AccessTokenExpiresAt
 			snapshot.AccessTokenExpiresAt = &expiry
 		}
-		if session.RefreshTokenExpiresAt != nil {
-			expiry := *session.RefreshTokenExpiresAt
-			snapshot.RefreshTokenExpiresAt = &expiry
-		}
 		selected[i] = &snapshot
 	}
 	if err := ctx.Err(); err != nil {
@@ -234,7 +230,7 @@ func compareSessionExpiryKey(session *storage.UserSession, expiry time.Time, ses
 
 var _ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)
 
-// ListByPrincipal retrieves all sessions for a principal, including expired ones.
+// ListByPrincipal retrieves all sessions for a principal, including those requiring reauthentication.
 func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
 		return nil, errors.New("principal required")
@@ -275,14 +271,14 @@ func (r *InMemoryUserSessionRepository) ListActiveServiceIDsByPrincipal(_ contex
 	defer r.mu.RUnlock()
 	ids := make([]id.ServiceID, 0)
 	for _, session := range r.sessions {
-		if session.Principal == principal && !session.IsExpired() {
+		if session.Principal == principal && !session.RequiresReauthentication() {
 			ids = append(ids, session.ServiceID)
 		}
 	}
 	return ids, nil
 }
 
-// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
+// ListActiveByPrincipal retrieves sessions that do not require reauthentication.
 func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
 		return nil, errors.New("principal required")
@@ -293,7 +289,7 @@ func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 
 	var sessions []*storage.UserSession
 	for _, session := range r.sessions {
-		if session.Principal == principal && !session.IsExpired() {
+		if session.Principal == principal && !session.RequiresReauthentication() {
 			sessions = append(sessions, session)
 		}
 	}
