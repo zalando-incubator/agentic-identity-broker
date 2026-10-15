@@ -12,10 +12,9 @@ import (
 	"github.com/lib/pq"
 )
 
-const userSessionColumns = `id, principal, service_id, callback_id,
-	encrypted_access_token, encrypted_refresh_token, token_type,
-	access_token_expires_at, refresh_token_expires_at, scope,
-	encryption_context, initiated_at, created_at, updated_at`
+const userSessionColumns = `id, principal, service_id, callback_id, upstream_client_id,
+encrypted_access_token, encrypted_refresh_token, token_type, access_token_expires_at,
+refresh_token_expires_at, scope, encryption_context, initiated_at, created_at, updated_at`
 
 const listExpiringSessionsFirstPageQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
@@ -44,6 +43,7 @@ type userSessionRecord struct {
 	Principal             id.Principal              `db:"principal"`
 	ServiceID             id.ServiceID              `db:"service_id"`
 	CallbackID            string                    `db:"callback_id"`
+	UpstreamClientID      *string                   `db:"upstream_client_id"`
 	EncryptedAccessToken  []byte                    `db:"encrypted_access_token"`
 	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
 	TokenType             string                    `db:"token_type"`
@@ -84,6 +84,10 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 		CreatedAt:             r.CreatedAt,
 		UpdatedAt:             r.UpdatedAt,
 	}
+	if r.UpstreamClientID != nil {
+		clientID := id.ClientID(*r.UpstreamClientID)
+		s.UpstreamClientID = &clientID
+	}
 	if s.Scope == nil {
 		s.Scope = []string{}
 	}
@@ -123,6 +127,11 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 	if session.ID.IsZero() {
 		session.ID = id.NewSessionID()
 	}
+	var upstreamClientID *string
+	if session.UpstreamClientID != nil {
+		clientID := session.UpstreamClientID.String()
+		upstreamClientID = &clientID
+	}
 
 	// The share lock serializes issuer and audience checks with provider updates,
 	// which take the service row's exclusive lock before counting sessions.
@@ -130,20 +139,21 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
-			encryption_context, initiated_at, created_at, updated_at, callback_id
+			encryption_context, initiated_at, created_at, updated_at, callback_id, upstream_client_id
 		)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		FROM thirdparty_oauth2_services AS service
 		WHERE service.id = $3
-			AND ((service.resource_url IS NULL AND $15::text = '' AND $16::text = '')
-				OR (service.resource_url IS NOT NULL AND $15::text <> '' AND $16::text <> ''
-					AND service.issuer_uri = $15::text AND service.authorization_params ->> 'resource' = $16::text))
+			AND ((service.resource_url IS NULL AND $16::text = '' AND $17::text = '')
+				OR (service.resource_url IS NOT NULL AND $16::text <> '' AND $17::text <> ''
+					AND service.issuer_uri = $16::text AND service.authorization_params ->> 'resource' = $17::text))
 		FOR SHARE OF service
 		ON CONFLICT (principal, service_id)
 	`
 	query := insertQuery + `DO NOTHING`
 	if replace {
 		query = insertQuery + `DO UPDATE SET
+			upstream_client_id = EXCLUDED.upstream_client_id,
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
 			token_type = EXCLUDED.token_type,
@@ -164,7 +174,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-		session.CallbackID, session.ExpectedIssuerURI, session.ExpectedResource,
+		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource,
 	)
 	if err != nil {
 		return nil, r.wrapError(err, "Create")
@@ -257,8 +267,8 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return recordToSession(&rec), nil
 }
 
-// WithLockedSession re-reads one session under a row lock and, when the callback reports a change,
-// commits its tokens, expiries, token type, scope and encryption context in the same transaction.
+// WithLockedSession re-reads one session under a row lock and commits token changes atomically.
+// A new callback generation may also replace the established upstream client identity.
 func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
@@ -300,9 +310,16 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
 	session := recordToSession(&rec)
+	upstreamClientID := session.UpstreamClientID
 	updated, err := refresh(ctx, session)
 	if err != nil {
 		return nil, err
+	}
+	if session.CallbackID == rec.CallbackID {
+		session.UpstreamClientID = upstreamClientID
+		if upstreamClientID != nil {
+			*upstreamClientID = id.ClientID(*rec.UpstreamClientID)
+		}
 	}
 	if updated {
 		if err := session.Validate(); err != nil {
@@ -311,10 +328,10 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
 			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
-			encryption_context = $7, updated_at = $8, callback_id = $9 WHERE id = $10`,
+			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10 WHERE id = $11`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
 			session.RefreshTokenExpiresAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
-			session.UpdatedAt, session.CallbackID, session.ID)
+			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")

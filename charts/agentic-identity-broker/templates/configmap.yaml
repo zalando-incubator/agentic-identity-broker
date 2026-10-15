@@ -80,6 +80,10 @@ data:
       {{- if .Values.broker.thirdPartyOauth2.clientName }}
       client_name: {{ .Values.broker.thirdPartyOauth2.clientName | quote }}
       {{- end }}
+      {{- with .Values.broker.thirdPartyOauth2.credentialFiles }}
+      credential_files:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
     # Proactive third-party token refresh configuration
     token_refresh:

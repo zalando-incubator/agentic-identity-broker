@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/credentialfile"
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/enduser"
@@ -743,7 +744,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		cfg,
 		b.logger,
 	).WithCIMDAssertionSigner(app.CIMDAssertionSigner).
-		WithDiscoveryTokenHTTPClient(discoveryTokenClient)
+		WithDiscoveryTokenHTTPClient(discoveryTokenClient).
+		WithCredentialFileReader(credentialfile.New())
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(

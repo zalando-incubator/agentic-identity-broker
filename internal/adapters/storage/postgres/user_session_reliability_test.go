@@ -79,9 +79,9 @@ func TestUserSessionReadsAfterSchemaExpansion(t *testing.T) {
 		}
 		require.NoError(t, repo.Create(ctx, sessions[i]))
 	}
-	_, err := adapter.db.ExecContext(ctx, `ALTER TABLE user_sessions ADD COLUMN upstream_client_id TEXT`)
+	_, err := adapter.db.ExecContext(ctx, `ALTER TABLE user_sessions ADD COLUMN future_metadata TEXT`)
 	require.NoError(t, err)
-	_, err = adapter.db.ExecContext(ctx, `UPDATE user_sessions SET upstream_client_id = 'established-client' WHERE id = $1`, sessions[0].ID)
+	_, err = adapter.db.ExecContext(ctx, `UPDATE user_sessions SET future_metadata = 'established-client' WHERE id = $1`, sessions[0].ID)
 	require.NoError(t, err)
 
 	t.Run("Get", func(t *testing.T) {
@@ -152,7 +152,7 @@ func TestUserSessionReadsAfterSchemaExpansion(t *testing.T) {
 		assert.Equal(t, expected.EncryptedAccessToken, got.EncryptedAccessToken)
 		assert.Equal(t, expected.EncryptedRefreshToken, got.EncryptedRefreshToken)
 		var established string
-		require.NoError(t, adapter.db.GetContext(ctx, &established, `SELECT upstream_client_id FROM user_sessions WHERE id = $1`, expected.ID))
+		require.NoError(t, adapter.db.GetContext(ctx, &established, `SELECT future_metadata FROM user_sessions WHERE id = $1`, expected.ID))
 		assert.Equal(t, "established-client", established)
 	})
 }

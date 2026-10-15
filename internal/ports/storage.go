@@ -282,6 +282,7 @@ type UserSessionRepository interface {
 // refresh and by re-connect. The callback sees the latest session under a lock; it returns true
 // only when it has changed the session and the adapter must atomically persist the encrypted
 // tokens, both expiries, token type, scope, encryption context and callback generation.
+// Only a new callback generation may replace the established upstream client identity.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)

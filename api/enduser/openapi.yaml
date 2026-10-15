@@ -1468,6 +1468,9 @@ paths:
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
           `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
           landing-page `error_uri`. The stored session is left unchanged.
+        - A missing required client-identity association or a mismatch with the selected client ID
+          returns 400 `invalid_grant` with the same sessions landing-page `error_uri`.
+          The broker stops before provider authentication and leaves the established session unchanged.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never

@@ -292,9 +292,8 @@ migration:
   hookWeight: -5
 
   # Job configuration
-  # -- Job backoff limit (retry attempts)
-  # Higher value needed for Zalando operator as PostgreSQL takes time to initialize
-  backoffLimit: 10
+  # -- Job retry attempts. Dirty migration metadata requires operator recovery.
+  backoffLimit: 0
   # -- TTL for completed/failed jobs (cleanup delay in seconds)
   ttlSecondsAfterFinished: 300
 
@@ -330,6 +329,11 @@ broker:
   # Keep IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL false in production.
   # True requires explicit GO_ENV=development; all other environments reject it.
   extraEnv: []
+
+  # -- Additional Kubernetes volumes for the broker pod
+  extraVolumes: []
+  # -- Additional Kubernetes volume mounts for the broker container
+  extraVolumeMounts: []
 
   # Logging
   log:
@@ -423,6 +427,8 @@ broker:
     jweSigningKeySecret:
       name: ""
       key: signing-key
+    # -- Exact canonical-ID bindings to client_id_file and client_secret_file absolute paths; service source selection is separate
+    credentialFiles: {}
 
   # -- Encryption configuration
   encryption:

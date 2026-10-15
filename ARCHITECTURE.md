@@ -775,9 +775,66 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **Session-expiry index**: Migration `037` creates the B-tree index `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY`. The key order matches the expiry-then-UUID sweep cursor. DOWN uses `DROP INDEX CONCURRENTLY`. The separate migration image invokes `golang-migrate` directly. Both SQL files retain `-- migrate:no-transaction` as an informational comment, not an enforced directive. [ADR 039](adrs/039-concurrent-session-expiry-index.md) accepts this named non-atomic exception with direct execution. No preflight checks the SQL pair: a missing DOWN can go unnoticed until after UP. A failed build can leave an invalid index and a dirty `schema_migrations` version. Recovery inspects `pg_index.indisvalid`, both ordered keys, and the migration version before any change. After stopping competing migration Jobs, operators drop only a confirmed invalid index with schema-qualified `DROP INDEX CONCURRENTLY` outside a transaction. They use `migrate force 36` or `migrate force 37` only after reviewing actual schema state. Force changes metadata, not the index. See [the runbook](docs/operations/session-sweep.md).
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange and refresh retry transient failures, but not permanent OAuth errors.
-- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
-- Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
+- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of stored confidential provider `client_secret` values via the `Secret` value object. Filesystem, public, and CIMD services use an absent secret. No other layer touches `EncryptionPort` for provider secrets.
+- Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
+
+**Implemented credential sources and operation boundaries (feature 051, unreleased)**:
+
+**Approval, 2026-10-08**: The user explicitly selected “Accept ADR 038” and “Major contract bump to 2.0.0”. [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md) is Accepted. Source selection, file acquisition, identity checks, and both-store persistence are implemented. Historical design approval and semantic-red evidence remain in the [quickstart](specs/051-oauth2-secret-file-overrides/quickstart.md#status-and-prerequisites). This feature is unreleased. No registry publication or live deployment occurred.
+
+The registered service owns `credential_source: stored | filesystem`. Creation omission selects stored. Update omission preserves the source without changing unrelated PUT semantics. Stored mode ignores bindings. Public clients, CIMD confidential clients, and Google-flavor services reject filesystem selection and retain existing behavior without file access.
+
+Filesystem mode requires a canonical ID and rejects either supplied inline credential field, including null or empty input. The service stores no file client ID or secret placeholder and uses `NewAbsentSecret()`. Administrative, consent, and session metadata operations never resolve files. Filesystem administrative responses omit both inline credentials and expose no paths or internal transition evidence.
+
+**Administrative API approval and versioning (feature 051)**:
+
+Published release `v0.1.81` contains Admin API `1.0.0`. Its `Service` response requires `client_id`, so filesystem omission is a breaking contract change. Admin API `2.0.0` replaces that contract on the existing `/api/services` and `/api/services/{service-id}` routes. No versioned route, compatibility endpoint, shim, or alias is introduced. The OpenAPI contract version is separate from the broker release tag.
+
+The approved contract appears in [`api/admin/openapi.yaml`](api/admin/openapi.yaml). OpenAPI 3.0 `oneOf`, `required`, and `not` schemas define the source-specific request and response shapes. List, get, create, and update responses always report the source. Stored responses always include the stored client ID and preserve applicable `REDACTED` secret output. Filesystem responses forbid both inline fields, including null values or a synthetic redaction placeholder.
+
+Creation omission selects stored. Update omission preserves the current source. Explicit null, unknown selectors, and filesystem inline-field presence are invalid. Filesystem mode requires a valid canonical ID and rejects public, CIMD confidential, and Google-flavor services. Administrative inputs cannot supply credential-file paths or internal transition evidence.
+
+PUT remains a full replacement with existing documented omission exceptions. Source transitions update the source, credentials, and irreversible transition evidence atomically. The reverse transition requires both explicit non-empty inline credentials, never imported file values. Existing error envelopes, ETags, protected-resource preconditions, methods, endpoints, and unrelated validation remain unchanged. End-user API and operational error contracts remain unchanged.
+
+An OpenAPI request cannot inspect the previous service record. The domain enforces omitted-source updates, the resulting canonical ID, and stricter reverse-transition credentials against that record. Repository administrative consumers use the source-aware contract. External consumers must migrate as documented in the [Admin API 2.0.0 migration guide](docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200). The Admin API version does not announce a broker release.
+
+The relationships and ownership are:
+
+| Concept | Owner and relationship |
+|---|---|
+| Credential source | The existing service model defines the source. `ThirdpartyOAuth2ProviderService` validates source changes and owns stored-secret encryption. |
+| Transition evidence | The service owns internal `credential_source_transitioned`. Both stores persist it atomically with source and credential changes. |
+| Filesystem credential binding | Operator configuration maps an exact, case-sensitive canonical ID to two absolute paths. Builder injects the immutable snapshot. A binding never selects a source. |
+| Operation credentials | `OAuth2SessionService` selects required values through one shared path. `ports.CredentialFileReader` separates file I/O from domain rules. |
+| Client-identity association | Existing JWE authorization context and `UserSession` retain the established non-secret identity. The session domain enforces it before provider authentication. |
+| Credential-source error | The domain model owns the safe category. The file adapter translates OS errors. The session domain supplies binding and identity errors. |
+
+The three operation boundaries are:
+
+| Boundary | Filesystem action | Eligible stored action and identity rule |
+|---|---|---|
+| Authorization initiation | Call `ReadClientID(path string) (string, error)` once. Never access the secret path. | Select the stored client ID without file access. Both modes seal their effective identity in the existing JWE. |
+| Code exchange | Call `ReadPair(clientIDPath, clientSecretPath string) (clientID, clientSecret string, err error)` once per broker-owned exchange attempt. | Select stored credentials without file access. Both modes compare the selected ID with the sealed initiating ID before provider authentication. |
+| Token refresh | Call `ReadPair` once per logical refresh operation; safe HTTP retries reuse the validated pair. | Select stored credentials without file access. Both modes compare the selected ID with the established session ID before provider authentication. |
+
+`ReadPair` opens both current targets before either bounded read. After both reads, it revalidates both configured paths against their open descriptors with `os.SameFile`. A changed target produces `generation_changed`, no partial pair, and no acquisition retry. Both descriptors close before return on every path. The reader follows current symlink targets, rejects non-regular files without blocking, and enforces 65,536 bytes per file before whitespace removal. It trims surrounding whitespace and rejects empty results.
+
+Pair coherence requires complete publication through fresh immutable targets. Providers never modify published targets or reuse retired targets during acquisition. Publication after validation can leave an in-flight operation using its validated pair. Later acquisitions use current targets. Identity checks and provider validity still apply. Credentials, descriptors, and last-known values never persist across operations.
+
+New eligible authorizations in both modes capture `OAuth2StateTokenClaims.UpstreamClientID` as `upstream_client_id,omitempty`. Successful exchange copies that verified identity to `UserSession.UpstreamClientID`. Both stores preserve nullable session `upstream_client_id`, including locked refresh copies. Public session JSON excludes the field. File secrets and paths never persist. Client identity is not encryption AAD.
+
+The internal transition marker starts false on creation and legacy backfill. An actual source change atomically sets it true with credential removal or replacement. It never resets. No-op selections and metadata updates preserve it. Source transitions never rewrite established identities. Mismatches stop before provider authentication and require a new connection. Matching identities can continue, subject to provider validity.
+
+Legacy missing identity remains usable only for stored services whose transition marker is false. Filesystem mode or a prior transition produces `identity_missing`, including after returning to stored. The broker never infers legacy identity from current credentials. Excluded flows remain unchanged.
+
+Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
+
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the sessions landing page as `error_uri` before provider authentication. Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+
+Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
+
+Stored-secret encryption remains domain-owned. Session-token AAD remains exactly `service_id`. Public PKCE, confidential auth-style negotiation, CIMD trust domains, provider retry policy, refresh locking, and singleflight remain unchanged.
 
 **Secret Value Object** (`internal/domain/model/secret.go`):
 
@@ -1498,7 +1555,7 @@ Define any project-specific terms or acronyms.)
 
 **Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
 
-**ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Manual services retain their existing credentials and methods. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
+**ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Static confidential providers in stored mode retain a client ID and an encrypted `Secret` value object. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
 **Provider Authorization Parameters**: Administrator-managed OAuth2 request parameters on a `ThirdpartyOAuth2Provider`, not end-user input. Other parameters keep their existing authorization-URL behavior. For a discovery-backed service, `authorization_params.resource` is the single effective RFC 8707 token audience on authorization, code exchange, and refresh. It does not claim ownership of a protected resource. The source of this value appears only in the response field `discovery.authorization_param_resource_strategy`.
 
@@ -1506,7 +1563,7 @@ Define any project-specific terms or acronyms.)
 
 **Public client**: A manual or DCR service with `token_endpoint_auth_method: none`. It stores no client credential. Authorization-code requests use PKCE S256. Its token requests send its client ID but no client credential.
 
-**Static confidential client**: A manual service with an omitted or `null` authentication method. It stores an encrypted client secret. It retains the existing upstream authentication-style negotiation for code exchange and token refresh.
+**Static confidential client**: A manual service with an omitted or `null` authentication method. Stored mode retains an encrypted client credential. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. Both modes use the existing upstream client-authentication negotiation.
 
 **Configured discovery URL**: `discovery.resource_url` is the protected-resource identifier that an administrator supplies for an unauthenticated probe. It can derive the effective audience but does not itself claim an RFC 8693 routing resource. In contrast, `discovery.metadata_url` selects an authorization-server metadata endpoint directly and keeps the older transport and fallback.
 
@@ -1524,7 +1581,19 @@ Define any project-specific terms or acronyms.)
 
 **Broker client name**: The optional deployment-wide `third_party_oauth2.client_name` sent as DCR `client_name`. It identifies the broker or platform, not the service's `display_name`. An absent or blank value blocks DCR before registration but does not block startup, manual services, or hosted CIMD.
 
-**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a secretless public or CIMD confidential service. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
+**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a filesystem, public, or CIMD confidential service without a stored secret. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
+
+The next five entries describe feature 051's implemented, unreleased model under [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
+
+**Credential source**: The service-owned choice of `stored` or `filesystem` credentials. The third-party domain validates it, and both stores persist it. Internal `credential_source_transitioned` starts false on creation/backfill, becomes true atomically on an actual transition, and never resets. It prevents legacy missing-identity reuse after a source round trip. No-op selections and metadata updates preserve it. The administrative API never exposes the marker.
+
+**Filesystem credential binding**: Operator configuration that associates one exact, case-sensitive service canonical ID with `client_id_file` and `client_secret_file` absolute paths. Builder supplies the immutable snapshot to the session domain. A binding never selects the service source or persists on the service. An absent binding stops a filesystem operation. Pair acquisition depends on fresh immutable targets and no retired-target reuse during acquisition.
+
+**Operation credentials**: Normalized file values that the session domain obtains through `CredentialFileReader` for one operation. Initiation obtains only the client ID. Exchange and refresh obtain one coherent pair per attempt. The reader opens both descriptors before reads and revalidates both paths with `os.SameFile` after both reads. Target changes return `generation_changed` without partial values or acquisition retries. File secrets, descriptors, and last-known values never persist across operations.
+
+**Client-identity association**: The established non-secret client ID in an eligible authorization's JWE and its resulting `UserSession`. New eligible stored and filesystem flows capture `UpstreamClientID`. Both modes compare it with selected credentials before exchange or refresh, including after source transitions. A mismatch requires a new connection. Missing legacy identity is usable only for never-transitioned stored services. Transitions never rewrite it, and it is neither public metadata nor encryption AAD.
+
+**Credential-source error**: A safe domain failure that stops mandatory-source use before provider authentication. The reader supplies file reasons. The session domain supplies binding and identity reasons. Closed reasons include `missing_binding`, `identity_missing`, `identity_mismatch`, and `generation_changed`. Errors expose no file contents, paths, or raw OS chains. They retain generic client-facing responses and remain distinct from provider rejection.
 
 **OAuth Scope**: A specific permission defined by an OAuth2 provider (e.g., "repo", "user:email"). Each scope has a scope_value (the OAuth scope string) and a human-readable description. Scopes are defined per service and validated during grant creation.
 

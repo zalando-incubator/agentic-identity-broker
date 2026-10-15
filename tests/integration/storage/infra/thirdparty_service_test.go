@@ -81,6 +81,73 @@ func TestAuthorizationParamsOmittedUpdatePreservesResponseAndStorage(t *testing.
 	assert.Equal(t, map[string]string{"business_partner_id": "12345"}, stored.AuthorizationParams)
 }
 
+func TestProtectedResourceUpdatePreservesUnchangedCreatedAt(t *testing.T) {
+	ctx, repo, providerService, shared, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name      string
+		resources []string
+		implicit  bool
+		stale     bool
+	}{
+		{name: "omitted-resource metadata", implicit: true},
+		{name: "normalized-equivalent membership", resources: []string{"https://api.example.test/b/", "https://api.example.test/a/"}},
+		{name: "genuine replacement", resources: []string{"https://api.example.test/c"}},
+		{name: "empty replacement", resources: []string{}},
+		{name: "stale CAS", resources: []string{"https://api.example.test/c"}, stale: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entity := createTestService(uuid.NewString(), "Resource timestamps", []string{"https://api.example.test/a", "https://api.example.test/b"})
+			require.NoError(t, providerService.Create(ctx, entity))
+			t.Cleanup(func() { require.NoError(t, repo.Delete(ctx, entity.ID)) })
+			shared.ExecuteSQL(t, dbName, fmt.Sprintf(`UPDATE service_protected_resources SET created_at = '2020-01-02 03:04:05+00' WHERE service_id = '%s'`, entity.ID))
+			snapshot := func() string {
+				return shared.QuerySQL(t, dbName, fmt.Sprintf(`SELECT COALESCE(jsonb_agg(jsonb_build_array(resource_uri, service_id, created_at) ORDER BY resource_uri), '[]'::jsonb)::text FROM service_protected_resources WHERE service_id = '%s'`, entity.ID))
+			}
+			persisted, err := repo.Get(ctx, entity.ID)
+			require.NoError(t, err)
+			version := persisted.Version
+			var expectedVersion *int64
+			if !tc.implicit {
+				expectedVersion = &version
+			}
+			if tc.stale {
+				_, err := repo.AddProtectedResource(ctx, entity.ID, "https://api.example.test/concurrent")
+				require.NoError(t, err)
+				persisted, err = repo.Get(ctx, entity.ID)
+				require.NoError(t, err)
+			}
+			before := snapshot()
+			candidate := *persisted
+			candidate.DisplayName = "Updated resource timestamps"
+			candidate.Secret = model.NewPlaintextSecret("test-secret")
+			candidate.ProtectedResources = tc.resources
+			err = providerService.Update(ctx, &candidate, expectedVersion)
+			if tc.stale {
+				var storageErr *storage.StorageError
+				require.ErrorAs(t, err, &storageErr)
+				assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+				assert.Equal(t, before, snapshot())
+			} else {
+				require.NoError(t, err)
+			}
+			updated, err := repo.Get(ctx, entity.ID)
+			require.NoError(t, err)
+			switch {
+			case tc.stale:
+				assert.Equal(t, persisted.Version, updated.Version)
+			case tc.implicit || tc.name == "normalized-equivalent membership":
+				assert.Equal(t, before, snapshot(), "unchanged membership must preserve ownership and creation timestamps")
+				assert.Equal(t, persisted.Version+1, updated.Version)
+			default:
+				assert.Equal(t, tc.resources, updated.ProtectedResources)
+				assert.Equal(t, persisted.Version+1, updated.Version)
+			}
+		})
+	}
+}
+
 // newTestEncryption creates a real memory encryption adapter using the deterministic test KEK.
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()

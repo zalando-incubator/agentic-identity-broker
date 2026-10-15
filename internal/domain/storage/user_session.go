@@ -20,10 +20,11 @@ type SessionExpiryCursor struct {
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
 type UserSession struct {
-	ID         id.SessionID `json:"id" db:"id"`
-	Principal  id.Principal `json:"principal" db:"principal"`
-	ServiceID  id.ServiceID `json:"service_id" db:"service_id"`
-	CallbackID string       `json:"-" db:"callback_id"`
+	ID               id.SessionID `json:"id" db:"id"`
+	Principal        id.Principal `json:"principal" db:"principal"`
+	ServiceID        id.ServiceID `json:"service_id" db:"service_id"`
+	CallbackID       string       `json:"-" db:"callback_id"`
+	UpstreamClientID *id.ClientID `json:"-" db:"upstream_client_id"`
 	// ExpectedIssuerURI binds a discovered callback to the issuer that initiated it.
 	// Repositories check this value before storage; they do not persist it.
 	ExpectedIssuerURI string `json:"-" db:"-"`
@@ -96,6 +97,9 @@ func (s *UserSession) Validate() error {
 	}
 	if s.ServiceID.IsZero() {
 		return errors.New("service_id is required")
+	}
+	if s.UpstreamClientID != nil && s.UpstreamClientID.IsZero() {
+		return errors.New("upstream client ID cannot be empty")
 	}
 	if len(s.EncryptedAccessToken) == 0 {
 		return errors.New("encrypted access token is required")

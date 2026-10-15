@@ -13,6 +13,13 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 )
 
+type CredentialSource string
+
+const (
+	CredentialSourceStored     CredentialSource = "stored"
+	CredentialSourceFilesystem CredentialSource = "filesystem"
+)
+
 // isAllowedHTTPSScheme checks if a URL uses an allowed scheme.
 // HTTPS is always allowed. HTTP is only allowed for localhost addresses
 // or when skipHTTPSValidation is true (dev/test mode).
@@ -119,26 +126,31 @@ func validateAuthorizationParams(params map[string]string) error {
 //
 // Encryption and decryption happens exclusively in domain services, not in this entity.
 type ThirdpartyOAuth2ProviderEntity struct {
-	ID                      id.ServiceID
-	CanonicalID             *string
-	ClearCanonicalID        bool
-	DisplayName             string
-	ClientID                id.ClientID
-	Secret                  Secret
-	TokenEndpointAuthMethod TokenEndpointAuthMethod
-	Flavor                  OAuth2Flavor // defaults to OAuth2FlavorStandard when zero
-	IssuerURI               string
-	Discovery               DiscoveryConfig
-	Endpoints               OAuth2Endpoints
-	Scopes                  []OAuthScope
-	AuthorizationParams     map[string]string
-	ResourceExplicit        bool
-	DiscoveryStatus         DiscoveryStatus
-	ProtectedResources      []string
-	Version                 int64
-	ServiceRequirements     []ServiceRequirement
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
+	ID                           id.ServiceID
+	CanonicalID                  *string
+	ClearCanonicalID             bool
+	DisplayName                  string
+	ClientID                     id.ClientID
+	Secret                       Secret
+	CredentialSource             CredentialSource
+	CredentialSourceTransitioned bool
+	CredentialSourceProvided     bool
+	ClientIDProvided             bool
+	ClientSecretProvided         bool
+	TokenEndpointAuthMethod      TokenEndpointAuthMethod
+	Flavor                       OAuth2Flavor // defaults to OAuth2FlavorStandard when zero
+	IssuerURI                    string
+	Discovery                    DiscoveryConfig
+	Endpoints                    OAuth2Endpoints
+	Scopes                       []OAuthScope
+	AuthorizationParams          map[string]string
+	ResourceExplicit             bool
+	DiscoveryStatus              DiscoveryStatus
+	ProtectedResources           []string
+	Version                      int64
+	ServiceRequirements          []ServiceRequirement
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 // IsPublicClient reports whether the provider uses no token-endpoint client authentication.
@@ -153,10 +165,41 @@ func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDConfidentialClient() bool {
 
 // ValidateOutboundCredentials rejects alternate credentials for clients without a shared secret.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateOutboundCredentials() error {
+	if e.CredentialSource != "" || e.CredentialSourceProvided {
+		if err := e.validateCredentialSource(); err != nil {
+			return err
+		}
+	}
 	if !e.IsPublicClient() && !e.IsCIMDConfidentialClient() {
 		return nil
 	}
 	return validateSecretlessClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint, e.TokenEndpointAuthMethod)
+}
+
+func (e *ThirdpartyOAuth2ProviderEntity) validateCredentialSource() error {
+	if e.CredentialSource == "" && !e.CredentialSourceProvided {
+		e.CredentialSource = CredentialSourceStored
+	}
+	switch e.CredentialSource {
+	case CredentialSourceStored:
+		return nil
+	case CredentialSourceFilesystem:
+		if e.TokenEndpointAuthMethod != "" || e.Flavor == OAuth2FlavorGoogle || e.Discovery.ResourceURL != nil || e.Discovery.ClientMethod != "" {
+			return errors.New("filesystem credential_source is not supported for this authentication mode")
+		}
+		if e.CanonicalID == nil || e.ClearCanonicalID {
+			return errors.New("canonical_id is required for filesystem credential_source")
+		}
+		if err := canonical.Validate(e.CanonicalID); err != nil {
+			return err
+		}
+		if e.ClientIDProvided || e.ClientSecretProvided || !e.ClientID.IsZero() || !e.Secret.IsAbsent() {
+			return errors.New("inline credentials must be absent for filesystem credential_source")
+		}
+		return nil
+	default:
+		return errors.New("credential_source must be stored or filesystem")
+	}
 }
 
 // CIMDClientID derives the fixed broker-hosted identifier for a CIMD client.
@@ -174,6 +217,9 @@ func CIMDClientID(publicURL string, serviceID id.ServiceID) (id.ClientID, error)
 // Validate performs basic validation on the entity.
 // It checks that required fields are present and the secret is in a valid state.
 func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
+	if err := e.validateCredentialSource(); err != nil {
+		return err
+	}
 	if e.ID.IsZero() {
 		return errors.New("provider ID cannot be empty")
 	}
@@ -190,7 +236,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 	if len(e.DisplayName) > 255 {
 		return errors.New("display_name exceeds 255 characters")
 	}
-	if e.ClientID.IsZero() {
+	if e.ClientID.IsZero() && e.CredentialSource != CredentialSourceFilesystem {
 		return errors.New("client_id is required")
 	}
 
@@ -230,6 +276,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 // ValidateStoredClientAuthentication checks the client method and secret state
 // before a repository stores an encrypted or secretless service.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateStoredClientAuthentication() error {
+	if err := e.validateCredentialSource(); err != nil {
+		return err
+	}
 	if err := e.TokenEndpointAuthMethod.Validate(); err != nil {
 		return err
 	}
@@ -238,6 +287,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateStoredClientAuthentication() er
 	}
 	if err := e.validateStoredDiscoveryState(); err != nil {
 		return err
+	}
+	if e.CredentialSource == CredentialSourceFilesystem {
+		return nil
 	}
 	switch e.Discovery.ClientMethod {
 	case ClientBootstrapDCR:
@@ -294,8 +346,14 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateEffectiveDiscoveryResource() er
 }
 
 func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAuth2Flavor) (bool, error) {
+	if err := e.validateCredentialSource(); err != nil {
+		return false, err
+	}
 	if err := e.TokenEndpointAuthMethod.Validate(); err != nil {
 		return false, err
+	}
+	if e.CredentialSource == CredentialSourceFilesystem {
+		return false, nil
 	}
 	if e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretBasic || e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretPost {
 		if e.Discovery.ClientMethod != ClientBootstrapDCR || e.Discovery.ResourceURL == nil {
@@ -339,6 +397,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 // ValidateDiscoveryRequest checks the administrator's protected-resource request
 // before the service contacts untrusted metadata or registers a client.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateDiscoveryRequest() error {
+	if err := e.validateCredentialSource(); err != nil {
+		return err
+	}
 	if e.Discovery.ResourceURL == nil {
 		return errors.New("discovery.resource_url is required")
 	}
@@ -513,6 +574,7 @@ func validateExplicitDiscoveryResource(raw string) error {
 // skipHTTPSValidation allows HTTP URLs for development/testing.
 // Does not require ID (will be generated by the domain service).
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation bool) error {
+	e.CredentialSourceTransitioned = false
 	if err := e.validateDiscoverySelection(); err != nil {
 		return err
 	}
@@ -541,7 +603,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	}
 
 	credential := ""
-	if !isPublicClient && !isCIMDClient {
+	if !isPublicClient && !isCIMDClient && e.CredentialSource != CredentialSourceFilesystem {
 		if !e.Secret.IsPlaintext() {
 			return errors.New("client_secret is required for create")
 		}
@@ -554,10 +616,10 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
 		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
-		if e.ClientID == "" && !isCIMDClient {
+		if e.ClientID == "" && !isCIMDClient && e.CredentialSource != CredentialSourceFilesystem {
 			return errors.New("client_id is required")
 		}
-		if !isPublicClient && !isCIMDClient && credential == "" {
+		if !isPublicClient && !isCIMDClient && e.CredentialSource != CredentialSourceFilesystem && credential == "" {
 			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
@@ -651,7 +713,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	}
 
 	credential := ""
-	if !isPublicClient && !isCIMDClient {
+	if !isPublicClient && !isCIMDClient && e.CredentialSource != CredentialSourceFilesystem {
 		switch {
 		case e.Secret.IsPlaintext():
 			credential, err = e.Secret.GetPlaintext()
@@ -670,7 +732,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
 		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
-		if e.ClientID == "" && !isCIMDClient {
+		if e.ClientID == "" && !isCIMDClient && e.CredentialSource != CredentialSourceFilesystem {
 			return errors.New("client_id is required")
 		}
 		if e.IssuerURI == "" {
@@ -870,15 +932,21 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 	}
 
 	result := &ThirdpartyOAuth2ProviderEntity{
-		ID:                      e.ID,
-		DisplayName:             e.DisplayName,
-		ClientID:                e.ClientID,
-		Secret:                  e.Secret, // Value type; internal ciphertext slice independently copied by Secret
-		TokenEndpointAuthMethod: e.TokenEndpointAuthMethod,
-		Flavor:                  e.Flavor,
-		IssuerURI:               e.IssuerURI,
-		ResourceExplicit:        e.ResourceExplicit,
-		DiscoveryStatus:         e.DiscoveryStatus,
+		ID:                           e.ID,
+		DisplayName:                  e.DisplayName,
+		ClientID:                     e.ClientID,
+		Secret:                       e.Secret, // Value type; internal ciphertext slice independently copied by Secret
+		CredentialSource:             e.CredentialSource,
+		CredentialSourceTransitioned: e.CredentialSourceTransitioned,
+		CredentialSourceProvided:     e.CredentialSourceProvided,
+		ClientIDProvided:             e.ClientIDProvided,
+		ClientSecretProvided:         e.ClientSecretProvided,
+		ClearCanonicalID:             e.ClearCanonicalID,
+		TokenEndpointAuthMethod:      e.TokenEndpointAuthMethod,
+		Flavor:                       e.Flavor,
+		IssuerURI:                    e.IssuerURI,
+		ResourceExplicit:             e.ResourceExplicit,
+		DiscoveryStatus:              e.DiscoveryStatus,
 		Discovery: DiscoveryConfig{
 			EnableDiscovery: e.Discovery.EnableDiscovery,
 			ClientMethod:    e.Discovery.ClientMethod,

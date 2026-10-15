@@ -62,6 +62,8 @@ The builder creates these adapters and injects them. `adapters/jwtauth/` receive
 
 Both adapters implement the required storage contracts. The migrations are in `migrations/`. They use go-migrate names.
 
+List SQL result columns explicitly. Do not use `SELECT *` or `RETURNING *` in storage adapters. Additive schema changes must not break record scans.
+
 ## Rules
 
 - **Cross-adapter ban**: Do not import `storage/postgres/` from `encryption/aws/`, or import between other adapters.

@@ -129,6 +129,51 @@ Keep AWS TLS certificate verification enabled in production. If
 startup requires explicit `GO_ENV=development`. Production, staging, unset,
 and unknown environments reject that development-only bypass.
 
+Use `broker.extraVolumes` and `broker.extraVolumeMounts` to append standard Kubernetes volumes and container mounts. Both default to empty lists. Mount names must reference a pod volume; use names other than the chart's built-in `config` and `tmp`. Create any referenced Secrets or ConfigMaps in the broker's namespace before deploying it.
+
+For example, mount an existing ConfigMap read-only:
+
+```yaml
+broker:
+  extraVolumes:
+    - name: supplemental-config
+      configMap:
+        name: broker-settings
+  extraVolumeMounts:
+    - name: supplemental-config
+      mountPath: /etc/broker/settings
+      readOnly: true
+```
+
+### Filesystem OAuth2 credentials
+
+`broker.thirdPartyOauth2.credentialFiles` maps exact service canonical IDs to two paths. The default `{}` renders no broker binding. Keys preserve case and dots. Both `client_id_file` and `client_secret_file` are required strings. Broker startup validates absolute, non-empty paths and the full canonical-ID grammar without opening files.
+
+The chart does not register services or choose their credential source. Register an eligible service through Admin API 2.0.0 with `credential_source: filesystem` and no inline `client_id` or `client_secret`, including null or empty fields. Stored services ignore bindings. A filesystem service without its exact binding fails closed at use. Use a feature-capable broker image with this contract.
+
+```yaml
+broker:
+  thirdPartyOauth2:
+    credentialFiles:
+      zalando-platform:
+        client_id_file: /meta/credentials/employee-client-id
+        client_secret_file: /meta/credentials/employee-client-secret
+  extraVolumes:
+    - name: credentials
+      secret:
+        secretName: agentic-platform-credentials
+  extraVolumeMounts:
+    - name: credentials
+      mountPath: /meta/credentials
+      readOnly: true
+```
+
+Use the existing volume inputs for a read-only directory mount. Do not use credential-file `subPath`. Preserve the built-in `config` and `tmp` mounts. The non-root pod identity must read both files and traverse every parent directory. Read-only mounting does not grant those permissions.
+
+Publish each replacement pair together through fresh immutable targets. Never modify published targets or republish retired targets during acquisition. Code exchange and refresh acquire both values and revalidate their targets. A detected change produces `generation_changed` before authentication without acquisition retries. Publication after validation can leave an in-flight operation using its validated pair. Later operations acquire current targets.
+
+Authorization initiation reads only the client-ID file. Metadata reads resolve neither file. Same-client secret rotation requires no restart or registration update. A changed client ID requires new connections for old codes or sessions. Provider validity overlap remains an operator responsibility, not an uninterrupted-rotation guarantee.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |
@@ -137,6 +182,8 @@ and unknown environments reject that development-only bypass.
 | `image.repository` | Broker container image repository | `agentic-identity-broker` |
 | `image.tag` | Broker image tag | Chart appVersion |
 | `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
+| `broker.extraVolumes` | Additional Kubernetes volumes for the broker pod | `[]` |
+| `broker.extraVolumeMounts` | Additional Kubernetes volume mounts for the broker container | `[]` |
 | `migration.image.repository` | Migration container image repository | `agentic-identity-broker-migrate` |
 | `migration.image.tag` | Migration image tag | Chart appVersion |
 | `storage.type` | Storage backend (`memory` or `postgres`) | `memory` |
@@ -156,6 +203,7 @@ and unknown environments reject that development-only bypass.
 | `postgresql.operator.secretSuffix` | Operator credentials secret suffix | `postgresql.acid.zalan.do` |
 | `broker.thirdPartyOauth2.jweSigningKeySecret` | Secret ref for JWE signing key | `{name: "", key: signing-key}` |
 | `broker.thirdPartyOauth2.jweSigningKeyBase64` | Base64-encoded JWE signing key (highest precedence) | `""` |
+| `broker.thirdPartyOauth2.credentialFiles` | Exact canonical-ID object with required `client_id_file` and `client_secret_file` string paths in each binding | `{}` |
 | `broker.encryption.memory.rawKey` | Base64-encoded memory encryption key | `""` |
 | `broker.encryption.awsKms.keyArn` | AWS KMS key ARN | `""` |
 | `broker.encryption.awsKms.dynamodbTableName` | DynamoDB table for branch keys | `IdentityBrokerEncryptionBranchKeys` |
@@ -372,7 +420,36 @@ Quote a value that starts with `{{` in single quotes. Unquoted, YAML parses it a
 2. Migration Job uses a **separate Docker image** (`agentic-identity-broker-migrate`) containing only migration tooling
 3. Migration Job uses a separate ServiceAccount and user credentials (least privilege)
 4. Broker Deployment uses the main image and a different user with appropriate runtime permissions
-5. Migration Job completes before broker pods start
+5. Migration Job completes before new broker pods start; on upgrade, existing pods continue serving until the hook succeeds
+
+### Credential-source migrations 040 and 041
+
+Migration 040 performs metadata-only schema expansion. It adds CHECK constraints as `NOT VALID`: new writes are checked immediately, but existing rows are not scanned under the exclusive schema locks. Both table locks use `NOWAIT`, and the schema statement has a one-second timeout. A busy table causes the hook to fail immediately rather than queue an exclusive lock that blocks live traffic.
+
+Migration 041 validates existing rows in a separate transaction. Its `SHARE UPDATE EXCLUSIVE` locks permit ordinary reads and writes. It also uses `NOWAIT` to avoid waiting on other schema maintenance. Each migration is atomic; keep `x-multi-statement` disabled when using golang-migrate.
+
+Before migration 040, deploy a compatibility release with explicit session-query columns to every pod. Wildcard scans in older binaries reject the new `upstream_client_id` column, even for stored services. Changing queries in the new release cannot repair those running binaries.
+
+Complete both migrations before rolling out the new broker. Keep services in `stored` mode until all old broker pods are replaced. Older binaries cannot scan filesystem services with NULL `client_id`, including during startup validation. The expansion still needs a brief exclusive lock, so it cannot promise zero request latency. Validation can also consume database I/O. Allow sufficient Helm timeout and database headroom.
+
+On failure, leave the old Deployment running and inspect migration logs and actual schema before clearing dirty metadata:
+
+| Failed step | Schema to verify | Recovery after verification |
+|---|---|---|
+| 040 UP: contention or timeout | Intact 039 columns, constraints, and data | `migrate force 39`, then retry the upgrade separately |
+| 041 UP: contention or invalid legacy data | Intact 040 columns and all three CHECKs still `NOT VALID`; data unchanged | Resolve contention or repair invalid data explicitly, `migrate force 40`, then rerun validation |
+
+The migration Job defaults to `backoffLimit: 0`. A failed migration can leave dirty metadata, so automatic Job retries cannot recover it. If inspection finds a different schema, stop and reconcile it before forcing any version. Never force 41 after failed validation.
+
+#### Application rollback with the schema retained
+
+1. Select a rollback release that includes explicit session-query columns. Do not roll back to a binary with wildcard session scans.
+2. Before starting older pods, list services through the current Admin API.
+3. PUT every filesystem service back to `credential_source: stored` with explicit, non-empty `client_id` and `client_secret`. Supply the complete replacement metadata. Use inline credentials from the operator's secure source, not values imported by the broker. Omit `protected_resources` to preserve them, or supply the current `If-Match` when replacing them.
+4. Verify that every service reports stored mode before running `helm rollback`.
+5. Retain schema 040 and the transition evidence. Returning to stored does not permit a database downgrade: migration 040 DOWN still rejects transitioned rows.
+
+An earlier compatibility release can instead exclude NULL-client-ID rows from every provider lookup and listing query. Those services must return not-found and fail closed. Converting NULL to an empty string is not sufficient. This branch does not change already-released binaries.
 
 ### Security: Separate Migration Image
 

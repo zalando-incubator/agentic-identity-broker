@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package migrations_test
+package migrations
 
 import (
 	"context"
@@ -121,16 +121,16 @@ func TestMigration007OAuth2Flavor(t *testing.T) {
 	`)
 	require.NoError(t, err, "should be able to insert a pre-existing row before migration 007")
 
-	// Step 2: Apply migration 007 (apply all remaining)
+	// Step 2: Apply migration 007 only.
 	t.Log("Step 2: Applying migration 007 (ADD COLUMN oauth2_flavor)...")
-	err = f.UpAll(t)
+	err = f.Up(t, 7)
 	require.NoError(t, err)
 
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
 	t.Logf("After Up 007: version=%d, dirty=%v", version, dirty)
 	assert.False(t, dirty)
-	assert.GreaterOrEqual(t, version, uint(7), "Migration 007 should be applied")
+	assert.Equal(t, uint(7), version, "Migration 007 should be applied")
 
 	// Step 3: Verify column exists with correct default value for the pre-existing row
 	exists, err = f.ColumnExists(t, "thirdparty_oauth2_services", "oauth2_flavor")
@@ -163,7 +163,7 @@ func TestMigration007OAuth2Flavor(t *testing.T) {
 
 	// Step 6: Re-apply migration 007 to verify idempotency
 	t.Log("Step 6: Re-applying migration 007...")
-	err = f.UpAll(t)
+	err = f.Up(t, 7)
 	require.NoError(t, err)
 
 	exists, err = f.ColumnExists(t, "thirdparty_oauth2_services", "oauth2_flavor")
@@ -189,7 +189,7 @@ func TestMigration015AgentCIMDFields(t *testing.T) {
 	assert.False(t, exists, "agent_client_uris table should NOT exist before migration 015")
 
 	// Apply migration 015
-	err = f.UpAll(t)
+	err = f.Up(t, 15)
 	require.NoError(t, err)
 
 	// Verify agent_client_uris table now exists
@@ -219,7 +219,7 @@ func TestMigration029CanonicalIDs(t *testing.T) {
 		assert.False(t, exists)
 	}
 
-	require.NoError(t, f.UpAll(t))
+	require.NoError(t, f.Up(t, 29))
 	for _, table := range []string{"agents", "thirdparty_oauth2_services", "permission_sets"} {
 		exists, err := f.ColumnExists(t, table, "canonical_id")
 		require.NoError(t, err)
@@ -815,7 +815,7 @@ func TestMigration039ProtectedResourceDiscovery(t *testing.T) {
 	}
 	legacyRows := manualSnapshot()
 
-	require.NoError(t, f.UpAll(t))
+	require.NoError(t, f.Up(t, 39))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
 	require.Equal(t, uint(39), version, "protected-resource discovery migration must be applied")

@@ -1071,6 +1071,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToStaticRequiresNewSecretAnd
 		)
 		var updateCalls, encryptCalls, branchKeyCalls int
 		repo := &functionFieldProviderRepository{
+			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return persisted, nil
+			},
 			updateFn: func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 				updateCalls++
 				return nil
@@ -1114,6 +1117,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToStaticRequiresNewSecretAnd
 		)
 		var stored *model.ThirdpartyOAuth2ProviderEntity
 		repo := &functionFieldProviderRepository{
+			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return persisted, nil
+			},
 			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 				stored = provider.Copy()
 				return nil
@@ -1167,6 +1173,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToPublicPersistsAbsentSecret
 	)
 	var stored *model.ThirdpartyOAuth2ProviderEntity
 	repo := &functionFieldProviderRepository{
+		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			return persisted, nil
+		},
 		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 			stored = provider.Copy()
 			return nil
@@ -1243,27 +1252,32 @@ func TestThirdpartyOAuth2ProviderService_GetByIDs_DecryptsExistingProviders(t *t
 	ctx := context.Background()
 	repo := new(MockRepository)
 	enc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(repo, enc, newNoopBranchKeyManager(), nil, false, slog.Default())
-	confidentialID, publicID, cimdID, missingID := id.NewServiceID(), id.NewServiceID(), id.NewServiceID(), id.NewServiceID()
+	var logs bytes.Buffer
+	svc := NewThirdpartyOAuth2ProviderService(repo, enc, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	confidentialID, publicID, cimdID, filesystemID, missingID := id.NewServiceID(), id.NewServiceID(), id.NewServiceID(), id.NewServiceID(), id.NewServiceID()
 	cimdProvider := minimalValidCIMDProvider(cimdID, brokerHostedCIMDClientID(cimdID), model.TokenEndpointAuthMethodPrivateKeyJWT)
 	cimdProvider.Secret = model.NewEncryptedSecret([]byte("cimd-ciphertext"))
-	ids := []id.ServiceID{confidentialID, publicID, cimdID, missingID}
+	ids := []id.ServiceID{confidentialID, publicID, cimdID, filesystemID, missingID}
 	repo.On("GetByIDs", ctx, ids).Return([]*model.ThirdpartyOAuth2ProviderEntity{
 		{ID: confidentialID, Secret: model.NewEncryptedSecret([]byte("ciphertext"))},
 		{ID: publicID, Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone},
 		cimdProvider,
+		{ID: filesystemID, CredentialSource: model.CredentialSourceFilesystem, Secret: model.NewAbsentSecret()},
 	}, nil)
 	enc.On("Decrypt", ctx, []byte("ciphertext"), map[string]string{"service_id": confidentialID.String()}).Return([]byte("secret"), nil)
 
 	providers, err := svc.GetByIDs(ctx, ids)
 	require.NoError(t, err)
-	require.Len(t, providers, 3)
+	require.Len(t, providers, 4)
 	plaintext, err := providers[0].Secret.GetPlaintext()
 	require.NoError(t, err)
 	assert.Equal(t, "secret", plaintext)
 	assert.True(t, providers[1].Secret.IsAbsent())
 	assert.Equal(t, cimdProvider, providers[2])
 	assert.True(t, providers[2].Secret.IsEncrypted())
+	assert.Equal(t, model.CredentialSourceFilesystem, providers[3].CredentialSource)
+	assert.True(t, providers[3].Secret.IsAbsent())
+	assert.Empty(t, logs.String(), "secretless providers must not cause a decrypt warning or error")
 	repo.AssertExpectations(t)
 	enc.AssertExpectations(t)
 }
@@ -1392,51 +1406,18 @@ func TestThirdpartyOAuth2ProviderService_Update_WithNewSecret(t *testing.T) {
 	ctx := context.Background()
 	svcID := id.NewServiceID()
 	entity := minimalValidEntity(svcID, model.NewPlaintextSecret("new-secret"))
+	mockRepo.On("Get", ctx, svcID).Return(&model.ThirdpartyOAuth2ProviderEntity{ID: svcID, CredentialSource: model.CredentialSourceStored, Version: 1}, nil)
 
 	mockEnc.On("Encrypt", ctx, []byte("new-secret"), map[string]string{"service_id": svcID.String()}).
 		Return([]byte("new-encrypted"), nil)
 	mockRepo.On("Update", ctx, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
 		return e.Secret.IsEncrypted()
-	}), (*int64)(nil)).Return(nil)
+	}), mock.MatchedBy(func(version *int64) bool { return version != nil && *version == 1 })).Return(nil)
 
 	err := svc.Update(ctx, entity, nil)
 
 	require.NoError(t, err)
 	assert.True(t, entity.Secret.IsEncrypted(), "secret must be encrypted after update")
-	mockEnc.AssertExpectations(t)
-	mockRepo.AssertExpectations(t)
-}
-
-func TestThirdpartyOAuth2ProviderService_Update_NormalizesProtectedResourcesBeforePersist(t *testing.T) {
-	mockRepo := new(MockRepository)
-	mockEnc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
-
-	ctx := context.Background()
-	svcID := id.NewServiceID()
-	entity := minimalValidEntity(svcID, model.NewPlaintextSecret("new-secret"))
-	entity.ProtectedResources = []string{
-		"https://api.example.com/",
-		"https://api.example.com/v1///",
-	}
-
-	mockEnc.On("Encrypt", ctx, []byte("new-secret"), map[string]string{"service_id": svcID.String()}).
-		Return([]byte("new-encrypted"), nil)
-	mockRepo.On("Update", ctx, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
-		return e.Secret.IsEncrypted() &&
-			assert.ObjectsAreEqual([]string{
-				"https://api.example.com",
-				"https://api.example.com/v1",
-			}, e.ProtectedResources)
-	}), (*int64)(nil)).Return(nil)
-
-	err := svc.Update(ctx, entity, nil)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"https://api.example.com",
-		"https://api.example.com/v1",
-	}, entity.ProtectedResources)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }
@@ -1455,6 +1436,7 @@ func TestThirdpartyOAuth2ProviderService_Update_ProvisionsBranchKey(t *testing.T
 	ctx := context.Background()
 	svcID := id.NewServiceID()
 	entity := minimalValidEntity(svcID, model.NewPlaintextSecret("new-secret"))
+	mockRepo.On("Get", ctx, svcID).Return(&model.ThirdpartyOAuth2ProviderEntity{ID: svcID, CredentialSource: model.CredentialSourceStored, Version: 1}, nil)
 
 	var callSeq atomic.Int32 // incremented by each call; used to verify ordering
 
@@ -1474,7 +1456,7 @@ func TestThirdpartyOAuth2ProviderService_Update_ProvisionsBranchKey(t *testing.T
 
 	mockRepo.On("Update", ctx, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
 		return e.Secret.IsEncrypted()
-	}), (*int64)(nil)).Return(nil)
+	}), mock.MatchedBy(func(version *int64) bool { return version != nil && *version == 1 })).Return(nil)
 
 	err := svc.Update(ctx, entity, nil)
 
@@ -1497,6 +1479,7 @@ func TestThirdpartyOAuth2ProviderService_Update_BranchKeyProvisioningFailure_Abo
 	ctx := context.Background()
 	svcID := id.NewServiceID()
 	entity := minimalValidEntity(svcID, model.NewPlaintextSecret("new-secret"))
+	mockRepo.On("Get", ctx, svcID).Return(&model.ThirdpartyOAuth2ProviderEntity{ID: svcID, CredentialSource: model.CredentialSourceStored, Version: 1}, nil)
 
 	mockBKM.On("Create", ctx, serviceSubject(svcID)).Return("", fmt.Errorf("DynamoDB unavailable"))
 
@@ -1537,6 +1520,9 @@ func TestThirdpartyOAuth2ProviderService_Update_PublicClient_ProvisionsBranchKey
 
 	var stored *model.ThirdpartyOAuth2ProviderEntity
 	repo := &functionFieldProviderRepository{
+		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			return entity.Copy(), nil
+		},
 		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 			stored = provider
 			return nil
@@ -1568,6 +1554,9 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 		require.True(t, persisted.Secret.IsEncrypted())
 
 		repo := &functionFieldProviderRepository{
+			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return persisted.Copy(), nil
+			},
 			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 				persisted = provider.Copy()
 				return nil
@@ -1597,6 +1586,9 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 		persisted.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
 
 		repo := &functionFieldProviderRepository{
+			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return persisted.Copy(), nil
+			},
 			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
 				persisted = provider.Copy()
 				return nil

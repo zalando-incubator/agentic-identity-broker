@@ -59,6 +59,8 @@ func TestUserSessionRepository(t *testing.T) {
 
 	repo := NewUserSessionRepository(adapter)
 	ctx := context.Background()
+	_, err := adapter.db.ExecContext(ctx, `ALTER TABLE user_sessions ADD COLUMN future_session_metadata TEXT`)
+	require.NoError(t, err)
 
 	t.Run("FindByPrincipalAndService scopes scan", func(t *testing.T) {
 		serviceID := id.NewServiceID()
