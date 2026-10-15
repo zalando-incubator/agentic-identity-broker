@@ -429,7 +429,7 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken)
+				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken, nil)
 				results <- err
 			}()
 		}

@@ -112,12 +112,18 @@ spec:
           readOnly: true
         - name: tmp
           mountPath: /tmp
+        {{- with .Values.broker.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
       - name: config
         configMap:
           name: {{ include "agentic-identity-broker.fullname" . }}-config
       - name: tmp
         emptyDir: {}
+      {{- with .Values.broker.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

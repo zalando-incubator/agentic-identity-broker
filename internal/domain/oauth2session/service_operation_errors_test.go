@@ -263,7 +263,7 @@ func TestRefreshAccessTokenClassifiesDirectFailures(t *testing.T) {
 			service, provider, _ := newOperationTestService(t, io.Discard)
 			token := "refresh"
 			tc.configure(service, &provider, &token)
-			_, err := service.RefreshAccessToken(context.Background(), provider, token)
+			_, err := service.RefreshAccessToken(context.Background(), provider, token, nil)
 			requireOperationError(t, err, OperationRefresh, tc.detail)
 		})
 	}
@@ -276,7 +276,7 @@ func TestRefreshDeadlineClassificationRequiresCallerEvidence(t *testing.T) {
 		if shared {
 			ctx = context.WithValue(ctx, sharedRefreshContextKey{}, true)
 		}
-		_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+		_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 		cancel()
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		detail := DetailCallerCanceled
@@ -333,10 +333,12 @@ func TestExchangeAndRefreshLogsOmitURLAndCredentialMaterial(t *testing.T) {
 				}
 			})
 			if mode == "exchange network" {
+				provider, err := service.providerService.GetForTokenAcquisition(context.Background(), provider.ID)
+				require.NoError(t, err)
 				service.config.MaxRetries = 2
 				service.config.RetryBaseDelay = time.Nanosecond
 				cfg := &oauth2.Config{ClientID: provider.ClientID.String(), Endpoint: oauth2.Endpoint{TokenURL: endpoint, AuthStyle: oauth2.AuthStyleInParams}}
-				_, err := service.exchangeCodeWithRetry(context.Background(), cfg, provider, "sentinel-code", "sentinel-verifier", nil)
+				_, err = service.exchangeCodeWithRetry(context.Background(), cfg, provider, nil, "sentinel-code", "sentinel-verifier", nil)
 				assert.ErrorIs(t, err, cause)
 				assert.NotContains(t, err.Error(), "sentinel-")
 			} else {
@@ -378,7 +380,7 @@ func TestRefreshRejectionBodyReadPreservesDependencyCause(t *testing.T) {
 	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(operationFailingReader{cause: cause})}, nil
 	})
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 	metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 	assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
 	assert.ErrorIs(t, err, cause)

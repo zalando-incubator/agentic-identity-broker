@@ -52,6 +52,8 @@ end-user `:8000` server and the admin `:14000` server.
 
 Both adapters implement the required storage contracts. The migrations are in `migrations/`. They use go-migrate names.
 
+List SQL result columns explicitly. Do not use `SELECT *` or `RETURNING *` in storage adapters. Additive schema changes must not break record scans.
+
 ## Rules
 
 - **Cross-adapter ban**: Do not import `storage/postgres/` from `encryption/aws/`, or import between other adapters.

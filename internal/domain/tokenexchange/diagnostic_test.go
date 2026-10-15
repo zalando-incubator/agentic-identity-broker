@@ -73,6 +73,8 @@ func TestDiagnosticClassificationContract(t *testing.T) {
 		{DetailSessionEncryptionFailed, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailSessionPersistenceFailed, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailSessionConfiguration, StageRefresh, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailCredentialSourceUnavailable, StageSessionLookup, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailCredentialSourceUnavailable, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailSessionScopeInsufficient, StageScopeValidation, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailResponseWriteFailed, StageResponseWrite, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailInternalUnclassified, StageIdentityResolution, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
@@ -118,6 +120,8 @@ func TestSessionDiagnosticPreservesOriginAndCause(t *testing.T) {
 		{oauth2session.DetailEncryptionFailed, StageRefresh, DetailSessionEncryptionFailed},
 		{oauth2session.DetailPersistenceFailed, StageRefresh, DetailSessionPersistenceFailed},
 		{oauth2session.DetailConfiguration, StageRefresh, DetailSessionConfiguration},
+		{oauth2session.DetailCredentialSourceUnavailable, StageSessionLookup, DetailCredentialSourceUnavailable},
+		{oauth2session.DetailCredentialSourceUnavailable, StageRefresh, DetailCredentialSourceUnavailable},
 		{oauth2session.DetailCallerCanceled, StageRefresh, DetailCallerCanceled},
 		{oauth2session.DetailInternalUnclassified, StageRefresh, DetailInternalUnclassified},
 	} {

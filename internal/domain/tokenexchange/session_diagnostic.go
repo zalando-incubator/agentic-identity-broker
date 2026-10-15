@@ -3,6 +3,7 @@ package tokenexchange
 import (
 	"errors"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 )
 
@@ -49,6 +50,12 @@ func sessionDiagnostic(err error) Diagnostic {
 		detail = DetailSessionPersistenceFailed
 	case oauth2session.DetailConfiguration:
 		detail = DetailSessionConfiguration
+	case oauth2session.DetailCredentialSourceUnavailable:
+		detail = DetailCredentialSourceUnavailable
+		var sourceErr *model.CredentialSourceError
+		if errors.As(err, &sourceErr) && (sourceErr.Reason == model.CredentialSourceReasonIdentityMismatch || sourceErr.Reason == model.CredentialSourceReasonIdentityMissing) {
+			detail = DetailCredentialIdentityChanged
+		}
 	case oauth2session.DetailCallerCanceled:
 		detail = DetailCallerCanceled
 	default:
