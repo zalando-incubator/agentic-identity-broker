@@ -62,7 +62,7 @@
     "istanbul-lib-source-maps": "^5.0.6",
     "istanbul-reports": "^3.2.0",
     "jsdom": "^27.4.0",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.29",
     "prettier": "^3.9.9",
     "storybook": "10.3.5",
     "tailwindcss": "^4.0.0",
