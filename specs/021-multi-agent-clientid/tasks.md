@@ -172,9 +172,9 @@ Backend-only feature per plan.md §Technical Context. No frontend changes.
 
 ---
 
-## Phase 7: Documentation & Changelog
+## Phase 7: Documentation
 
-- [X] T043 [P] Add breaking change entry to docs/changelog.md per contracts/admin-api-changes.md §Changelog Entry (client_id semantics, CEL expression update, new multi_agent_client block, resolveAgentIdByClientId function)
+- [X] T043 [P] Document compatibility changes in contracts/admin-api-changes.md §Compatibility Changes (client_id semantics, CEL expression update, new multi_agent_client block, resolveAgentIdByClientId function)
 - [X] T044 [P] Update examples/config/token-exchange.yaml with updated agent_id_expression examples (resolveAgentIdByClientId for disabled mode, subject_token.x_agent_id for enabled mode)
 - [X] T077 [P] Add multi_agent_client configuration documentation to docs/configuration.md: describe enabled/disabled modes, all three parameters (enabled, agent_id_param_name, agent_id_claim_name), startup validation behaviour, and link to examples/config/oauth2-authorization-server.yaml (Constitution Principle VII)
 - [X] T078 [P] Update examples/config/README.md to reference the new multi_agent_client block in oauth2-authorization-server.yaml and note the required token-exchange.yaml CEL expression update (Constitution Principle VII)

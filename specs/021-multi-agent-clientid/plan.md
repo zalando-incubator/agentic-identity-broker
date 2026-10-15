@@ -30,7 +30,7 @@ Allow multiple agents to share one upstream OAuth2 client ID. This requires a **
 - [x] **Configuration Design**: `MultiAgentClientConfig` with `enabled`, `agent_id_param_name`, `agent_id_claim_name`. YAML examples in `quickstart.md` and `examples/config/oauth2-authorization-server.yaml`.
 - [x] **Config Examples**: Config examples documented in `quickstart.md` and `examples/config/oauth2-authorization-server.yaml`.
 - [x] **API Design First**: Breaking `client_id` semantics change and admin uniqueness relaxation documented in `contracts/admin-api-changes.md`. OpenAPI updates identified.
-- [x] **API Documentation**: Updates to `/api/enduser/openapi.yaml` (authorize `client_id` description) and `/api/admin/openapi.yaml` (agent `client_id` uniqueness note). Changelog entry documented.
+- [x] **API Documentation**: Updates to `/api/enduser/openapi.yaml` (authorize `client_id` description) and `/api/admin/openapi.yaml` (agent `client_id` uniqueness note).
 - [x] **API Changes**: Breaking changes acknowledged in spec and clarifications (spec lines 14–16). Stakeholder-confirmed.
 - [x] **Database Design**: Migration `008_drop_agent_client_id_unique` documented in `data-model.md`.
 - [x] **E2E Acceptance Tests**: All 14 spec scenarios (US1×6, US2×4, US3×4) map 1:1 to `tests/e2e/multi_agent_client_test.go`. Written before implementation (red phase).
@@ -44,7 +44,7 @@ Allow multiple agents to share one upstream OAuth2 client ID. This requires a **
 - [x] **ADRs**: No new architectural boundary; the pattern (CEL custom function via injected closure) follows existing CEL and DI patterns. No ADR needed.
 - [x] **Library-First Security**: JWT parsing via `lestrrat-go/jwx/v3 jwt.ParseInsecure`. No custom crypto.
 - [x] **Zalando Guidelines**: No new REST endpoints; existing endpoints updated with clarified descriptions.
-- [x] **End-User Docs**: `docs/changelog.md` entry added; OpenAPI descriptions updated.
+- [x] **End-User Docs**: OpenAPI descriptions updated.
 - [x] **Migration Testing**: Migration `008` tested with apply/rollback in PostgreSQL integration tests.
 - [x] **Hexagonal Architecture**: `MultiAgentClientConfig` in `ports/config.go`; `MultiAgentTokenVerifier` injected into handler; `ResolveAgentIDByClientID` closure injected into CEL evaluator.
 - [x] **Persistence Patterns**: No new entity persistence. Existing `AgentRepository` ports unchanged (only `GetByClientID` callers updated from the service layer).
@@ -82,7 +82,6 @@ examples/config/oauth2-authorization-server.yaml    # Add multi_agent_client blo
 examples/config/token-exchange.yaml                 # Update CEL expression examples
 api/enduser/openapi.yaml                            # Update client_id description
 api/admin/openapi.yaml                              # Update agent client_id uniqueness note
-docs/changelog.md                                   # Breaking change entry
 ARCHITECTURE.md                                     # Glossary additions
 tests/e2e/multi_agent_client_test.go               # New E2E test file (14 scenarios)
 ```
@@ -303,8 +302,7 @@ See [data-model.md](data-model.md), [contracts/admin-api-changes.md](contracts/a
 2. Update `examples/config/token-exchange.yaml` with updated CEL expression examples
 3. Update `api/enduser/openapi.yaml`: update `client_id` description on authorize endpoint
 4. Update `api/admin/openapi.yaml`: update agent `client_id` uniqueness note
-5. Add changelog entry to `docs/changelog.md`
-6. Update `ARCHITECTURE.md` glossary
+5. Update `ARCHITECTURE.md` glossary
 
 ### Phase 2k: Constitution Compliance Verification
 

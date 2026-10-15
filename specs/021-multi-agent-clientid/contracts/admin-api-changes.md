@@ -143,15 +143,9 @@ HTTP status: `500 Internal Server Error`
 
 ---
 
-## Changelog Entry for `docs/changelog.md`
-
-```markdown
-## [NEXT VERSION] — Breaking Changes
-
-### Multi-Agent OAuth2 Client Delegation (021)
+## Compatibility Changes
 
 - **BREAKING**: The `client_id` parameter in OAuth2 authorize/token requests now resolves to `agent.id` (UUID), not `agent.client_id` (upstream client ID). Clients must update their `client_id` values.
 - **BREAKING**: Token exchange CEL expression `agent_id_expression` must be updated from `subject_token.azp` to `resolveAgentIdByClientId(subject_token.azp)` (or similar claim-based expression when feature is enabled).
 - **NEW**: `multi_agent_client` configuration block under `oauth2_authorization_server` enables multiple agents to share one upstream OAuth2 client ID.
 - **NEW**: CEL helper function `resolveAgentIdByClientId(clientId)` available when feature is disabled for token exchange CEL policies.
-```

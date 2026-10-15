@@ -127,8 +127,8 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
       (Principle III, SR-009).
 - [x] **Zalando Guidelines**: The new property is snake_case, optional, with a closed enum and no
       default; errors reuse the existing admin `ErrorResponse` shape.
-- [x] **End-User Docs**: `docs/api/` gains no new guide (none exists for service CRUD); the read
-      schema `required` relaxation is recorded in `docs/changelog.md`.
+- [x] **End-User Docs**: `docs/api/` gains no new guide (none exists for service CRUD).
+      `contracts/admin-api.md` records the read-schema `required` relaxation.
 - [x] **Migration Testing**: Apply, constraint enforcement in both directions, rollback refusal with
       a public service present, and successful rollback without one (DB-007). The refusal leaves
       `schema_migrations.dirty = true`, so `tests/integration/migrations/framework.go` gains a
@@ -194,7 +194,6 @@ api/
 
 adrs/036-public-client-token-endpoint-auth.md      # NEW
 ARCHITECTURE.md                                    # glossary + upstream auth modes
-docs/changelog.md                                  # read-schema required relaxation
 
 tests/
 ├── e2e/

@@ -34,7 +34,7 @@
 
 - [X] T006 During implementation, merge the five `/api/services/{service-id}/protected-resources` operations (GET, body-based POST add, member-addressed PUT add, PATCH, DELETE), request/response schemas, ETag headers, and `400`/`404`/`409` statuses from `specs/035-protected-resource-subresources/contracts/protected-resources.openapi.yaml` into `api/admin/openapi.yaml`.
 - [X] T007 During implementation, merge the full-service `PUT /api/services/{service-id}` contract delta—optional `protected_resources`, required `If-Match` only for replacement, and `412`/`428` responses—from `specs/035-protected-resource-subresources/contracts/protected-resources.openapi.yaml` into `api/admin/openapi.yaml`.
-- [x] T008 Record confirmation from this stakeholder conversation for the body-based POST add operation, the retained member-addressed PUT add operation, and full-service `PUT` behavior change, including compatibility impact, in `docs/changelog.md` and `specs/035-protected-resource-subresources/plan.md`.
+- [x] T008 Record confirmation from this stakeholder conversation for the body-based POST add operation, the retained member-addressed PUT add operation, and full-service `PUT` behavior change, including compatibility impact, in `specs/035-protected-resource-subresources/plan.md`.
 - [X] T009 Document the normalized child-table, global-uniqueness, and optimistic-concurrency decision with Context, Decision, Consequences, and Proposed status in `adrs/030-normalize-protected-resources.md`.
 - [X] T010 Create `docs/api/protected-resource-subresources.md` with representative admin API usage and ETag retry examples for PUT/POST add, remove, rename, list, and full-set replacement; link it to the canonical `api/admin/openapi.yaml` contract.
 
@@ -158,7 +158,7 @@
 #### Architecture, API, and Domain Documentation
 
 - [ ] T056 Verify implemented operations, schemas, ETag headers, and `400`/`404`/`409`/`412`/`428` responses exactly match the confirmed OpenAPI contract. (Principles IV, X)
-- [ ] T057 Verify `ARCHITECTURE.md`, `adrs/030-normalize-protected-resources.md`, `docs/changelog.md`, and `docs/api/third-party-services.md` consistently describe the shipped child-table and compatibility behavior. (Principles II, V)
+- [ ] T057 Verify `ARCHITECTURE.md`, `adrs/030-normalize-protected-resources.md`, and `docs/api/third-party-services.md` consistently describe the shipped child-table and compatibility behavior. (Principles II, V)
 
 #### Security, Configuration, and Architecture Boundaries
 

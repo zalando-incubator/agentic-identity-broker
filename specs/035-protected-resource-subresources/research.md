@@ -275,8 +275,6 @@ guarantees as the Postgres constraint. Optimistic CAS compares the stored `versi
   `protected_resources` optional on the service PUT with the `If-Match`/`ETag` semantics, and add `428`/
   `412` responses. Per Constitution IV/X these API changes require stakeholder confirmation — the
   OpenAPI diff + ADR 030 are the confirmation artifacts. Render examples in `docs/api/`.
-- **`docs/changelog.md`**: the full-service PUT contract change (`protected_resources` now optional;
-  `If-Match` required when replacing) is a behavioral change and is recorded there.
 
 ---
 

@@ -126,7 +126,7 @@ complete before any implementation begins.
       services while PKCE applies to every service; paths, parameters, and responses stay unchanged
       (API-008)
 - [X] T012 [P] Record the `Service` read-schema `required` relaxation (`client_secret` no longer
-      unconditionally required) in `docs/changelog.md`
+      unconditionally required) in contracts/admin-api.md §6. Backward compatibility
 
 **Checkpoint**: `api/admin/openapi.yaml` matches contracts/admin-api.md exactly; end-user document
 carries description-only amendments
@@ -551,8 +551,8 @@ transition
 - [X] T081 [P] Verify the implemented request and response shapes in
       `internal/adapters/http/handlers/admin/services_handler.go` match the confirmed schemas in
       `api/admin/openapi.yaml` field for field
-- [X] T082 [P] Verify `docs/changelog.md` records the read-schema `required` relaxation and that no
-      `docs/api/` guide is required (none exists for service CRUD)
+- [X] T082 [P] Verify contracts/admin-api.md §6. Backward compatibility records the read-schema
+      `required` relaxation and that no `docs/api/` guide is required (none exists for service CRUD)
 
 **Architecture & Documentation** (Principle II):
 
@@ -681,7 +681,7 @@ transition
 
 ```text
 T001, T002, T003, T004   # ARCHITECTURE.md and adrs/ — T001+T002 same file, run sequentially
-T011, T012               # api/enduser/openapi.yaml and docs/changelog.md — independent files
+T011, T012               # api/enduser/openapi.yaml and contracts/admin-api.md — independent files
 T013, T014               # the two migration SQL files
 T017 || T019              # independent helper and compile scaffolding
 T018                      # after T019; compile-only during Phase 2f

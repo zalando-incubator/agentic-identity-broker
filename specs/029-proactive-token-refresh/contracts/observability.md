@@ -2,8 +2,7 @@
 
 **Feature**: `029-proactive-token-refresh` | NFR-001..NFR-004 | Research R7, R11
 
-Operators build alerts on these names. Once released, they are a compatibility surface. A rename
-needs a changelog entry.
+Operators build alerts on these names. Once released, they are a compatibility surface.
 
 ## Metrics (OpenTelemetry, NFR-004)
 

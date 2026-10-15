@@ -1,3 +1,16 @@
+<!--
+Sync Impact Report
+Version: 3.0.0 → 4.0.0
+Modified principle: IV. API Documentation & OpenAPI Transparency (title unchanged).
+Removed rule: the duplicate breaking-change record requirement.
+Rationale: existing API contracts and design documents describe compatibility changes.
+Migration: feature plans, tasks, and contracts use their existing documentation.
+Added sections: none.
+Removed sections: none.
+Template changes: none required.
+Follow-up items: none.
+-->
+
 # Agentic Identity Broker Constitution
 
 ## Core Principles
@@ -91,7 +104,6 @@ and API contracts are binding commitments to consumers.
   (https://opensource.zalando.com/restful-api-guidelines/)
 - API design decisions (e.g., naming conventions, error response format, pagination strategy) MUST be
   documented in [ARCHITECTURE.md](../../ARCHITECTURE.md) or via ADR
-- Breaking API changes MUST be documented in [docs/changelog.md](docs/changelog.md)
 
 **Rationale**: APIs are contracts with consumers. Explicit OpenAPI documentation in designated locations
 ensures clients can discover, understand, and implement integrations correctly. Designing APIs before
@@ -662,4 +674,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 3.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-12
+**Version**: 4.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15

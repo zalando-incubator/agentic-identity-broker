@@ -53,7 +53,7 @@ service). No NEEDS CLARIFICATION — all forks resolved in research.md.
 - [x] **API Design First**: OpenAPI authored first —
   [contracts/protected-resources.openapi.yaml](./contracts/protected-resources.openapi.yaml).
 - [ ] **API Documentation**: During implementation, merge the feature contract into `api/admin/openapi.yaml`; user-facing usage examples remain tracked in T010.
-- [x] **API Changes confirmed by stakeholder**: Stakeholder approved the body-based POST add operation, the retained member-addressed PUT add operation, and full-service `PUT /api/services/{id}` behavior change (`protected_resources` optional; `If-Match` required on replacement; `412`/`428`). Confirmation is recorded in `docs/changelog.md`.
+- [x] **API Changes confirmed by stakeholder**: Stakeholder approved the body-based POST add operation, the retained member-addressed PUT add operation, and full-service `PUT /api/services/{id}` behavior change (`protected_resources` optional; `If-Match` required on replacement; `412`/`428`). This entry records the confirmation.
 - [ ] **Database Design**: Finalize migration `028_normalize_service_protected_resources.{up,down}.sql` (go-migrate), including a fail-closed canonicality and collision preflight, from [data-model.md](./data-model.md).
 - [ ] **E2E Acceptance Tests**: Write `tests/e2e/service_protected_resources_test.go` before implementation, mapping 1:1 to spec scenarios (see Testing Strategy).
 - [ ] **E2E Test Mapping**: Verify each acceptance scenario maps to one `It()`.
@@ -116,7 +116,7 @@ internal/
 │   ├── handlers.go                                              # + ProtectedResources handler field
 │   └── builder.go                                               # wire handler (Constitution XII)
 tests/e2e/service_protected_resources_test.go                     # new E2E suite (1:1 scenarios)
-docs/api/…, docs/changelog.md, ARCHITECTURE.md                    # docs + glossary + changelog
+docs/api/…, ARCHITECTURE.md                                      # docs + glossary
 ```
 
 **Structure Decision**: existing Go hexagonal layout (domain → ports → adapters → app). The feature adds
