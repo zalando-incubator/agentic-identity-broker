@@ -235,42 +235,21 @@ grant for the agent is valid until 2027-01-15T09:30:12Z.
 
 ## Render Wireloom wireframes
 
-Wireloom 0.7.0 has no command-line interface. Render with its library function `wireloom.render`,
-which returns a self-contained SVG string.
+Wireloom 0.7.0 has no command-line interface. `tools/wireloom/render.mjs` calls its library
+function `wireloom.render`, which returns a self-contained SVG string. `just install-tools`
+installs the pinned `wireloom` version from `tools/wireloom/package-lock.json`.
 
 In a spec, put each image link directly above its `wireloom` source, separated by one blank line,
 as Step 3 above shows. The image path is relative to the spec file.
 
-From the repository root, render every image and source pair in one spec:
+From the repository root, render every image and source pair in one or more specs:
 
 ```bash
-SPEC=specs/NNN-feature-name/spec.md
-WIRELOOM_DIR="$(mktemp -d)"
-npm install --prefix "$WIRELOOM_DIR" --no-save --silent wireloom@0.7.0
-SPEC="$SPEC" WIRELOOM_DIR="$WIRELOOM_DIR" node --input-type=module <<'EOF'
-import { createRequire } from 'node:module';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-
-const require = createRequire(join(process.env.WIRELOOM_DIR, 'package.json'));
-const loaded = require('wireloom');
-const wireloom = loaded.default ?? loaded;
-const spec = process.env.SPEC;
-const markdown = await readFile(spec, 'utf8');
-const pairs = [...markdown.matchAll(/!\[[^\]]*\]\(([^)\s]+\.svg)\)\n\n```wireloom\n([\s\S]*?)```/g)];
-if (pairs.length === 0) throw new Error(`no image and wireloom pairs in ${spec}`);
-for (const [, image, source] of pairs) {
-  const target = join(dirname(spec), image);
-  const { svg } = await wireloom.render(image, source);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, svg.endsWith('\n') ? svg : `${svg}\n`);
-  console.log(`rendered ${target}`);
-}
-EOF
-rm -rf "$WIRELOOM_DIR"
+just install-tools                                   # once, and after a Wireloom version change
+just render-wireframes specs/NNN-feature-name/spec.md
 ```
 
-The command writes each SVG to the path in its image link and prints that path. It fails if the
-spec has no image and source pair. Run it again after each source change, and commit the SVGs
+The recipe writes each SVG to the path in its image link and prints that path. It fails if a
+file has no image and source pair. Run it again after each source change, and commit the SVGs
 with the spec. The wireframes in this file were rendered with
-`SPEC=.specify/examples/specification-by-example.md`.
+`just render-wireframes .specify/examples/specification-by-example.md`.

@@ -101,12 +101,13 @@
   - HTTP: RFC-style request and response that match the applicable OpenAPI contract. Use `...`
     only for values that are clear from context and immaterial to the behavior; keep
     security-critical inputs and observable outcomes explicit.
-  - UI: one `wireloom` block per meaningful state. Commit its rendered SVG under
-    `specs/[###-feature-name]/wireframes/` and embed it as an image directly above the source;
+  - UI: one `wireloom` block per meaningful state. Render it with
+    `just render-wireframes specs/[###-feature-name]/spec.md`, commit the SVG under
+    `specs/[###-feature-name]/wireframes/`, and embed it as an image directly above the source;
     name the user action between states. Follow
     https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md
   - JWT: synthetic token marker plus decoded header and claims. Never use real tokens or secrets.
-  Worked example and Wireloom render command: `.specify/examples/specification-by-example.md`.
+  Worked example and rendering details: `.specify/examples/specification-by-example.md`.
   Replace the placeholders below, repeat the journey for each flow, and omit inapplicable blocks.
 -->
 

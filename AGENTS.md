@@ -195,6 +195,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just test-integration-infra` | Infra-backed integration suites (Docker/Podman required) |
 | `just test-integration-all` | Both integration layers |
 | `just cdk-test` | CDK unit tests |
+| `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 **Local validation:** Do not rely only on editor diagnostics. After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
 

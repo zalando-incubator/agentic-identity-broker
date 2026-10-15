@@ -69,6 +69,18 @@ updates:
         patterns:
           - "*"
 
+  # Spec wireframe renderer npm Dependencies
+  - package-ecosystem: "npm"
+    directory: "/tools/wireloom"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependabot"
+      - "minor"
+    open-pull-requests-limit: 1
+
   # GitHub Actions — every `uses:` is pinned to a commit SHA, so this is the
   # only way those pins ever move. Grouped into one PR per week.
   - package-ecosystem: "github-actions"

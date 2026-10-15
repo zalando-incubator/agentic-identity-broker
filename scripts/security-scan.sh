@@ -71,6 +71,7 @@ lockfiles=(
     mocks/upstream-oauth2-server/go.mod
     web/package-lock.json
     assets/docusaurus/package-lock.json
+    tools/wireloom/package-lock.json
 )
 
 osv_args=(

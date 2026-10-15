@@ -26,6 +26,7 @@ on:
       - "**/go.sum"
       - "web/package-lock.json"
       - "assets/docusaurus/package-lock.json"
+      - "tools/wireloom/package-lock.json"
       - "osv-scanner.toml"
       - "scripts/security-scan.sh"
       - ".github/workflows/security.yml"
