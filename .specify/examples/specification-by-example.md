@@ -62,6 +62,8 @@ State A — consent screen as loaded:
 
 ![State A: consent screen as loaded](wireframes/journey-1-a-consent.svg)
 
+<details><summary>Wireloom source</summary>
+
 ```wireloom
 window "Consent Management":
   header:
@@ -89,11 +91,15 @@ window "Consent Management":
 annotation "Action: Alice checks this box" target="end-date" position=right
 ```
 
+</details>
+
 Action: Alice checks **Specific end date**. The page pre-fills today + 3 months.
 
 State B — end date set:
 
 ![State B: end date set to January 15, 2027](wireframes/journey-1-b-end-date.svg)
+
+<details><summary>Wireloom source</summary>
 
 ```wireloom
 window "Consent Management":
@@ -127,6 +133,8 @@ window "Consent Management":
 annotation "Pre-filled: today + 3 months" target="end-date-value" position=right
 annotation "Step 4: Alice clicks" target="approve" position=right
 ```
+
+</details>
 
 **Step 4 — 09:30:15: Alice clicks Approve & Delegate**
 
@@ -239,10 +247,12 @@ Wireloom 0.7.0 has no command-line interface. `tools/wireloom/render.mjs` calls 
 function `wireloom.render`, which returns a self-contained SVG string. `just install-tools`
 installs the pinned `wireloom` version from `tools/wireloom/package-lock.json`.
 
-In a spec, put an SVG image in its own paragraph immediately before each fenced `wireloom`
-source block, as Step 3 above shows. The image path is relative to the spec file and MUST stay
-inside its directory. The renderer parses Markdown, so blank-line spacing and reference-style
-image links do not change the pairing.
+In a spec, put each SVG image in its own paragraph, followed by a collapsed
+`<details><summary>Wireloom source</summary>` block containing its fenced `wireloom` source.
+Close it with `</details>` after the fence, with blank lines around the fence. GitHub shows the
+image by default and reveals the editable source when expanded. The image path is relative to
+the spec and MUST stay inside its directory. The renderer pairs adjacent top-level Markdown
+blocks, so reference-style image links and blank-line spacing also work.
 
 From the repository root, render every image and source pair in one or more specs:
 

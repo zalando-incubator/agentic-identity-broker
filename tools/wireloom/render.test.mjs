@@ -20,7 +20,7 @@ async function withSpec(markdown, check) {
   }
 }
 
-test('renders a reference-style image despite CRLF spacing; ignores examples inside fences', async () => {
+test('renders a collapsed reference-style source despite CRLF spacing; ignores fenced examples', async () => {
   const markdown = [
     '~~~md',
     '![fake](fake.svg)',
@@ -33,10 +33,15 @@ test('renders a reference-style image despite CRLF spacing; ignores examples ins
     '',
     '![Consent][screen]',
     '',
+    '<details>',
+    '<summary>Wireloom source</summary>',
+    '',
     '```wireloom title=consent',
     'window "Consent":',
     '  text "Visible"',
     '```',
+    '',
+    '</details>',
     '',
     '[screen]: wireframes/consent.svg',
   ].join('\r\n');

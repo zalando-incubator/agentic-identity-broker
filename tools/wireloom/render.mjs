@@ -9,7 +9,7 @@ if (files.length === 0) {
   process.exit(2);
 }
 
-const markdownParser = new MarkdownIt();
+const markdownParser = new MarkdownIt({ html: true });
 
 for (const file of files) {
   const tokens = markdownParser.parse(await readFile(file, 'utf8'), {});
@@ -18,12 +18,21 @@ for (const file of files) {
 
   for (let i = 0; i < tokens.length - 3; i++) {
     if (tokens[i].type !== 'paragraph_open' || tokens[i + 1].type !== 'inline' ||
-        tokens[i + 2].type !== 'paragraph_close' || tokens[i + 3].type !== 'fence') continue;
+        tokens[i + 2].type !== 'paragraph_close') continue;
     const children = tokens[i + 1].children.filter(
       child => child.type !== 'text' || child.content.trim() !== '',
     );
-    if (children.length !== 1 || children[0].type !== 'image' ||
-        tokens[i + 3].info.trim().split(/\s+/)[0] !== 'wireloom') continue;
+    if (children.length !== 1 || children[0].type !== 'image') continue;
+
+    let fenceIndex = i + 3;
+    if (tokens[fenceIndex]?.type === 'html_block' &&
+        /^<details>\s*<summary>[^<]*<\/summary>\s*$/.test(tokens[fenceIndex].content) &&
+        tokens[fenceIndex + 2]?.type === 'html_block' &&
+        /^<\/details>\s*$/.test(tokens[fenceIndex + 2].content)) {
+      fenceIndex++;
+    }
+    if (tokens[fenceIndex]?.type !== 'fence' ||
+        tokens[fenceIndex].info.trim().split(/\s+/)[0] !== 'wireloom') continue;
 
     const image = children[0].attrGet('src');
     if (!image?.endsWith('.svg') || isAbsolute(image) || /^[a-z][a-z\d+.-]*:/i.test(image)) {
@@ -35,8 +44,8 @@ for (const file of files) {
     if (relativeTarget === '..' || relativeTarget.startsWith(`..${sep}`)) {
       throw new Error(`Wireloom image must stay within ${directory}: ${image}`);
     }
-    pairs.push({ image, source: tokens[i + 3].content, target });
-    pairedFences.add(i + 3);
+    pairs.push({ image, source: tokens[fenceIndex].content, target });
+    pairedFences.add(fenceIndex);
   }
 
   for (const [i, token] of tokens.entries()) {

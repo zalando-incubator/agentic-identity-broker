@@ -103,8 +103,8 @@
     security-critical inputs and observable outcomes explicit.
   - UI: one `wireloom` block per meaningful state. Render it with
     `just render-wireframes specs/[###-feature-name]/spec.md`, commit the SVG under
-    `specs/[###-feature-name]/wireframes/`, and embed it as an image directly above the source;
-    name the user action between states. Follow
+    `specs/[###-feature-name]/wireframes/`, and embed it above a collapsed `<details>` block
+    containing the editable `wireloom` source; name the user action between states. Follow
     https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md
   - JWT: synthetic token marker plus decoded header and claims. Never use real tokens or secrets.
   Worked example and rendering details: `.specify/examples/specification-by-example.md`.
