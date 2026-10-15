@@ -46,6 +46,8 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `specs/NNN-<name>/spec.md` | Feature requirements + acceptance scenarios
 `specs/NNN-<name>/plan.md` | Implementation approach
 `specs/NNN-<name>/tasks.md` | Trackable task list
+`.specify/templates/overrides/spec-template.md` | Spec template: required sections and the worked example journey (Principle XIV)
+`.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
 
 ### Encryption Deep Reference
 

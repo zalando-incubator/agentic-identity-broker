@@ -117,9 +117,10 @@ broker credentials, `redirect_uris: [https://agent.example.com/callback]`,
 `allowed_scopes: [openid, profile]`); required permission set *GitHub Read Access*
 (`770e8400-e29b-41d4-a716-446655440001`) for service *GitHub Production*
 (`880e8400-e29b-41d4-a716-446655440010`), where Alice already has an active session. Alice has no
-grant for the agent. All times are 2026-10-15 UTC.
+grant for the agent. All times are 2026-10-15 UTC, and Alice's browser time zone is UTC (the SPA
+computes the end date in browser-local time). All IDs, codes, keys, and tokens are synthetic.
 
-**Step 1 — Broker configuration (initial state)**
+**Step 1 — Broker configuration (initial state; excerpt, other required settings omitted)**
 
 ```yaml
 server:
@@ -293,12 +294,14 @@ Pragma: no-cache
 {
   "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6...",
   "token_type": "Bearer",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
   "expires_in": 3600,
   "scope": "openid profile"
 }
 ```
 
-No `refresh_token` is returned because the agent did not request `offline_access`.
+Line breaks in the form body are for display only. No `refresh_token` is returned because the
+agent did not request `offline_access`.
 
 Decoded `access_token` (synthetic):
 
