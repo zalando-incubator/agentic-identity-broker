@@ -4,10 +4,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
-const renderer = new URL('./render.mjs', import.meta.url).pathname;
+const renderer = fileURLToPath(new URL('./render.mjs', import.meta.url));
 
 async function withSpec(markdown, check) {
   const dir = await mkdtemp(join(tmpdir(), 'wireloom-render-'));
