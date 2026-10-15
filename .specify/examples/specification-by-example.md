@@ -239,8 +239,10 @@ Wireloom 0.7.0 has no command-line interface. `tools/wireloom/render.mjs` calls 
 function `wireloom.render`, which returns a self-contained SVG string. `just install-tools`
 installs the pinned `wireloom` version from `tools/wireloom/package-lock.json`.
 
-In a spec, put each image link directly above its `wireloom` source, separated by one blank line,
-as Step 3 above shows. The image path is relative to the spec file.
+In a spec, put an SVG image in its own paragraph immediately before each fenced `wireloom`
+source block, as Step 3 above shows. The image path is relative to the spec file and MUST stay
+inside its directory. The renderer parses Markdown, so blank-line spacing and reference-style
+image links do not change the pairing.
 
 From the repository root, render every image and source pair in one or more specs:
 
@@ -249,7 +251,8 @@ just install-tools                                   # once, and after a Wireloo
 just render-wireframes specs/NNN-feature-name/spec.md
 ```
 
-The recipe writes each SVG to the path in its image link and prints that path. It fails if a
-file has no image and source pair. Run it again after each source change, and commit the SVGs
-with the spec. The wireframes in this file were rendered with
+The recipe writes each SVG to the path in its image link and prints that path. It rejects
+unpaired `wireloom` blocks and fails when a file has no image and source pair. Run it again
+after each source change, and commit the SVGs with the spec.
+The wireframes in this file were rendered with
 `just render-wireframes .specify/examples/specification-by-example.md`.
