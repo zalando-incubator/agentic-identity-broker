@@ -51,7 +51,7 @@ Do not use private, loopback, or redirected URLs for production validation. The 
    just test-integration-infra
    ```
 
-   Migration 036 must apply, refuse unsafe rollback, roll back cleanly when allowed, and replay. The two restart scenarios in step 1 use the `docker` label. They create a new adapter for the same PostgreSQL database.
+   Migration 039 must apply, refuse unsafe rollback, roll back cleanly when allowed, and replay. The two restart scenarios in step 1 use the `docker` label. They create a new adapter for the same PostgreSQL database.
 
 5. Run static checks and build documentation.
 

@@ -50,7 +50,7 @@ The existing `Scopes`, `ProtectedResources`, `ServiceRequirements`, canonical ID
 | Discovery confidential DCR | `dcr` | `client_secret_basic` or `client_secret_post` | Encrypted | The selected method only, with PKCE. |
 | Discovery public DCR | `dcr` | `none` | Absent | Public token requests and PKCE. |
 
-[ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md) supersedes [ADR 036](../../adrs/036-public-client-token-endpoint-auth.md) only for discovery-backed DCR authentication. Manual confidential clients keep automatic authentication. DCR pins its selected method for code exchange and refresh without probing alternatives. Only DCR rows participate in issuer/client-ID uniqueness. Manual services retain their present uniqueness rules.
+[ADR 040](../../adrs/040-protected-resource-discovery-and-dcr.md) supersedes [ADR 036](../../adrs/036-public-client-token-endpoint-auth.md) only for discovery-backed DCR authentication. Manual confidential clients keep automatic authentication. DCR pins its selected method for code exchange and refresh without probing alternatives. Only DCR rows participate in issuer/client-ID uniqueness. Manual services retain their present uniqueness rules.
 
 ## DiscoveryStatus value object
 
@@ -118,7 +118,7 @@ An issuer or effective-audience change checks for all user sessions before netwo
 
 ## Persistence design
 
-Migration `036_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services`. These SQL predicates follow [proposed ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md), subject to reviewer acceptance. The existing `authorization_params` JSONB column stores the effective resource.
+Migration `039_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services` after existing versions 036–038. These SQL predicates follow [proposed ADR 040](../../adrs/040-protected-resource-discovery-and-dcr.md), subject to reviewer acceptance. The existing `authorization_params` JSONB column stores the effective resource.
 
 ```sql
 ALTER TABLE thirdparty_oauth2_services

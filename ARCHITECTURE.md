@@ -888,7 +888,7 @@ OAuth2 /authorize request
 
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 
-**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [Proposed ADR 038](adrs/038-protected-resource-discovery-and-dcr.md) changes only its package locations if accepted. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
+**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [Proposed ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations if accepted. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
@@ -981,7 +981,7 @@ Discovery and registration send no service credentials, user tokens, cookies, or
 
 **Audit NFRs**: Discovery, registration, rejection, and refresh audit records contain the service ID, operation, outcome, and validated issuer or selected method when known. They also contain a safe failure code on failure. They contain no secrets, assertions, tokens, authorization codes, query strings, or raw remote response bodies.
 
-**See Also**: [Proposed ADR 038: Protected Resource Discovery and Dynamic Client Registration](adrs/038-protected-resource-discovery-and-dcr.md), [feature specification](specs/050-oauth2-protected-resource-discovery/spec.md), and the canonical [Admin OpenAPI](api/admin/openapi.yaml).
+**See Also**: [Proposed ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md), [feature specification](specs/050-oauth2-protected-resource-discovery/spec.md), and the canonical [Admin OpenAPI](api/admin/openapi.yaml).
 
 #### 3.1.y. User Impersonation Domain (Feature 037)
 
@@ -1379,10 +1379,10 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 ### Client ID Metadata Document (CIMD)
 
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. Proposed ADR 038 would change package locations only.
+- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. Proposed ADR 040 would change package locations only.
 - [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
-- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. Proposed ADR 038 would extend decision 2 only for discovery-backed DCR.
-- [ADR 038: Protected Resource Discovery and Dynamic Client Registration](adrs/038-protected-resource-discovery-and-dcr.md) - Proposed discovery, client selection, guarded HTTP, and status design. Stakeholder approval does not constitute reviewer acceptance. ADRs 015 and 036 remain binding until then.
+- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. Proposed ADR 040 would extend decision 2 only for discovery-backed DCR.
+- [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Proposed discovery, client selection, guarded HTTP, and status design. Stakeholder approval does not constitute reviewer acceptance. ADRs 015 and 036 remain binding until then.
 
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window

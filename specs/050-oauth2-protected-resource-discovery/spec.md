@@ -24,6 +24,8 @@
 - Q: Are the proposed ADR 038 decisions accepted, including the shared outbound security boundary, DCR-only Basic/POST methods, and optional deployment-wide DCR name with Helm support? → A: Yes. Accept ADR 038.
 - Q: Is the canonical Admin OpenAPI delta approved, including response methods, `discovery.client_method`, discovery status, failure-code mappings, and `client_name_unconfigured` as a `400` error? → A: Yes. Approve the API contract.
 
+The stakeholder approved this proposal under number 038. It is now [proposed ADR 040](../../adrs/040-protected-resource-discovery-and-dcr.md). Main uses 038 for proactive token refresh; the decision is unchanged.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Connect a service that supports CIMD (Priority: P1)

@@ -776,11 +776,11 @@ func TestMigration035PrivateKeyJWTAuthentication(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration replay must preserve legacy static and public services")
 }
 
-func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
+func TestMigration039ProtectedResourceDiscovery(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
-	require.NoError(t, f.Up(t, 35))
+	require.NoError(t, f.Up(t, 38))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO thirdparty_oauth2_services
 			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
@@ -818,7 +818,7 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 	require.NoError(t, f.UpAll(t))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version, "protected-resource discovery migration must be applied")
+	require.Equal(t, uint(39), version, "protected-resource discovery migration must be applied")
 	require.False(t, dirty)
 	assert.Equal(t, legacyRows, manualSnapshot(), "migration must not modify existing service data")
 
@@ -984,11 +984,11 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = f.Down(t, 35)
+	err = f.Down(t, 38)
 	require.ErrorContains(t, err, "cannot revert protected-resource discovery while discovery-backed services exist")
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
+	require.Equal(t, uint(38), version)
 	require.True(t, dirty)
 	rowsAfterGuard, err := f.QuerySQL(t, `
 		SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text
@@ -1007,7 +1007,7 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, indexExists, "guard must run before schema removal")
 
-	require.NoError(t, f.Force(t, 36))
+	require.NoError(t, f.Force(t, 39))
 	require.NoError(t, f.ExecuteSQL(t, `
 		DELETE FROM thirdparty_oauth2_services
 		WHERE id IN (
@@ -1018,10 +1018,10 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 			'36000000-0000-0000-0000-000000000014'
 		);
 	`))
-	require.NoError(t, f.Down(t, 35))
+	require.NoError(t, f.Down(t, 38))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
+	require.Equal(t, uint(38), version)
 	require.False(t, dirty)
 	assert.Equal(t, legacyRows, manualSnapshot(), "clean rollback must preserve manual services")
 	for _, column := range []string{
@@ -1059,10 +1059,10 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 		})
 	}
 
-	require.NoError(t, f.Up(t, 36))
+	require.NoError(t, f.Up(t, 39))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version)
+	require.Equal(t, uint(39), version)
 	require.False(t, dirty)
 	assert.Equal(t, legacyRows, manualSnapshot(), "replay must preserve manual services")
 	indexExists, err = f.IndexExists(t, indexName)
@@ -1070,10 +1070,10 @@ func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
 	require.True(t, indexExists)
 }
 
-func TestMigration036RollbackWaitsForDiscoveryWrite(t *testing.T) {
+func TestMigration039RollbackWaitsForDiscoveryWrite(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 36))
+	require.NoError(t, f.Up(t, 39))
 	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
 	require.NoError(t, err)
 	defer func() { _, _ = m.Close() }()
@@ -1129,7 +1129,7 @@ func TestMigration036RollbackWaitsForDiscoveryWrite(t *testing.T) {
 
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
+	require.Equal(t, uint(38), version)
 	require.True(t, dirty)
 	row, err := f.QuerySQL(t, `
 		SELECT resource_url FROM thirdparty_oauth2_services

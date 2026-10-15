@@ -14,12 +14,12 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 **Goal**: Share the existing CIMD outbound safety boundary without changing CIMD behavior. Submit this phase as a separate PR before feature code.
 
-- [X] T001 Draft `adrs/038-protected-resource-discovery-and-dcr.md` and obtain stakeholder approval before relocating the ADR 015 adapter. Record the outbound port boundary and a scoped proposed supersession of ADR 036 decision 2 for DCR-issued `client_secret_basic` and `client_secret_post`. Reviewer acceptance remains outstanding.
+- [X] T001 Draft `adrs/040-protected-resource-discovery-and-dcr.md` and obtain stakeholder approval before relocating the ADR 015 adapter. Record the outbound port boundary and a scoped proposed supersession of ADR 036 decision 2 for DCR-issued `client_secret_basic` and `client_secret_post`. Reviewer acceptance remains outstanding.
 - [X] T002 Relocate `internal/domain/oauth2/cimd/blocklist.go` and its tests to `internal/domain/netpolicy/`; migrate imports without aliases or behavior changes. Retain special-range and operator-CIDR coverage. In the same Phase 0 PR, update the "New Domain Packages" paragraph in the CIMD Subsystem and the `SSRFBlocklist` glossary entry in `ARCHITECTURE.md`. Name `internal/domain/netpolicy/` as the new location.
 - [X] T003 Relocate `internal/adapters/cimd/fetcher.go` and its tests to `internal/adapters/outboundhttp/`; migrate imports and Builder construction without behavior changes. Keep its dedicated timeout and body limit. Do not pass Builder's shared `upstreamClient` to a CIMD constructor that changes `CheckRedirect`. Remove the old adapter package. In the same Phase 0 PR, update the `CIMDFetcher` glossary entry in `ARCHITECTURE.md` to name `internal/adapters/outboundhttp/`.
 - [X] T004 Run `just verify` for the Phase 0 refactor and record its result. The 2026-10-07 stakeholder exception defers unchanged npm advisory remediation until after this feature: the security scanner stopped the full gate, but `just check`, focused Go tests, and 101 existing CIMD E2E cases passed. Confirm `ARCHITECTURE.md` names both new packages and no longer places the blocklist or fetcher in their old packages. Submit the behavior-neutral code and documentation in a separate PR before feature behavior. Do not claim the full gate passed. Phase 0 PR: https://github.com/zalando-incubator/agentic-identity-broker/pull/190.
 
-**Checkpoint**: The existing CIMD scenarios passed. The stakeholder approved the proposed ADR 038 approach before the shared adapter change; reviewers have not accepted the ADR.
+**Checkpoint**: The existing CIMD scenarios passed. The stakeholder approved the proposed ADR 040 approach before the shared adapter change; reviewers have not accepted the ADR.
 
 ## Phase 1: Setup
 
@@ -36,8 +36,8 @@ description: "Task list for protected-resource OAuth2 discovery"
 ### Phase 2a: Domain Model and Glossary (Principles II and V)
 
 - [X] T008 Add Protected Resource Metadata, Authorization Server Metadata, Client bootstrap method, DCR client identity, Effective resource, and Discovery status to the glossary in `ARCHITECTURE.md`; distinguish discovery URL, token audience, and `protected_resources` ownership.
-- [X] T009 Document the trust boundary, probe order, failure isolation, DCR method order, and one-resource invariant in `ARCHITECTURE.md`. Record SC-006: at least 19 of 20 registrations finish within five seconds when each external response takes at most one second. Record the 15-second/256-KiB security limits. Link accepted `adrs/038-protected-resource-discovery-and-dcr.md` without changing manual-service behavior.
-- [X] T010 Compare the aggregate, owned status value, states, and issuer-change-with-sessions rule in `specs/050-oauth2-protected-resource-discovery/data-model.md` with accepted `adrs/038-protected-resource-discovery-and-dcr.md`; resolve any mismatch there before implementation.
+- [X] T009 Document the trust boundary, probe order, failure isolation, DCR method order, and one-resource invariant in `ARCHITECTURE.md`. Record SC-006: at least 19 of 20 registrations finish within five seconds when each external response takes at most one second. Record the 15-second/256-KiB security limits. Link proposed `adrs/040-protected-resource-discovery-and-dcr.md` without changing manual-service behavior.
+- [X] T010 Compare the aggregate, owned status value, states, and issuer-change-with-sessions rule in `specs/050-oauth2-protected-resource-discovery/data-model.md` with proposed `adrs/040-protected-resource-discovery-and-dcr.md`; resolve any mismatch there before implementation.
 
 ### Phase 2b: Configuration Design (Principle VII)
 
@@ -55,7 +55,7 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 ### Phase 2d: Database Design (Principle IX)
 
-- [X] T019 Specify migration 036's exact field-combination and status checks, DCR-only `(issuer_uri, client_id)` unique predicate, migration-035 authentication-check restoration, and guarded rollback in `specs/050-oauth2-protected-resource-discovery/data-model.md`; retain the existing service table and manual uniqueness policy.
+- [X] T019 Specify migration 039's exact field-combination and status checks, DCR-only `(issuer_uri, client_id)` unique predicate, migration-035 authentication-check restoration, and guarded rollback in `specs/050-oauth2-protected-resource-discovery/data-model.md`; retain the existing service table and manual uniqueness policy.
 
 ### Phase 2e: Frontend and Design System Review (Principle XI)
 
@@ -73,7 +73,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 **Red baseline (2026-10-07)**: The functional filter selected 41 of 688 specs and reported 0 passed, 41 semantic failures, and 0 pending. Both Docker restart cases started PostgreSQL and failed only because discovery-backed service creation returned `400` instead of `201`. The one-process SC-006 filter selected one case and reported 0 of 20 successful registrations (all Admin responses `400`, zero DCR requests). Both gates compiled and ran without unreachable test hosts, missing Builder symbols, or fixture errors.
 
-**Checkpoint**: The stakeholder approved proposed ADR 038 and the Admin OpenAPI delta. Migration 036 was specified, and the original 41 functional scenarios plus SC-006 failed semantically. The Phase 1 Builder seam compiled before those gates. Three later remediation cases bring the functional total to 44.
+**Checkpoint**: The stakeholder approved proposed ADR 040 and the Admin OpenAPI delta. Migration 036 was specified, and the original 41 functional scenarios plus SC-006 failed semantically. The Phase 1 Builder seam compiled before those gates. Three later remediation cases bring the functional total to 44.
 
 ## Phase 2.5: Foundational Infrastructure
 
@@ -83,17 +83,19 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 - [X] T026 Add only fields and constructors needed by focused foundation and story tests in `internal/domain/model/discovery_config.go` and `internal/domain/model/thirdparty_oauth2_provider.go`. Complete test-facing adapter types around the T006 constructor in `internal/adapters/outboundhttp/discovery_client.go`. The earlier E2E red gate must compile without these later symbols.
 - [X] T027 [P] Write semantic-red outbound adapter tests in `internal/adapters/outboundhttp/discovery_client_test.go` for public HTTPS validation, dial-time blocked-IP rejection, no redirects, challenge extraction, 404 sentinel, 256-KiB response limit, one 15-second discovery/registration attempt deadline, and no response-body leaks. With `HTTPS_PROXY` set, prove the guarded client bypasses the proxy and still blocks a private target before connect.
 - [X] T028 Implement the production guarded dialer and bounded probe/JSON operations in `internal/adapters/outboundhttp/discovery_client.go`. Enforce public HTTPS URL validation, `Accept: application/json`, HTTP 200 plus JSON content type, no redirects, and 256-KiB metadata bounds in the client layer even when T006 injects a fake-host HTTP client. Use `internal/domain/netpolicy` at production dial time; reject user information and fragments. Disable proxies on the guarded transport so `net.Dialer.Control` checks the destination, not a proxy. Expose the guard for Builder's distinct discovery-backed token client without mutating the existing shared client. Do not expose an insecure runtime constructor.
-- [X] T029 [P] Write semantic-red migration tests in `tests/integration/migrations/migrations_test.go` for legacy rows, migration 036 apply, DCR check/index constraints, guarded down with discovery rows, clean down, and replay on real PostgreSQL.
-- [X] T030 Add `migrations/036_add_protected_resource_discovery.up.sql` and `.down.sql`: same-row source/status fields, DCR-only issuer/client unique index, expanded auth check, consistency checks, and a down guard that refuses to discard discovery-backed rows before restoring migration-035 rules.
+- [X] T029 [P] Write semantic-red migration tests in `tests/integration/migrations/migrations_test.go` for legacy rows, migration 039 apply, DCR check/index constraints, guarded down with discovery rows, clean down, and replay on real PostgreSQL.
+- [X] T030 Add `migrations/039_add_protected_resource_discovery.up.sql` and `.down.sql`: same-row source/status fields, DCR-only issuer/client unique index, expanded auth check, consistency checks, and a down guard that refuses to discard discovery-backed rows before restoring migration-035 rules.
 - [X] T031 Define a focused `ThirdpartyOAuth2ProviderDiscoveryStatusWriter` interface in `internal/ports/storage.go` for guarded failure-only status writes. Keep successful active-state writes on the existing repository operations. Do not add methods to the existing ten-method `ThirdpartyOAuth2ProviderRepository`. Require optimistic version and attempt ordering without adapter-specific errors.
 - [X] T032 [P] Write semantic-red shared persistence tests in `internal/adapters/storage/memory/thirdparty_provider_test.go` for discovery fields, atomic success state, and stale failure-only writes without changing service version or sessions.
 - [X] T033 Implement baseline discovery field copying, active-state writes, and guarded status writes in `internal/adapters/storage/memory/thirdparty_provider.go` and `internal/adapters/storage/memory/thirdparty_provider_record.go`; use the adapter lock and preserve manual behavior.
-- [X] T034 [P] Write semantic-red shared persistence tests in `internal/adapters/storage/postgres/thirdparty_provider_test.go` for migration-036 fields, atomic success transaction, and stale failure-only writes under a competing version/newer success.
+- [X] T034 [P] Write semantic-red shared persistence tests in `internal/adapters/storage/postgres/thirdparty_provider_test.go` for migration-039 fields, atomic success transaction, and stale failure-only writes under a competing version/newer success.
 - [X] T035 Implement active-state and status columns in `internal/adapters/storage/postgres/thirdparty_provider.go` and `internal/adapters/storage/postgres/thirdparty_provider_record.go`; commit success with the service row, limit failure writes to status fields, and translate unique conflicts into domain storage errors.
 
 **Foundation red baseline (2026-10-07)**: Outbound tests rejected the compile-only adapter instead of observing safe HTTPS and dial-time behavior. Memory tests found missing copied discovery status and a failure-writer error. Migration 036 tests observed version 35 rather than 36. PostgreSQL repository tests found no `resource_url` column. All test packages compiled; PostgreSQL containers started successfully.
 
 **Foundation green (2026-10-07)**: `go test` passed for `internal/adapters/outboundhttp`, `internal/adapters/storage/memory`, `internal/adapters/storage`, and `internal/domain/model`. The real PostgreSQL migration-036 lifecycle test and three discovery repository integration tests passed after replacing constraint-name assertions with SQLSTATE checks and comparing timestamp instants rather than local timezone representations. `just check` passed.
+
+The 2026-10-07 red/green evidence refers to this feature's original migration 036. It is now migration 039 because versions 036–038 were added on the base branch; the SQL behavior is unchanged.
 
 **Checkpoint**: Common outbound security and persistence are ready. No story-specific method selection or response behavior is claimed complete.
 
@@ -158,7 +160,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 - [X] T063 [US2] Pin DCR code exchange to `AuthStyleInHeader` for Basic or `AuthStyleInParams` for POST/public, and preserve the CIMD assertion path in `internal/domain/oauth2session/service.go`; never probe another style.
 - [X] T064 [US2] Send only the selected Basic header or POST body secret on refresh, one stored `resource`, and no secret for public DCR in `internal/domain/oauth2session/service.go`. Load credentials by service ID and verify issuer. If no refresh token exists or the provider rejects a credential, fail without re-registering or probing another method.
 - [X] T065 [US2] Enforce issuer-scoped DCR uniqueness under the adapter lock and copy absent/encrypted secrets correctly in `internal/adapters/storage/memory/thirdparty_provider.go`; preserve manual uniqueness.
-- [X] T066 [US2] Persist confidential/public DCR fields using migration 036's partial unique index and conflict mapping in `internal/adapters/storage/postgres/thirdparty_provider.go`; verify encrypted secret survives a fresh adapter and deletes with the service.
+- [X] T066 [US2] Persist confidential/public DCR fields using migration 039's partial unique index and conflict mapping in `internal/adapters/storage/postgres/thirdparty_provider.go`; verify encrypted secret survives a fresh adapter and deletes with the service.
 - [X] T067 [US2] Return `discovery.client_method`, explicit DCR auth method, issuer and client ID, and effective override without a DCR secret in `internal/adapters/http/handlers/admin/services_handler.go`.
 - [X] T068 [US2] Run US2-S1–S10 in `tests/e2e/thirdparty_protected_resource_dcr_test.go` to green; use a new PostgreSQL adapter after restart for US2-S3 and assert registration count stays one. Assert that US2-S10 uses only the configured broker name.
 
@@ -223,10 +225,10 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 ### Design Phase Verification (Principles II, IV, V, VII, IX, X, XIII)
 
-- [X] T094 Confirm the glossary, outbound trust flow, stakeholder-approved proposed ADR 038, and the precise ADR 036/015 relationship in `ARCHITECTURE.md` and `adrs/038-protected-resource-discovery-and-dcr.md`. Confirm that the full SC-006 target and the 15-second/256-KiB limits appear in `ARCHITECTURE.md` (Principles II and V).
+- [X] T094 Confirm the glossary, outbound trust flow, stakeholder-approved proposed ADR 040, and the precise ADR 036/015 relationship in `ARCHITECTURE.md` and `adrs/040-protected-resource-discovery-and-dcr.md`. Confirm that the full SC-006 target and the 15-second/256-KiB limits appear in `ARCHITECTURE.md` (Principles II and V).
 - [X] T095 Confirm the HTTPS public-URL precondition and optional broker-wide DCR client name in `docs/configuration.md`, `examples/config/protected-resource-discovery.yaml`, `examples/config/README.md`, `internal/ports/config.go`, loader and CLI, `charts/agentic-identity-broker/values.yaml`, `values.schema.json`, `templates/configmap.yaml`, and chart README (Principle VII). Verify missing name blocks DCR only.
 - [X] T096 Confirm the stakeholder review record and exact request/response/security/error examples in `api/admin/openapi.yaml` against `specs/050-oauth2-protected-resource-discovery/contracts/admin-api.md` (Principles IV and X).
-- [X] T097 Confirm migration design, guarded down rule, and preservation of manual rows in `specs/050-oauth2-protected-resource-discovery/data-model.md` and `migrations/036_add_protected_resource_discovery.up.sql` (Principle IX).
+- [X] T097 Confirm migration design, guarded down rule, and preservation of manual rows in `specs/050-oauth2-protected-resource-discovery/data-model.md` and `migrations/039_add_protected_resource_discovery.up.sql` (Principle IX).
 - [X] T098 Confirm exactly 41 scenario IDs map to `Describe` → `Context` → `It()` blocks with labels and spec references in `tests/e2e/thirdparty_protected_resource_discovery_test.go`, `tests/e2e/thirdparty_protected_resource_dcr_test.go`, `tests/e2e/thirdparty_protected_resource_rejection_test.go`, and `tests/e2e/thirdparty_protected_resource_status_test.go` (Principle XIII); record semantic red/green and reject skipped, placeholder, or weakened assertions.
 
 ### Implementation Phase Verification (Principles I–XIII, as applicable)
@@ -250,7 +252,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 ## Phase N+1: Protected Resource Remediation (Completed)
 
-- [X] T107 [US4] Update the audience-change `409` and response-only provenance contract in `api/admin/openapi.yaml`, feature contracts, and operator guides. Clarify service ETag scope, unversioned status, callback binding, outbound trust boundaries, and proposed ADR 038 in governance docs. Record US4-S9–S11 and the 44-case functional target without changing prior evidence.
+- [X] T107 [US4] Update the audience-change `409` and response-only provenance contract in `api/admin/openapi.yaml`, feature contracts, and operator guides. Clarify service ETag scope, unversioned status, callback binding, outbound trust boundaries, and proposed ADR 040 in governance docs. Record US4-S9–S11 and the 44-case functional target without changing prior evidence.
 - [X] T108 [US4] Add semantic-red domain, callback, adapter, HTTP, and production-Builder Ginkgo cases for US4-S9–S11. Cover session races, unchanged explicit audience, provenance transitions, unchanged ETag and tokens, and status-write boundaries before production edits.
 - [X] T109 [US4] Reject effective audience changes with existing sessions in domain and both storage adapters under their session gates or locks. Keep issuer-conflict precedence, propagate count errors, and map the typed conflict to the approved `409`; write only discovery failure status, never manual-conversion status.
 - [X] T110 [US4] Seal issuer and audience in discovered callback state, reject stale callbacks before token exchange, and guard memory and PostgreSQL session insertion against concurrent audience changes. Preserve manual state rules and existing token encryption context.
@@ -258,14 +260,14 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 - [X] T112 [US4] Return response-only `discovery.authorization_param_resource_strategy` as `derived`, `pinned`, or null for create, get, list, and update. Keep the effective value in `authorization_params.resource` and retain PUT field-presence rules.
 - [X] T113 [US3] Reuse public HTTPS URL validation for discovery and discovered token endpoints. Reject case-insensitive `resource` parameter collisions in requests and issuer metadata before remote registration; leave direct `metadata_url` and manual flows unchanged.
 - [X] T114 [US3] Remove untrusted outbound error detail from discovered token and refresh failures, Admin logs, status, and audit. Separate caller cancellation from attempt deadlines and retain safe approved failure codes.
-- [X] T115 [US4] Reject equal-microsecond discovery completions in memory and PostgreSQL. Retain the first committed outcome, active fields, ETag, and failed status on ties; record the policy in proposed ADR 038 and architecture docs.
+- [X] T115 [US4] Reject equal-microsecond discovery completions in memory and PostgreSQL. Retain the first committed outcome, active fields, ETag, and failed status on ties; record the policy in proposed ADR 040 and architecture docs.
 
 ## Dependencies and Execution Order
 
 ### Phase graph
 
 ```text
-Phase 0 (stakeholder-approved proposed ADR 038; behavior-neutral refactor, separate PR)
+Phase 0 (stakeholder-approved proposed ADR 040; behavior-neutral refactor, separate PR)
     → Phase 1 (provider, TLS seam, fixtures)
     → Phase 2a–2d (model/glossary, configuration, approved Admin API, DB design)
     → Phase 2f (41 functional plus SC-006 semantic-red cases through the Phase 1 Builder seam)
@@ -275,7 +277,7 @@ Phase 0 (stakeholder-approved proposed ADR 038; behavior-neutral refactor, separ
     → Phase N (compliance, SC-006 green measurement, full validation)
 ```
 
-Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `model.ThirdpartyOAuth2ProviderEntity` already owns the status and registration. Phase 2a–2d can proceed in parallel only where files and approvals permit. The original design needed OpenAPI and stakeholder approval before implementation; reviewer acceptance of proposed ADR 038 remains outstanding.
+Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `model.ThirdpartyOAuth2ProviderEntity` already owns the status and registration. Phase 2a–2d can proceed in parallel only where files and approvals permit. The original design needed OpenAPI and stakeholder approval before implementation; reviewer acceptance of proposed ADR 040 remains outstanding.
 
 ### Story dependencies
 
@@ -294,7 +296,7 @@ Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `mod
 
 ## Implementation Strategy
 
-1. Complete the separate Phase 0 refactor PR with stakeholder approval of proposed ADR 038 and unchanged CIMD behavior.
+1. Complete the separate Phase 0 refactor PR with stakeholder approval of proposed ADR 040 and unchanged CIMD behavior.
 2. Complete setup, design preconditions, written Admin API review, the Builder test seam, and the original 41 functional plus SC-006 semantic-red cases. Add three remediation cases for a total of 44 functional scenarios.
 3. Complete the shared foundation with test-first adapter and migration work.
 4. Deliver US1 alone as the MVP. Run its 10 scenarios and the existing CIMD/manual flows.

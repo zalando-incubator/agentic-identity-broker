@@ -1,8 +1,9 @@
-# ADR 038: Protected Resource Discovery and Dynamic Client Registration
+# ADR 040: Protected Resource Discovery and Dynamic Client Registration
 
 **Status**: Proposed
 **Date**: 2026-10-07
 **Stakeholder approval**: The stakeholder approved the API and implementation approach on 2026-10-07, including the optional broker-wide DCR client name and Helm mapping. Reviewer acceptance of this ADR remains outstanding.
+**Numbering**: The stakeholder approved this proposal when it was ADR 038. This branch renumbered it to ADR 040 on 2026-10-15 because main assigned ADR 038 to proactive token refresh. The decision did not change.
 
 ## Context
 
