@@ -1,1 +1,3 @@
-{"feature_directory":"specs/029-proactive-token-refresh"}
+{
+  "feature_directory": "specs/052-inline-jwks-trust-anchors"
+}

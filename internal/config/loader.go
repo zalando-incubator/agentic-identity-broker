@@ -195,6 +195,7 @@ func (l *Loader) setDefaults() {
 
 	// Set security configuration defaults
 	l.v.SetDefault(configutil.Key("security", "skip_thirdparty_https_validation"), false)
+	_ = l.v.BindEnv(configutil.Key("security", "trust_material_dir"), "IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR")
 
 	// Approval configuration defaults
 	l.v.SetDefault(configutil.Key("approvals", "pending_ttl"), "10m")
@@ -281,6 +282,8 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_file"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_min_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_max_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH")
 

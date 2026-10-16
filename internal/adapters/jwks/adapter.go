@@ -18,11 +18,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 const staleServeRelogEvery = 10
-const maxJWKSResponseBytes = 1 << 20
+const maxJWKSResponseBytes = trustanchor.MaxKeySetBytes
 
 // Adapter implements the JWKSPort interface for fetching and caching JWKS from a known upstream JWKS URI.
 // Each adapter instance maintains its own cached key set, refresh schedule, and refresh health.

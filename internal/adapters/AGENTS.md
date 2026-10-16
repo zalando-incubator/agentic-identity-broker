@@ -42,6 +42,16 @@ end-user `:8000` server and the admin `:14000` server.
 `httprc` resources refresh upstream data in the background. The adapter implements `ports.JWKSPort`.
 `published_adapter.go` provides the broker aggregated JWKS to in-process consumers.
 
+Trust anchors can use a local key set instead of a remote `jwks_uri` ([ADR 040](../../adrs/040-trust-anchor-local-key-sets.md)). Every adapter below implements `ports.JWKSPort`, and the domain validates each local document with `trustanchor.ParseLocalKeySet`.
+
+| Type | Purpose |
+|---|---|
+| `StaticAdapter` | Serves one validated inline (`jwks`) set for the process lifetime. No network, no refresh. `HealthState()` is always `healthy`. |
+| `FileAdapter` | Reads a `jwks_file` at construction (a failure fails startup) and re-reads it in the background every `jwks_min_refresh`. A valid re-read replaces the set. A failed re-read keeps the last valid set and reports `degraded`. After `jwks_max_refresh` since the last success, `GetKeySet` fails closed. `Shutdown` stops the loop. |
+| `TrustDirectory` | Wraps `os.Root` over `security.trust_material_dir`. Opens a file by its path relative to the directory, so `..` and symbolic links that leave it are refused. Absolute symbolic links are refused even when the target is inside. The caller checks the regular file on the opened descriptor. |
+
+The builder creates these adapters and injects them. `adapters/jwtauth/` receives a `ports.JWKSPort` through its config and never imports `adapters/jwks/`. Errors and logs never include document content or key material.
+
 ### Storage (`storage/`)
 
 | Package | Purpose |

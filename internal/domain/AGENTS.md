@@ -29,6 +29,7 @@ and declared domain libraries.
 | `storage/` | Domain data models and endpoint discovery | `Agent`, `UserGrant`, `UserSession` |
 | `thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
+| `trustanchor/` | Trust-anchor key-source resolution and local key-set validation | `ResolveKeySetSource()`, `ParseLocalKeySet()` |
 | `urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
 
 ## Critical Rules
@@ -45,6 +46,18 @@ Use constructor injection with port interfaces. Create services in `app/builder.
 ### Cross-Domain Dependencies
 
 Keep cross-domain imports narrowly scoped. Read the importing package and its direct dependencies before you add an import.
+
+## Trust Anchor Key Sets (`trustanchor/`)
+
+A bounded context with no I/O. It depends only on the standard library and `jwx`. See [ADR 040](../../adrs/040-trust-anchor-local-key-sets.md).
+
+- `ResolveKeySetSource()` selects one Key Set Source per trust anchor (`remote`, `inline`, or `file`) and enforces the structural rules: mutually exclusive sources, no refresh bounds with `jwks`, no key source with `verification: none`, and an absolute `jwks_file` inside the Trust Directory.
+- `ParseLocalKeySet()` validates an inline or file document: at most 1 MiB, a JWK Set with at least one key, no symmetric or private keys, approved `alg` values only, and unique `kid` values.
+- `IsApprovedAlgorithm()` is the single approved asymmetric algorithm set. `impersonation.IsApprovedAlgorithm` delegates to it.
+- `DiffKeyIDs()` supports the key-set re-read log.
+- Errors use fixed categories. Never include document content, key material, or jwx error text.
+
+Consumers: `internal/config/validator.go` (load-time rules), `internal/app/builder.go` (startup resolution), `internal/adapters/jwks/` (every read of a local key set), and `impersonation/`. `tokenexchange/` and the jwtauth adapter receive the resulting key set through `ports.JWKSPort`, not through this package.
 
 ## Domain Data Models (`storage/`)
 

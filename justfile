@@ -231,6 +231,7 @@ vet:
     go vet ./...
 
 # Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
+# The backend E2E suite also needs the helm binary on PATH (https://helm.sh/docs/intro/install/).
 install-tools:
     @echo "Installing development tools..."
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6

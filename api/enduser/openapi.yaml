@@ -143,7 +143,14 @@ paths:
         - `shutting_down`: Graceful shutdown in progress, completing in-flight requests
         - `unhealthy`: Server encountered an error and requires restart
 
-        In proxy and hybrid OAuth2 modes, the response may also include component-level health in `components`. The `upstream_jwks` component reports `healthy` or `degraded` without changing the top-level server lifecycle status.
+        The response may also include component-level health in `components`. Components report
+        `healthy` or `degraded` and never change the HTTP status or the top-level `status`.
+
+        - `upstream_jwks` (proxy and hybrid modes): freshness of the upstream key set that the broker
+          republishes.
+        - `trust_anchor_key_files` (any mode, when a trust anchor uses `jwks_file`): `degraded` when the
+          latest re-read of any key-set file failed. The broker keeps verifying with the last valid key set
+          until that trust anchor's maximum refresh interval expires.
       operationId: getHealth
       tags:
         - Health
@@ -170,6 +177,14 @@ paths:
                     uptime_seconds: 3600
                     components:
                       upstream_jwks: degraded
+                healthyWithDegradedKeySetFile:
+                  summary: Healthy server with a key-set file that failed its latest re-read
+                  value:
+                    status: healthy
+                    timestamp: "2026-10-16T10:15:00Z"
+                    uptime_seconds: 5400
+                    components:
+                      trust_anchor_key_files: degraded
         "503":
           description: Server is unavailable (starting, shutting down, or unhealthy)
           content:
@@ -2591,6 +2606,12 @@ components:
 
             - `healthy`: Upstream key material is reachable and fresh
             - `degraded`: Upstream refresh has failed or become stale
+
+            In any OAuth2 mode, when at least one trust anchor uses `jwks_file`,
+            `trust_anchor_key_files` reports the state of every key-set file:
+
+            - `healthy`: The latest re-read of every key-set file succeeded
+            - `degraded`: The latest re-read of at least one key-set file failed
           additionalProperties:
             type: string
           example:
