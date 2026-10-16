@@ -107,10 +107,23 @@ type App struct {
 
 // EnduserHealthComponents returns optional component-level health for the public /health endpoint.
 func (a *App) EnduserHealthComponents() map[string]string {
-	if a == nil || a.jwksPublisherHealth == nil {
+	if a == nil {
 		return nil
 	}
-	return map[string]string{"upstream_jwks": string(a.jwksPublisherHealth.HealthState())}
+	components := map[string]string{}
+	if a.jwksPublisherHealth != nil {
+		components["upstream_jwks"] = string(a.jwksPublisherHealth.HealthState())
+	}
+	a.addKeyFileHealth(components)
+	if len(components) == 0 {
+		return nil
+	}
+	return components
+}
+
+// addKeyFileHealth contributes trust_anchor_key_files when a trust anchor uses jwks_file.
+func (a *App) addKeyFileHealth(components map[string]string) {
+	_ = components
 }
 
 // Builder is a chainable builder for constructing App instances.

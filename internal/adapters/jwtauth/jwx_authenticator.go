@@ -45,6 +45,10 @@ type JWXAuthenticatorConfig struct {
 
 	// Logger is the structured logger for authentication events.
 	Logger *slog.Logger
+
+	// KeySet, when set, supplies the verification keys instead of JWTConfig.JWKSURI.
+	// The authenticator then skips its own key fetching and does not own the key set's lifecycle.
+	KeySet ports.JWKSPort
 }
 
 // JWXAuthenticator implements the domain JWTAuthenticator port using lestrrat-go/jwx v4.

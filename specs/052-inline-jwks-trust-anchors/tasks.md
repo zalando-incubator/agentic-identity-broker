@@ -50,7 +50,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Purpose**: E2E helpers and CI prerequisites that every user story's acceptance tests need.
 
-- [ ] T001 [P] Add local key-set E2E helpers in `tests/e2e/helpers/local_jwks.go`. Rely on the jwx `jwk`/`jws`/`jwt` packages already used by `tests/e2e/helpers/jwt_helpers.go`, and add no new library. The helpers must:
+- [X] T001 [P] Add local key-set E2E helpers in `tests/e2e/helpers/local_jwks.go`. Rely on the jwx `jwk`/`jws`/`jwt` packages already used by `tests/e2e/helpers/jwt_helpers.go`, and add no new library. The helpers must:
   - generate in-memory ES256 (P-256) and RS256 (2048-bit) key pairs with a chosen `kid` and `alg`;
   - marshal the public JWK Set as compact JSON;
   - deliberately marshal invalid sets: a private EC key, a private RSA key, a `kty: oct` key, an unapproved `alg` (`HS256`), a duplicate `kid`, an empty `keys` array, a bare JWK without `keys`, and a document over 1 MiB;
@@ -58,7 +58,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - expose each key's base64url `x`, `y`, `n`, and `d` member values, so tests can assert those values never appear in output.
 
   Supports US1–US5 and research R14.
-- [ ] T002 [P] Add trust-directory writers to `tests/e2e/helpers/local_jwks.go`, in a separate section after T001's content:
+- [X] T002 [P] Add trust-directory writers to `tests/e2e/helpers/local_jwks.go`, in a separate section after T001's content:
   - create a per-test trust directory under `GinkgoT().TempDir()`;
   - write a plain key-set file;
   - write the Kubernetes layout: `<name>` → `..data/<name>` → `..<timestamp>/<name>`, using relative links only;
@@ -67,9 +67,9 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - write a corrupt (truncated) file in place.
 
   Supports US2-S3, US2-S4, US2-S7, US2-S9, and research R4.
-- [ ] T003 [P] Add a counting `httptest` server helper in `tests/e2e/helpers/counting_server.go`. It counts every request regardless of path, exposes `Count()` and `URL()`, and serves 404 for every path. Supports US1-S1, US4-S1, and SC-002.
-- [ ] T004 [P] Add a `helm template` wrapper in `tests/e2e/helpers/helm_render.go`. It renders `charts/agentic-identity-broker` with a values file and returns the rendered ConfigMap `config.yaml` and the Deployment's projected volume and mount. Fail the test with a clear message when the `helm` binary is missing. Do not call `Skip()`. Supports US2-S5 and research R13/R14.
-- [ ] T005 Add the `azure/setup-helm` step to the `e2e-backend` job in `.github/workflows/ci.yml`. Pin the action by commit SHA, matching the job's other actions. List Helm as an E2E prerequisite in the `install-tools` recipe comment in `justfile` and in `tests/e2e/README.md`. Supports US2-S5 and research R14.
+- [X] T003 [P] Add a counting `httptest` server helper in `tests/e2e/helpers/counting_server.go`. It counts every request regardless of path, exposes `Count()` and `URL()`, and serves 404 for every path. Supports US1-S1, US4-S1, and SC-002.
+- [X] T004 [P] Add a `helm template` wrapper in `tests/e2e/helpers/helm_render.go`. It renders `charts/agentic-identity-broker` with a values file and returns the rendered ConfigMap `config.yaml` and the Deployment's projected volume and mount. Fail the test with a clear message when the `helm` binary is missing. Do not call `Skip()`. Supports US2-S5 and research R13/R14.
+- [X] T005 Add the `azure/setup-helm` step to the `e2e-backend` job in `.github/workflows/ci.yml`. Pin the action by commit SHA, matching the job's other actions. List Helm as an E2E prerequisite in the `install-tools` recipe comment in `justfile` and in `tests/e2e/README.md`. Supports US2-S5 and research R14.
 
 **Checkpoint**: The helpers compile (`go vet ./tests/e2e/...`), and the CI job installs Helm.
 
@@ -85,17 +85,17 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Constitution Reference**: Principles II and V
 
-- [ ] T006 Draft `adrs/040-trust-anchor-local-key-sets.md` with status Proposed. It extends ADR 029 and ADR 008 and supersedes neither. Record each of the following, per research R15:
+- [X] T006 Draft `adrs/040-trust-anchor-local-key-sets.md` with status Proposed. It extends ADR 029 and ADR 008 and supersedes neither. Record each of the following, per research R15:
   - the three mutually exclusive key sources (`jwks_uri`, `jwks`, `jwks_file`), with no precedence;
   - the `security.trust_material_dir` boundary through `os.Root`, including the R4 consequence that "absolute symbolic links inside the trust directory are rejected; relative links (Kubernetes) are accepted";
   - the file re-read cadence: every `jwks_min_refresh`, and fail closed after `jwks_max_refresh` since the last success;
   - the `trust_anchor_key_files` `/health` component;
   - the end-user-only scope for JWT pre-authentication, where the admin server rejects local sources.
 - [ ] T007 Obtain stakeholder acceptance of ADR 040 and of the two scope interpretations: R4 (absolute links rejected) and R9 (`server.admin` local sources rejected). Then set ADR 040 to Accepted in `adrs/040-trust-anchor-local-key-sets.md`, and record the acceptance date in the PR description. Implementation and unit-test tasks from T043 on MUST NOT start until this is done (Principle II, plan "Stakeholder decisions" 2–3).
-- [ ] T008 [P] Add the glossary terms to `ARCHITECTURE.md`, using the exact definitions in [data-model.md](./data-model.md) "Glossary additions": **Key Set Source**, **Local Key Set**, and **Trust Directory**. Disambiguate Key Set Source from the JWKS-aggregation **KeySource**. Update the existing **ClientAssertion Trust Anchor**, **Trusted Token Issuer**, and **JWTAuthConfig** entries to name `jwks` and `jwks_file` as alternatives to `jwks_uri` (Principle V).
-- [ ] T009 [P] Update `ARCHITECTURE.md` §3.1.4.1 for the trust-anchor key sources, the resolution order, the trust directory, and the `trust_anchor_key_files` health component. Update the JWT pre-authentication section to describe the injected local key set and the admin rejection. Add ADR 040 to the ADR index (Principle II, plan "Architecture documentation").
-- [ ] T010 [P] Add ADR 040 to the root `AGENTS.md` ADR Decision Index, with the decision "Inline and file-based key sets for trust anchors (trust directory, re-read, health)". Add Key Set Source, Local Key Set, and Trust Directory to its Domain Glossary table (Principle V).
-- [ ] T011 [P] Update the internal guides:
+- [X] T008 [P] Add the glossary terms to `ARCHITECTURE.md`, using the exact definitions in [data-model.md](./data-model.md) "Glossary additions": **Key Set Source**, **Local Key Set**, and **Trust Directory**. Disambiguate Key Set Source from the JWKS-aggregation **KeySource**. Update the existing **ClientAssertion Trust Anchor**, **Trusted Token Issuer**, and **JWTAuthConfig** entries to name `jwks` and `jwks_file` as alternatives to `jwks_uri` (Principle V).
+- [X] T009 [P] Update `ARCHITECTURE.md` §3.1.4.1 for the trust-anchor key sources, the resolution order, the trust directory, and the `trust_anchor_key_files` health component. Update the JWT pre-authentication section to describe the injected local key set and the admin rejection. Add ADR 040 to the ADR index (Principle II, plan "Architecture documentation").
+- [X] T010 [P] Add ADR 040 to the root `AGENTS.md` ADR Decision Index, with the decision "Inline and file-based key sets for trust anchors (trust directory, re-read, health)". Add Key Set Source, Local Key Set, and Trust Directory to its Domain Glossary table (Principle V).
+- [X] T011 [P] Update the internal guides:
   - `internal/AGENTS.md`: add `trustanchor/` to the package map, and add static and file adapters to `jwks/`.
   - `internal/domain/AGENTS.md`: describe the `trustanchor` bounded context and its consumers.
   - `internal/adapters/AGENTS.md`: describe `StaticAdapter`, `FileAdapter`, and `TrustDirectory` in the JWKS section.
@@ -108,7 +108,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Constitution Reference**: Principle VII
 
-- [ ] T012 Document the seven new keys in `docs/configuration.md`, exactly as [contracts/configuration.md](./contracts/configuration.md) §1–§3 specifies them:
+- [X] T012 Document the seven new keys in `docs/configuration.md`, exactly as [contracts/configuration.md](./contracts/configuration.md) §1–§3 specifies them:
   - `security.trust_material_dir`;
   - `jwks` and `jwks_file` on `token_exchange.client_assertion`, on impersonation `trusted_issuers[]`, and on `server.enduser.authentication.jwt`.
 
@@ -122,38 +122,38 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - the R4 absolute-symlink rule.
 
   Supports FR-021.
-- [ ] T013 [P] Create `examples/config/trust-anchor-local-jwks.yaml`, a complete, loadable local-mode example with these parts:
+- [X] T013 [P] Create `examples/config/trust-anchor-local-jwks.yaml`, a complete, loadable local-mode example with these parts:
   - `security.trust_material_dir: "/etc/agentic-identity-broker/trust"`;
   - an inline `token_exchange.client_assertion.jwks` for issuer `https://agentgateway.internal.example.com`, using the ES256 `kid` `agentgateway-2026-10`;
   - an impersonation trusted issuer with `jwks_file: "/etc/agentic-identity-broker/trust/agentgateway-jwks.json"`, `allowed_algorithms: ["ES256"]`, and `signs_roles: ["client_assertion", "actor"]`;
   - `server.enduser.authentication.jwt` with `verification: jwks` and `jwks_file: "/etc/agentic-identity-broker/trust/mesh-jwks.json"`.
 
   Match the spec's Configuration Requirements example and Journeys 1–5. Supports FR-021.
-- [ ] T014 [P] Add commented `jwks` and `jwks_file` alternatives next to the existing `jwks_uri` lines in `examples/config/token-exchange.yaml`, `examples/config/impersonation.yaml`, and `examples/config/jwt-preauth.yaml`. Note that they are mutually exclusive and that `jwks_file` requires `security.trust_material_dir`. Supports FR-021.
-- [ ] T015 Reference `trust-anchor-local-jwks.yaml` in `examples/config/README.md`, with a one-line description of each of the three trust anchors it configures (Principle VII).
-- [ ] T016 [P] Add the new chart values to `charts/agentic-identity-broker/values.yaml`, with `# --` comments, exactly as [contracts/helm-values.md](./contracts/helm-values.md) "New values" specifies:
+- [X] T014 [P] Add commented `jwks` and `jwks_file` alternatives next to the existing `jwks_uri` lines in `examples/config/token-exchange.yaml`, `examples/config/impersonation.yaml`, and `examples/config/jwt-preauth.yaml`. Note that they are mutually exclusive and that `jwks_file` requires `security.trust_material_dir`. Supports FR-021.
+- [X] T015 Reference `trust-anchor-local-jwks.yaml` in `examples/config/README.md`, with a one-line description of each of the three trust anchors it configures (Principle VII).
+- [X] T016 [P] Add the new chart values to `charts/agentic-identity-broker/values.yaml`, with `# --` comments, exactly as [contracts/helm-values.md](./contracts/helm-values.md) "New values" specifies:
   - `broker.security.trustMaterial.directory`, default `""`;
   - `broker.security.trustMaterial.sources`, default `[]`, with the commented Secret and ConfigMap examples;
   - `broker.tokenExchange.clientAssertion.jwks`;
   - `broker.tokenExchange.clientAssertion.jwksFile`.
 
   Supports FR-020.
-- [ ] T017 [P] Extend `charts/agentic-identity-broker/values.schema.json` per [contracts/helm-values.md](./contracts/helm-values.md) "Schema":
+- [X] T017 [P] Extend `charts/agentic-identity-broker/values.schema.json` per [contracts/helm-values.md](./contracts/helm-values.md) "Schema":
   - `broker.security.trustMaterial`: `directory` is a string that is empty or an absolute path; `sources` is an array of `oneOf` `{secret: {name, items}}` / `{configMap: {name, items}}` objects with `additionalProperties: false`, where items are `{key, path}`;
   - `jwks` and `jwksFile` on `broker.tokenExchange.clientAssertion`;
   - `jwks` and `jwks_file` on the impersonation `trusted_issuers[]` items and on `definitions.serverConfig.authentication.jwt`.
 
   Supports FR-020.
-- [ ] T018 Render the new values in `charts/agentic-identity-broker/templates/configmap.yaml`:
+- [X] T018 Render the new values in `charts/agentic-identity-broker/templates/configmap.yaml`:
   - `security.trust_material_dir` when `trustMaterial.directory` is non-empty;
   - `token_exchange.client_assertion.jwks` as a YAML block scalar;
   - `token_exchange.client_assertion.jwks_file`;
   - the template failure `broker.security.trustMaterial.directory is required when sources are set`.
 
   Do not create a second top-level `security:` key. Supports FR-020 and R13.
-- [ ] T019 Render the `trust-material` volume in `charts/agentic-identity-broker/templates/deployment.yaml`. It is a `projected` volume with one `secret` or `configMap` source per `trustMaterial.sources` entry, mounted `readOnly: true` at `trustMaterial.directory` **without `subPath`**. Render nothing when `sources` is empty. Supports FR-020, US2-S5, and R13.
-- [ ] T020 Add the four new values to the parameter table in `charts/agentic-identity-broker/README.md`. Add a "Trust material for local key sets" section with the Secret example, the no-`subPath` rule, and the rotation behaviour. Supports FR-020 and FR-021.
-- [ ] T021 Run `helm lint charts/agentic-identity-broker`. Also run `helm template` with the [contracts/helm-values.md](./contracts/helm-values.md) Secret and ConfigMap example. Confirm the projected volume, the read-only mount without `subPath`, and the rendered `security.trust_material_dir` (Principle VII).
+- [X] T019 Render the `trust-material` volume in `charts/agentic-identity-broker/templates/deployment.yaml`. It is a `projected` volume with one `secret` or `configMap` source per `trustMaterial.sources` entry, mounted `readOnly: true` at `trustMaterial.directory` **without `subPath`**. Render nothing when `sources` is empty. Supports FR-020, US2-S5, and R13.
+- [X] T020 Add the four new values to the parameter table in `charts/agentic-identity-broker/README.md`. Add a "Trust material for local key sets" section with the Secret example, the no-`subPath` rule, and the rotation behaviour. Supports FR-020 and FR-021.
+- [X] T021 Run `helm lint charts/agentic-identity-broker`. Also run `helm template` with the [contracts/helm-values.md](./contracts/helm-values.md) Secret and ConfigMap example. Confirm the projected volume, the read-only mount without `subPath`, and the rendered `security.trust_material_dir` (Principle VII).
 
 **Checkpoint**: The configuration reference, examples, and Helm contract are complete.
 
@@ -197,13 +197,13 @@ All E2E tests use production bootstrap through `tests/e2e/bootstrap/`, with fres
 Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/health` polling. File scenarios set `jwks_min_refresh: 200ms` and `jwks_max_refresh: 2s`.
 
 - [ ] T028 Review the five Concrete Example Journeys in `specs/052-inline-jwks-trust-anchors/spec.md` with the stakeholder. Check each one's link to its Given/When/Then scenarios, its configuration snippets against [contracts/configuration.md](./contracts/configuration.md), its HTTP exchanges against `api/enduser/openapi.yaml`, and its decoded JWT claims against FR-005 and FR-015. Correct any mismatch in the spec (Principle XIV, plan "Stakeholder decisions" 4).
-- [ ] T029 Write the User Story 1 `It()` blocks in `tests/e2e/trust_anchor_inline_jwks_test.go`:
+- [X] T029 Write the User Story 1 `It()` blocks in `tests/e2e/trust_anchor_inline_jwks_test.go`:
   - **US1-S1**: Local mode with an inline set starts successfully. The counting server at the issuer host records 0 requests after startup and after a verification.
   - **US1-S2**: A token exchange whose client assertion is signed by the inline key returns `200` with the vault token.
   - **US1-S3**: An assertion signed by an unlisted key returns `401` with `error=invalid_client`, and no token is issued.
   - **US1-S4**: `POST /api/approvals` with an inline-key `X-Client-Assertion` authenticates the gateway.
   - **US1-S5**: Hybrid mode without `issuer_uri` expects the upstream issuer, accepts an inline-key assertion, rejects an assertion signed by an upstream key, and verifies subject tokens against the upstream keys.
-- [ ] T030 Write the User Story 3 `It()` blocks in `tests/e2e/trust_anchor_inline_jwks_test.go`, in a separate `Context` after T029's blocks. Each asserts the `BuildApp` error substring from [contracts/configuration.md](./contracts/configuration.md) §2:
+- [X] T030 Write the User Story 3 `It()` blocks in `tests/e2e/trust_anchor_inline_jwks_test.go`, in a separate `Context` after T029's blocks. Each asserts the `BuildApp` error substring from [contracts/configuration.md](./contracts/configuration.md) §2:
   - **US3-S1**: `only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)`.
   - **US3-S2**: a bare JWK gives `key set is not a valid JWK Set document`; `{"keys":[]}` gives `key set contains no keys`; a document over 1 MiB gives `key set exceeds 1048576 bytes`.
   - **US3-S3**: `key set contains private key material; only public keys are allowed`, and neither the error nor the buffered log contains the key's `d`, `x`, `y`, or `n` values.
@@ -212,7 +212,7 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US3-S6**: `jwks_min_refresh and jwks_max_refresh are not allowed with jwks; an inline key set never refreshes`.
   - **US3-S7**: The existing self-trust rejection fires for the broker's own issuer, with both an inline and a file source.
   - **US3-S8**: The `trust anchor key set loaded` log has `trust_anchor`, `key_source`, `key_count`, and `key_ids`, and no key-member values.
-- [ ] T031 [P] Write the User Story 2 `It()` blocks in `tests/e2e/trust_anchor_key_files_test.go`:
+- [X] T031 [P] Write the User Story 2 `It()` blocks in `tests/e2e/trust_anchor_key_files_test.go`:
   - **US2-S1**: A file inside the trust directory verifies assertions.
   - **US2-S2**: A missing path gives `jwks_file "<path>" does not exist`, and a directory path gives `jwks_file "<path>" is not a regular file`.
   - **US2-S3**: After an atomic swap, the new key is accepted and the removed key is rejected within `Eventually` 3s.
@@ -222,18 +222,18 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US2-S7**: A `..` escape, a relative-link escape, and an absolute link whose target is inside the trust directory all give the US2-S6 message (FR-023).
   - **US2-S8**: `jwks_file requires security.trust_material_dir to be set`.
   - **US2-S9**: The Kubernetes `..data` layout starts successfully.
-- [ ] T032 [P] Write the User Story 4 `It()` blocks in `tests/e2e/impersonation_local_jwks_test.go`:
+- [X] T032 [P] Write the User Story 4 `It()` blocks in `tests/e2e/impersonation_local_jwks_test.go`:
   - **US4-S1**: An inline trusted issuer makes 0 discovery requests (counting server), and an impersonation request mints a token whose decoded `act.iss` and `act.sub` match the gateway.
   - **US4-S2**: A file trusted issuer validates the credentials.
   - **US4-S3**: With `allowed_algorithms: ["ES256"]`, an RS256 credential is rejected.
   - **US4-S4**: Rules A and B for the same `issuer_uri` with different inline keys. A credential signed by rule B's key never matches rule A.
-- [ ] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
+- [X] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
   - **US5-S1**: `GET /api/me` derives the principal with an inline source and, in a second `Context`, with a file source.
   - **US5-S2**: `verification: none` with `jwks`, and with `jwks_file`, gives `verification 'none' and jwks are mutually exclusive` (or `… jwks_file …`).
   - **US5-S3**: `verification: jwks` with no source fails startup with the existing message.
-- [ ] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `tests/e2e/helpers/mock_jwks_server.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
-- [ ] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 29 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×3. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
-- [ ] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
+- [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `tests/e2e/helpers/mock_jwks_server.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
+- [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 29 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×3. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
+- [X] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
 
 **Checkpoint**: Journeys are reviewed, and all 29 scenarios plus the parity table are written and verified red.
 
@@ -253,29 +253,29 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Compile-only scaffolding (enables T036)
 
-- [ ] T037 [P] Add the seven configuration fields to `internal/ports/config.go`, with `mapstructure` tags exactly as [data-model.md](./data-model.md) "Configuration model changes" specifies:
+- [X] T037 [P] Add the seven configuration fields to `internal/ports/config.go`, with `mapstructure` tags exactly as [data-model.md](./data-model.md) "Configuration model changes" specifies:
   - `ClientAssertionTrustConfig.JWKS` (`jwks`) and `.JWKSFile` (`jwks_file`);
   - `TrustedTokenIssuerConfig.JWKS` and `.JWKSFile`;
   - `JWTConfig.JWKS` and `.JWKSFile`;
   - `SecurityConfig.TrustMaterialDir` (`trust_material_dir`).
 
   Add one-line doc comments that match the surrounding style. Supports FR-001, FR-006, and FR-022.
-- [ ] T038 [P] Create the `internal/domain/trustanchor/` scaffolding with exported types and signatures only:
+- [X] T038 [P] Create the `internal/domain/trustanchor/` scaffolding with exported types and signatures only:
   - `source.go`: `AnchorKind`, `AnchorRef`, `SourceKind`, `SourceInput`, `RefreshBounds`, `KeySetSource`, and `ResolveKeySetSource`;
   - `local_key_set.go`: `LocalKeySet`, `ParseLocalKeySet`, `DiffKeyIDs`, and `MaxKeySetBytes = 1 << 20`;
   - `algorithms.go`: `IsApprovedAlgorithm`;
   - `errors.go`: `Category` and `Error`.
 
   Function bodies return a `not implemented` error. Supports plan §1–§2.
-- [ ] T039 [P] Create the adapter scaffolding in `internal/adapters/jwks/`. Each constructor returns a `not implemented` error, and each type satisfies `ports.JWKSPort`:
+- [X] T039 [P] Create the adapter scaffolding in `internal/adapters/jwks/`. Each constructor returns a `not implemented` error, and each type satisfies `ports.JWKSPort`:
   - `static_adapter.go`: `StaticAdapter` and `NewStaticAdapter`;
   - `file_adapter.go`: `FileAdapter`, `NewFileAdapter`, and `Shutdown`;
   - `trust_directory.go`: `TrustDirectory`, `OpenTrustDirectory`, `Open`, and `Close`.
 
   Supports plan §3–§4.
-- [ ] T040 [P] Add the optional `KeySet ports.JWKSPort` field to `jwtauth.JWXAuthenticatorConfig` in `internal/adapters/jwtauth/jwx_authenticator.go`. Leave its behaviour unchanged for now. Supports research R9.
-- [ ] T041 Add a no-op `trust_anchor_key_files` contribution hook to `App.EnduserHealthComponents()` in `internal/app/builder.go`. It contributes nothing until US2. Supports research R11.
-- [ ] T042 Run `just build` and `go vet ./...` to confirm that the scaffolding compiles. Then run T036.
+- [X] T040 [P] Add the optional `KeySet ports.JWKSPort` field to `jwtauth.JWXAuthenticatorConfig` in `internal/adapters/jwtauth/jwx_authenticator.go`. Leave its behaviour unchanged for now. Supports research R9.
+- [X] T041 Add a no-op `trust_anchor_key_files` contribution hook to `App.EnduserHealthComponents()` in `internal/app/builder.go`. It contributes nothing until US2. Supports research R11.
+- [X] T042 Run `just build` and `go vet ./...` to confirm that the scaffolding compiles. Then run T036.
 
 ### Domain: `trustanchor` (test-first)
 

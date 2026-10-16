@@ -148,6 +148,14 @@ type JWTConfig struct {
 	// MUST NOT be set when Verification is "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
 
+	// JWKS is an inline JWK Set for signature verification. End-user server only;
+	// mutually exclusive with JWKSURI and JWKSFile, and with Verification "none".
+	JWKS string `mapstructure:"jwks"`
+
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	// End-user server only; mutually exclusive with JWKSURI and JWKS, and with Verification "none".
+	JWKSFile string `mapstructure:"jwks_file"`
+
 	// ExpectedAudience is the expected value in the JWT aud claim.
 	// If set, JWTs without this audience are rejected with 401.
 	// Optional.
@@ -762,6 +770,10 @@ type TrustedTokenIssuerConfig struct {
 	IssuerURI string `mapstructure:"issuer_uri"`
 	// JWKSURI is the explicit key-set location; discovered from issuer metadata when empty.
 	JWKSURI string `mapstructure:"jwks_uri"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile string `mapstructure:"jwks_file"`
 	// JWKSMinRefresh bounds the minimum JWKS refresh cadence (default 15m).
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
 	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence (default max(min, 1h)).
@@ -779,8 +791,12 @@ type TrustedTokenIssuerConfig struct {
 // in proxy and hybrid modes. In local mode it must be set explicitly and must identify an external
 // identity provider; broker-minted tokens must never be accepted as client assertions.
 type ClientAssertionTrustConfig struct {
-	IssuerURI      string        `mapstructure:"issuer_uri"`
-	JWKSURI        string        `mapstructure:"jwks_uri"`
+	IssuerURI string `mapstructure:"issuer_uri"`
+	JWKSURI   string `mapstructure:"jwks_uri"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile       string        `mapstructure:"jwks_file"`
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 }
@@ -900,6 +916,10 @@ type SecurityConfig struct {
 	// for CIMD document fetches.
 	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
+
+	// TrustMaterialDir is the only directory from which key-set files (jwks_file) are read.
+	// Absolute, resolves to an existing directory other than "/". Unset disables jwks_file.
+	TrustMaterialDir string `mapstructure:"trust_material_dir"`
 }
 
 // EncryptionConfig contains configuration for encryption operations.
