@@ -531,6 +531,8 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 		methods := []string{"client_secret_post"}
 		if s.config.CIMDEnabled {
 			methods = append([]string{"none"}, methods...)
+			methods = append(methods, "private_key_jwt")
+			metadata.TokenEndpointAuthSigningAlgValuesSupported = []string{"RS256", "ES256"}
 		}
 		metadata.TokenEndpointAuthMethodsSupported = methods
 	}

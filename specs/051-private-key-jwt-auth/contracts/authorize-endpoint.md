@@ -2,7 +2,7 @@
 
 **Feature**: `051-private-key-jwt-auth` | **Date**: 2026-10-15
 **Canonical source**: [`api/enduser/openapi.yaml`](../../../api/enduser/openapi.yaml), `GET /oauth2/authorize`
-**Status**: **PROPOSED**. Requires stakeholder confirmation before implementation (API-003, Constitution Principle X).
+**Status**: Confirmed by the user on 2026-10-16. The authorization-endpoint delta is approved as proposed (API-003, Constitution Principle X).
 
 This feature does not add parameters or endpoints here. It changes one error response of an existing endpoint, which is a visible API change, so it is documented and confirmed like the others.
 

@@ -14,7 +14,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 
 ## Technical Context
 
-**Language/Version**: Go 1.27.1
+**Language/Version**: Go 1.27.2
 
 **Primary Dependencies**: `github.com/lestrrat-go/jwx/v4` v4.5.0 (JWT and JWK parsing and verification), `github.com/ory/fosite` v0.49.0 (grant handlers only), chi v5, sqlx and pgx v5, Viper, Ginkgo v2, Gomega, testify. No new dependencies.
 
@@ -64,7 +64,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 
 - [x] **Security-First**: Enforcement is always on and fails closed (SR-001, SR-003).
 - [x] **Architecture Docs**: `ARCHITECTURE.md` updated in the same PR: token-endpoint client authentication, replay protection, glossary, and the metadata advertisement rule.
-- [x] **ADRs**: A new ADR is required (verifier outside fosite; persisted authentication method; fixed profile). It also records the partial supersession of spec 028 FR-022, and it addresses ADR 008 (JWKS adapter pattern) explicitly: either why client key sets are not fetched through that pattern, or that ADR 041 supersedes ADR 008 in part. It takes number `041` because ADR 040 is already accepted (see R1). Because it is introduced on this branch it can be Accepted in this PR (Constitution Principle II).
+- [x] **ADRs**: ADR 041 records the verifier outside fosite, persisted authentication method, fixed profile, partial supersession of spec 028 FR-022, and relationship to ADR 008 (JWKS adapter pattern). It takes number `041` because ADR 040 is already accepted (see R1). Because it is introduced on this branch it can be Accepted in this PR (Constitution Principle II).
 - [x] **Library-First Security**: `jwx` v4 for everything cryptographic.
 - [x] **Zalando Guidelines**: The token endpoint follows RFC 6749 and RFC 7523 error semantics; no new REST resources.
 - [x] **End-User Docs**: `docs/api/enduser-api.md` gets a client-authentication section with a worked example.
@@ -131,8 +131,8 @@ internal/
 │   ├── builder.go                   # wire key-set fetcher, service, verifier, replay repo
 │   └── local_strategy.go            # adapt to ClientCredentials
 migrations/
-├── 038_create_client_assertion_replays.{up,down}.sql
-└── 039_add_refresh_token_client_auth_method.{up,down}.sql
+├── 040_create_client_assertion_replays.{up,down}.sql
+└── 041_add_refresh_token_client_auth_method.{up,down}.sql
 api/enduser/openapi.yaml             # token endpoint and metadata schema
 justfile                             # backend E2E targets exclude label docker; new test-e2e-docker
 adrs/041-inbound-cimd-private-key-jwt.md

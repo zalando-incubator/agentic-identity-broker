@@ -390,6 +390,7 @@ Annotated configuration example for the CIMD feature (Feature 028). Demonstrates
 - `cache.max_ttl` / `cache.min_ttl` — operator TTL bounds for cached documents
 - `ssrf.extra_blocked_cidrs` — additional CIDR ranges blocked beyond RFC 6890 defaults
 - `client_name_blocklist` — case-insensitive keyword blocklist for CIMD `client_name` values
+- `client_authentication` — key-set cache lifetime, unknown-key refetch interval, response-size limit, and fetch timeout for inbound `private_key_jwt`
 
 **Usage:**
 ```yaml
@@ -404,6 +405,11 @@ oauth2_authorization_server:
     cache:
       max_ttl: 1h
       min_ttl: 60s
+    client_authentication:
+      key_set_cache_ttl: 1h
+      key_set_min_refetch_interval: 5m
+      key_set_max_bytes: 65536
+      key_set_fetch_timeout: 5s
 ```
 
 See [cimd.yaml](cimd.yaml) for the full annotated example with all available options.
@@ -572,7 +578,7 @@ Configuration Summary:
 ### Docker Container
 
 ```dockerfile
-FROM golang:1.27.1-alpine as builder
+FROM golang:1.27.2-alpine as builder
 WORKDIR /app
 COPY . .
 RUN go build -o agentic-identity-broker ./cmd/agentic-identity-broker

@@ -54,20 +54,20 @@ func newProxyTokenGrantStrategyForTest(endpoint string, verifier ports.MultiAgen
 // mockTokenMintingStrategy is a configurable test double for ports.TokenMintingStrategy.
 type mockTokenMintingStrategy struct {
 	clientCredentialsFn         func(context.Context, id.ClientID, string, string) (*ports.TokenResponse, error)
-	authorizationCodeExchangeFn func(context.Context, id.ClientID, string, string, string, string) (*ports.TokenResponse, error)
-	refreshTokenFn              func(context.Context, id.ClientID, string, string, string) (*ports.TokenResponse, error)
+	authorizationCodeExchangeFn func(context.Context, id.ClientID, ports.ClientCredentials, string, string, string) (*ports.TokenResponse, error)
+	refreshTokenFn              func(context.Context, id.ClientID, ports.ClientCredentials, string, string) (*ports.TokenResponse, error)
 }
 
 func (m *mockTokenMintingStrategy) HandleClientCredentials(ctx context.Context, clientID id.ClientID, clientSecret, scope string) (*ports.TokenResponse, error) {
 	return m.clientCredentialsFn(ctx, clientID, clientSecret, scope)
 }
 
-func (m *mockTokenMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, clientSecret, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
-	return m.authorizationCodeExchangeFn(ctx, clientID, clientSecret, code, redirectURI, codeVerifier)
+func (m *mockTokenMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
+	return m.authorizationCodeExchangeFn(ctx, clientID, creds, code, redirectURI, codeVerifier)
 }
 
-func (m *mockTokenMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, clientSecret, refreshToken, scope string) (*ports.TokenResponse, error) {
-	return m.refreshTokenFn(ctx, clientID, clientSecret, refreshToken, scope)
+func (m *mockTokenMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, refreshToken, scope string) (*ports.TokenResponse, error) {
+	return m.refreshTokenFn(ctx, clientID, creds, refreshToken, scope)
 }
 
 // fixedMinting returns a mock strategy that always returns the given response/error for all local grant types.
@@ -76,10 +76,10 @@ func fixedMinting(resp *ports.TokenResponse, err error) *mockTokenMintingStrateg
 		clientCredentialsFn: func(_ context.Context, _ id.ClientID, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
-		authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _, _, _, _ string) (*ports.TokenResponse, error) {
+		authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
-		refreshTokenFn: func(_ context.Context, _ id.ClientID, _, _, _ string) (*ports.TokenResponse, error) {
+		refreshTokenFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
 	}
@@ -998,7 +998,7 @@ func TestHandleLocalMinting_AuthorizationCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			minting := &mockTokenMintingStrategy{
-				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _, _, _, _ string) (*ports.TokenResponse, error) {
+				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
 					if tt.mintingErr != nil {
 						return nil, tt.mintingErr
 					}
@@ -1065,7 +1065,7 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			minting := &mockTokenMintingStrategy{
-				refreshTokenFn: func(_ context.Context, _ id.ClientID, _, _, _ string) (*ports.TokenResponse, error) {
+				refreshTokenFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
 					if tt.mintingErr != nil {
 						return nil, tt.mintingErr
 					}
@@ -1091,6 +1091,46 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 				assert.EqualValues(t, 1800, body["expires_in"])
 				assert.Equal(t, "read offline_access", body["scope"])
 			}
+		})
+	}
+}
+
+func TestLocalGrantStrategyPassesClientAssertions(t *testing.T) {
+	for _, grantType := range []string{"authorization_code", "refresh_token"} {
+		t.Run(grantType, func(t *testing.T) {
+			var received ports.ClientCredentials
+			minting := &mockTokenMintingStrategy{
+				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, creds ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
+					received = creds
+					return &ports.TokenResponse{AccessToken: "access", TokenType: "Bearer"}, nil
+				},
+				refreshTokenFn: func(_ context.Context, _ id.ClientID, creds ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
+					received = creds
+					return &ports.TokenResponse{AccessToken: "access", TokenType: "Bearer"}, nil
+				},
+			}
+			form := url.Values{
+				"grant_type":            {grantType},
+				"client_id":             {"550e8400-e29b-41d4-a716-446655440000"},
+				"client_assertion_type": {oauth2server.ClientAssertionTypeJWTBearer},
+				"client_assertion":      {"signed-client-assertion"},
+			}
+			if grantType == "authorization_code" {
+				form.Set("code", "authorization-code")
+				form.Set("redirect_uri", "https://client.example/callback")
+				form.Set("code_verifier", "pkce-verifier")
+			} else {
+				form.Set("refresh_token", "refresh-token")
+			}
+			handler := &OAuth2TokenHandler{GrantHandler: NewLocalGrantStrategy(minting, nil), OAuth2Service: newLocalModeOAuth2Service()}
+			request := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			assert.Equal(t, "signed-client-assertion", received.Assertion)
+			assert.Equal(t, oauth2server.ClientAssertionTypeJWTBearer, received.AssertionType)
 		})
 	}
 }
@@ -1133,7 +1173,7 @@ func TestHandleMintingError_RFC6749StatusCodes(t *testing.T) {
 			s := &localGrantStrategy{}
 			w := httptest.NewRecorder()
 
-			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", "broker_test")
+			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", "broker_test", false)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
@@ -1151,7 +1191,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", "broker_test")
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", "broker_test", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1164,7 +1204,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", "broker_test")
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", "broker_test", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1184,7 +1224,7 @@ func TestHandleMintingError_LogDoesNotLeakErrorChain(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	wrapped := fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_client", "client auth failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient))
-	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", "broker_test")
+	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", "broker_test", false)
 
 	logLine := buf.String()
 	assert.NotContains(t, logLine, internalDetail)

@@ -61,6 +61,7 @@ type Adapter struct {
 	transactions          ports.StorageTransactionManager
 	authorizationCodes    ports.AuthorizationCodeRepository
 	pkceSessions          ports.PKCESessionRepository
+	clientAssertionReplays ports.ClientAssertionReplayRepository
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -119,6 +120,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		refreshTokenSessions:  memory.NewRefreshTokenSessionStore(),
 		transactions:          noOpStorageTransactionManager{},
 		pkceSessions:          memory.NewPKCESessionStore(),
+		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
 	}, nil
 }
 
@@ -158,6 +160,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		refreshTokenSessions:  postgres.NewRefreshTokenSessionRepo(pgAdapter),
 		transactions:          pgAdapter,
 		pkceSessions:          postgres.NewPKCESessionRepo(pgAdapter),
+		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
 	}, nil
 }
 
@@ -315,4 +318,9 @@ func (a *Adapter) Rollback(ctx context.Context) error {
 // PKCESessions returns the PKCESessionRepository interface implementation.
 func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 	return a.pkceSessions
+}
+
+// ClientAssertionReplays returns the client assertion replay repository.
+func (a *Adapter) ClientAssertionReplays() ports.ClientAssertionReplayRepository {
+	return a.clientAssertionReplays
 }

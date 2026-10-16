@@ -104,7 +104,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 | Section | Technology | AGENTS.md |
 |---|---|---|
-| `internal/` | Go 1.27.1 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
+| `internal/` | Go 1.27.2 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
 | `web/` | React 19 + TypeScript + Vite 7 + Tailwind 4 | `web/AGENTS.md` |
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
@@ -163,6 +163,7 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
 | 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
+| 041 | `adrs/041-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 
 ## Domain Glossary
 
@@ -222,4 +223,4 @@ Use `NNN_description.{up,down}.sql` for migrations in `migrations/`. For large t
 
 ## Active Technologies
 
-Go 1.27.1 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
+Go 1.27.2 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)

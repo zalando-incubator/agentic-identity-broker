@@ -64,11 +64,16 @@ func NewCIMDTestFetcherFromClient(client *http.Client, maxResponseBytes int64) (
 // It preserves a configured HTTPS public URL and starts a TLS test server for outbound
 // CIMD-client scenarios. Other CIMD tests keep the existing HTTP URL-alignment behavior.
 func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetcher ports.CIMDFetcher, logger *slog.Logger) (*TestServer, error) {
+	return NewCIMDEndUserTestServerWithFetchers(storage, sf, cimdFetcher, nil, logger)
+}
+
+// NewCIMDEndUserTestServerWithFetchers creates a CIMD test server with independent document and key-set fetchers.
+func NewCIMDEndUserTestServerWithFetchers(storage interface{}, sf *ServerFactory, documentFetcher, keySetFetcher ports.CIMDFetcher, logger *slog.Logger) (*TestServer, error) {
 	if sf == nil || sf.config == nil {
 		return nil, fmt.Errorf("CIMD server factory config is required")
 	}
 	if _, ok := cimdHTTPSOrigin(sf.config.Server.EndUser.PublicURL); ok {
-		appInstance, err := sf.BuildAppWithCIMDFetcher(storage, cimdFetcher)
+		appInstance, err := sf.BuildAppWithCIMDFetchers(storage, documentFetcher, keySetFetcher)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build CIMD HTTPS app: %w", err)
 		}
@@ -85,7 +90,7 @@ func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetche
 	}
 
 	sf.config.Server.EndUser.PublicURL = "http://" + listener.Addr().String()
-	appInstance, err := sf.BuildAppWithCIMDFetcher(storage, cimdFetcher)
+	appInstance, err := sf.BuildAppWithCIMDFetchers(storage, documentFetcher, keySetFetcher)
 	if err != nil {
 		_ = listener.Close()
 		return nil, fmt.Errorf("failed to build CIMD app: %w", err)

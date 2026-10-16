@@ -356,6 +356,35 @@ func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
 	})
 }
 
+func TestCIMDClientAuthenticationConfiguration(t *testing.T) {
+	t.Run("defaults are loaded", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		auth := cfg.OAuth2AuthServer.CIMD.ClientAuthentication
+		assert.Equal(t, time.Hour, auth.KeySetCacheTTL)
+		assert.Equal(t, 5*time.Minute, auth.KeySetMinRefetchInterval)
+		assert.Equal(t, 65536, auth.KeySetMaxBytes)
+		assert.Equal(t, 5*time.Second, auth.KeySetFetchTimeout)
+	})
+
+	t.Run("environment variables override defaults", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL", "2h")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL", "7m")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES", "32768")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT", "3s")
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		auth := cfg.OAuth2AuthServer.CIMD.ClientAuthentication
+		assert.Equal(t, 2*time.Hour, auth.KeySetCacheTTL)
+		assert.Equal(t, 7*time.Minute, auth.KeySetMinRefetchInterval)
+		assert.Equal(t, 32768, auth.KeySetMaxBytes)
+		assert.Equal(t, 3*time.Second, auth.KeySetFetchTimeout)
+	})
+}
+
 func TestConfigLoader_UpstreamTimeout(t *testing.T) {
 	t.Run("proxy upstream timeout can be configured via environment variable", func(t *testing.T) {
 		t.Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", generateBase64EncodedString(t, 32))
