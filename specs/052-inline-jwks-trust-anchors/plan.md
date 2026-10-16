@@ -121,7 +121,7 @@ stakeholder decisions are listed under [Stakeholder decisions](#stakeholder-deci
 | ADRs | Pass with precondition | Add `adrs/040-trust-anchor-local-key-sets.md`, extending ADR 029 and ADR 008. It must be Accepted before implementation tasks start. |
 | Library-first security | Pass | jwx parses, classifies, and verifies keys. `os.Root` contains file access. The broker adds invariant checks only. |
 | Zalando guidelines | Pass | The `/health` change is additive and optional, and uses the existing component vocabulary. |
-| End-user API docs | Pass | Rebuild the rendered end-user API documentation from OpenAPI with the existing docs pipeline. |
+| End-user API docs | Pass | Add `docs/api/health.md` with the `components` contract and the `trust_anchor_key_files` examples (Principle IV requires rendered end-user API docs in `docs/api/`), and rebuild the Redoc site with `just docs-build`. |
 | Migration testing | Not applicable | No migration. |
 | Hexagonal architecture | Pass | Domain rules in `trustanchor/`. File I/O in a driven adapter behind `ports.JWKSPort`. The jwtauth adapter receives the key-set port by injection, without a cross-adapter import. All wiring is in the builder. |
 | Persistence patterns | Not applicable | No persistence. |
@@ -147,7 +147,8 @@ The gate passes after Phase 1, with the preconditions listed below.
 2. **Accept ADR 040** after it is drafted in Phase 2a (Principle II).
 3. **Confirm two scope interpretations** recorded in [research.md](./research.md):
    - R4: absolute symbolic links inside the trust directory are rejected. Relative links, which
-     Kubernetes uses, are accepted.
+     Kubernetes uses, are accepted. spec.md FR-023 and the "Symlinked file" edge case now state
+     this rule; revert both if the stakeholder declines it.
    - R9: `jwks` and `jwks_file` on `server.admin.authentication.jwt` fail startup, because FR-002
      covers only end-user JWT pre-authentication.
 4. **Review the five example journeys** added to [spec.md](./spec.md) under Principle XIV.
@@ -210,6 +211,7 @@ charts/agentic-identity-broker/
 └── README.md
 
 docs/configuration.md
+docs/api/health.md                                  # New: /health components and examples (Principle IV)
 examples/config/
 ├── trust-anchor-local-jwks.yaml                    # New complete example
 ├── token-exchange.yaml, impersonation.yaml, jwt-preauth.yaml
@@ -340,7 +342,8 @@ read-only projected volume without `subPath`, and extend the schema for the pass
   `examples/config/` with the README reference. Update the Helm values, schema, templates, and
   README per [contracts/helm-values.md](./contracts/helm-values.md).
 - **2c API design**: apply [contracts/health-endpoint.md](./contracts/health-endpoint.md) to
-  `api/enduser/openapi.yaml` after stakeholder confirmation. Rebuild the rendered API docs.
+  `api/enduser/openapi.yaml` after stakeholder confirmation. Add `docs/api/health.md` with the
+  component contract and examples, and rebuild the Redoc site.
 - **2d Database design**: none. Record "no schema change".
 - **2e Frontend review**: none. Record "no UI change".
 - **2f E2E acceptance test design**: review the spec journeys. Write the 29 `It()` blocks and the

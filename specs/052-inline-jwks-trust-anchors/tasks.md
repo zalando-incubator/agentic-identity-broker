@@ -164,7 +164,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 - [ ] T022 Present [contracts/health-endpoint.md](./contracts/health-endpoint.md) to the stakeholder: the optional `trust_anchor_key_files` component, its values `healthy` and `degraded`, and that it has no effect on HTTP status. Record the confirmation date in the PR description. T023 MUST NOT start before this is confirmed (plan "Stakeholder decisions" 1).
 - [ ] T023 Update the `/health` operation in `api/enduser/openapi.yaml`. Replace the description paragraph that starts "In proxy and hybrid OAuth2 modes" with the text in [contracts/health-endpoint.md](./contracts/health-endpoint.md), and add the `healthyWithDegradedKeySetFile` `200` example. Make no schema change, because `HealthResponse.components` is already a string map (Principle IV).
 - [ ] T024 [P] Confirm and record in the PR description that `api/admin/openapi.yaml` does not change. The admin `/health` is unchanged and no admin route is added (Principle IV).
-- [ ] T025 Rebuild the rendered end-user API documentation with `just docs-build`, and confirm the `/health` description and example render (plan "End-user API docs").
+- [ ] T025 Create `docs/api/health.md`, following the style of `docs/api/approval-endpoints.md`. It documents `GET /health`, the `components` map with `upstream_jwks` and `trust_anchor_key_files`, when each component appears, the fact that components never change the HTTP status, the RFC-style example exchange from [contracts/health-endpoint.md](./contracts/health-endpoint.md), and the operator action for `degraded` (check the `trust anchor key set re-read failed` log). Then run `just docs-build` and confirm the Redoc `/health` description and example render (Principle IV: end-user API docs rendered in `docs/api/`).
 
 **Checkpoint**: The `/health` delta is confirmed and documented in OpenAPI.
 
@@ -218,8 +218,8 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US2-S3**: After an atomic swap, the new key is accepted and the removed key is rejected within `Eventually` 3s.
   - **US2-S4**: A corrupt re-read keeps verification working. `/health` reports `components.trust_anchor_key_files == "degraded"`, the log `trust anchor key set re-read failed` has `error_kind` and no file contents, and a valid file restores `healthy`.
   - **US2-S5**: Render with the T004 wrapper using a Secret source, project the Secret key into a temp trust directory in the Kubernetes layout, load the rendered `config.yaml` through the production loader, boot, and verify.
-  - **US2-S6**: A path outside the trust directory gives `jwks_file "<path>" is outside security.trust_material_dir "<dir>"`, and the file is never opened (assert that its atime or a FIFO read is untouched).
-  - **US2-S7**: Both a `..` escape and a relative-link escape give the US2-S6 message.
+  - **US2-S6**: A path outside the trust directory gives `jwks_file "<path>" is outside security.trust_material_dir "<dir>"`, and the file is never opened. Make the outside path a FIFO with no writer, and assert that `BuildApp` returns the error within 2s: opening the FIFO would block, so a timely error proves the broker never opened it. Do not rely on atime, which `noatime` and `relatime` mounts make meaningless.
+  - **US2-S7**: A `..` escape, a relative-link escape, and an absolute link whose target is inside the trust directory all give the US2-S6 message (FR-023).
   - **US2-S8**: `jwks_file requires security.trust_material_dir to be set`.
   - **US2-S9**: The Kubernetes `..data` layout starts successfully.
 - [ ] T032 [P] Write the User Story 4 `It()` blocks in `tests/e2e/impersonation_local_jwks_test.go`:
@@ -557,7 +557,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 **API & Documentation** (Principles IV, X):
 
 - [ ] T096 [P] Verify that the `/health` response matches [contracts/health-endpoint.md](./contracts/health-endpoint.md) exactly. The component is present only with a file source, has the values `healthy` and `degraded`, and does not change the HTTP status.
-- [ ] T097 Verify that `just docs-build` renders the updated `/health` documentation.
+- [ ] T097 Verify that `docs/api/health.md` documents the `trust_anchor_key_files` component with examples that match `api/enduser/openapi.yaml`, and that `just docs-build` renders the updated Redoc `/health` page (Principle IV).
 
 **Architecture & Documentation** (Principle II):
 
