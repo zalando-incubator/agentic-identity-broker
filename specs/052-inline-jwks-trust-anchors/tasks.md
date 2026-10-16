@@ -280,8 +280,8 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Domain: `trustanchor` (test-first)
 
-- [ ] T043 [P] Write table tests in `internal/domain/trustanchor/algorithms_test.go`. Exactly RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, and EdDSA are approved. `none`, `HS256`, `HS384`, `HS512`, the empty string, and lower-case variants are rejected. Supports research R6.
-- [ ] T044 [P] Write table tests in `internal/domain/trustanchor/source_test.go` for each [data-model.md](./data-model.md) resolution rule, in order:
+- [X] T043 [P] Write table tests in `internal/domain/trustanchor/algorithms_test.go`. Exactly RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, and EdDSA are approved. `none`, `HS256`, `HS384`, `HS512`, the empty string, and lower-case variants are rejected. Supports research R6.
+- [X] T044 [P] Write table tests in `internal/domain/trustanchor/source_test.go` for each [data-model.md](./data-model.md) resolution rule, in order:
   1. More than one of `jwks_uri`, `jwks`, `jwks_file` is non-empty: `conflicting_key_sources`, naming the anchor and the set keys (FR-009).
   2. `jwks` is set and an explicit refresh bound is set: `refresh_bounds_with_inline` (FR-012).
   3. JWT pre-authentication with `verification: none` and any key source: `verification_disabled_with_key_source` (FR-013).
@@ -299,7 +299,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   - the invariant `0 < Min <= Max`, with a `Max` below `Min` raised to `Min`.
 
   Assert that every error message names `AnchorRef.ConfigPath`.
-- [ ] T045 [P] Write table tests in `internal/domain/trustanchor/local_key_set_test.go` for each Local Key Set invariant, in order:
+- [X] T045 [P] Write table tests in `internal/domain/trustanchor/local_key_set_test.go` for each Local Key Set invariant, in order:
   1. `len(doc) <= MaxKeySetBytes` → `too_large`.
   2. Top-level JSON object with a `keys` array → `not_a_jwk_set`.
   3. jwx parses the document → `not_a_jwk_set`.
@@ -316,13 +316,13 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   - `DiffKeyIDs` returning added and removed identifiers.
 
   Assert that no error string contains any substring of the input document or any jwx error text (FR-008).
-- [ ] T046 Implement `internal/domain/trustanchor/algorithms.go` so that T043 passes. Then delegate `impersonation.IsApprovedAlgorithm` in `internal/domain/impersonation/constants.go` to `trustanchor.IsApprovedAlgorithm`. Keep the existing impersonation error messages, and confirm the existing tests in `internal/domain/impersonation/` pass unchanged (research R6).
-- [ ] T047 Implement `internal/domain/trustanchor/errors.go` and `internal/domain/trustanchor/local_key_set.go` so that T045 passes. Parse with jwx `jwk.Parse(doc, jwk.WithStrictKeySetParsing(true))`, classify keys with jwx accessors, and never wrap jwx error text. Change the size bound in `internal/adapters/jwks/adapter.go` to `trustanchor.MaxKeySetBytes`, with no behaviour change. Supports FR-007, FR-008, SR-002, and SR-003.
-- [ ] T048 Implement `internal/domain/trustanchor/source.go` so that T044 passes. Supports FR-001, FR-003, FR-009, FR-010, FR-012, FR-013, FR-022, and FR-023 (lexical).
+- [X] T046 Implement `internal/domain/trustanchor/algorithms.go` so that T043 passes. Then delegate `impersonation.IsApprovedAlgorithm` in `internal/domain/impersonation/constants.go` to `trustanchor.IsApprovedAlgorithm`. Keep the existing impersonation error messages, and confirm the existing tests in `internal/domain/impersonation/` pass unchanged (research R6).
+- [X] T047 Implement `internal/domain/trustanchor/errors.go` and `internal/domain/trustanchor/local_key_set.go` so that T045 passes. Parse with jwx `jwk.Parse(doc, jwk.WithStrictKeySetParsing(true))`, classify keys with jwx accessors, and never wrap jwx error text. Change the size bound in `internal/adapters/jwks/adapter.go` to `trustanchor.MaxKeySetBytes`, with no behaviour change. Supports FR-007, FR-008, SR-002, and SR-003.
+- [X] T048 Implement `internal/domain/trustanchor/source.go` so that T044 passes. Supports FR-001, FR-003, FR-009, FR-010, FR-012, FR-013, FR-022, and FR-023 (lexical).
 
 ### Adapters: trust directory, static, file (test-first)
 
-- [ ] T049 [P] Write tests in `internal/adapters/jwks/trust_directory_test.go`. Accepted:
+- [X] T049 [P] Write tests in `internal/adapters/jwks/trust_directory_test.go`. Accepted:
   - the Kubernetes `..data` relative-link layout;
   - a plain file.
 
@@ -342,10 +342,10 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   - `Close` releases the `*os.Root`.
 
   Supports FR-010, FR-022, FR-023, and SR-006.
-- [ ] T050 Implement `internal/adapters/jwks/trust_directory.go` with the research R4 algorithm so that T049 passes. Resolve the directory with `filepath.EvalSymlinks`, open it once with `os.OpenRoot`, and require `filepath.IsLocal` on the relative name. Open through `root.Open`, `Stat` the handle, and read through the same handle.
-- [ ] T051 [P] Write tests in `internal/adapters/jwks/static_adapter_test.go`. `GetKeySet` returns the parsed set. `GetKey` finds a known `kid` and returns the existing "not found" error for an unknown one. `HealthState()` is always `healthy`. No goroutine is started. Supports FR-019 and research R2.
-- [ ] T052 Implement `internal/adapters/jwks/static_adapter.go` so that T051 passes.
-- [ ] T053 [P] Write tests in `internal/adapters/jwks/file_adapter_test.go` covering the [data-model.md](./data-model.md) state machine with fake clock and re-read intervals:
+- [X] T050 Implement `internal/adapters/jwks/trust_directory.go` with the research R4 algorithm so that T049 passes. Resolve the directory with `filepath.EvalSymlinks`, open it once with `os.OpenRoot`, and require `filepath.IsLocal` on the relative name. Open through `root.Open`, `Stat` the handle, and read through the same handle.
+- [X] T051 [P] Write tests in `internal/adapters/jwks/static_adapter_test.go`. `GetKeySet` returns the parsed set. `GetKey` finds a known `kid` and returns the existing "not found" error for an unknown one. `HealthState()` is always `healthy`. No goroutine is started. Supports FR-019 and research R2.
+- [X] T052 Implement `internal/adapters/jwks/static_adapter.go` so that T051 passes.
+- [X] T053 [P] Write tests in `internal/adapters/jwks/file_adapter_test.go` covering the [data-model.md](./data-model.md) state machine with fake clock and re-read intervals:
   - a startup read failure returns the categorized error;
   - Current → Current on a valid re-read; the set is replaced and `trust anchor key set changed` is logged with `added_key_ids` and `removed_key_ids`; unchanged content logs nothing;
   - Current → Degraded on a failed re-read; the last set is kept, the `trust anchor key set re-read failed` Warn log has `error_kind`, `last_success_at`, and `fails_closed_at`, and health is `degraded`;
@@ -357,7 +357,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   - `Shutdown` stops the loop.
 
   Supports FR-011, FR-018, and FR-019.
-- [ ] T054 Implement `internal/adapters/jwks/file_adapter.go` so that T053 passes. Re-read every `RefreshBounds.Min` through `TrustDirectory`, validate with `trustanchor.ParseLocalKeySet`, and swap atomically. Fail closed after `Max` since the last success, and stop on `Shutdown`.
+- [X] T054 Implement `internal/adapters/jwks/file_adapter.go` so that T053 passes. Re-read every `RefreshBounds.Min` through `TrustDirectory`, validate with `trustanchor.ParseLocalKeySet`, and swap atomically. Fail closed after `Max` since the last success, and stop on `Shutdown`.
 
 ### Configuration loader and validator (test-first)
 

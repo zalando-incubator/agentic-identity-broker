@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// trustAnchorLabel selects the 29 scenario It() blocks of feature 052.
+	// trustAnchorLabel selects the 30 scenario It() blocks of feature 052.
 	trustAnchorLabel = "inline-jwks-trust-anchors"
 	// trustAnchorParityLabel selects the SC-003 parity table.
 	trustAnchorParityLabel = "inline-jwks-trust-anchors-parity"

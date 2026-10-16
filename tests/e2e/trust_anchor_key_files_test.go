@@ -16,10 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/matchers"
 )
 
-const (
-	gatewayKeyFile = "agentgateway-jwks.json"
-	fileAnchorPath = clientAssertionPath + ".jwks_file"
-)
+const gatewayKeyFile = "agentgateway-jwks.json"
 
 var _ = Describe("File key sets for the client-assertion trust anchor", Label(trustAnchorLabel), func() {
 	var env *trustAnchorEnv
@@ -203,7 +200,7 @@ broker:
 			env.trust.WriteOutsideFile("secret.json", helpers.PublicKeySet(env.gateway))
 
 			dotDot := env.trust.DotDotPath("secret.json")
-			env.expectStartupFailure(fileConfig(dotDot), fileAnchorPath+": jwks_file", "is outside security.trust_material_dir")
+			env.expectStartupFailure(fileConfig(dotDot), clientAssertionPath+": jwks_file", "is outside security.trust_material_dir")
 
 			relative := env.trust.LinkRelativeEscape("relative.json", "secret.json")
 			env.expectStartupFailure(fileConfig(relative), outsideMessage(relative))
@@ -219,7 +216,7 @@ broker:
 			cfg := fileConfig(path)
 			cfg.Security.TrustMaterialDir = ""
 
-			env.expectStartupFailure(cfg, fileAnchorPath+": jwks_file requires security.trust_material_dir to be set")
+			env.expectStartupFailure(cfg, clientAssertionPath+": jwks_file requires security.trust_material_dir to be set")
 		})
 	})
 })
