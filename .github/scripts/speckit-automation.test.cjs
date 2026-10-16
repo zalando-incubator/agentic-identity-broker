@@ -230,6 +230,41 @@ test("tasks consume only a current successful plan from the same pipeline run", 
   await assert.rejects(prepare({ ...f, inputs: { phase: "tasks", pr: 42 } }), /different run/);
 });
 
+test("pipeline reruns reuse upstream results across attempts but reject other runs and stale artifacts", async (t) => {
+  const saved = preparationIO(t);
+  process.env.GITHUB_RUN_ATTEMPT = "2";
+  for (const [phase, previous] of [
+    ["tasks", "plan"], ["analyze", "tasks"], ["remediate", "analyze"], ["reanalyze", "remediate"],
+  ]) {
+    const upstream = comment(result(previous));
+    const f = fixture("pull_request_target", {}, { comments: [upstream] });
+    const data = await prepare({ ...f, inputs: { phase, pr: 42 } });
+    assert.equal(data.run, "100/2");
+    assert.equal(data.previous.run, "100/1");
+    assert.equal(JSON.parse(saved.at(-1).body).run, "100/2");
+    upstream.body = comment(result(previous, { run: "1000/1" })).body;
+    await assert.rejects(prepare({ ...f, inputs: { phase, pr: 42 } }), /different run/);
+    upstream.body = comment(result(previous, {
+      files: { ...artifactHashes(files), [`${spec}/spec.md`]: "0".repeat(64) },
+    })).body;
+    await assert.rejects(prepare({ ...f, inputs: { phase, pr: 42 } }), /changed/);
+  }
+});
+
+test("final verification reuses earlier attempts but rejects other runs and stale artifacts", async (t) => {
+  preparationIO(t);
+  process.env.GITHUB_RUN_ATTEMPT = "2";
+  const posted = comment(result("reanalyze"));
+  const f = fixture("pull_request_target", {}, { comments: [posted] });
+  assert.equal((await verify({ ...f, comment: 11, phase: "reanalyze" })).run, "100/1");
+  posted.body = comment(result("reanalyze", { run: "1000/1" })).body;
+  await assert.rejects(verify({ ...f, comment: 11, phase: "reanalyze" }), /provenance/);
+  posted.body = comment(result("reanalyze", {
+    files: { ...artifactHashes(files), [`${spec}/spec.md`]: "0".repeat(64) },
+  })).body;
+  await assert.rejects(verify({ ...f, comment: 11, phase: "reanalyze" }), /changed/);
+});
+
 test("final verification rejects missing output and incomplete implementation tasks", async (t) => {
   preparationIO(t);
   const f = fixture("pull_request_target", {}, { comments: [comment(result("implement"))] });

@@ -63,7 +63,7 @@ function parseResult(comment) {
 function requireResult(result, required, hashes, { clean = false, run } = {}) {
   if (!result) throw new Error("Required Spec Kit result is missing (clarification or previous phase)");
   if (result.status !== "complete") throw new Error(`Spec Kit ${result.phase} is ${result.status}`);
-  if (run && result.run !== run) throw new Error("Previous phase result belongs to a different run");
+  if (run && result.run.split("/")[0] !== run.split("/")[0]) throw new Error("Previous phase result belongs to a different run");
   for (const name of required) {
     const file = `${result.feature}/${name}`;
     if (!hashes[file] || result.files[file] !== hashes[file]) throw new Error(`${file} changed after ${result.phase}`);
@@ -214,7 +214,7 @@ async function verify({ github, context, comment, phase }) {
   if (!Number.isSafeInteger(Number(comment)) || Number(comment) <= 0) throw new Error("Worker did not publish a result comment");
   const { data: posted } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(comment) });
   const result = parseResult(posted);
-  if (!result || result.phase !== phase || result.run !== `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`) {
+  if (!result || result.phase !== phase || result.run.split("/")[0] !== String(context.runId)) {
     throw new Error("Worker result provenance does not match this phase and run");
   }
   const number = Number(posted.issue_url.split("/").pop());
