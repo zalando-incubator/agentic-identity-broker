@@ -212,13 +212,15 @@ ginkgo -v --label-filter="!performance" --seed=12345 ./tests/e2e/
    go install github.com/onsi/gomega/...@latest
    ```
 
-2. **Run tests from project root**:
+2. **Install Helm 3**: the trust-anchor key-set scenarios render `charts/agentic-identity-broker` with `helm template` and fail, never skip, when `helm` is not on `PATH` (https://helm.sh/docs/intro/install/).
+
+3. **Run tests from project root**:
    ```bash
    cd /path/to/agentic-identity-broker
    just test-e2e-backend
    ```
 
-3. **View coverage**:
+4. **View coverage**:
    ```bash
    just test-e2e-backend-coverage
    # Opens coverage/e2e-backend.html in your browser
