@@ -78,7 +78,7 @@ jobs:
           {
             echo "docs=$(match '^(docs/|api/|assets/docusaurus/)')"
             echo "helm=$(match '^charts/')"
-            echo "workflows=$(match '^\.github/(workflows/|dependabot\.yml)')"
+            echo "workflows=$(match '^(\.github/(workflows/|scripts/speckit-|actionlint\.yaml$|aw/actions-lock\.json$|dependabot\.yml)|\.agents/skills/speckit-)')"
             echo "deps=$(match '(^|/)(go\.mod|go\.sum|package(-lock)?\.json)$')"
             # "code" = anything that is not purely documentation.
             if grep -Evq "$DOCS_ONLY" changed.txt; then echo "code=true"; else echo "code=false"; fi
@@ -466,6 +466,15 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
+      - name: Spec Kit automation guards
+        run: node --test .github/scripts/speckit-automation.test.cjs
+      - name: Validate agentic workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-aw --pin v0.92.0
+          gh aw compile speckit-specify speckit-phase speckit-plan speckit-analyze speckit-implement --strict --no-emit --no-check-update
+          gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
       - name: zizmor
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
