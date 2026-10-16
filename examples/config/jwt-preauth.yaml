@@ -27,6 +27,13 @@
 #         header_name: Authorization              # Default; strips "Bearer " prefix
 #         # verification: jwks                    # Default when omitted
 #         jwks_uri: https://auth.example.com/.well-known/jwks.json
+#         # Alternatives to jwks_uri on server.enduser (rejected on server.admin). Set at most
+#         # one of jwks_uri, jwks, and jwks_file; neither alternative makes an outbound request.
+#         # jwks_file must lie inside security.trust_material_dir and is re-read every 5 minutes
+#         # (the last valid set serves for up to 15 minutes after a failed re-read).
+#         # See trust-anchor-local-jwks.yaml. Use compact single-line JSON with ${VAR} expansion.
+#         # jwks: '{"keys":[{"kty":"EC","crv":"P-256","kid":"mesh-2026-10","use":"sig","alg":"ES256","x":"<base64url>","y":"<base64url>"}]}'
+#         # jwks_file: /etc/agentic-identity-broker/trust/mesh-jwks.json
 #         expected_audience: agentic-identity-broker
 #         expected_issuer: https://auth.example.com
 #         claim_extraction:
@@ -44,8 +51,8 @@
 #
 # ⚠️ Security: Only use verification: none in network environments where you
 # trust that JWT injection is controlled (e.g., mutual TLS service mesh).
-# jwks_uri MUST NOT be set when verification is "none" — startup will fail
-# if both are present.
+# jwks_uri, jwks, and jwks_file MUST NOT be set when verification is "none" —
+# startup will fail if any of them is present.
 #
 # server:
 #   enduser:

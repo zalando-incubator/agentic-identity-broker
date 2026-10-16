@@ -176,6 +176,10 @@ and unknown environments reject that development-only bypass.
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenExchange.clientAssertion.jwks` | Inline JWK Set JSON (public keys only) for client assertions. Mutually exclusive with `jwksUri`, `jwksFile`, `jwksMinRefresh`, and `jwksMaxRefresh`. Skips discovery and key fetch. | `""` |
+| `broker.tokenExchange.clientAssertion.jwksFile` | Absolute key-set file path inside `broker.security.trustMaterial.directory`. Mutually exclusive with `jwksUri` and `jwks`. | `""` |
+| `broker.security.trustMaterial.directory` | Absolute path of the trust directory (`security.trust_material_dir`), the only place `jwks_file` key sets are read. Required when `sources` is set. | `""` |
+| `broker.security.trustMaterial.sources` | Existing Secrets or ConfigMaps projected read-only into the trust directory. Entries are `{secret: {name, items}}` or `{configMap: {name, items}}`; items are `{key, path}`. | `[]` |
 | `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
 | `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
 | `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
@@ -436,6 +440,48 @@ The chart enforces Kubernetes Pod Security Standards (restricted):
 - **Migration user**: Schema modification permissions (varies by PostgreSQL setup)
 - **Broker user**: Runtime data access permissions (varies by PostgreSQL setup)
 - **Separate Secrets**: Different Kubernetes Secrets for each user
+
+### Trust material for local key sets
+
+A trust anchor can take its public verification keys from an inline JWK Set (`jwks`) or a key-set file (`jwks_file`) instead of a remote `jwks_uri`. The broker reads key-set files only from `broker.security.trustMaterial.directory`. The chart mounts existing Secrets or ConfigMaps there, so no custom image is needed.
+
+The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and end-user JWT pre-authentication (`broker.server.enduser.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names. The admin server rejects both.
+
+```bash
+kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./agentgateway-jwks.json
+```
+
+```yaml
+broker:
+  security:
+    trustMaterial:
+      directory: "/etc/agentic-identity-broker/trust"
+      sources:
+        - secret:
+            name: agentgateway-jwks
+            items:
+              - key: jwks.json
+                path: agentgateway-jwks.json
+        - configMap:
+            name: mesh-jwks
+            items:
+              - key: jwks.json
+                path: mesh-jwks.json
+  tokenExchange:
+    clientAssertion:
+      issuerUri: "https://agentgateway.internal.example.com"
+      jwksFile: "/etc/agentic-identity-broker/trust/agentgateway-jwks.json"
+      jwksMinRefresh: "5m"
+      jwksMaxRefresh: "1h"
+```
+
+- **Projected volume**: each entry becomes one source of a read-only `projected` volume named `trust-material`, mounted at `directory`. Setting `sources` without `directory` fails `helm template` with `broker.security.trustMaterial.directory is required when sources are set`.
+- **No `subPath`**: the chart never mounts the volume with `subPath`. Kubernetes does not update `subPath` mounts, so a `subPath` mount would never deliver a rotated key set. The projected volume keeps the `..data` relative-link layout that the broker accepts. Absolute symbolic links inside the trust directory are rejected.
+- **Rotation**: when the Secret or ConfigMap changes, the kubelet updates the volume without restarting the pod. The broker re-reads each file every `jwksMinRefresh` (default `15m`; end-user JWT pre-authentication uses a fixed `5m`) and applies a valid set without a restart. A failed re-read keeps the last valid set and reports `components.trust_anchor_key_files` as `degraded` on `GET /health`. After `jwksMaxRefresh` (default `max(jwksMinRefresh, 1h)`; JWT pre-authentication `15m`) without a successful read, the trust anchor fails closed.
+- **Inline alternative**: `jwks` is rendered as a YAML block scalar and is never refreshed, so `jwksMinRefresh` and `jwksMaxRefresh` are rejected next to it.
+- **One source per trust anchor**: set at most one of `jwksUri`, `jwks`, and `jwksFile`.
+
+See `examples/config/trust-anchor-local-jwks.yaml` for the rendered configuration.
 
 ## Examples
 

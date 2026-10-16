@@ -197,13 +197,20 @@ data:
       {{- if .expectedAudience }}
       expected_audience: {{ .expectedAudience | quote }}
       {{- end }}
-      {{- if or .clientAssertion.issuerUri .clientAssertion.jwksUri .clientAssertion.jwksMinRefresh .clientAssertion.jwksMaxRefresh }}
+      {{- if or .clientAssertion.issuerUri .clientAssertion.jwksUri .clientAssertion.jwks .clientAssertion.jwksFile .clientAssertion.jwksMinRefresh .clientAssertion.jwksMaxRefresh }}
       client_assertion:
         {{- if .clientAssertion.issuerUri }}
         issuer_uri: {{ .clientAssertion.issuerUri | quote }}
         {{- end }}
         {{- if .clientAssertion.jwksUri }}
         jwks_uri: {{ .clientAssertion.jwksUri | quote }}
+        {{- end }}
+        {{- if .clientAssertion.jwks }}
+        jwks: |
+          {{- .clientAssertion.jwks | trim | nindent 10 }}
+        {{- end }}
+        {{- if .clientAssertion.jwksFile }}
+        jwks_file: {{ .clientAssertion.jwksFile | quote }}
         {{- end }}
         {{- if .clientAssertion.jwksMinRefresh }}
         jwks_min_refresh: {{ .clientAssertion.jwksMinRefresh | quote }}
@@ -225,9 +232,17 @@ data:
           {{- end }}
     {{- end }}
 
+    {{- $trustMaterial := .Values.broker.security.trustMaterial }}
+    {{- if and $trustMaterial.sources (not $trustMaterial.directory) }}
+    {{- fail "broker.security.trustMaterial.directory is required when sources are set" }}
+    {{- end }}
+
     # Security configuration
     security:
       skip_thirdparty_https_validation: {{ .Values.broker.security.skipThirdpartyHttpsValidation }}
+      {{- if $trustMaterial.directory }}
+      trust_material_dir: {{ $trustMaterial.directory | quote }}
+      {{- end }}
 
     {{- if .Values.broker.telemetry.enabled }}
     # OpenTelemetry observability configuration

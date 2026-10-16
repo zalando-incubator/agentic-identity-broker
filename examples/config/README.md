@@ -429,6 +429,24 @@ An active `UserGrant` for `(extracted subject, target agent)` is mandatory for e
 ./agentic-identity-broker --config ./examples/config/impersonation.yaml
 ```
 
+### `trust-anchor-local-jwks.yaml` — Inline and File-Based Trust Anchor Key Sets
+
+Complete, loadable `local`-mode configuration in which three trust anchors take their public verification keys from configuration instead of a remote `jwks_uri` or issuer discovery. No outbound request is made for those keys.
+
+- `token_exchange.client_assertion` — client assertions from a locally signing gateway verify against an inline `jwks` JWK Set. Machine-facing approval authentication reuses this trust anchor.
+- `oauth2_authorization_server.impersonation.rules[].trusted_issuers[]` — each impersonation trusted issuer verifies credentials against its own `jwks_file`.
+- `server.enduser.authentication.jwt` — end-user JWT pre-authentication verifies a service mesh's identity JWTs against a `jwks_file`.
+
+Key settings:
+- `security.trust_material_dir` — the only directory from which `jwks_file` key sets are read
+- `jwks` / `jwks_file` — mutually exclusive with `jwks_uri` and each other
+- Key sets hold public asymmetric keys only; invalid or ambiguous key sources fail startup
+
+**Usage:**
+```bash
+./agentic-identity-broker --config ./examples/config/trust-anchor-local-jwks.yaml
+```
+
 ### Hybrid Mode (`oauth2-hybrid-mode.yaml`)
 
 Configures the broker to serve both proxy agents (forwarded to an upstream OAuth2 server) and local agents (tokens issued locally) in a single deployment. Agent classification is property-based: agents with `ClientID` set are ProxyClients; agents with `ClientURIs` set are CIMDClients; agents with neither are LocalClients.

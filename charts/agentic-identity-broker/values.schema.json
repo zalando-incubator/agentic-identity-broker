@@ -991,6 +991,14 @@
                               "type": "string",
                               "description": "Explicit JWKS endpoint; empty discovers it from issuer metadata"
                             },
+                            "jwks": {
+                              "type": "string",
+                              "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwks_uri and jwks_file"
+                            },
+                            "jwks_file": {
+                              "type": "string",
+                              "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwks_uri and jwks"
+                            },
                             "jwks_min_refresh": {
                               "type": "string",
                               "description": "Minimum JWKS refresh interval (Go duration); default 15m"
@@ -1123,6 +1131,14 @@
                 "jwksMaxRefresh": {
                   "type": "string",
                   "description": "Maximum client-assertion JWKS refresh interval as a Go duration"
+                },
+                "jwks": {
+                  "type": "string",
+                  "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwksUri and jwksFile"
+                },
+                "jwksFile": {
+                  "type": "string",
+                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwksUri and jwks"
                 }
               }
             },
@@ -1209,6 +1225,46 @@
             "skipThirdpartyHttpsValidation": {
               "type": "boolean",
               "description": "Skip HTTPS validation for third-party services (dev/test only)"
+            },
+            "trustMaterial": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Trust material mounted for jwks_file key sets",
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^(/.*)?$",
+                  "description": "Absolute path of the trust directory (security.trust_material_dir); empty disables jwks_file"
+                },
+                "sources": {
+                  "type": "array",
+                  "description": "Existing Secrets or ConfigMaps projected read-only into the trust directory",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["secret"],
+                        "properties": {
+                          "secret": {
+                            "$ref": "#/definitions/trustMaterialSource"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["configMap"],
+                        "properties": {
+                          "configMap": {
+                            "$ref": "#/definitions/trustMaterialSource"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
             }
           }
         },
@@ -1501,6 +1557,40 @@
         }
       }
     },
+    "trustMaterialSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "items"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the existing Secret or ConfigMap"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Keys projected into the trust directory",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "path"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Key in the Secret or ConfigMap"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "File path relative to the trust directory"
+              }
+            }
+          }
+        }
+      }
+    },
     "serverConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -1550,7 +1640,15 @@
                 },
                 "jwks_uri": {
                   "type": "string",
-                  "description": "JWKS URI (required when verification is jwks)"
+                  "description": "JWKS URI (required when verification is jwks and neither jwks nor jwks_file is set)"
+                },
+                "jwks": {
+                  "type": "string",
+                  "description": "Inline JWK Set JSON (public keys only); end-user server only, rejected by the broker on the admin server"
+                },
+                "jwks_file": {
+                  "type": "string",
+                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; end-user server only, rejected by the broker on the admin server"
                 },
                 "expected_audience": {
                   "type": "string",

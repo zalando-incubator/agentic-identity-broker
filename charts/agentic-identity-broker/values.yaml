@@ -622,6 +622,12 @@ broker:
       jwksMinRefresh: ""
       # -- Maximum client-assertion JWKS refresh interval. Empty defaults to max(jwksMinRefresh, 1h).
       jwksMaxRefresh: ""
+      # -- Inline JWK Set JSON (public keys only). Mutually exclusive with jwksUri and jwksFile,
+      # and with jwksMinRefresh and jwksMaxRefresh. Rendered without discovery or key fetch.
+      jwks: ""
+      # -- Absolute key-set file path inside broker.security.trustMaterial.directory.
+      # Mutually exclusive with jwksUri and jwks.
+      jwksFile: ""
 
     claimExtraction:
       # -- CEL expression to extract the user principal from subject_token.
@@ -661,6 +667,24 @@ broker:
   security:
     # -- Skip HTTPS validation for third-party services (dev/test only!)
     skipThirdpartyHttpsValidation: false
+    # -- Trust material mounted for jwks_file key sets.
+    trustMaterial:
+      # -- Absolute path of the trust directory (security.trust_material_dir). Empty disables jwks_file.
+      directory: ""
+      # -- Existing Secrets or ConfigMaps projected read-only into the trust directory.
+      # Each entry is {secret: {name, items}} or {configMap: {name, items}}; items are {key, path}.
+      sources: []
+      # sources:
+      #   - secret:
+      #       name: agentgateway-jwks
+      #       items:
+      #         - key: jwks.json
+      #           path: agentgateway-jwks.json
+      #   - configMap:
+      #       name: mesh-jwks
+      #       items:
+      #         - key: jwks.json
+      #           path: mesh-jwks.json
 
   # OpenTelemetry observability configuration
   telemetry:

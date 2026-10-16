@@ -16,6 +16,18 @@ token_exchange:
   #   # Refresh defaults: min 15m; max max(jwks_min_refresh, 1h).
   #   jwks_min_refresh: "15m"
   #   jwks_max_refresh: "1h"
+  #
+  # Alternatives to jwks_uri for an issuer that publishes no key endpoint. Set at most one
+  # of jwks_uri, jwks, and jwks_file. Neither alternative triggers discovery or any outbound request.
+  #   # Inline JWK Set (public keys only); never refreshed, so jwks_min_refresh and
+  #   # jwks_max_refresh are not allowed with it:
+  #   jwks: |
+  #     {"keys":[{"kty":"EC","crv":"P-256","kid":"gateway-2026-10","use":"sig","alg":"ES256",
+  #               "x":"<base64url>","y":"<base64url>"}]}
+  #   # Key-set file, re-read every jwks_min_refresh; requires security.trust_material_dir
+  #   # and must lie inside it:
+  #   jwks_file: "/etc/agentic-identity-broker/trust/gateway-jwks.json"
+  # See examples/config/trust-anchor-local-jwks.yaml for a complete example.
 
   # Claim extraction configures CEL expressions to extract claims from subject_token
   claim_extraction:
