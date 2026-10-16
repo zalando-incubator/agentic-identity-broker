@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,7 +18,7 @@ import (
 
 const jwtAnchorPath = "server.enduser.authentication.jwt"
 
-var _ = Describe("Local key sets for end-user JWT pre-authentication", Label(trustAnchorLabel), func() {
+var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorLabel), func() {
 	var (
 		env  *trustAnchorEnv
 		mesh *helpers.LocalKey
@@ -96,6 +97,41 @@ var _ = Describe("Local key sets for end-user JWT pre-authentication", Label(tru
 				jwt.JWKSFile = path
 			}))
 			expectPrincipalDerived()
+		})
+	})
+
+	Context("separate key sets on the admin and end-user servers", func() {
+		// US5-S4 from specs/052-inline-jwks-trust-anchors/spec.md
+		It("derives the admin principal only from a JWT signed by the admin server's own key set", func() {
+			operator := helpers.NewLocalES256Key("admin-proxy-2026-10")
+			path := env.trust.WriteFile("mesh-jwks.json", helpers.PublicKeySet(mesh))
+			config := signedConfig(func(jwt *ports.JWTConfig) {
+				jwt.JWKSFile = path
+			})
+			admin := *config.Server.EndUser.Authentication.JWT
+			admin.JWKSFile = ""
+			admin.JWKS = helpers.PublicKeySet(operator)
+			config.Server.Admin.Authentication.JWT = &admin
+			Expect(env.build(config)).To(Succeed())
+			var err error
+			env.adminServer, err = bootstrap.NewAdminTestServer(env.app, env.logger)
+			Expect(err).ToNot(HaveOccurred())
+
+			sweep := func(key *helpers.LocalKey) int {
+				token, err := key.Sign(helpers.NewJWTClaims().WithSubject("operator-alice").Build())
+				Expect(err).ToNot(HaveOccurred())
+				resp, err := env.adminServer.DirectRequest(http.MethodPost, "/api/sessions/sweep", "", map[string]string{
+					"Authorization": "Bearer " + token,
+					"Content-Type":  "application/json",
+				}, strings.NewReader(`{"dry_run":true}`))
+				Expect(err).ToNot(HaveOccurred())
+				defer func() { _ = resp.Body.Close() }()
+				return resp.StatusCode
+			}
+
+			Expect(sweep(operator)).To(Equal(http.StatusOK))
+			Expect(sweep(mesh)).ToNot(Equal(http.StatusOK))
+			Expect(env.logs.Raw()).To(ContainSubstring(`"trust_anchor":"server.admin.authentication.jwt"`))
 		})
 	})
 

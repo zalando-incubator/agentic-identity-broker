@@ -227,13 +227,13 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US4-S2**: A file trusted issuer validates the credentials.
   - **US4-S3**: With `allowed_algorithms: ["ES256"]`, an RS256 credential is rejected.
   - **US4-S4**: Rules A and B for the same `issuer_uri` with different inline keys. A credential signed by rule B's key never matches rule A.
-- [ ] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
+- [X] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
   - **US5-S1**: `GET /api/me` derives the principal with an inline source and, in a second `Context`, with a file source.
   - **US5-S2**: `verification: none` with `jwks`, and with `jwks_file`, gives `verification 'none' and jwks are mutually exclusive` (or `… jwks_file …`).
   - **US5-S3**: `verification: jwks` with no source fails startup with the existing message.
-  - **US5-S4**: The admin server with an inline admin key set and the end-user server with a different file key set. An admin API request with an admin-key JWT derives the principal, and one with an end-user-key JWT returns `401`.
+  - **US5-S4**: The admin server with an inline admin key set and the end-user server with a different file key set. `POST /api/sessions/sweep` (dry run) with an admin-key JWT returns `200`, and with an end-user-key JWT is rejected as for an unknown remote key.
 - [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `tests/e2e/helpers/mock_jwks_server.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
-- [ ] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 30 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
+- [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 30 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
 - [X] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
 
 **Checkpoint**: Journeys are reviewed, and all 30 scenarios plus the parity table are written and verified red.

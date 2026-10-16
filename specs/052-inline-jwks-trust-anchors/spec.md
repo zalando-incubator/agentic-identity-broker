@@ -543,7 +543,7 @@ Decoded mesh JWT (synthetic):
 
 **Observable result**: the broker derives Alice's principal from a JWT whose public key lives only in a mounted file. A JWT with an unknown `kid` returns `401 Unauthorized`, as it does for a remote key set.
 
-The same configuration under `server.admin.authentication.jwt` works identically on the admin server (User Story 5, Scenario 4). That trust anchor is separate: a JWT signed only by a key in the end-user set returns `401 Unauthorized` on the admin server.
+The same configuration under `server.admin.authentication.jwt` works identically on the admin server (User Story 5, Scenario 4). That trust anchor is separate: the admin server derives no principal from a JWT signed only by a key in the end-user set, exactly as for a JWT signed by an unknown remote key.
 
 ## Requirements *(mandatory)*
 

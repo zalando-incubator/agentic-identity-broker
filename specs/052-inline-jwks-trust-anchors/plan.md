@@ -439,7 +439,7 @@ fresh storage, servers, keys, and trust directory.
 | US5-S1 | `jwt_preauth_local_jwks_test.go` | Derives the principal for `GET /api/me` with inline and file sources. |
 | US5-S2 | `jwt_preauth_local_jwks_test.go` | Fails startup for `verification: none` with `jwks` or `jwks_file`. |
 | US5-S3 | `jwt_preauth_local_jwks_test.go` | Fails startup for `verification: jwks` with no source, as today. |
-| US5-S4 | `jwt_preauth_local_jwks_test.go` | Admin and end-user servers with different local key sets: the admin API accepts an admin-key JWT and rejects an end-user-key JWT with `401`. |
+| US5-S4 | `jwt_preauth_local_jwks_test.go` | Admin and end-user servers with different local key sets: admin `POST /api/sessions/sweep` succeeds with an admin-key JWT and is rejected with an end-user-key JWT. |
 
 **SC-003 parity table** (`trust_anchor_key_source_parity_test.go`): a `DescribeTable` crosses five
 credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources
