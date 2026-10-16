@@ -1050,7 +1050,7 @@ func thirdpartyRefreshError(resp *http.Response) (error, bool) {
 		detail = DetailProviderClientRejected
 	}
 	metadata := NewErrorMetadata(OperationRefresh, detail).WithProviderResponse(resp.StatusCode, oauthCode)
-	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err)), err == nil
+	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err)), err == nil && len(body) <= maxThirdpartyErrorBodyBytes
 }
 
 func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token, flavor model.OAuth2Flavor) error {

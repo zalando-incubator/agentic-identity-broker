@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -56,6 +57,37 @@ func TestRefreshIncompleteErrorResponseIsNotRetried(t *testing.T) {
 				assert.Equal(t, status, metadata.StatusCode())
 				assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 				assert.Equal(t, 1, attempts)
+			})
+		})
+	}
+}
+
+func TestRefreshErrorBodyLimitControlsRetries(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       int
+		bodyBytes    int
+		wantAttempts int
+	}{
+		{"429 at limit", http.StatusTooManyRequests, maxThirdpartyErrorBodyBytes, 3},
+		{"429 over limit", http.StatusTooManyRequests, maxThirdpartyErrorBodyBytes + 1, 1},
+		{"503 at limit", http.StatusServiceUnavailable, maxThirdpartyErrorBodyBytes, 3},
+		{"503 over limit", http.StatusServiceUnavailable, maxThirdpartyErrorBodyBytes + 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				service, provider, _ := newOperationTestService(t, io.Discard)
+				payload := `{"error":"temporarily_unavailable"}`
+				body := payload + strings.Repeat(" ", tc.bodyBytes-len(payload))
+				attempts := 0
+				service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+					attempts++
+					return operationTokenResponse(tc.status, body), nil
+				})
+				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+				metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
+				assert.Equal(t, tc.status, metadata.StatusCode())
+				assert.Equal(t, tc.wantAttempts, attempts)
 			})
 		})
 	}
