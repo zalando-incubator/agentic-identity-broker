@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -28,6 +30,10 @@ func Validate(cfg *ports.Config) error {
 	// Validate log format
 	if err := validateLogFormat(cfg.Log.Format); err != nil {
 		return formatValidationError("log.format", string(cfg.Log.Format), "text or json", err)
+	}
+
+	if err := validateTrustMaterialDir(&cfg.Security); err != nil {
+		return err
 	}
 
 	// Validate server configuration (pass security config for HTTPS validation)
@@ -608,12 +614,22 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 		)
 	}
 
-	// Required jwks_uri when verification is jwks
-	if jwt.Verification == "jwks" && jwt.JWKSURI == "" {
+	if err := validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorJWTPreauth, ConfigPath: prefix}, trustanchor.SourceInput{
+		JWKSURI:              jwt.JWKSURI,
+		JWKS:                 jwt.JWKS,
+		JWKSFile:             jwt.JWKSFile,
+		TrustDirectory:       trustDirectory(security),
+		VerificationDisabled: jwt.Verification == "none",
+	}); err != nil {
+		return err
+	}
+
+	// A signed JWT needs exactly one key source.
+	if jwt.Verification == "jwks" && jwt.JWKSURI == "" && jwt.JWKS == "" && jwt.JWKSFile == "" {
 		return formatValidationError(
 			prefix+".jwks_uri",
 			"",
-			"non-empty JWKS URI (required when verification is 'jwks')",
+			"one of jwks_uri, jwks, or jwks_file (required when verification is 'jwks')",
 			nil,
 		)
 	}
@@ -681,6 +697,59 @@ func validateTokenExchangeConfig(cfg *ports.TokenExchangeConfig, security *ports
 	}
 	if clientAssertion.JWKSMaxRefresh < 0 {
 		return formatValidationError("token_exchange.client_assertion.jwks_max_refresh", clientAssertion.JWKSMaxRefresh.String(), "non-negative duration", nil)
+	}
+	return validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorClientAssertion, ConfigPath: "token_exchange.client_assertion"}, trustanchor.SourceInput{
+		JWKSURI:        clientAssertion.JWKSURI,
+		JWKS:           clientAssertion.JWKS,
+		JWKSFile:       clientAssertion.JWKSFile,
+		MinRefresh:     clientAssertion.JWKSMinRefresh,
+		MaxRefresh:     clientAssertion.JWKSMaxRefresh,
+		TrustDirectory: security.TrustMaterialDir,
+	})
+}
+
+// inlineKeySetRedacted replaces an inline JWK Set in configuration errors, which otherwise echo
+// the rejected value.
+const inlineKeySetRedacted = "[inline JWK Set redacted]"
+
+// validateKeySource applies the trust-anchor key-source structural rules at load time. The
+// builder applies the same rules, and also validates the key-set documents themselves.
+func validateKeySource(anchor trustanchor.AnchorRef, in trustanchor.SourceInput) error {
+	_, err := trustanchor.ResolveKeySetSource(anchor, in)
+	var anchorErr *trustanchor.Error
+	if !errors.As(err, &anchorErr) {
+		return err
+	}
+	field, value := anchorErr.Path, ""
+	switch {
+	case anchorErr.Category == trustanchor.CategoryInvalidTrustDirectory:
+		field, value = "security.trust_material_dir", in.TrustDirectory
+	case in.JWKS != "":
+		value = inlineKeySetRedacted
+	case in.JWKSFile != "":
+		value = in.JWKSFile
+	default:
+		value = in.JWKSURI
+	}
+	return formatValidationError(field, value, anchorErr.Message(), nil)
+}
+
+func trustDirectory(security *ports.SecurityConfig) string {
+	if security == nil {
+		return ""
+	}
+	return security.TrustMaterialDir
+}
+
+// validateTrustMaterialDir checks the security.trust_material_dir string. Existence is checked
+// at startup, and only when a trust anchor uses jwks_file.
+func validateTrustMaterialDir(security *ports.SecurityConfig) error {
+	if security.TrustMaterialDir == "" {
+		return nil
+	}
+	if trustanchor.ValidateTrustDirectory(security.TrustMaterialDir) != nil {
+		return formatValidationError("security.trust_material_dir", security.TrustMaterialDir,
+			"absolute path to an existing directory other than /", nil)
 	}
 	return nil
 }
@@ -1055,6 +1124,16 @@ func validateImpersonationTrustedIssuers(rule *ports.ImpersonationRuleConfig, rb
 			return err
 		}
 		if err := validateOptionalHTTPSURL(issuer.JWKSURI, ibase+".jwks_uri", security); err != nil {
+			return err
+		}
+		if err := validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorImpersonationIssuer, ConfigPath: ibase}, trustanchor.SourceInput{
+			JWKSURI:        issuer.JWKSURI,
+			JWKS:           issuer.JWKS,
+			JWKSFile:       issuer.JWKSFile,
+			MinRefresh:     issuer.JWKSMinRefresh,
+			MaxRefresh:     issuer.JWKSMaxRefresh,
+			TrustDirectory: security.TrustMaterialDir,
+		}); err != nil {
 			return err
 		}
 		if issuer.JWKSMinRefresh < 0 {

@@ -31,7 +31,7 @@
 #         # one of jwks_uri, jwks, and jwks_file; neither alternative makes an outbound request.
 #         # jwks_file must lie inside security.trust_material_dir and is re-read every 5 minutes
 #         # (the last valid set serves for up to 15 minutes after a failed re-read).
-#         # See trust-anchor-local-jwks.yaml. Use compact single-line JSON with ${VAR} expansion.
+#         # See trust-anchor-local-jwks.yaml. With ${VAR} expansion, use it as the whole value.
 #         # jwks: '{"keys":[{"kty":"EC","crv":"P-256","kid":"mesh-2026-10","use":"sig","alg":"ES256","x":"<base64url>","y":"<base64url>"}]}'
 #         # jwks_file: /etc/agentic-identity-broker/trust/mesh-jwks.json
 #         expected_audience: agentic-identity-broker

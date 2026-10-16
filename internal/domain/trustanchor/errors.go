@@ -59,6 +59,11 @@ func (e *Error) Error() string {
 	return e.Path + ": " + e.message()
 }
 
+// Message returns the category description without the configuration path.
+func (e *Error) Message() string {
+	return e.message()
+}
+
 func (e *Error) message() string {
 	d := e.Detail
 	switch e.Category {

@@ -114,7 +114,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
   The section must include:
   - the environment overrides `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE`, and `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`;
-  - the instruction "use compact single-line JSON" for `${VAR}` expansion;
+  - the `${VAR}` expansion rule: the reference is the whole value (corrected 2026-10-16: the loader checks the YAML value, not the substituted one);
   - the refresh-bound table, including the fixed 5m/15m for JWT pre-authentication;
   - the key-set document and file rules, with every startup error message;
   - the log events;
@@ -361,11 +361,11 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Configuration loader and validator (test-first)
 
-- [ ] T055 [P] Write loader tests in `internal/config/loader_test.go`. The three new `BindEnv` keys load from `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE`, and `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`. A bound multi-line JSON value is accepted without expansion. A YAML `jwks: |` block scalar loads for all three trust anchors. A `${VAR}` expansion containing a newline is rejected, as today. Supports FR-006 and research R8.
-- [ ] T056 Add the three `BindEnv` calls in `internal/config/loader.go` next to the existing client-assertion bindings so that T055 passes.
-- [ ] T057 [P] Write validator tests in `internal/config/validator_test.go`. Structural rules 1–6 run at load time for every in-scope trust anchor, with full config paths such as `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1].jwks_file`. `security.trust_material_dir` string invariants are enforced. Every `ConfigError` about an inline set uses the value `[inline JWK Set redacted]` and never echoes the document. Supports FR-007, FR-008, FR-009, FR-012, FR-013, FR-022, and research R7.
-- [ ] T058 Call the `trustanchor` structural rules from `internal/config/validator.go` (`validateTokenExchangeConfig`, the impersonation trusted-issuer loop, and `validateJWTConfig`) so that T057 passes. Use the `[inline JWK Set redacted]` placeholder for inline values.
-- [ ] T059 Run `just check` and `go test ./internal/domain/trustanchor/... ./internal/domain/impersonation/... ./internal/adapters/jwks/... ./internal/config/...`, and confirm that all of them pass.
+- [X] T055 [P] Write loader tests in `internal/config/loader_test.go`. The three new `BindEnv` keys load from `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE`, and `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`. A bound multi-line JSON value is accepted without expansion. A YAML `jwks: |` block scalar loads for all three trust anchors. `jwks: ${VAR}` loads a multi-line environment value, and a multi-line YAML value that contains a `${VAR}` reference is rejected, as today. Supports FR-006 and research R8.
+- [X] T056 Add the three `BindEnv` calls in `internal/config/loader.go` next to the existing client-assertion bindings so that T055 passes.
+- [X] T057 [P] Write validator tests in `internal/config/validator_test.go`. Structural rules 1–6 run at load time for every in-scope trust anchor, with full config paths such as `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1].jwks_file`. `security.trust_material_dir` string invariants are enforced. Every `ConfigError` about an inline set uses the value `[inline JWK Set redacted]` and never echoes the document. Supports FR-007, FR-008, FR-009, FR-012, FR-013, FR-022, and research R7.
+- [X] T058 Call the `trustanchor` structural rules from `internal/config/validator.go` (`validateTokenExchangeConfig`, the impersonation trusted-issuer loop, and `validateJWTConfig`) so that T057 passes. Use the `[inline JWK Set redacted]` placeholder for inline values.
+- [X] T059 Run `just check` and `go test ./internal/domain/trustanchor/... ./internal/domain/impersonation/... ./internal/adapters/jwks/... ./internal/config/...`, and confirm that all of them pass.
 
 **Checkpoint**: The domain rules, adapters, and configuration support are green. User stories can begin.
 

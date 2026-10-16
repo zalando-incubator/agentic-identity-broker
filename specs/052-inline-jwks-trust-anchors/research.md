@@ -289,8 +289,9 @@ current `ConfigError` format echoes values, so inline values need an explicit pl
   `security` section use explicit `BindEnv`. JWT pre-authentication has no bound keys. A bound key
   under the nil-able `jwt` pointer would also enable JWT authentication as a side effect of setting
   one variable, so it keeps `${VAR}` expansion.
-- `${VAR}` expansion rejects newlines and shell metacharacters (`loader.go:612-627`). The
-  configuration reference tells operators to use compact single-line JSON with expansion.
+- `${VAR}` expansion rejects newlines and shell metacharacters in the YAML value that holds the
+  reference (`loader.go:612-627`); it does not check the substituted value. The configuration
+  reference tells operators to write the reference as the whole value (`jwks: ${MESH_JWKS}`).
   Bound variables are not expanded and accept any valid JSON text.
 
 ## R9. JWT pre-authentication integration

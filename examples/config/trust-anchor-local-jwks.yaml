@@ -24,7 +24,7 @@
 # `jwks` is never refreshed, so jwks_min_refresh and jwks_max_refresh are rejected
 # next to it. In YAML, write the JSON as a block scalar (`jwks: |`). Through the
 # environment, use IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS. With
-# ${VAR} expansion, use compact single-line JSON.
+# ${VAR} expansion, make the reference the whole value: jwks: ${GATEWAY_JWKS}.
 #
 # This example is a COMPLETE, loadable local-mode configuration. The JWK Sets
 # contain public keys generated for this example only. Replace them, and create

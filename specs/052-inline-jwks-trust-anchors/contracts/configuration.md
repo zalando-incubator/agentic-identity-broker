@@ -22,8 +22,8 @@ Each in-scope trust anchor accepts at most one of `jwks_uri` (existing), `jwks`,
 |---|---|---|---|
 | `token_exchange.client_assertion` | Inline JWK Set JSON | Absolute path inside the trust directory | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` |
 | `oauth2_authorization_server.impersonation.rules[].trusted_issuers[]` | Inline JWK Set JSON | Absolute path inside the trust directory | None (rule lists are YAML-only, as today) |
-| `server.enduser.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML; use compact single-line JSON |
-| `server.admin.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML; use compact single-line JSON |
+| `server.enduser.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML, as the whole value |
+| `server.admin.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML, as the whole value |
 
 The two JWT pre-authentication trust anchors are independent: each has its own source and adapter.
 
@@ -39,8 +39,9 @@ The two JWT pre-authentication trust anchors are independent: each has its own s
 
 - JSON text of an RFC 7517 §5 JWK Set: an object with a `keys` array.
 - A YAML block scalar (`jwks: |`) or a bound environment variable may span lines.
-- A `${VAR}` expansion must be a single line. The loader rejects newlines and shell
-  metacharacters in expanded values.
+- A YAML value that contains a `${VAR}` reference must fit on one line and must not contain shell
+  metacharacters, because the loader checks that value before it substitutes. Write the reference
+  as the whole value (`jwks: ${MESH_JWKS}`); the substituted environment value may span lines.
 
 ### 1.5 Key-set document rules (inline and file)
 

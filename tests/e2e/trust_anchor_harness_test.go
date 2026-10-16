@@ -192,7 +192,12 @@ func (e *trustAnchorEnv) start(config *ports.Config) {
 }
 
 // expectStartupFailure builds config and asserts BuildApp fails with every substring in want.
-func (e *trustAnchorEnv) expectStartupFailure(config *ports.Config, want ...string) error {
+func (e *trustAnchorEnv) expectStartupFailure(config *ports.Config, want ...string) {
+	_ = e.startupFailure(config, want...)
+}
+
+// startupFailure is expectStartupFailure that also returns the BuildApp error.
+func (e *trustAnchorEnv) startupFailure(config *ports.Config, want ...string) error {
 	err := e.build(config)
 	Expect(err).To(HaveOccurred(), "BuildApp unexpectedly succeeded")
 	for _, fragment := range want {

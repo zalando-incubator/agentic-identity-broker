@@ -166,9 +166,9 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		It("fails for private key material without echoing any key member", func() {
 			rsaKey := helpers.NewLocalRS256Key("rsa-private")
 
-			ecErr := env.expectStartupFailure(inlineConfig(helpers.PrivateKeySet(env.gateway)),
+			ecErr := env.startupFailure(inlineConfig(helpers.PrivateKeySet(env.gateway)),
 				clientAssertionPath+".jwks: key set contains private key material; only public keys are allowed")
-			rsaErr := env.expectStartupFailure(inlineConfig(helpers.PrivateKeySet(rsaKey)),
+			rsaErr := env.startupFailure(inlineConfig(helpers.PrivateKeySet(rsaKey)),
 				clientAssertionPath+".jwks: key set contains private key material; only public keys are allowed")
 
 			env.expectNoKeyMaterial(ecErr, env.gateway, rsaKey)

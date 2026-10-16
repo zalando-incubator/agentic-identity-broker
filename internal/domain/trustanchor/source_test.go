@@ -221,7 +221,7 @@ func TestValidateTrustDirectory(t *testing.T) {
 		assert.NoError(t, ValidateTrustDirectory(dir), dir)
 	}
 	for _, dir := range []string{"", "trust", "./trust", "/", "//", "/etc/.."} {
-		requireCategory(t, ValidateTrustDirectory(dir), CategoryInvalidTrustDirectory)
+		_ = requireCategory(t, ValidateTrustDirectory(dir), CategoryInvalidTrustDirectory)
 	}
 }
 

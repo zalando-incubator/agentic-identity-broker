@@ -1235,7 +1235,7 @@ A local key set is used only by the trust anchor that declares it. The broker ne
 - `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` and `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` override the client assertion keys. Any valid JWK Set JSON is accepted, including multiple lines.
 - `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR` overrides `security.trust_material_dir`.
 - Impersonation rule lists are YAML-only, as for every other rule setting.
-- JWT pre-authentication on either server has no environment variable. Use `${VAR}` expansion in YAML. **Use compact single-line JSON**: the loader rejects newlines and shell metacharacters in expanded values. A YAML block scalar (`jwks: |`) may span lines.
+- JWT pre-authentication on either server has no environment variable. Use `${VAR}` expansion in YAML, as the whole value: `jwks: ${MESH_JWKS}`. The loader checks the YAML value that contains the reference, so that value must fit on one line and must not contain shell metacharacters; the substituted environment value itself may span lines. A YAML block scalar (`jwks: |`) that holds the JSON directly may also span lines.
 
 ##### Refresh bounds
 
