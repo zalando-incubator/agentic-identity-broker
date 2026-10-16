@@ -98,6 +98,9 @@ type App struct {
 	// Logger
 	Logger *slog.Logger
 
+	upstreamTransport *http.Transport
+	guardedTransport  *http.Transport
+
 	jwksPublisherHealth ports.JWKSPublisherHealthPort
 
 	// Shutdown must be called on graceful shutdown to release background resources
@@ -124,13 +127,15 @@ func (a *App) EnduserHealthComponents() map[string]string {
 //		WithLogger(logger).
 //		Build()
 type Builder struct {
-	config                 *ports.Config
-	storage                *storage.Adapter
-	logger                 *slog.Logger
-	staticWebResourcesPath string
-	tracerProvider         *sdktrace.TracerProvider // Optional: custom TracerProvider for testing
-	cimdFetcher            ports.CIMDFetcher        // Optional: overrides auto-created CIMD fetcher for testing
-	jwksPublisher          ports.JWKSPublisherPort  // Optional: overrides JWKS publisher for testing
+	config                   *ports.Config
+	storage                  *storage.Adapter
+	logger                   *slog.Logger
+	staticWebResourcesPath   string
+	tracerProvider           *sdktrace.TracerProvider   // Optional: custom TracerProvider for testing
+	cimdFetcher              ports.CIMDFetcher          // Optional: overrides auto-created CIMD fetcher for testing
+	oauthDiscoveryClient     ports.OAuthDiscoveryClient // Optional: outbound discovery adapter for E2E
+	discoveryTokenHTTPClient *http.Client               // Optional: discovery-backed token requests only
+	jwksPublisher            ports.JWKSPublisherPort    // Optional: overrides JWKS publisher for testing
 }
 
 // NewBuilder creates a new application builder.
@@ -177,6 +182,20 @@ func (b *Builder) WithTracerProvider(tp *sdktrace.TracerProvider) *Builder {
 // Only effective when cimd.enabled is true.
 func (b *Builder) WithCIMDFetcher(f ports.CIMDFetcher) *Builder {
 	b.cimdFetcher = f
+	return b
+}
+
+// WithOAuthDiscoveryClient injects the outbound client used for protected-resource
+// discovery. Production constructs a guarded client when this option is absent.
+func (b *Builder) WithOAuthDiscoveryClient(client ports.OAuthDiscoveryClient) *Builder {
+	b.oauthDiscoveryClient = client
+	return b
+}
+
+// WithDiscoveryTokenHTTPClient injects a client reserved for discovery-backed
+// code exchange and refresh. Manual services keep the shared upstream client.
+func (b *Builder) WithDiscoveryTokenHTTPClient(client *http.Client) *Builder {
+	b.discoveryTokenHTTPClient = client
 	return b
 }
 
@@ -422,6 +441,9 @@ func (b *Builder) Build() (*App, error) {
 	// This consolidated domain service replaces the previous ServiceManager + AuthProvider split.
 	// encryptor is guaranteed to be initialized from Phase 1.
 	if b.storage.Services() != nil {
+		if b.storage.DiscoveryStatusWriter() == nil {
+			return nil, errors.New("discovery status writer is required for service storage")
+		}
 		app.ProviderService = thirdparty.NewThirdpartyOAuth2ProviderService(
 			b.storage.Services(),
 			encryptor,
@@ -429,7 +451,10 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.PermissionSets(),
 			b.config.Security.SkipThirdpartyHTTPSValidation,
 			b.logger,
-		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL)
+		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL).
+			WithDCRClientName(b.config.ThirdPartyOAuth2.ClientName).
+			WithUserSessions(b.storage.UserSessions()).
+			WithDiscoveryStatusWriter(b.storage.DiscoveryStatusWriter())
 	}
 
 	// Construct outbound CIMD key dependencies before the OAuth server-mode split.
@@ -604,11 +629,44 @@ func (b *Builder) Build() (*App, error) {
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 100
+	app.upstreamTransport = transport
 	upstreamClient := &http.Client{Transport: transport, Timeout: ov.upstreamTimeout}
 
 	// Propagate traces without recording provider URLs, headers, bodies or error strings.
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
 		upstreamClient.Transport = telemetryhttp.NewTransport(transport)
+	}
+
+	// Protected-resource discovery and its token requests share one separate,
+	// proxy-free transport. The shared upstream client above remains unchanged.
+	discoveryClient := b.oauthDiscoveryClient
+	discoveryTokenClient := b.discoveryTokenHTTPClient
+	var guardedTransport *http.Transport
+	if discoveryClient == nil || discoveryTokenClient == nil {
+		var err error
+		guardedTransport, err = outboundhttp.NewGuardedTransport(ov.cimdConfig.SSRF.ExtraBlockedCIDRs)
+		if err != nil {
+			return nil, fmt.Errorf("create guarded discovery transport: %w", err)
+		}
+		var guardedRoundTripper http.RoundTripper = guardedTransport
+		if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
+			guardedRoundTripper = telemetryhttp.NewTransport(guardedTransport)
+		}
+		noRedirects := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		if discoveryClient == nil {
+			discoveryClient = outboundhttp.NewDiscoveryClientWithClient(&http.Client{
+				Transport: guardedRoundTripper, CheckRedirect: noRedirects,
+			})
+		}
+		if discoveryTokenClient == nil {
+			discoveryTokenClient = &http.Client{
+				Transport: guardedRoundTripper, Timeout: ov.upstreamTimeout, CheckRedirect: noRedirects,
+			}
+		}
+	}
+	app.guardedTransport = guardedTransport
+	if app.ProviderService != nil {
+		app.ProviderService.WithOAuthDiscoveryClient(discoveryClient)
 	}
 
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
@@ -622,7 +680,8 @@ func (b *Builder) Build() (*App, error) {
 		jweTokenService,
 		cfg,
 		b.logger,
-	).WithCIMDAssertionSigner(app.CIMDAssertionSigner)
+	).WithCIMDAssertionSigner(app.CIMDAssertionSigner).
+		WithDiscoveryTokenHTTPClient(discoveryTokenClient)
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(
@@ -1222,7 +1281,11 @@ func (b *Builder) Build() (*App, error) {
 	prevShutdown := app.Shutdown
 	app.Shutdown = func(ctx context.Context) error {
 		err := prevShutdown(ctx)
-		transport.CloseIdleConnections()
+		app.upstreamTransport.CloseIdleConnections()
+		if app.guardedTransport != nil {
+			app.guardedTransport.CloseIdleConnections()
+		}
+		discoveryTokenClient.CloseIdleConnections()
 		return err
 	}
 

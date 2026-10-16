@@ -2,7 +2,7 @@
 
 **Feature**: `050-oauth2-protected-resource-discovery` | **Date**: 2026-10-06
 **Canonical source**: [`api/admin/openapi.yaml`](../../../api/admin/openapi.yaml)
-**Status**: Confirmed core fields and route; representation details require review in the canonical OpenAPI file before implementation.
+**Status**: The stakeholder approved the canonical OpenAPI response methods, discovery method, status route, and failure-code mappings on 2026-10-07.
 
 This document is the delta for `api/admin/openapi.yaml`. The root OpenAPI file remains the administrative contract. The `PreAuthProxy` security scheme, `ServiceId` parameter, ETag behavior, and service resource names remain unchanged.
 
@@ -13,7 +13,7 @@ The 2026-10-01 clarification confirms these items:
 - `GET /api/services/{service-id}/discovery-status`.
 - Status fields `status`, `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
 
-The new `token_endpoint_auth_method` response values, the `discovery.client_method` response field, and failure codes follow from API-002, API-003, and API-005. Record stakeholder review of these details in the PR before implementation.
+The new `token_endpoint_auth_method` response values, `discovery.client_method`, and failure codes follow API-002, API-003, and API-005. The [2026-10-07 review](../spec.md#session-2026-10-07) approves these details.
 The 2026-10-06 stakeholder feedback confirms returning validated `authorization_servers` when issuer selection is required.
 
 ## Summary of the delta
@@ -22,8 +22,8 @@ The 2026-10-06 stakeholder feedback confirms returning validated `authorization_
 |---|---|
 | `DiscoveryConfigRequest` | Add `resource_url`. It requires `enable_discovery: true` and excludes `metadata_url`. |
 | `ServiceCreateRequest` | Accept protected-resource discovery without client or endpoint fields. Make `issuer_uri` optional for this mode. |
-| `ServiceUpdateRequest` | Re-run discovery with full-replacement rules. Preserve unchanged issuer and client identity. |
-| `Service` | Return the discovery source, broker-selected client method, effective resource, and explicit DCR authentication method. Do not return a DCR secret. |
+| `ServiceUpdateRequest` | Re-run discovery with field-presence rules. Reject an effective audience change while any user sessions exist, including expired sessions. Preserve unchanged issuer and client identity. |
+| `Service` | Return the discovery source, broker-selected client method, effective resource, read-only source strategy, and explicit DCR authentication method. Do not return a DCR secret. |
 | `/api/services/{service-id}/discovery-status` | Add an authenticated, read-only status resource. |
 | `ErrorResponse` | Keep `error` and `message`. Add optional `authorization_servers` only for `issuer_selection_required`. Add safe failure-code messages. |
 
@@ -61,6 +61,11 @@ A protected-resource request must satisfy these rules before network access:
 
 An omitted `token_endpoint_auth_method` does not mean static confidential mode when `resource_url` is present. Existing manual and direct-metadata requests keep their present meaning. Their accepted request method values remain `none`, `private_key_jwt`, omitted, or `null`.
 
+The broker takes the DCR `client_name` from deployment-wide `third_party_oauth2.client_name`, never `display_name`. An absent or blank setting stops DCR before registration. It does not block startup, manual services, or hosted CIMD. The name is not an Admin API request field.
+
+Discovery and registration share a 15-second deadline and a 256-KiB cap per response. They do not follow redirects or use proxies.
+Discovery-backed token calls use a separate guarded client with the configured upstream token timeout. The client rejects redirects, proxies, and blocked resolved addresses before connection.
+
 ### 1.2 Create example
 
 ```json
@@ -86,13 +91,17 @@ An omitted `token_endpoint_auth_method` does not mean static confidential mode w
 | Same verified issuer and same client and token authentication methods | Update metadata and endpoints. Keep the client ID, DCR secret, and user sessions. |
 | `issuer_uri` omitted for an existing discovery-backed service | Use the active issuer only if the resource still advertises it. Do not select another advertised issuer. |
 | Explicit different advertised `issuer_uri` | Fail with `409` when the service has user sessions. Otherwise, keep the exact `discovery.client_method` and `token_endpoint_auth_method`. Register a new DCR client only with that saved authentication method. If the new issuer or registration cannot support it, reject the update without public or alternate-method fallback. |
+| Effective `authorization_params.resource` changes while any user session exists | Reject with `409` and `resource_change_requires_no_sessions`, before a provider request and again before commit. An unchanged explicit audience permits a new verified discovery URL. An issuer change retains issuer-conflict precedence. |
 | Different client bootstrap or token authentication method required by metadata | Reject the update, including after explicit issuer selection. This API has no method selector. Keep the active client unchanged. |
-| `authorization_params` omitted | Keep the current parameter map and explicit/derived source. |
+| `authorization_params` omitted on discovery refresh | Keep the current parameter map and explicit/derived source. |
 | `authorization_params` present with `resource` | Store that value as an explicit override. |
-| `authorization_params` present without `resource` | Clear the explicit override and use the verified resource URL. |
+| `authorization_params` present without `resource`, including `{}`, on discovery refresh | Clear the explicit override and use the verified resource URL. |
+| `authorization_params` omitted on replacement with manual configuration | Keep the current parameter map. Clear the discovery source and set the stored `resource_explicit` marker to `false`. |
+| `authorization_params` present as `{}` on replacement with manual configuration | Clear all parameters and the discovery source. Set the stored `resource_explicit` marker to `false`. |
+| Manual replacement changes the effective audience while sessions exist | Reject with the same `409` without a discovery-status write. |
 | Manual configuration without `resource_url` | Apply the existing manual replacement contract. Remove discovery source, DCR credential, and discovery timestamps after success. |
 
-A request-shape error happens before discovery and does not change status. A failure after remote discovery starts updates only `last_attempt_at` and `failure_reason`. It does not change active configuration, `last_success_at`, the service ETag, or user sessions.
+A request-shape error happens before discovery and does not change status. A discovery-backed audience conflict records only `last_attempt_at` and `failure_reason: resource_change_requires_no_sessions`. A failed refresh does not change active configuration, `last_success_at`, the service ETag, or user sessions. A rejected manual conversion does not write status. Terminate all sessions before changing the effective audience.
 
 ## 2. `Service` representation
 
@@ -104,6 +113,16 @@ client_method:
   nullable: true
   enum: [cimd, dcr, null]
   readOnly: true
+```
+
+The response-only `DiscoveryConfig.authorization_param_resource_strategy` is required and nullable. It is `derived` when the verified URL supplied the audience, `pinned` when the administrator supplied `authorization_params.resource` (even if equal to the verified URL), and `null` for manual or direct-metadata services. It never appears in `DiscoveryConfigRequest` or the upstream parameter map.
+
+```yaml
+authorization_param_resource_strategy:
+  type: string
+  nullable: true
+  readOnly: true
+  enum: [derived, pinned, null]
 ```
 
 Extend the read-only response enum for `token_endpoint_auth_method`:
@@ -126,6 +145,15 @@ The new values appear only for discovery-backed DCR clients.
 `none` identifies a public client. Every other non-null method identifies a confidential client. A consumer identifies a DCR client by `issuer_uri` and `client_id` together.
 
 Discovery-backed read, list, create, and update responses always contain `authorization_params.resource`. Its value is the effective value for authorization and token requests.
+These response fragments show the same effective audience with different sources, followed by a manual service:
+
+```json
+[
+  {"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"derived"},"authorization_params":{"resource":"https://files.example/mcp"}},
+  {"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"pinned"},"authorization_params":{"resource":"https://files.example/mcp"}},
+  {"discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"authorization_params":{}}
+]
+```
 
 ### 2.1 Example response
 
@@ -141,7 +169,8 @@ Discovery-backed read, list, create, and update responses always contain `author
   "discovery": {
     "enable_discovery": true,
     "resource_url": "https://mcp.example.com/mcp",
-    "client_method": "dcr"
+    "client_method": "dcr",
+    "authorization_param_resource_strategy": "derived"
   },
   "endpoints": {
     "token_endpoint": "https://auth.example.com/tenant/token",
@@ -166,7 +195,7 @@ Add this route under the root `PreAuthProxy` security requirement:
 |---|---|---|---|
 | `GET` | `/api/services/{service-id}/discovery-status` | `getServiceDiscoveryStatus` | `200` and `ServiceDiscoveryStatus` |
 
-The route accepts the existing UUID or canonical service ID forms. It reads persisted state only and never contacts a provider.
+The route requires an operator principal. It reads persisted state only and never contacts a provider. It accepts the existing UUID or canonical service ID forms.
 
 ```yaml
 ServiceDiscoveryStatus:
@@ -237,12 +266,17 @@ The response examples are:
 
 On failure, `resource_url`, `issuer_uri`, and `client_method` describe the active configuration. The status does not return a failed replacement URL. The effective token audience appears only in the service's `authorization_params.resource`.
 
+For manual services, `status` is `not_applicable` and all six discovery fields are `null`, even when a retained parameter map contains `resource`.
+
 | Condition | Status |
 |---|---|
+| Missing or empty operator principal | `401` |
 | Existing manual or discovery-backed service | `200` |
 | Malformed service identifier | `400` |
 | Unknown or deleted service | `404` |
 | Internal failure | `500` |
+
+An unauthenticated request returns `{"error":"missing or empty principal"}` from the principal middleware. A malformed identifier returns `{"error":"invalid service ID","message":"service ID is invalid"}`. An unknown service returns `404` with `error: service not found`.
 
 ## 4. Errors
 
@@ -253,9 +287,12 @@ Extend `ErrorResponse` with optional `authorization_servers`. `error` remains re
 | Invalid or conflicting request fields | `400` | `validation failed` | Existing field-level text. |
 | Metadata, issuer, or destination failure | `400` | `discovery failed` | One failure code from section 4.1. |
 | CIMD or DCR selection or registration failure | `400` | `client registration failed` | One failure code from section 4.1. |
+| DCR selected without a configured broker client name | `400` | `client registration failed` | `client_name_unconfigured` |
 | Discovery or registration deadline exceeded | `504` | `discovery failed` | `timeout` |
 | Same-issuer DCR identity already exists | `409` | `conflict` | `duplicate_client_identity` |
 | Explicit issuer change while user sessions exist | `409` | `conflict` | `issuer_change_requires_no_sessions` |
+| Effective audience change with user sessions | `409` | `conflict` | `resource_change_requires_no_sessions` |
+| Protected-resource URI owned by another service | `409` | `conflict` | `protected resource URI already configured for another service` |
 | Existing ETag or version precondition failure | `409`, `412`, or `428` | Existing value | Existing text. |
 | Local storage or encryption failure | `500` | `internal server error` | Omitted. |
 
@@ -301,14 +338,20 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `no_compatible_client_method` | No compatible CIMD or DCR method exists. |
 | `cimd_unavailable` | The selected hosted CIMD identity or signing key is not usable. |
 | `client_registration_rejected` | The selected DCR registration returned an error. |
+| `client_name_unconfigured` | DCR needs a non-blank deployment-wide broker client name. No registration request occurs. |
 | `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, another method, or a non-zero `client_secret_expires_at`. |
 | `client_method_changed` | An update would change `discovery.client_method` or the exact `token_endpoint_auth_method`, including confidential/public mode. |
 | `duplicate_client_identity` | The DCR client ID already exists for the same issuer. |
+| `resource_change_requires_no_sessions` | An audience-changing discovery refresh has user sessions; status records this safe failure. |
 
 No response includes a provider response body, URL query, secret, assertion, code, or token.
 
+The service ETag versions active configuration and owned protected resources. The failure-only discovery status has no ETag and does not advance the service version. A completion tied to an already committed attempt at stored microsecond precision loses to the first outcome.
+
 ## 5. Documentation and confirmation record
 
-Update `api/admin/openapi.yaml` before implementation. Then update `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md` from that root contract. Correct the stale reference that says `ErrorResponse.message` is always required.
+The root OpenAPI file defines the implemented contract. The API reference and service guide describe its create, update, and status operations. `ErrorResponse.message` is optional.
 
-The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, status route and fields, and the `authorization_servers` error field confirmed on 2026-10-06. The PR must record review of the remaining new response values in sections 2 and 4.
+The [specification](../spec.md#clarifications) records the request and status decisions. It records the 2026-10-06 `authorization_servers` feedback.
+The 2026-10-07 session approves the response methods, read-only `discovery.client_method`, and failure-code mappings.
+[PR #191](https://github.com/zalando-incubator/agentic-identity-broker/pull/191) links this review, including `client_name_unconfigured` as a safe `400` response.

@@ -160,6 +160,7 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Proposed protected-resource discovery and DCR client selection |
 
 ## Domain Glossary
 

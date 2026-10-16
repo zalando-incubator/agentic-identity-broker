@@ -109,10 +109,16 @@ func SeedPlaceholderGrantData(ctx context.Context, store *storageadapter.Adapter
 	return store.PermissionSets().Create(ctx, ps2)
 }
 
-// SeedDefaultConsentData inserts the shared default permission set and an active
-// opaque session for the supplied principal. It avoids encryption because consent
-// flows only need session presence, not token decryption.
+// SeedDefaultConsentData inserts a manual placeholder service, its permission set,
+// and an active opaque session for the principal. Consent flows need session
+// presence, not token decryption.
 func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, principal id.Principal) error {
+	svc := ServiceWithID(PlaceholderServiceID.String())
+	svc.ProtectedResources = nil
+	if err := store.Services().Create(ctx, svc); err != nil {
+		return err
+	}
+
 	if err := store.PermissionSets().Create(ctx, &storagedomain.PermissionSet{
 		ID:          PlaceholderPermissionSetID,
 		Name:        "Default Test Permission Set",

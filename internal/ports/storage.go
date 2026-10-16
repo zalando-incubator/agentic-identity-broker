@@ -43,6 +43,14 @@ type StorageTransactionManager interface {
 	Rollback(ctx context.Context) error
 }
 
+// ThirdpartyOAuth2ProviderDiscoveryStatusWriter records a failed discovery
+// attempt without changing the service's active configuration or version.
+type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
+	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
+	// the stored attempt or success. failureCode contains no remote response data.
+	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
+}
+
 // User represents a user entity in the storage layer.
 // Domain entity - does not expose storage implementation details.
 type User struct {
@@ -263,8 +271,8 @@ type UserSessionRepository interface {
 	// Idempotent: safe to delete non-existent session.
 	DeleteByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) error
 
-	// CountByService counts sessions referencing a service.
-	// Used to enforce deletion protection (cannot delete service with active sessions).
+	// CountByService counts every session referencing a service, including expired ones.
+	// Used to block deletion, issuer changes, and effective-audience changes.
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 

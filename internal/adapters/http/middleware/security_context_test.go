@@ -2,6 +2,7 @@ package middleware_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -423,6 +426,39 @@ func (w *benchmarkResponseWriter) WriteHeader(status int) {
 func (w *benchmarkResponseWriter) Reset() {
 	clear(w.header)
 	w.status = 0
+}
+
+func TestNewHandler_TracingOmitsQueryBearingRequests(t *testing.T) {
+	const secret = "authorization-code-sentinel"
+	previous := otel.GetTracerProvider()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		assert.NoError(t, provider.Shutdown(context.Background()))
+	})
+	config := newTestServerConfig()
+	config.Telemetry.Enabled = true
+	config.Telemetry.Traces.Enabled = true
+	handler := adapterhttp.NewHandler(config, func(router chi.Router) {
+		router.Get("/api/third-party/{serviceId}/oauth2/callback", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "/api/third-party/123/oauth2/callback", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusNoContent, response.Code)
+	baseline := len(recorder.Ended())
+	require.Positive(t, baseline)
+	request = httptest.NewRequest(http.MethodGet, "/api/third-party/123/oauth2/callback?code="+secret, nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusNoContent, response.Code)
+	for _, span := range recorder.Ended()[baseline:] {
+		assert.NotContains(t, fmt.Sprint(span.Attributes()), secret, "server spans must not export authorization codes")
+	}
 }
 
 func BenchmarkSecurityContextMiddleware(b *testing.B) {

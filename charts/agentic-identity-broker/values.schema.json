@@ -604,6 +604,10 @@
           "additionalProperties": false,
           "description": "OAuth2 third-party service configuration",
           "properties": {
+            "clientName": {
+              "type": "string",
+              "description": "Optional broker or platform name mapped to third_party_oauth2.client_name. An absent or whitespace-only name blocks DCR registration, not startup, manual services, or hosted CIMD."
+            },
             "jweSigningKey": {
               "type": "string",
               "description": "Raw 32-byte JWE signing key; the chart base64-encodes it into the broker-facing Secret string"

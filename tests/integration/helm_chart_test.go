@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"bytes"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -9,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func renderHelmTemplate(t *testing.T, extraArgs ...string) string {
+func runHelmTemplate(t *testing.T, extraArgs ...string) (string, error) {
 	t.Helper()
 
 	if _, err := exec.LookPath("helm"); err != nil {
@@ -30,17 +29,15 @@ func renderHelmTemplate(t *testing.T, extraArgs ...string) string {
 	}
 	args = append(args, extraArgs...)
 
-	cmd := exec.Command("helm", args...)
+	output, err := exec.Command("helm", args...).CombinedOutput()
+	return string(output), err
+}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	require.NoError(t, err, stderr.String())
-
-	return stdout.String()
+func renderHelmTemplate(t *testing.T, extraArgs ...string) string {
+	t.Helper()
+	output, err := runHelmTemplate(t, extraArgs...)
+	require.NoError(t, err, output)
+	return output
 }
 
 func TestHelmTemplate_ProxyUpstreamTimeout(t *testing.T) {
@@ -68,4 +65,23 @@ func TestHelmTemplate_ManagedKeysUseBase64StringData(t *testing.T) {
 
 	require.Contains(t, output, "stringData:\n  signing-key: \""+key+"\"")
 	require.Contains(t, output, "stringData:\n  memory-raw-key: \""+key+"\"")
+}
+
+func TestHelmTemplate_DCRClientName(t *testing.T) {
+	t.Run("default omits optional client_name", func(t *testing.T) {
+		output := renderHelmTemplate(t)
+		require.NotContains(t, output, "client_name:")
+	})
+
+	t.Run("configured name is quoted in the rendered broker configuration", func(t *testing.T) {
+		output := renderHelmTemplate(t, "--set-string", "broker.thirdPartyOauth2.clientName=Example Platform: 01")
+		require.Contains(t, output, `client_name: "Example Platform: 01"`)
+	})
+
+	t.Run("schema rejects a non-string name", func(t *testing.T) {
+		output, err := runHelmTemplate(t, "--set", "broker.thirdPartyOauth2.clientName=true")
+		require.Error(t, err, output)
+		require.Contains(t, output, "clientName")
+		require.Contains(t, output, "string")
+	})
 }

@@ -454,6 +454,9 @@ func init() {
 	rootCmd.PersistentFlags().Int("token_refresh.background_workers", 0, "maximum concurrent background refreshes (default: 10)")
 	rootCmd.PersistentFlags().Int("token_refresh.sweep.default_page_size", 0, "default session sweep page size (default: 100)")
 
+	// Third-party OAuth2 client registration configuration
+	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
+
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")
 	rootCmd.PersistentFlags().String("request_context.trusted_proxy.forwarded_header", "", "forwarded header name for client IP derivation")

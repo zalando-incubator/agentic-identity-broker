@@ -164,6 +164,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trace", "response_enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "client_name"), "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "jwe_signing_key"), "IDENTITY_BROKER_JWE_SIGNING_KEY")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "state_token_ttl"), "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "pkce_verifier_length"), "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
@@ -750,6 +751,13 @@ func (l *Loader) bindFlags() error {
 		pageSize, _ := l.cmd.Flags().GetInt("token_refresh.sweep.default_page_size")
 		l.v.Set(configutil.Key("token_refresh", "sweep", "default_page_size"), pageSize)
 		cliKeys = append(cliKeys, "token_refresh.sweep.default_page_size")
+	}
+
+	// Bind third_party_oauth2.client_name flag
+	if l.cmd.Flags().Changed("third_party_oauth2.client_name") {
+		clientName, _ := l.cmd.Flags().GetString("third_party_oauth2.client_name")
+		l.v.Set(configutil.Key("third_party_oauth2", "client_name"), clientName)
+		cliKeys = append(cliKeys, "third_party_oauth2.client_name")
 	}
 
 	// Record CLI source if any flags were set

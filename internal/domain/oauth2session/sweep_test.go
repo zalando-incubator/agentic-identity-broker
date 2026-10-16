@@ -104,8 +104,8 @@ type sweepFixture struct {
 
 func newSweepFixture(t *testing.T) *sweepFixture {
 	t.Helper()
-	_, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
-	repo := sessions.(*memory.InMemoryUserSessionRepository)
+	_, _, _, _, _, providers := setupServiceWithConfig(t, nil)
+	repo := memory.NewInMemoryUserSessionRepository()
 	f := &sweepFixture{
 		t: t, repo: repo, providers: providers, serviceID: id.NewServiceID(),
 		seedEncryption: newTestEncryption(t), logs: &strings.Builder{},
