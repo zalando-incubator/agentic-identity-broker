@@ -14,7 +14,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 
 ## Technical Context
 
-**Language/Version**: Go 1.27.1
+**Language/Version**: Go 1.27.2
 
 **Primary Dependencies**: `github.com/lestrrat-go/jwx/v4` v4.5.0 (JWT and JWK parsing and verification), `github.com/ory/fosite` v0.49.0 (grant handlers only), chi v5, sqlx and pgx v5, Viper, Ginkgo v2, Gomega, testify. No new dependencies.
 

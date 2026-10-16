@@ -22,6 +22,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -69,10 +70,9 @@ func setupPostgresContainer(ctx context.Context) (testcontainers.Container, stri
 			"POSTGRES_PASSWORD": "testpass",
 			"POSTGRES_DB":       "testdb",
 		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30 * time.Second),
-		// Use "podman" network on Podman (available by default)
-		// On Docker, this will use the default network. Podman requires explicit network for container communication.
-		Networks: []string{"podman"},
+		WaitingFor: wait.ForSQL("5432/tcp", "pgx", func(host string, port network.Port) string {
+			return fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
+		}).WithStartupTimeout(30 * time.Second),
 	}
 
 	genericReq := testcontainers.GenericContainerRequest{
@@ -102,7 +102,7 @@ func setupPostgresContainer(ctx context.Context) (testcontainers.Container, stri
 		return nil, "", err
 	}
 
-	connStr := fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb", host, port.Port())
+	connStr := fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 	return container, connStr, nil
 }
 
@@ -336,7 +336,7 @@ func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
 	// But connection should succeed
 	if err != nil {
 		if storErr, ok := err.(*storage.StorageError); ok {
-			assert.Equal(t, storage.ErrorKindValidation, storErr.Kind)
+			assert.Equal(t, storage.ErrorKindValidation, storErr.Kind, "initialize error cause: %v", storErr.Cause)
 		}
 	}
 }

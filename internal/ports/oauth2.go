@@ -152,6 +152,9 @@ type MetadataResponse struct {
 	// OPTIONAL: Supported token endpoint authentication methods
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 
+	// OPTIONAL: Signing algorithms supported for token endpoint client authentication
+	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+
 	// OPTIONAL: Scopes supported by the broker
 	ScopesSupported []string `json:"scopes_supported,omitempty"`
 
@@ -171,6 +174,12 @@ type MetadataResponse struct {
 // TokenMintingStrategy abstracts local token grant processing in local mode.
 // Grants are processed locally by the oauth2server.Provider.
 // In proxy mode, grants are handled at the HTTP layer by proxyTokenGrantStrategy.
+type ClientCredentials struct {
+	Secret        string
+	AssertionType string
+	Assertion     string
+}
+
 type TokenMintingStrategy interface {
 	// HandleClientCredentials processes a client_credentials grant type request.
 	// Returns the token response or an error.
@@ -178,11 +187,11 @@ type TokenMintingStrategy interface {
 
 	// HandleAuthorizationCodeExchange processes an authorization_code grant type request.
 	// Returns the token response or an error.
-	HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, clientSecret, code, redirectURI, codeVerifier string) (*TokenResponse, error)
+	HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, creds ClientCredentials, code, redirectURI, codeVerifier string) (*TokenResponse, error)
 
 	// HandleRefreshToken processes a refresh_token grant type request.
 	// Returns the token response or an error.
-	HandleRefreshToken(ctx context.Context, clientID id.ClientID, clientSecret, refreshToken, scope string) (*TokenResponse, error)
+	HandleRefreshToken(ctx context.Context, clientID id.ClientID, creds ClientCredentials, refreshToken, scope string) (*TokenResponse, error)
 }
 
 // TokenResponse represents a successful OAuth2 token response from a minting strategy.

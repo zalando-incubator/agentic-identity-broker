@@ -71,7 +71,7 @@ Name: Agentic Identity Broker
 
 Description: Core service providing secure identity management, authentication, and authorization for AI agents and autonomous systems. Implements hexagonal architecture with clear separation of domain logic, ports, and adapters.
 
-Technologies: Go 1.27.1+, Viper (configuration), Cobra (CLI)
+Technologies: Go 1.27.2+, Viper (configuration), Cobra (CLI)
 
 Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, or standalone
 
@@ -564,11 +564,13 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 - `OAuth2TokenHandler` always exists; the builder injects `proxyTokenGrantStrategy`, `localGrantStrategy`, or `hybridTokenGrantStrategy` based on the selected mode.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
+**Inbound CIMD client authentication (Feature 050)**: In local and hybrid modes with CIMD enabled, the provider verifies `private_key_jwt` assertions before fosite processes authorization-code and refresh-token grants. It accepts RS256 and ES256 keys from the client document. A separate key-set cache refreshes once for an unknown `kid` after the configured minimum interval. A replay repository consumes each `(client_id, jti)` atomically across replicas. Fetch and replay-store failures fail closed as `server_error`. Refresh sessions persist `client_auth_method`; refresh authentication uses the stricter of the stored method and the current document method. Metadata advertises `private_key_jwt` and its signing algorithms only in local or hybrid mode with CIMD enabled.
+
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
 **Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
 
-**OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
+**OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, refresh-token sessions, and client assertion replay records at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success. Migration 038 creates the replay table. Migration 039 adds the nullable, constrained `client_auth_method` column to `refresh_token_sessions`.
 
 **Third-party session maintenance**: In every OAuth2 server mode, the builder creates `OAuth2SessionService`, its bounded background refresh pool, and the admin sweep handler. This work is separate from local/hybrid `SessionCleanup`. The broker does not start a session-sweep timer.
 
@@ -1229,9 +1231,9 @@ Name: Broker transactional store
 
 Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
+Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, client assertion replay records, and tool approvals. The `refresh_token_sessions` table stores the optional `client_auth_method`. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
+Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `client_assertion_replays`, `refresh_token_sessions`, `tool_approvals`, `approval_sync_state`.
 
 ### 4.2. DynamoDB branch-key store
 
@@ -1553,6 +1555,12 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 
 **ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
+
+**CIMD Client Assertion**: A short-lived JWT signed by a CIMD client to authenticate at the broker token endpoint. It is distinct from the privileged-client `ClientAssertion` used for RFC 8693 token exchange.
+
+**Client Key Set**: The public verification keys published by a CIMD client and cached in process for inbound `private_key_jwt` authentication.
+
+**Assertion Replay Record**: A durable `(client_id, jti)` marker that makes a valid CIMD client assertion single-use across broker instances.
 
 **SubjectToken**: JWT containing both user principal and agent identifier from the upstream OAuth2 server. Principal extracted via configurable CEL expression (default: sub claim). Agent identifier extracted via configurable CEL expression (default: azp claim). Identifies the end-user and agent on whose behalf token exchange is requested.
 

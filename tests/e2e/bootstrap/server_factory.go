@@ -154,6 +154,11 @@ func (f *ServerFactory) BuildAppWithTracerProvider(storage interface{}, tp *sdkt
 // Used in CIMD E2E tests where the mock CIMD server uses a self-signed TLS certificate
 // (e.g., httptest.NewTLSServer) that the production fetcher's system cert pool would reject.
 func (f *ServerFactory) BuildAppWithCIMDFetcher(storage interface{}, cimdFetcher ports.CIMDFetcher) (*app.App, error) {
+	return f.BuildAppWithCIMDFetchers(storage, cimdFetcher, nil)
+}
+
+// BuildAppWithCIMDFetchers creates an application with separately injected CIMD document and key-set fetchers.
+func (f *ServerFactory) BuildAppWithCIMDFetchers(storage interface{}, documentFetcher, keySetFetcher ports.CIMDFetcher) (*app.App, error) {
 	if storage == nil {
 		return nil, fmt.Errorf("storage adapter is required")
 	}
@@ -174,7 +179,8 @@ func (f *ServerFactory) BuildAppWithCIMDFetcher(storage interface{}, cimdFetcher
 		WithStorage(storageAdapter).
 		WithLogger(f.logger).
 		WithStaticWebResourcesPath(webDistPath()).
-		WithCIMDFetcher(cimdFetcher).
+		WithCIMDFetcher(documentFetcher).
+		WithCIMDKeySetFetcher(keySetFetcher).
 		Build()
 }
 

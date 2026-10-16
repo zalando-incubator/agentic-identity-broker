@@ -69,3 +69,17 @@ func TestHelmTemplate_ManagedKeysUseBase64StringData(t *testing.T) {
 	require.Contains(t, output, "stringData:\n  signing-key: \""+key+"\"")
 	require.Contains(t, output, "stringData:\n  memory-raw-key: \""+key+"\"")
 }
+
+func TestHelmTemplate_CIMDClientAuthentication(t *testing.T) {
+	output := renderHelmTemplate(t,
+		"--set-string", "broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetCacheTtl=2h",
+		"--set-string", "broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMinRefetchInterval=7m",
+		"--set", "broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMaxBytes=32768",
+		"--set-string", "broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetFetchTimeout=3s",
+	)
+
+	require.Contains(t, output, "client_authentication:\n          key_set_cache_ttl: \"2h\"")
+	require.Contains(t, output, "key_set_min_refetch_interval: \"7m\"")
+	require.Contains(t, output, "key_set_max_bytes: 32768")
+	require.Contains(t, output, "key_set_fetch_timeout: \"3s\"")
+}
