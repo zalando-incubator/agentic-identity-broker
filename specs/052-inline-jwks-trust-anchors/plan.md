@@ -12,7 +12,8 @@ key-set file (`jwks_file`), as alternatives to `jwks_uri` and discovery:
 - the token-exchange client-assertion trust anchor, which machine-facing approval authentication
   reuses;
 - every impersonation trusted issuer;
-- end-user JWT pre-authentication.
+- JWT pre-authentication on the end-user server and on the admin server (stakeholder decision
+  2026-10-16, research R9).
 
 The design adds one pure domain context, `internal/domain/trustanchor/`. It resolves exactly one
 Key Set Source per trust anchor and validates every Local Key Set: public asymmetric keys only,
@@ -82,7 +83,7 @@ contract.
 - 3 trust-anchor kinds and 7 new configuration keys
 - 1 new domain package and 2 new adapters
 - 1 new `/health` component and 1 new ADR
-- 29 acceptance scenarios plus one SC-003 parity table
+- 30 acceptance scenarios plus one SC-003 parity table
 
 **NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves every design question. Four
 stakeholder decisions are listed under [Stakeholder decisions](#stakeholder-decisions-before-implementation).
@@ -105,7 +106,7 @@ stakeholder decisions are listed under [Stakeholder decisions](#stakeholder-deci
 | OpenAPI documentation | Pass | Update `/health` in `api/enduser/openapi.yaml`. The admin API does not change. |
 | API changes confirmed | **Pending** | The stakeholder must confirm the `trust_anchor_key_files` component before implementation (Principles IV and X). |
 | Database design | Not applicable | No schema change. |
-| E2E acceptance tests | Pass | 29 production-bootstrap Ginkgo `It()` blocks, written before implementation. |
+| E2E acceptance tests | Pass | 30 production-bootstrap Ginkgo `It()` blocks, written before implementation. |
 | E2E mapping | Pass | The Testing Strategy maps every scenario to one `It()`. |
 | E2E red phase | Pass | Every `It()` asserts a concrete status, response body, error substring, log field, or `/health` value. |
 | Frontend Playwright E2E | Not applicable | No React change. |
@@ -147,11 +148,13 @@ The gate passes after Phase 1, with the preconditions listed below.
 2. **Accept ADR 040** after it is drafted in Phase 2a (Principle II).
 3. **Confirm two scope interpretations** recorded in [research.md](./research.md):
    - R4: absolute symbolic links inside the trust directory are rejected. Relative links, which
-     Kubernetes uses, are accepted. spec.md FR-023 and the "Symlinked file" edge case now state
-     this rule; revert both if the stakeholder declines it.
-   - R9: `jwks` and `jwks_file` on `server.admin.authentication.jwt` fail startup, because FR-002
-     covers only end-user JWT pre-authentication.
+     Kubernetes uses, are accepted. **Confirmed 2026-10-16.**
+   - R9: the stakeholder chose to **support** `jwks` and `jwks_file` on
+     `server.admin.authentication.jwt` (2026-10-16). FR-002 and User Story 5 scenario 4 now cover
+     it.
 4. **Review the five example journeys** added to [spec.md](./spec.md) under Principle XIV.
+   **Confirmed 2026-10-16**, together with the `/health` contract (decision 1) and ADR 040
+   (decision 2).
 5. **Decide whether to file GitHub issues** for the four deferred findings in
    [research.md](./research.md). They are not tasks of this feature.
 
@@ -289,8 +292,9 @@ The state machine is in [data-model.md](./data-model.md).
 - **Impersonation**: extend the factory's sharing key with the source kind, inline document, and
   file path (FR-017). Chain shutdown for each new adapter.
 - **JWT pre-authentication**: inject the static or file adapter into
-  `jwtauth.JWXAuthenticatorConfig.KeySet`, which bypasses `jwkfetch` and its startup fetch. Reject
-  local sources on `server.admin`.
+  `jwtauth.JWXAuthenticatorConfig.KeySet`, which bypasses `jwkfetch` and its startup fetch. Do this
+  for both servers in the existing per-server loop; each server is its own trust anchor
+  (`server.enduser.authentication.jwt`, `server.admin.authentication.jwt`).
 - **Self-trust checks** run before source loading, unchanged (FR-014).
 - **Logging**: log `trust anchor key set loaded` once per local source (FR-018).
 - **Trust directory**: open it once, only when a `jwks_file` exists, and close it at shutdown.
@@ -346,7 +350,7 @@ read-only projected volume without `subPath`, and extend the schema for the pass
   component contract and examples, and rebuild the Redoc site.
 - **2d Database design**: none. Record "no schema change".
 - **2e Frontend review**: none. Record "no UI change".
-- **2f E2E acceptance test design**: review the spec journeys. Write the 29 `It()` blocks and the
+- **2f E2E acceptance test design**: review the spec journeys. Write the 30 `It()` blocks and the
   SC-003 parity table. Compile them and confirm a semantic red run.
 
 ### Phase 2.5: Foundational infrastructure
@@ -367,14 +371,14 @@ read-only projected volume without `subPath`, and extend the schema for the pass
   projection.
 - **US3 (P1)**: complete the fail-closed matrix and redaction across all trust anchors.
 - **US4 (P2)**: impersonation inline and file sources, sharing key, shutdown chaining.
-- **US5 (P3)**: JWT pre-authentication injection, `verification: none` exclusivity, admin
-  rejection.
+- **US5 (P3)**: JWT pre-authentication injection on both servers, `verification: none`
+  exclusivity, per-server isolation.
 
 ### Phase N: Constitution compliance verification
 
 Verify against the principles: ADR 040 Accepted and matching the code; OpenAPI and docs updated;
 Helm contract complete; glossary updated; no key material in any error, log, or health output;
-`just check`, `just test`, `just test-integration`, and `just verify` green; all 29 scenarios and
+`just check`, `just test`, `just test-integration`, and `just verify` green; all 30 scenarios and
 SC-003 passing.
 
 ## Testing Strategy
@@ -388,7 +392,7 @@ fresh storage, servers, keys, and trust directory.
 
 - Every scenario `It()` uses `Label("inline-jwks-trust-anchors")`.
 - The SC-003 table uses `Label("inline-jwks-trust-anchors-parity")`.
-- `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly the 29
+- `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly the 30
   scenarios.
 
 **Observation techniques** ([research.md](./research.md) R14):
@@ -435,6 +439,7 @@ fresh storage, servers, keys, and trust directory.
 | US5-S1 | `jwt_preauth_local_jwks_test.go` | Derives the principal for `GET /api/me` with inline and file sources. |
 | US5-S2 | `jwt_preauth_local_jwks_test.go` | Fails startup for `verification: none` with `jwks` or `jwks_file`. |
 | US5-S3 | `jwt_preauth_local_jwks_test.go` | Fails startup for `verification: jwks` with no source, as today. |
+| US5-S4 | `jwt_preauth_local_jwks_test.go` | Admin and end-user servers with different local key sets: the admin API accepts an admin-key JWT and rejects an end-user-key JWT with `401`. |
 
 **SC-003 parity table** (`trust_anchor_key_source_parity_test.go`): a `DescribeTable` crosses five
 credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources
@@ -454,7 +459,7 @@ pre-authentication suites run unchanged.
 | `internal/domain/impersonation` | Delegation keeps existing algorithm checks and messages. |
 | `internal/adapters/jwks` | Static adapter health and lookup. File adapter: startup failures by category; re-read success, failure, and recovery; staleness expiry at `max`; no partial application; logs without contents; shutdown stops the loop. Trust directory: `os.Root` escapes, absolute links, Kubernetes layout, directories, root `/` rejection. Injected filesystem errors cover unreadable files when tests run as root. |
 | `internal/adapters/jwtauth` | Injected key set bypasses `jwkfetch` and verifies with the same options. Unknown `kid` returns the existing error. |
-| `internal/config` | New fields, `BindEnv` for the three bound keys, structural rules, `[inline JWK Set redacted]` placeholder, admin JWT rejection. |
+| `internal/config` | New fields, `BindEnv` for the three bound keys, structural rules for every trust anchor including `server.admin.authentication.jwt`, `[inline JWK Set redacted]` placeholder. |
 | `internal/app` | Discovery skipped for local sources; FR-015 issuer; local sources never reach the JWKS publisher (FR-016); impersonation sharing key (FR-017); health component merge; shutdown chaining. |
 
 ### Integration tests

@@ -433,7 +433,7 @@ or mesh; it must remove client-supplied copies and restrict direct access to bot
 | `header_name` | `Authorization` | JWT header; only `Authorization` strips a `Bearer ` prefix. A gateway-supplied `X-Userinfo` contains the raw JWT. |
 | `verification` | `jwks` | `jwks` verifies a signature; `none` trusts a gateway-supplied JWT without signature verification. |
 | `jwks_uri` | none | One key source for `jwks` verification. Forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
-| `jwks`, `jwks_file` | none | Alternative key sources to `jwks_uri` on `server.enduser.authentication.jwt` only. At most one of the three key sources may be set, and `jwks` verification requires one. Forbidden with `none`. The admin server rejects both. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
+| `jwks`, `jwks_file` | none | Alternative key sources to `jwks_uri`, on both `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each server is a separate trust anchor with its own key set. At most one of the three key sources may be set, and `jwks` verification requires one. Forbidden with `none`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `expected_audience`, `expected_issuer` | unset | Reject JWTs with other audience/issuer when set. |
 | `claim_extraction.principal_expression` | `claims.sub` | CEL expression returning a non-empty principal; for gateway userinfo containing `principal`, use `claims.principal`. |
 | `claim_extraction.display_name_expression`, `email_expression`, `picture_url_expression` | unset | Optional CEL expressions for profile attributes. |
@@ -1208,7 +1208,7 @@ The in-scope trust anchors are:
 
 - the token-exchange client assertion trust anchor, which also authenticates machine-facing approval requests;
 - every trusted issuer of every impersonation rule;
-- end-user JWT pre-authentication.
+- JWT pre-authentication on the end-user server and, separately, on the admin server.
 
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
@@ -1219,8 +1219,10 @@ The in-scope trust anchors are:
 | `oauth2_authorization_server.impersonation.rules[].trusted_issuers[].jwks_file` | string | unset | No | None (rule lists are YAML-only) | Absolute path of a JWK Set file inside the trust directory. |
 | `server.enduser.authentication.jwt.jwks` | string | unset | No | None. `${VAR}` expansion in YAML applies | Inline JWK Set JSON. |
 | `server.enduser.authentication.jwt.jwks_file` | string | unset | No | None. `${VAR}` expansion in YAML applies | Absolute path of a JWK Set file inside the trust directory. |
+| `server.admin.authentication.jwt.jwks` | string | unset | No | None. `${VAR}` expansion in YAML applies | Inline JWK Set JSON. |
+| `server.admin.authentication.jwt.jwks_file` | string | unset | No | None. `${VAR}` expansion in YAML applies | Absolute path of a JWK Set file inside the trust directory. |
 
-`server.admin.authentication.jwt.jwks` and `server.admin.authentication.jwt.jwks_file` are rejected at startup (`unsupported_trust_anchor`). Local key sets are supported only for `server.enduser.authentication.jwt`.
+The end-user and admin servers' JWT pre-authentication are separate trust anchors. Each has its own key set, and a JWT verified by one server's keys is not accepted by the other unless both declare the same key.
 
 **Mutual exclusivity**: A trust anchor accepts at most one of `jwks_uri`, `jwks`, and `jwks_file`. There is no precedence. Setting more than one fails startup. A trust anchor that sets none keeps its existing behavior: issuer-metadata discovery, or the proxy upstream key set for the client assertion trust anchor in `proxy` and `hybrid` modes. A failed local source never falls back to discovery or to another source. To move a trust anchor from a remote key set to a local one, replace `jwks_uri` with `jwks` or `jwks_file`.
 
@@ -1233,7 +1235,7 @@ A local key set is used only by the trust anchor that declares it. The broker ne
 - `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` and `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` override the client assertion keys. Any valid JWK Set JSON is accepted, including multiple lines.
 - `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR` overrides `security.trust_material_dir`.
 - Impersonation rule lists are YAML-only, as for every other rule setting.
-- End-user JWT pre-authentication has no environment variable. Use `${VAR}` expansion in YAML. **Use compact single-line JSON**: the loader rejects newlines and shell metacharacters in expanded values. A YAML block scalar (`jwks: |`) may span lines.
+- JWT pre-authentication on either server has no environment variable. Use `${VAR}` expansion in YAML. **Use compact single-line JSON**: the loader rejects newlines and shell metacharacters in expanded values. A YAML block scalar (`jwks: |`) may span lines.
 
 ##### Refresh bounds
 
@@ -1249,7 +1251,7 @@ A local key set is used only by the trust anchor that declares it. The broker ne
 |---|---|---|
 | `token_exchange.client_assertion` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`, default `max(min, 1h)` |
 | Impersonation `trusted_issuers[]` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`, default `max(min, 1h)` |
-| `server.enduser.authentication.jwt` | `5m`, fixed | `15m`, fixed |
+| `server.enduser.authentication.jwt`, `server.admin.authentication.jwt` | `5m`, fixed | `15m`, fixed |
 
 JWT pre-authentication does not accept refresh settings.
 
@@ -1319,7 +1321,6 @@ Builder errors use `<path>: <message>`. For document rules, `<path>` is the sour
 | `conflicting_key_sources` | `only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)` |
 | `refresh_bounds_with_inline` | `jwks_min_refresh and jwks_max_refresh are not allowed with jwks; an inline key set never refreshes` |
 | `verification_disabled_with_key_source` | `verification 'none' and jwks are mutually exclusive` (or `jwks_file`, or the existing `jwks_uri` message) |
-| `unsupported_trust_anchor` | `jwks and jwks_file are supported only for server.enduser.authentication.jwt` |
 | `relative_path` | `jwks_file "<path>" must be an absolute path` |
 | `missing_trust_directory` | `jwks_file requires security.trust_material_dir to be set` |
 | `invalid_trust_directory` | `security.trust_material_dir "<dir>" must be an absolute path to an existing directory other than /` |

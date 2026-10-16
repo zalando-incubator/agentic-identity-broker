@@ -23,11 +23,11 @@ its configuration location. It owns exactly one resolved `KeySetSource`.
 | Field | Type | Rule |
 |---|---|---|
 | `Kind` | `AnchorKind`: `client_assertion`, `impersonation_issuer`, `jwt_preauth` | Closed set (FR-002) |
-| `ConfigPath` | string | Identity. Examples: `token_exchange.client_assertion`, `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1]`, `server.enduser.authentication.jwt`. Every error and log names it. |
+| `ConfigPath` | string | Identity. Examples: `token_exchange.client_assertion`, `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1]`, `server.enduser.authentication.jwt`, `server.admin.authentication.jwt`. Every error and log names it. |
 | `Source` | `KeySetSource` | Exactly one, resolved at startup, never shared with another anchor's verification (FR-016, FR-017). |
 
-`server.admin.authentication.jwt` is not a trust anchor for this feature. A local key source there
-fails startup with `unsupported_trust_anchor` (research R9).
+The end-user and admin servers' JWT pre-authentication are two separate `jwt_preauth` trust anchors
+(research R9). They never share an adapter.
 
 ## Value object: Key Set Source
 

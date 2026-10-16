@@ -1,10 +1,11 @@
 # Local Key Sets for Trust Anchors (inline JWK Set and key-set file)
 #
-# Three trust anchors take their public verification keys from configuration
+# These trust anchors take their public verification keys from configuration
 # instead of a remote jwks_uri or issuer-metadata discovery:
 #   1. token_exchange.client_assertion               -> inline `jwks`
 #   2. impersonation rules[].trusted_issuers[]       -> `jwks_file`
 #   3. server.enduser.authentication.jwt             -> `jwks_file`
+#   (server.admin.authentication.jwt accepts the same settings as a separate trust anchor)
 #
 # Each trust anchor accepts at most one of jwks_uri, jwks, and jwks_file.
 # The broker makes no outbound request for the keys of a trust anchor that uses
@@ -65,7 +66,7 @@ server:
     bind: "0.0.0.0"
     public_url: "https://broker.example.com:14000"
     authentication:
-      # jwks and jwks_file are not supported on server.admin.authentication.jwt.
+      # server.admin.authentication.jwt also accepts jwks or jwks_file, as its own trust anchor.
       preauth:
         principal_header_name: "X-Remote-User"
 

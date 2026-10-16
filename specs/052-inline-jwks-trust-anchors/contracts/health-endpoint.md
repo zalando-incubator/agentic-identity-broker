@@ -16,7 +16,8 @@ Principles IV and X require stakeholder confirmation before implementation.
 
 `trust_anchor_key_files` is `degraded` when any file-based key set's last re-read failed, including
 after its staleness window expired. It returns to `healthy` after the next valid re-read of every
-degraded file. Inline key sets never appear in or affect this component. The admin server's
+degraded file. It aggregates every key-set file in the broker, including the admin server's JWT
+pre-authentication. Inline key sets never appear in or affect this component. The admin server's
 `/health` is unchanged.
 
 ## OpenAPI edits (`api/enduser/openapi.yaml`, `/health`)

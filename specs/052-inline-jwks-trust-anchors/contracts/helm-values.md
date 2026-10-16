@@ -55,7 +55,7 @@ layout, so a Secret or ConfigMap update reaches the broker through the file re-r
 | `broker.security` | Add `trustMaterial` with `directory` (string; empty or an absolute path) and `sources` (array of `oneOf` `{secret}` / `{configMap}` objects, `additionalProperties: false`) |
 | `broker.tokenExchange.clientAssertion` | Add `jwks` and `jwksFile` (strings) |
 | Impersonation `trusted_issuers[]` items | Add `jwks` and `jwks_file` (strings) |
-| `definitions.serverConfig.authentication.jwt` | Add `jwks` and `jwks_file` (strings). The broker rejects them on the admin server at startup. |
+| `definitions.serverConfig.authentication.jwt` | Add `jwks` and `jwks_file` (strings). Valid on both the end-user and the admin server. |
 
 ## README
 

@@ -36,7 +36,7 @@ description: "Task list for feature 052: inline and file-based JWKS for trust an
   - an acceptance scenario;
   - a binding constraint for the affected path (an ADR, a constitution principle, or the Helm contract).
 - [research.md](./research.md) lists four "Deferred findings". They are **not** tasks. The user decides whether to file GitHub issues for them. Only user-approved issue URLs go under the **Future Work** note at the end of this file.
-- Supporting `jwks` or `jwks_file` on `server.admin.authentication.jwt` would expand the feature's scope. This task list rejects them instead (research R9, FR-002).
+- On 2026-10-16 the stakeholder approved extending the scope to `server.admin.authentication.jwt` (research R9). `spec.md` FR-002 and User Story 5 scenario 4 were updated before implementation, as the Feature Scope rule requires. Tasks T033, T035, T080, T082, T083, and T084 cover it.
 
 ---
 
@@ -90,8 +90,8 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - the `security.trust_material_dir` boundary through `os.Root`, including the R4 consequence that "absolute symbolic links inside the trust directory are rejected; relative links (Kubernetes) are accepted";
   - the file re-read cadence: every `jwks_min_refresh`, and fail closed after `jwks_max_refresh` since the last success;
   - the `trust_anchor_key_files` `/health` component;
-  - the end-user-only scope for JWT pre-authentication, where the admin server rejects local sources.
-- [ ] T007 Obtain stakeholder acceptance of ADR 040 and of the two scope interpretations: R4 (absolute links rejected) and R9 (`server.admin` local sources rejected). Then set ADR 040 to Accepted in `adrs/040-trust-anchor-local-key-sets.md`, and record the acceptance date in the PR description. Implementation and unit-test tasks from T043 on MUST NOT start until this is done (Principle II, plan "Stakeholder decisions" 2–3).
+  - the JWT pre-authentication scope (revised 2026-10-16: both servers, each a separate trust anchor).
+- [X] T007 Obtain stakeholder acceptance of ADR 040 and of the two scope interpretations: R4 (absolute links rejected; confirmed) and R9 (decided 2026-10-16: support `server.admin` local sources, and revise ADR 040 accordingly). Then set ADR 040 to Accepted in `adrs/040-trust-anchor-local-key-sets.md`, and record the acceptance date in the PR description. Implementation and unit-test tasks from T043 on MUST NOT start until this is done (Principle II, plan "Stakeholder decisions" 2–3).
 - [X] T008 [P] Add the glossary terms to `ARCHITECTURE.md`, using the exact definitions in [data-model.md](./data-model.md) "Glossary additions": **Key Set Source**, **Local Key Set**, and **Trust Directory**. Disambiguate Key Set Source from the JWKS-aggregation **KeySource**. Update the existing **ClientAssertion Trust Anchor**, **Trusted Token Issuer**, and **JWTAuthConfig** entries to name `jwks` and `jwks_file` as alternatives to `jwks_uri` (Principle V).
 - [X] T009 [P] Update `ARCHITECTURE.md` §3.1.4.1 for the trust-anchor key sources, the resolution order, the trust directory, and the `trust_anchor_key_files` health component. Update the JWT pre-authentication section to describe the injected local key set and the admin rejection. Add ADR 040 to the ADR index (Principle II, plan "Architecture documentation").
 - [X] T010 [P] Add ADR 040 to the root `AGENTS.md` ADR Decision Index, with the decision "Inline and file-based key sets for trust anchors (trust directory, re-read, health)". Add Key Set Source, Local Key Set, and Trust Directory to its Domain Glossary table (Principle V).
@@ -161,10 +161,10 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Constitution Reference**: Principles IV and X
 
-- [ ] T022 Present [contracts/health-endpoint.md](./contracts/health-endpoint.md) to the stakeholder: the optional `trust_anchor_key_files` component, its values `healthy` and `degraded`, and that it has no effect on HTTP status. Record the confirmation date in the PR description. T023 MUST NOT start before this is confirmed (plan "Stakeholder decisions" 1).
-- [ ] T023 Update the `/health` operation in `api/enduser/openapi.yaml`. Replace the description paragraph that starts "In proxy and hybrid OAuth2 modes" with the text in [contracts/health-endpoint.md](./contracts/health-endpoint.md), and add the `healthyWithDegradedKeySetFile` `200` example. Make no schema change, because `HealthResponse.components` is already a string map (Principle IV).
-- [ ] T024 [P] Confirm and record in the PR description that `api/admin/openapi.yaml` does not change. The admin `/health` is unchanged and no admin route is added (Principle IV).
-- [ ] T025 Create `docs/api/health.md`, following the style of `docs/api/approval-endpoints.md`. It documents `GET /health`, the `components` map with `upstream_jwks` and `trust_anchor_key_files`, when each component appears, the fact that components never change the HTTP status, the RFC-style example exchange from [contracts/health-endpoint.md](./contracts/health-endpoint.md), and the operator action for `degraded` (check the `trust anchor key set re-read failed` log). Then run `just docs-build` and confirm the Redoc `/health` description and example render (Principle IV: end-user API docs rendered in `docs/api/`).
+- [X] T022 Present [contracts/health-endpoint.md](./contracts/health-endpoint.md) to the stakeholder: the optional `trust_anchor_key_files` component, its values `healthy` and `degraded`, and that it has no effect on HTTP status. Record the confirmation date in the PR description. T023 MUST NOT start before this is confirmed (plan "Stakeholder decisions" 1).
+- [X] T023 Update the `/health` operation in `api/enduser/openapi.yaml`. Replace the description paragraph that starts "In proxy and hybrid OAuth2 modes" with the text in [contracts/health-endpoint.md](./contracts/health-endpoint.md), and add the `healthyWithDegradedKeySetFile` `200` example. Make no schema change, because `HealthResponse.components` is already a string map (Principle IV).
+- [X] T024 [P] Confirm and record in the PR description that `api/admin/openapi.yaml` does not change. The admin `/health` is unchanged and no admin route is added (Principle IV).
+- [X] T025 Create `docs/api/health.md`, following the style of `docs/api/approval-endpoints.md`. It documents `GET /health`, the `components` map with `upstream_jwks` and `trust_anchor_key_files`, when each component appears, the fact that components never change the HTTP status, the RFC-style example exchange from [contracts/health-endpoint.md](./contracts/health-endpoint.md), and the operator action for `degraded` (check the `trust anchor key set re-read failed` log). Then run `just docs-build` and confirm the Redoc `/health` description and example render (Principle IV: end-user API docs rendered in `docs/api/`).
 
 **Checkpoint**: The `/health` delta is confirmed and documented in OpenAPI.
 
@@ -196,7 +196,7 @@ All E2E tests use production bootstrap through `tests/e2e/bootstrap/`, with fres
 
 Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/health` polling. File scenarios set `jwks_min_refresh: 200ms` and `jwks_max_refresh: 2s`.
 
-- [ ] T028 Review the five Concrete Example Journeys in `specs/052-inline-jwks-trust-anchors/spec.md` with the stakeholder. Check each one's link to its Given/When/Then scenarios, its configuration snippets against [contracts/configuration.md](./contracts/configuration.md), its HTTP exchanges against `api/enduser/openapi.yaml`, and its decoded JWT claims against FR-005 and FR-015. Correct any mismatch in the spec (Principle XIV, plan "Stakeholder decisions" 4).
+- [X] T028 Review the five Concrete Example Journeys in `specs/052-inline-jwks-trust-anchors/spec.md` with the stakeholder. Check each one's link to its Given/When/Then scenarios, its configuration snippets against [contracts/configuration.md](./contracts/configuration.md), its HTTP exchanges against `api/enduser/openapi.yaml`, and its decoded JWT claims against FR-005 and FR-015. Correct any mismatch in the spec (Principle XIV, plan "Stakeholder decisions" 4).
 - [X] T029 Write the User Story 1 `It()` blocks in `tests/e2e/trust_anchor_inline_jwks_test.go`:
   - **US1-S1**: Local mode with an inline set starts successfully. The counting server at the issuer host records 0 requests after startup and after a verification.
   - **US1-S2**: A token exchange whose client assertion is signed by the inline key returns `200` with the vault token.
@@ -227,15 +227,16 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US4-S2**: A file trusted issuer validates the credentials.
   - **US4-S3**: With `allowed_algorithms: ["ES256"]`, an RS256 credential is rejected.
   - **US4-S4**: Rules A and B for the same `issuer_uri` with different inline keys. A credential signed by rule B's key never matches rule A.
-- [X] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
+- [ ] T033 [P] Write the User Story 5 `It()` blocks in `tests/e2e/jwt_preauth_local_jwks_test.go`:
   - **US5-S1**: `GET /api/me` derives the principal with an inline source and, in a second `Context`, with a file source.
   - **US5-S2**: `verification: none` with `jwks`, and with `jwks_file`, gives `verification 'none' and jwks are mutually exclusive` (or `… jwks_file …`).
   - **US5-S3**: `verification: jwks` with no source fails startup with the existing message.
+  - **US5-S4**: The admin server with an inline admin key set and the end-user server with a different file key set. An admin API request with an admin-key JWT derives the principal, and one with an end-user-key JWT returns `401`.
 - [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `tests/e2e/helpers/mock_jwks_server.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
-- [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 29 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×3. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
+- [ ] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 30 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
 - [X] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
 
-**Checkpoint**: Journeys are reviewed, and all 29 scenarios plus the parity table are written and verified red.
+**Checkpoint**: Journeys are reviewed, and all 30 scenarios plus the parity table are written and verified red.
 
 ---
 
@@ -487,9 +488,9 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ## Phase 7: User Story 5 — Use local key sets for end-user JWT pre-authentication (Priority: P3)
 
-**Goal**: `server.enduser.authentication.jwt` accepts `jwks` and `jwks_file` through an injected key set. `verification: none` stays exclusive with every source, and the admin server rejects local sources.
+**Goal**: `server.enduser.authentication.jwt` and `server.admin.authentication.jwt` accept `jwks` and `jwks_file` through an injected key set, each as its own trust anchor. `verification: none` stays exclusive with every source.
 
-**Independent Test**: A JWT signed by an inline key gets the principal from `GET /api/me`, and an unknown key is rejected. These are US5-S1 to US5-S3 in `tests/e2e/jwt_preauth_local_jwks_test.go`.
+**Independent Test**: A JWT signed by an inline key gets the principal from `GET /api/me`, and an unknown key is rejected. These are US5-S1 to US5-S4 in `tests/e2e/jwt_preauth_local_jwks_test.go`.
 
 ### Tests for User Story 5 [MANDATORY - Principle VIII] ⚠️
 
@@ -501,8 +502,9 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
   Supports FR-005 and research R9.
 - [ ] T080 [P] [US5] Write tests in `internal/config/validator_test.go` and `internal/app/builder_test.go`:
-  - `server.admin.authentication.jwt.jwks` and `.jwks_file` fail with `jwks and jwks_file are supported only for server.enduser.authentication.jwt` (`unsupported_trust_anchor`);
-  - `verification: none` with `jwks` or `jwks_file` on `server.enduser` fails with the `verification_disabled_with_key_source` message;
+  - `server.admin.authentication.jwt.jwks` and `.jwks_file` are accepted and validated with the same structural rules as the end-user server, with errors naming `server.admin.authentication.jwt.…`;
+  - `verification: none` with `jwks` or `jwks_file` on either server fails with the `verification_disabled_with_key_source` message;
+  - the builder creates a separate adapter for each server, even when both declare identical sources;
   - the builder's defense-in-depth exclusivity check covers all three sources.
 
   Supports FR-002, FR-013, and research R9.
@@ -511,14 +513,14 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 - [ ] T081 [US5] Implement the injected-key-set path in `internal/adapters/jwtauth/jwx_authenticator.go` so that T079 passes. When `KeySet` is set, skip `jwkfetch` creation and the startup `Refresh`, and verify against `KeySet.GetKeySet(ctx)` with the same options as the remote path.
 - [ ] T082 [US5] In `internal/app/builder.go`:
-  - resolve the `server.enduser.authentication.jwt` source with fixed JWT pre-authentication `RefreshBounds` (5m/15m);
+  - in the existing per-server loop, resolve each server's source (`server.enduser.authentication.jwt`, `server.admin.authentication.jwt`) with fixed JWT pre-authentication `RefreshBounds` (5m/15m);
   - build the static or file adapter, inject it into `jwtauthadapter.JWXAuthenticatorConfig.KeySet`, and chain shutdown;
   - extend the existing `verification: none` defense-in-depth check to `JWKS` and `JWKSFile`;
-  - log `trust anchor key set loaded` with `trust_anchor=server.enduser.authentication.jwt`.
+  - log `trust anchor key set loaded` with `trust_anchor=server.<name>.authentication.jwt`.
 
   Supports FR-002, FR-013, and FR-018.
-- [ ] T083 [US5] Reject `jwks` and `jwks_file` on `server.admin.authentication.jwt` in `internal/config/validator.go` (`validateJWTConfig`, by server prefix), and in the admin JWT wiring in `internal/app/builder.go`, so that T080 passes. Supports research R9.
-- [ ] T084 [US5] Run `go test ./internal/adapters/jwtauth/... ./internal/config/... ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 5" ./tests/e2e/`. US5-S1 to US5-S3 must be green.
+- [ ] T083 [US5] Make `validateJWTConfig` in `internal/config/validator.go` apply the key-source structural rules for both server prefixes, so that T080 passes. Remove the unused `CategoryUnsupportedTrustAnchor` from `internal/domain/trustanchor/errors.go`. Supports FR-002 and research R9.
+- [ ] T084 [US5] Run `go test ./internal/adapters/jwtauth/... ./internal/config/... ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 5" ./tests/e2e/`. US5-S1 to US5-S4 must be green.
 
 **Checkpoint**: All five user stories work independently.
 
@@ -546,7 +548,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 - [ ] T091 Verify that `api/enduser/openapi.yaml` documents `trust_anchor_key_files`, and that the PR description records the stakeholder confirmation from T022 (Principles IV and X).
 - [ ] T092 Verify that the PR description records "no schema change" (T026) and "no UI change" (T027) (Principles IX and XI).
 - [ ] T093 Verify that `specs/052-inline-jwks-trust-anchors/spec.md` contains the five linked Concrete Example Journeys, with configuration, HTTP exchanges, and decoded JWT claims that match the implemented behaviour and OpenAPI. No Wireloom wireframes are required because the feature has no UI (Principle XIV).
-- [ ] T094 Verify that `tests/e2e/` holds exactly 29 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
+- [ ] T094 Verify that `tests/e2e/` holds exactly 30 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
 
 ### Implementation Phase Verification [MANDATORY]
 
@@ -594,7 +596,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 **E2E Acceptance Testing** (Principle XIII):
 
 - [ ] T109 Verify that each `It()` maps to exactly one spec scenario, uses `Describe` → `Context` → `It`, cites its scenario ID in a comment, and changed only in fixtures during implementation.
-- [ ] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 29 scenarios and the SC-003 parity table.
+- [ ] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 30 scenarios and the SC-003 parity table.
 
 ---
 

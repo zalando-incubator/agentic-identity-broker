@@ -14,7 +14,7 @@ Every operator-configured trust anchor that verifies signed credentials currentl
 
 - The token-exchange client-assertion trust anchor (ADR 029). Machine-facing approval authentication reuses it.
 - Each trusted issuer of an impersonation rule ([OAuth2 User Impersonation](../037-oauth2-user-impersonation/spec.md)).
-- End-user JWT pre-authentication ([JWT Pre-Authentication](../016-jwt-preauth/spec.md)).
+- JWT pre-authentication on the end-user server and on the admin server ([JWT Pre-Authentication](../016-jwt-preauth/spec.md)).
 
 Issue #185 says this assumption fails when infrastructure holds the signing key locally. An agent gateway, such as agentgateway, can sign privileged client assertions with its own key. Then no web endpoint publishes the matching public key. To satisfy the broker, the operator must run a key-set endpoint that serves only a static document. The issue discussion states the principle: the broker needs a trusted public key, not a website that serves one. The discussion settled on two alternatives as sufficient for now:
 
@@ -33,6 +33,13 @@ This feature changes only **where** a trust anchor's public keys come from. It d
   - stricter non-disclosing errors and refusal of pseudo-filesystems;
   - audit-log content digests;
   - deployment-chart-only mounts.
+
+### Session 2026-10-16
+
+- Q: Is ADR 040 accepted as drafted? → A: Yes. The stakeholder accepted it in this PR. It was then revised for the admin-server decision below.
+- Q: Are absolute symbolic links inside the trust directory rejected (research R4)? → A: Yes. Only relative links are followed, as FR-023 states.
+- Q: Should `jwks` and `jwks_file` on `server.admin.authentication.jwt` be rejected or supported (research R9)? → A: Supported. The admin server's JWT pre-authentication is a separate trust anchor with the same rules as the end-user server (FR-002, User Story 5 scenario 4).
+- Q: Are the `/health` component contract and the five example journeys confirmed? → A: Yes, both, as written.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -114,9 +121,9 @@ An operator who defines OAuth2 user-impersonation rules trusts a gateway that si
 
 ---
 
-### User Story 5 - Use local key sets for end-user JWT pre-authentication (Priority: P3)
+### User Story 5 - Use local key sets for JWT pre-authentication (Priority: P3)
 
-An operator runs the broker behind infrastructure such as a reverse proxy or service mesh. That infrastructure issues signed identity JWTs with a locally held key. The operator declares the matching public keys inline or by file for JWT pre-authentication.
+An operator runs the broker behind infrastructure such as a reverse proxy or service mesh. That infrastructure issues signed identity JWTs with a locally held key. The operator declares the matching public keys inline or by file for JWT pre-authentication on the end-user server, the admin server, or both.
 
 **Why this priority**: The broker uses this trust anchor for the same purpose, so the change keeps configuration consistent across all trust anchors. The issue does not name this case, so it has a lower priority.
 
@@ -127,6 +134,7 @@ An operator runs the broker behind infrastructure such as a reverse proxy or ser
 1. **Given** JWT pre-authentication with signature verification and an inline or file key set, **When** a request has a JWT signed by a key in that set, **Then** the broker derives the principal as it does today.
 2. **Given** JWT pre-authentication with verification disabled, **When** the operator also configures an inline or file key set, **Then** startup fails, just as it does today for a key-set URI.
 3. **Given** JWT pre-authentication with signature verification and no key source, **When** the broker starts, **Then** startup fails as it does today.
+4. **Given** admin-server JWT pre-authentication with signature verification and an inline or file key set, and end-user JWT pre-authentication with a different key set, **When** an admin API request has a JWT signed by a key in the admin set, **Then** the admin server derives the principal; **When** it has a JWT signed only by a key in the end-user set, **Then** the admin server rejects it, because each server verifies only against its own declared keys.
 
 ---
 
@@ -535,6 +543,8 @@ Decoded mesh JWT (synthetic):
 
 **Observable result**: the broker derives Alice's principal from a JWT whose public key lives only in a mounted file. A JWT with an unknown `kid` returns `401 Unauthorized`, as it does for a remote key set.
 
+The same configuration under `server.admin.authentication.jwt` works identically on the admin server (User Story 5, Scenario 4). That trust anchor is separate: a JWT signed only by a key in the end-user set returns `401 Unauthorized` on the admin server.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -543,7 +553,8 @@ Decoded mesh JWT (synthetic):
 - **FR-002**: The in-scope trust anchors MUST be these:
   - The token-exchange client-assertion trust anchor, including its use for machine-facing approval authentication.
   - Every trusted issuer of every impersonation rule.
-  - End-user JWT pre-authentication.
+  - End-user JWT pre-authentication (`server.enduser.authentication.jwt`).
+  - Admin JWT pre-authentication (`server.admin.authentication.jwt`). Each server's JWT pre-authentication is a separate trust anchor.
 - **FR-003**: When a trust anchor declares no explicit key source, its current behavior MUST stay unchanged. This includes issuer-metadata discovery, ADR 029's reuse of the upstream key set, and the existing startup error for JWT pre-authentication with signature verification and no key source.
 - **FR-004**: When a trust anchor declares an inline or file key set, the broker MUST NOT perform issuer-metadata discovery or any outbound request to get that trust anchor's keys.
 - **FR-005**: Credential validation MUST give the same result for every key source. This covers key selection, algorithm restrictions, and issuer, audience, expiry, and claim checks. Only the origin of the public keys can differ.
@@ -621,7 +632,7 @@ stateDiagram-v2
 
 **Entities** (things with unique identity):
 
-- **Trust Anchor**: An operator-configured authority whose signed credentials the broker verifies. It is identified by its configuration location: the client-assertion trust anchor, an impersonation rule's trusted issuer, or JWT pre-authentication. It owns exactly one resolved key-set source.
+- **Trust Anchor**: An operator-configured authority whose signed credentials the broker verifies. It is identified by its configuration location: the client-assertion trust anchor, an impersonation rule's trusted issuer, or JWT pre-authentication on the end-user or admin server. It owns exactly one resolved key-set source.
 
 **Value Objects** (things without identity):
 
@@ -640,7 +651,7 @@ stateDiagram-v2
 
 **Configuration Parameters**:
 
-- **`jwks`** (string, optional, no default): An inline JWK Set as JSON text. It is available on the client-assertion trust anchor (`token_exchange.client_assertion`), on each impersonation trusted issuer (`oauth2_authorization_server.impersonation.rules[].trusted_issuers[]`), and on JWT pre-authentication (`server.enduser.authentication.jwt`). It is mutually exclusive with `jwks_uri` and `jwks_file`. The name matches the established OAuth2 convention that pairs an inline `jwks` value with a `jwks_uri` reference. Example environment-variable override: `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`.
+- **`jwks`** (string, optional, no default): An inline JWK Set as JSON text. It is available on the client-assertion trust anchor (`token_exchange.client_assertion`), on each impersonation trusted issuer (`oauth2_authorization_server.impersonation.rules[].trusted_issuers[]`), and on JWT pre-authentication (`server.enduser.authentication.jwt` and `server.admin.authentication.jwt`). It is mutually exclusive with `jwks_uri` and `jwks_file`. The name matches the established OAuth2 convention that pairs an inline `jwks` value with a `jwks_uri` reference. Example environment-variable override: `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`.
 - **`jwks_file`** (string, optional, no default): The absolute path of a file that contains a JWK Set. The file must be inside `security.trust_material_dir`. It is available in the same locations as `jwks`. It is mutually exclusive with `jwks_uri` and `jwks`.
 - **`security.trust_material_dir`** (string, optional, no default): The absolute path of the only directory from which the broker reads key-set files. While it is unset, `jwks_file` is unavailable. It must not be the filesystem root. Environment-variable override: `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`.
 - **`jwks_min_refresh` / `jwks_max_refresh`** (existing): These remain valid with `jwks_uri` and discovery. With `jwks_file`, they bound how often the broker re-reads the file. Their defaults stay the same: 15 minutes and `max(jwks_min_refresh, 1 hour)`. They are rejected with `jwks`. JWT pre-authentication still has no configurable refresh bounds.

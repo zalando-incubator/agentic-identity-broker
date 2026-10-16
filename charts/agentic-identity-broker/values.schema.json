@@ -1644,11 +1644,11 @@
                 },
                 "jwks": {
                   "type": "string",
-                  "description": "Inline JWK Set JSON (public keys only); end-user server only, rejected by the broker on the admin server"
+                  "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwks_uri and jwks_file"
                 },
                 "jwks_file": {
                   "type": "string",
-                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; end-user server only, rejected by the broker on the admin server"
+                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwks_uri and jwks"
                 },
                 "expected_audience": {
                   "type": "string",

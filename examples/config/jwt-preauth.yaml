@@ -27,7 +27,7 @@
 #         header_name: Authorization              # Default; strips "Bearer " prefix
 #         # verification: jwks                    # Default when omitted
 #         jwks_uri: https://auth.example.com/.well-known/jwks.json
-#         # Alternatives to jwks_uri on server.enduser (rejected on server.admin). Set at most
+#         # Alternatives to jwks_uri (on server.enduser and server.admin alike). Set at most
 #         # one of jwks_uri, jwks, and jwks_file; neither alternative makes an outbound request.
 #         # jwks_file must lie inside security.trust_material_dir and is re-read every 5 minutes
 #         # (the last valid set serves for up to 15 minutes after a failed re-read).

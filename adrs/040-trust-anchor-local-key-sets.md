@@ -1,7 +1,8 @@
 # ADR 040: Inline and File-Based Key Sets for Trust Anchors
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-10-16
+**Accepted**: 2026-10-16, by the stakeholder in this PR (Principle II same-PR acceptance)
 **Feature**: 052-inline-jwks-trust-anchors
 **Extends**: [ADR 029](029-token-exchange-client-assertion-trust-anchor.md), [ADR 008](008-token-exchange-jwks-adapter-pattern.md)
 
@@ -13,7 +14,7 @@ The broker verifies signed credentials against three kinds of trust anchor:
 
 - the token-exchange client-assertion trust anchor (ADR 029), which also authenticates machine-facing approval requests;
 - every trusted issuer of every impersonation rule;
-- end-user JWT pre-authentication.
+- JWT pre-authentication on the end-user server and on the admin server.
 
 Each trust anchor obtains its public verification keys from a remote JWKS endpoint, either an explicit `jwks_uri` or an endpoint discovered from issuer metadata. ADR 008 abstracts that fetch behind `JWKSPort`, and the domain consumes only `GetKeySet`.
 
@@ -93,13 +94,13 @@ A background read keeps health accurate when no traffic arrives. Filesystem noti
 
 ### Health component
 
-`GET /health` on the end-user server gains one optional component, `trust_anchor_key_files`, with values `healthy` and `degraded`. It appears when at least one trust anchor uses `jwks_file`, in any OAuth2 mode. It is `degraded` when the latest re-read of any key-set file failed, including after the staleness window expired. Like `upstream_jwks`, it never changes the HTTP status or the top-level `status`, so liveness and readiness probes do not restart pods over a temporary file problem. Inline key sets never contribute. The admin server's `/health` is unchanged.
+`GET /health` on the end-user server gains one optional component, `trust_anchor_key_files`, with values `healthy` and `degraded`. It appears when at least one trust anchor uses `jwks_file`, in any OAuth2 mode. It aggregates every file-based key set in the broker, including the admin server's JWT pre-authentication. It is `degraded` when the latest re-read of any key-set file failed, including after the staleness window expired. Like `upstream_jwks`, it never changes the HTTP status or the top-level `status`, so liveness and readiness probes do not restart pods over a temporary file problem. Inline key sets never contribute. The admin server's `/health` is unchanged.
 
 This is an additive change to `api/enduser/openapi.yaml`.
 
 ### Scope of JWT pre-authentication
 
-Local key sets apply to `server.enduser.authentication.jwt` only. `JWTConfig` is shared with the admin server, so the admin server's `jwks` and `jwks_file` fail startup with the category `unsupported_trust_anchor`. Silently ignoring them would mislead an operator and would not fail closed. Extending local key sets to the admin server is a scope change that needs a separate decision.
+Local key sets apply to both `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each server's JWT pre-authentication is a separate trust anchor, identified by its configuration path. It has its own key source, adapter, and log entries, and the two are never shared. Both use the fixed 5- and 15-minute refresh bounds. The stakeholder chose this scope on 2026-10-16 instead of rejecting local sources on the admin server, because `JWTConfig` is already shared by both servers and an operator running a locally signing proxy in front of the admin API has the same need.
 
 ### Diagnostics
 
@@ -120,7 +121,8 @@ The Helm chart gains a trust directory value and a read-only projected volume th
 - **Re-read every `jwks_max_refresh`**: the first failed re-read would fail closed immediately, with no degraded window.
 - **Change the HTTP status when a file is degraded**: restarts pods during a temporary file problem and turns a degraded state into an outage.
 - **One health component per trust anchor**: more contract surface for little gain. Logs identify the failing trust anchor and path.
-- **Support local key sets on the admin server**: low cost, but outside the approved scope.
+- **Reject local key sets on the admin server**: keeps the original end-user-only scope, but leaves an operator with a locally signing proxy in front of the admin API needing a key-publishing service. The stakeholder chose to support both servers.
+- **A separate admin `/health` component**: the admin `/health` contract stays unchanged; the end-user component already aggregates every key-set file.
 - **Allow any readable absolute path**: lets a configuration setting direct the broker to read credentials or platform tokens.
 
 ## Consequences
@@ -140,7 +142,6 @@ The Helm chart gains a trust directory value and a read-only projected volume th
 - Inline key sets require a restart to change.
 - File rotation takes effect within `jwks_min_refresh`, not immediately.
 - A degraded file keeps serving the last valid key set for up to `jwks_max_refresh` since the last successful read. A key removed from the file because it is compromised stays trusted until a valid re-read succeeds.
-- The admin server cannot use local key sets.
 - The `/health` response contract and the Helm values schema grow.
 
 ### Risks

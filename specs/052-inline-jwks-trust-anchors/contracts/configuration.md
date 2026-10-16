@@ -23,9 +23,9 @@ Each in-scope trust anchor accepts at most one of `jwks_uri` (existing), `jwks`,
 | `token_exchange.client_assertion` | Inline JWK Set JSON | Absolute path inside the trust directory | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` |
 | `oauth2_authorization_server.impersonation.rules[].trusted_issuers[]` | Inline JWK Set JSON | Absolute path inside the trust directory | None (rule lists are YAML-only, as today) |
 | `server.enduser.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML; use compact single-line JSON |
+| `server.admin.authentication.jwt` | Inline JWK Set JSON | Absolute path inside the trust directory | `${VAR}` expansion in YAML; use compact single-line JSON |
 
-`server.admin.authentication.jwt.jwks` and `server.admin.authentication.jwt.jwks_file` are
-rejected (`unsupported_trust_anchor`).
+The two JWT pre-authentication trust anchors are independent: each has its own source and adapter.
 
 ### 1.3 Refresh bounds
 
@@ -94,7 +94,6 @@ Builder errors use this format:
 | `conflicting_key_sources` | `only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)` |
 | `refresh_bounds_with_inline` | `jwks_min_refresh and jwks_max_refresh are not allowed with jwks; an inline key set never refreshes` |
 | `verification_disabled_with_key_source` | `verification 'none' and jwks are mutually exclusive` (or `jwks_file`, or the existing `jwks_uri` message) |
-| `unsupported_trust_anchor` | `jwks and jwks_file are supported only for server.enduser.authentication.jwt` |
 | `relative_path` | `jwks_file "<path>" must be an absolute path` |
 | `missing_trust_directory` | `jwks_file requires security.trust_material_dir to be set` |
 | `invalid_trust_directory` | `security.trust_material_dir "<dir>" must be an absolute path to an existing directory other than /` |

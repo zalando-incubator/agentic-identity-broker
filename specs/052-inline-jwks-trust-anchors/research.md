@@ -259,7 +259,7 @@ depend on an optional, local-mode-only feature.
 - Error categories: `conflicting_key_sources`, `not_a_jwk_set`, `empty_key_set`, `too_large`,
   `private_key`, `symmetric_key`, `unapproved_algorithm`, `duplicate_kid`,
   `refresh_bounds_with_inline`, `verification_disabled_with_key_source`,
-  `unsupported_trust_anchor`, `relative_path`,
+  `relative_path`,
   `missing_trust_directory`, `invalid_trust_directory`, `outside_trust_directory`, `not_found`,
   `unreadable`, `not_regular_file`, and `stale` (runtime only). The exact messages are in
   [contracts/configuration.md](./contracts/configuration.md).
@@ -302,17 +302,19 @@ current `ConfigError` format echoes values, so inline values need an explicit pl
   `jwt.WithKeySet(set, jws.WithInferAlgorithmFromKey(true))`, the same options as the remote path.
 - The builder creates the static or file adapter from `internal/adapters/jwks/` and injects it.
   This respects the cross-adapter import ban.
-- `server.admin.authentication.jwt.jwks` and `.jwks_file` fail startup with the error category
-  `unsupported_trust_anchor`. The message says that local key sets are supported only for
-  `server.enduser.authentication.jwt`.
+- Both `server.enduser.authentication.jwt` and `server.admin.authentication.jwt` accept `jwks` and
+  `jwks_file`. The builder already constructs one authenticator per server in a loop, so each
+  server resolves its own key source, gets its own adapter, and logs under its own configuration
+  path. The two servers never share an adapter, even with identical sources.
 
-**Rationale**: FR-002 scopes the feature to end-user JWT pre-authentication. `JWTConfig` is shared
-with the admin server, so new fields would otherwise be accepted there. Silently ignoring them
-could mislead an operator. Explicit rejection fails closed and keeps the approved scope.
-Supporting the admin server is a scope expansion that needs stakeholder approval.
+**Rationale**: The original draft rejected local sources on the admin server, because FR-002
+covered only end-user JWT pre-authentication. On 2026-10-16 the stakeholder chose to support the
+admin server instead, and FR-002 and User Story 5 scenario 4 were updated. `JWTConfig` is already
+shared by both servers, and the per-server loop makes support nearly free.
 
-**Alternatives considered**: *Support both servers*: low cost, but outside the approved scope.
-*Silently ignore on admin*: misleading and not fail-closed.
+**Alternatives considered**: *Reject on admin* (the original draft): fail-closed but leaves an
+admin-API proxy that signs locally with no option. *Silently ignore on admin*: misleading and not
+fail-closed.
 
 ## R10. Impersonation per-entry isolation
 

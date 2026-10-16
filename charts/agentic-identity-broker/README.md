@@ -445,7 +445,7 @@ The chart enforces Kubernetes Pod Security Standards (restricted):
 
 A trust anchor can take its public verification keys from an inline JWK Set (`jwks`) or a key-set file (`jwks_file`) instead of a remote `jwks_uri`. The broker reads key-set files only from `broker.security.trustMaterial.directory`. The chart mounts existing Secrets or ConfigMaps there, so no custom image is needed.
 
-The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and end-user JWT pre-authentication (`broker.server.enduser.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names. The admin server rejects both.
+The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and JWT pre-authentication on either server (`broker.server.enduser.authentication.jwt`, `broker.server.admin.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names. The admin server rejects both.
 
 ```bash
 kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./agentgateway-jwks.json
