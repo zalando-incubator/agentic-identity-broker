@@ -14,6 +14,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -136,6 +137,8 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 
 type exchangeClientContextKey struct{}
 
+type privateKeyJWTAuthenticatedContextKey struct{}
+
 // GetAuthorizeCodeSession retrieves an authorization code session by code signature.
 func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, requestSession fosite.Session) (fosite.Requester, error) {
 	authCode, err := s.codeRepo.FindByCodeHash(ctx, code)
@@ -247,9 +250,20 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 
 	var grantID id.GrantID
 	var previousSignature string
+	var clientAuthMethod *string
+	if authenticated, _ := ctx.Value(privateKeyJWTAuthenticatedContextKey{}).(bool); authenticated {
+		method := string(model.TokenEndpointAuthMethodPrivateKeyJWT)
+		clientAuthMethod = &method
+	}
 	if extra, ok := req.GetSession().(fosite.ExtraClaimsSession); ok {
-		grantID, _ = extra.GetExtraClaims()["consent_grant_id"].(id.GrantID)
-		previousSignature, _ = extra.GetExtraClaims()["refresh_parent_signature"].(string)
+		claims := extra.GetExtraClaims()
+		grantID, _ = claims["consent_grant_id"].(id.GrantID)
+		previousSignature, _ = claims["refresh_parent_signature"].(string)
+		if clientAuthMethod == nil {
+			if method, ok := claims["client_auth_method"].(string); ok && method != "" {
+				clientAuthMethod = &method
+			}
+		}
 	}
 	if grantID.IsZero() {
 		grant, err := s.verifier.VerifyAgentAccess(ctx, id.Principal(req.GetSession().GetSubject()), agentID)
@@ -264,17 +278,18 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 	email, displayName := sessionProfile(req.GetSession())
 
 	session := &storage.RefreshTokenSession{
-		Signature:   signature,
-		RequestID:   req.GetID(),
-		AgentID:     agentID,
-		GrantID:     &grantID,
-		ClientID:    id.NewClientID(req.GetClient().GetID()),
-		Principal:   id.NewPrincipal(req.GetSession().GetSubject()),
-		Email:       email,
-		DisplayName: displayName,
-		Scope:       strings.Join(req.GetGrantedScopes(), " "),
-		ExpiresAt:   req.GetSession().GetExpiresAt(fosite.RefreshToken),
-		CreatedAt:   time.Now(),
+		Signature:        signature,
+		RequestID:        req.GetID(),
+		AgentID:          agentID,
+		GrantID:          &grantID,
+		ClientID:         id.NewClientID(req.GetClient().GetID()),
+		Principal:        id.NewPrincipal(req.GetSession().GetSubject()),
+		Email:            email,
+		DisplayName:      displayName,
+		Scope:            strings.Join(req.GetGrantedScopes(), " "),
+		ClientAuthMethod: clientAuthMethod,
+		ExpiresAt:        req.GetSession().GetExpiresAt(fosite.RefreshToken),
+		CreatedAt:        time.Now(),
 	}
 	if err := session.Validate(); err != nil {
 		return err
@@ -344,6 +359,9 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 	}
 	sess.GetExtraClaims()["consent_grant_id"] = grant.ID
 	sess.GetExtraClaims()["refresh_parent_signature"] = signature
+	if refreshSession.ClientAuthMethod != nil {
+		sess.GetExtraClaims()["client_auth_method"] = *refreshSession.ClientAuthMethod
+	}
 
 	return req, nil
 }
@@ -443,6 +461,7 @@ func (s *FositeStorage) GetClient(ctx context.Context, clientID string) (fosite.
 			agent:        resolution.Agent,
 			redirectURIs: resolution.CIMDMetadata.RedirectURIs,
 			grantTypes:   publicClientGrantTypes(resolution.CIMDMetadata.GrantTypes),
+			metadata:     resolution.CIMDMetadata,
 		}, nil
 	}
 

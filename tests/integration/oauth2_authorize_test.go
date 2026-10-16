@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
+	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -107,6 +109,62 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "invalid_client", errResp["error"])
 	assert.NotEmpty(t, errResp["error_description"])
+}
+
+type integrationCIMDFetcher struct {
+	result *ports.CIMDFetchResult
+	err    error
+}
+
+func (f integrationCIMDFetcher) Fetch(context.Context, string) (*ports.CIMDFetchResult, error) {
+	return f.result, f.err
+}
+
+func newCIMDIntegrationOAuth2Service(t *testing.T, fetcher ports.CIMDFetcher) (*oauth2.AuthorizationService, *inMemoryAgentRepo) {
+	t.Helper()
+	agents := newInMemoryAgentRepo()
+	cache, err := domaincimd.NewCIMDCache(time.Minute, time.Hour, 100)
+	require.NoError(t, err)
+	resolver := oauth2.NewAgentClientResolverWithCIMD(agents, domaincimd.NewService(fetcher, cache, nil, slog.Default()), slog.Default())
+	service := oauth2.NewAuthorizationService(newInMemoryGrantRepo(), memory.NewInMemoryUserSessionRepository(), resolver, &oauth2.OAuth2Config{
+		PublicURL:              "https://broker.example.com",
+		SupportedResponseTypes: []string{"code"},
+		SupportedGrantTypes:    []string{"authorization_code", "refresh_token"},
+		ModeStrategy:           oauth2.NewLocalModeStrategy(),
+	}, nil, newIntegrationSessionTokenSvc())
+	return service, agents
+}
+
+func TestOAuth2AuthorizeEndpoint_CIMDFetchFailuresAreDirect(t *testing.T) {
+	const clientURL = "https://client.example/metadata"
+	for _, test := range []struct {
+		name       string
+		fetcher    ports.CIMDFetcher
+		wantStatus int
+		wantError  string
+	}{
+		{name: "temporarily unavailable", fetcher: integrationCIMDFetcher{err: &ports.CIMDUnavailableError{Cause: context.DeadlineExceeded}}, wantStatus: http.StatusInternalServerError, wantError: "server_error"},
+		{name: "SSRF blocked", fetcher: integrationCIMDFetcher{err: &ports.SSRFBlockedError{IP: "127.0.0.1"}}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+		{name: "malformed document", fetcher: integrationCIMDFetcher{result: &ports.CIMDFetchResult{Body: []byte("{")}}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+		{name: "client error response", fetcher: integrationCIMDFetcher{err: errors.New("CIMD endpoint returned status 404")}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, agents := newCIMDIntegrationOAuth2Service(t, test.fetcher)
+			agent := &storage.Agent{ID: id.NewAgentID(), ClientURIs: []string{clientURL}, DisplayName: "CIMD Integration Agent"}
+			require.NoError(t, agents.Create(context.Background(), agent))
+			handler := &enduser.OAuth2AuthorizeHandler{Service: service}
+			query := url.Values{"client_id": {clientURL}, "redirect_uri": {"https://client.example/callback"}, "response_type": {"code"}, "state": {"test-state"}}
+			request := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize?"+query.Encode(), nil)
+			request = request.WithContext(principal.WithPrincipal(request.Context(), "user@example.com"))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assert.Equal(t, test.wantStatus, response.Code)
+			assert.Empty(t, response.Header().Get("Location"), "resolution failures must not redirect to an unverified URI")
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, test.wantError, body["error"])
+		})
+	}
 }
 
 // TestOAuth2AuthorizeEndpoint_MissingParameterError tests validation of required parameters
@@ -507,6 +565,13 @@ func (r *inMemoryAgentRepo) GetByClientID(ctx context.Context, clientID id.Clien
 }
 
 func (r *inMemoryAgentRepo) GetByClientURI(ctx context.Context, uri string) (*storage.Agent, error) {
+	for _, agent := range r.agents {
+		for _, registeredURI := range agent.ClientURIs {
+			if registeredURI == uri {
+				return agent, nil
+			}
+		}
+	}
 	return nil, storage.NewStorageError(
 		"GetAgentByClientURI",
 		storage.ErrorKindNotFound,

@@ -3,9 +3,13 @@ package cimd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -16,6 +20,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fetcherRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f fetcherRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 // cimdDoc builds a minimal valid CIMD JSON document for the given URL.
 func cimdDoc(t *testing.T, clientID string, redirectURIs []string) []byte {
@@ -57,6 +67,63 @@ func TestFetcher_Success(t *testing.T) {
 	assert.Equal(t, 1, dialCount)
 }
 
+func TestFetcher_TransientFailuresReturnCIMDUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		make func(*testing.T) *http.Client
+	}{
+		{name: "connection failure", make: func(*testing.T) *http.Client {
+			return &http.Client{Transport: fetcherRoundTripper(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("connection refused")
+			})}
+		}},
+		{name: "timeout", make: func(*testing.T) *http.Client {
+			return &http.Client{Transport: fetcherRoundTripper(func(*http.Request) (*http.Response, error) {
+				return nil, context.DeadlineExceeded
+			})}
+		}},
+		{name: "server error", make: func(*testing.T) *http.Client {
+			return &http.Client{Transport: fetcherRoundTripper(func(request *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+			})}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			blocklist, err := domaincimd.NewSSRFBlocklist(nil)
+			require.NoError(t, err)
+			fetcher := NewFetcherWithClient(test.make(t), blocklist, 5120)
+			_, err = fetcher.Fetch(context.Background(), "https://client.example/metadata")
+			var unavailable *ports.CIMDUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.ErrorContains(t, err, "CIMD document temporarily unavailable")
+		})
+	}
+}
+
+func TestFetcher_ClientAndSSRFErrorsAreNotCIMDUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		client  *http.Client
+		wantErr error
+	}{
+		{name: "client error", client: &http.Client{Transport: fetcherRoundTripper(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+		})}},
+		{name: "SSRF blocked", client: &http.Client{Transport: fetcherRoundTripper(func(request *http.Request) (*http.Response, error) {
+			return nil, &url.Error{Op: "Get", URL: request.URL.String(), Err: &ports.SSRFBlockedError{IP: "127.0.0.1"}}
+		})}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			blocklist, err := domaincimd.NewSSRFBlocklist(nil)
+			require.NoError(t, err)
+			fetcher := NewFetcherWithClient(test.client, blocklist, 5120)
+			_, err = fetcher.Fetch(context.Background(), "https://client.example/metadata")
+			var unavailable *ports.CIMDUnavailableError
+			assert.NotErrorAs(t, err, &unavailable)
+		})
+	}
+}
+
 func TestFetcher_NonJSONContentType(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -72,6 +139,55 @@ func TestFetcher_NonJSONContentType(t *testing.T) {
 	_, err = fetcher.Fetch(context.Background(), srv.URL+"/client")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-JSON Content-Type")
+}
+
+func TestFetcher_AcceptedContentTypesOption(t *testing.T) {
+	content := []byte(`{"keys":[]}`)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/jwk-set+json")
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+
+	defaultFetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
+	_, err = defaultFetcher.Fetch(context.Background(), srv.URL+"/jwks")
+	require.Error(t, err, "document fetchers must retain the JSON-only default")
+
+	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120,
+		WithAcceptedContentTypes("application/json", "application/jwk-set+json"))
+	result, err := fetcher.Fetch(context.Background(), srv.URL+"/jwks")
+	require.NoError(t, err)
+	assert.JSONEq(t, string(content), string(result.Body))
+}
+
+func TestFetcher_AcceptedContentTypesOptionPreservesLimits(t *testing.T) {
+	redirectTarget := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/jwk-set+json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	defer redirectTarget.Close()
+	redirecting := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL+"/jwks", http.StatusFound)
+	}))
+	defer redirecting.Close()
+	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+	option := WithAcceptedContentTypes("application/json", "application/jwk-set+json")
+
+	redirectFetcher := NewFetcherWithClient(redirecting.Client(), bl, 5120, option)
+	_, err = redirectFetcher.Fetch(context.Background(), redirecting.URL+"/jwks")
+	require.ErrorContains(t, err, "status 302")
+
+	oversized := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/jwk-set+json")
+		_, _ = w.Write([]byte(strings.Repeat("x", 32)))
+	}))
+	defer oversized.Close()
+	limitedFetcher := NewFetcherWithClient(oversized.Client(), bl, 8, option)
+	_, err = limitedFetcher.Fetch(context.Background(), oversized.URL+"/jwks")
+	require.ErrorContains(t, err, "8 byte limit")
 }
 
 func TestFetcher_Non200(t *testing.T) {

@@ -45,6 +45,7 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 		time.Hour,
 		"", // no CEL expression
 		newTestGrantVerifier(agentRepo),
+		nil,
 		logger,
 	)
 	require.NoError(t, err)
@@ -139,6 +140,124 @@ func TestProvider_HandleClientCredentials(t *testing.T) {
 		)
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp.AccessToken)
+	})
+}
+
+type providerAssertionVerifierFake struct {
+	calls    int
+	err      error
+	onVerify func()
+}
+
+func (f *providerAssertionVerifierFake) Verify(_ context.Context, document *ports.CIMDMetadataDTO, assertionType, assertion string) (*VerifiedAssertion, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if assertionType != ClientAssertionTypeJWTBearer || assertion == "" {
+		return nil, ErrClientAuthentication
+	}
+	if f.onVerify != nil {
+		f.onVerify()
+	}
+	return &VerifiedAssertion{ClientID: document.ClientID, JTI: assertion, ExpiresAt: time.Now().Add(time.Minute), Method: "private_key_jwt"}, nil
+}
+
+func newCIMDProviderForAssertionTest(t *testing.T, authMethod string, verifier *providerAssertionVerifierFake) (*Provider, *dstorage.Agent, string) {
+	t.Helper()
+	provider, agentRepo, _ := newTestProvider(t)
+	clientID := "https://client.example/metadata.json"
+	agent := &dstorage.Agent{
+		ID:             id.NewAgentID(),
+		ClientURIs:     []string{clientID},
+		DisplayName:    "CIMD Provider Test Agent",
+		Description:    "Agent fixture for private_key_jwt provider tests",
+		PermissionSets: testAgentPermissionSets(),
+	}
+	require.NoError(t, agentRepo.Create(context.Background(), agent))
+	seedTestGrant(t, provider.fositeStorage.verifier, agent.ID, id.Principal("user@example.com"))
+	provider.fositeStorage.clientResolver = &mockClientResolver{resolveFunc: func(_ context.Context, resolvedID id.ClientID) (*ports.ClientResolution, error) {
+		if string(resolvedID) != clientID {
+			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "not found"}
+		}
+		return ports.NewClientResolution(agent, &ports.CIMDMetadataDTO{
+			ClientID:     clientID,
+			AuthMethod:   authMethod,
+			RedirectURIs: []string{"https://client.example/callback"},
+			GrantTypes:   []string{"authorization_code", "refresh_token"},
+			SigningAlg:   "RS256",
+			JWKSURI:      "https://client.example/jwks.json",
+		}), nil
+	}}
+	provider.clientAssertions = verifier
+	return provider, agent, clientID
+}
+
+func createCIMDAuthorizationCode(t *testing.T, provider *Provider, clientID string) (string, string, string) {
+	t.Helper()
+	verifier := "cimd-provider-verifier-12345678901234567890"
+	redirectURI := "https://client.example/callback"
+	code, err := provider.HandleAuthorize(context.Background(), clientID, redirectURI, "code", "read offline_access", "state", generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+	require.NoError(t, err)
+	return code, verifier, redirectURI
+}
+
+func TestProvider_PrivateKeyJWTAuthorizationCodeAndRefresh(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{}
+	provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "signed-code-assertion"}, code, redirectURI, codeVerifier)
+	require.NoError(t, err)
+	require.NotEmpty(t, response.AccessToken)
+	require.NotEmpty(t, response.RefreshToken)
+	assert.Equal(t, 1, verifier.calls)
+
+	refreshed, err := provider.HandleRefreshToken(context.Background(), clientID, ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "signed-refresh-assertion"}, response.RefreshToken, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, refreshed.AccessToken)
+	require.NotEmpty(t, refreshed.RefreshToken)
+	assert.NotEqual(t, response.RefreshToken, refreshed.RefreshToken)
+	assert.Equal(t, 2, verifier.calls)
+}
+
+func TestProvider_NoneCIMDClientDoesNotRequireVerifier(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{}
+	provider, _, clientID := newCIMDProviderForAssertionTest(t, "none", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{}, code, redirectURI, codeVerifier)
+	require.NoError(t, err)
+	require.NotEmpty(t, response.AccessToken)
+	assert.Zero(t, verifier.calls)
+}
+
+func TestProvider_ClientAssertionFailurePrecedesGrantAccess(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{err: ErrClientAuthentication}
+	provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+	credentials := ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "rejected-assertion"}
+	_, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, credentials, code, redirectURI, codeVerifier)
+	assert.ErrorIs(t, err, ErrInvalidClient)
+	assert.Equal(t, 1, verifier.calls)
+
+	verifier.err = nil
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "accepted-assertion"}, code, redirectURI, codeVerifier)
+	require.NoError(t, err, "failed client authentication must leave the authorization code untouched")
+	require.NotEmpty(t, response.AccessToken)
+}
+
+func TestProvider_AuthenticatedCIMDStillEnforcesPKCEAndRedirectURI(t *testing.T) {
+	t.Run("wrong code verifier", func(t *testing.T) {
+		provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", &providerAssertionVerifierFake{})
+		code, _, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+		_, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "valid-assertion"}, code, redirectURI, "wrong-verifier")
+		assert.Error(t, err)
+	})
+	t.Run("mismatched redirect URI", func(t *testing.T) {
+		provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", &providerAssertionVerifierFake{})
+		code, codeVerifier, _ := createCIMDAuthorizationCode(t, provider, clientID)
+		_, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "valid-assertion"}, code, "https://client.example/other", codeVerifier)
+		assert.Error(t, err)
 	})
 }
 
@@ -404,7 +523,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -412,13 +531,13 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.RefreshToken)
 
-		refreshed, err := provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, resp.RefreshToken, "")
+		refreshed, err := provider.HandleRefreshToken(context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: plaintext}, resp.RefreshToken, "")
 		require.NoError(t, err)
 		require.NotEmpty(t, refreshed.AccessToken)
 		require.NotEmpty(t, refreshed.RefreshToken)
 		assert.NotEqual(t, resp.RefreshToken, refreshed.RefreshToken)
 
-		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, resp.RefreshToken, "")
+		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: plaintext}, resp.RefreshToken, "")
 		assert.ErrorIs(t, err, ErrInvalidGrant)
 	})
 
@@ -447,7 +566,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -494,6 +613,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 			time.Hour,
 			"",
 			nil,
+			nil,
 			logger,
 		)
 		require.NoError(t, err)
@@ -520,7 +640,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			clientID,
-			"",
+			ports.ClientCredentials{},
 			code,
 			"https://client.example.com/callback",
 			verifier,
@@ -559,7 +679,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -597,7 +717,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			redirectURI,
 			verifier,
@@ -619,7 +739,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		}
 		require.NoError(t, provider.fositeStorage.codeRepo.Create(context.Background(), record))
 
-		response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, record.RedirectURI, "verifier")
+		response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, record.RedirectURI, "verifier")
 		assert.ErrorIs(t, err, ErrInvalidGrant)
 		assert.Nil(t, response)
 		stored, err := provider.fositeStorage.codeRepo.FindByCodeHash(context.Background(), record.CodeHash)
@@ -653,7 +773,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		_, err = provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -664,7 +784,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		_, err = provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -718,7 +838,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 			}
 
 			resp, err := provider.HandleAuthorizationCodeExchange(
-				context.Background(), agent.ID.String(), plaintext, rawCode, code.RedirectURI, verifier,
+				context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: plaintext}, rawCode, code.RedirectURI, verifier,
 			)
 			if tt.lifetime > 0 {
 				require.NoError(t, err)
@@ -762,7 +882,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		_, err = provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"https://attacker.example.com/callback",
 			verifier,
@@ -797,7 +917,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		_, err = provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			"wrong-verifier",
@@ -837,13 +957,13 @@ func TestProvider_AuthorizationCodeExchangeReusesClient(t *testing.T) {
 	provider.fositeStorage.clientResolver = countedResolver
 	provider.clientAuth.clientResolver = countedResolver
 
-	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 	require.NoError(t, err)
 	require.NotEmpty(t, response.AccessToken)
 	assert.Equal(t, 3, codeReads.reads, "fosite rechecks the code before token issuance and invalidation")
 	assert.Equal(t, 2, clientReads, "exchange resolves the client once and authenticates its credentials")
 
-	_, err = provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	_, err = provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 	assert.ErrorIs(t, err, ErrInvalidGrant, "a used code must still be rejected")
 }
 
@@ -883,7 +1003,7 @@ func TestProvider_HandleAuthorizationCodeExchange_ConcurrentReplay(t *testing.T)
 	_, err = provider.HandleAuthorizationCodeExchange(
 		context.Background(),
 		agent.ID.String(),
-		plaintext,
+		ports.ClientCredentials{Secret: plaintext},
 		code,
 		"http://localhost:8080/callback",
 		verifier,
@@ -995,7 +1115,7 @@ func TestProvider_AccessToken_ClaimsAndSignature(t *testing.T) {
 		resp, err := provider.HandleAuthorizationCodeExchange(
 			context.Background(),
 			agent.ID.String(),
-			plaintext,
+			ports.ClientCredentials{Secret: plaintext},
 			code,
 			"http://localhost:8080/callback",
 			verifier,
@@ -1020,7 +1140,7 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1064,7 +1184,7 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 		require.NoError(t, err)
 
 		resp, err := provider.HandleAuthorizationCodeExchange(
-			context.Background(), agent.ID.String(), plaintext,
+			context.Background(), agent.ID.String(), ports.ClientCredentials{Secret: plaintext},
 			code, "http://localhost:8080/callback", verifier,
 		)
 		require.NoError(t, err)
@@ -1084,7 +1204,7 @@ func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1120,7 +1240,7 @@ func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing
 	_, err = provider.HandleAuthorizationCodeExchange(
 		context.Background(),
 		agent.ID.String(),
-		plaintext,
+		ports.ClientCredentials{Secret: plaintext},
 		code,
 		"http://localhost:8080/callback",
 		verifier,

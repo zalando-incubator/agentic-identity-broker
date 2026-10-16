@@ -42,6 +42,10 @@ end-user `:8000` server and the admin `:14000` server.
 `httprc` resources refresh upstream data in the background. The adapter implements `ports.JWKSPort`.
 `published_adapter.go` provides the broker aggregated JWKS to in-process consumers.
 
+### CIMD (`cimd/`)
+
+The SSRF-hardened fetcher implements `ports.CIMDFetcher`. The builder creates separate fetcher instances for client documents and client key sets, with independent timeout and response-size limits.
+
 ### Storage (`storage/`)
 
 | Package | Purpose |
@@ -49,6 +53,8 @@ end-user `:8000` server and the admin `:14000` server.
 | `factory.go` | Backend selection (`memory`/`postgres`) → returns `Adapter` composite with all repos |
 | `memory/` | Maps + `sync.RWMutex`. All repository interfaces. Dev/testing. |
 | `postgres/` | `sqlx` + `pgx v5`. All repository interfaces. Production. |
+
+Both storage backends implement `ClientAssertionReplayRepository`. Replay rows are keyed by client ID and assertion `jti`, consumed atomically, and removed by `SessionCleanup` after expiry.
 
 Both adapters implement the required storage contracts. The migrations are in `migrations/`. They use go-migrate names.
 

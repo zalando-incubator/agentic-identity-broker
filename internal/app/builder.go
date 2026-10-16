@@ -130,6 +130,7 @@ type Builder struct {
 	staticWebResourcesPath string
 	tracerProvider         *sdktrace.TracerProvider // Optional: custom TracerProvider for testing
 	cimdFetcher            ports.CIMDFetcher        // Optional: overrides auto-created CIMD fetcher for testing
+	cimdKeySetFetcher      ports.CIMDFetcher        // Optional: overrides auto-created CIMD key-set fetcher for testing
 	jwksPublisher          ports.JWKSPublisherPort  // Optional: overrides JWKS publisher for testing
 }
 
@@ -177,6 +178,12 @@ func (b *Builder) WithTracerProvider(tp *sdktrace.TracerProvider) *Builder {
 // Only effective when cimd.enabled is true.
 func (b *Builder) WithCIMDFetcher(f ports.CIMDFetcher) *Builder {
 	b.cimdFetcher = f
+	return b
+}
+
+// WithCIMDKeySetFetcher injects a custom CIMD key-set fetcher for testing.
+func (b *Builder) WithCIMDKeySetFetcher(f ports.CIMDFetcher) *Builder {
+	b.cimdKeySetFetcher = f
 	return b
 }
 
@@ -511,6 +518,7 @@ func (b *Builder) Build() (*App, error) {
 
 	// Create OAuth2 service — mode-specific config drives all decisions.
 	var clientResolver ports.ClientResolver
+	var clientAssertionVerifier *oauth2server.ClientAssertionVerifier
 	{
 		oauth2Config := &oauth2service.OAuth2Config{
 			UpstreamAuthorizeEndpoint: ov.upstreamAuthorizeEndpoint,
@@ -558,6 +566,42 @@ func (b *Builder) Build() (*App, error) {
 			}
 			cimdSvc := domaincimd.NewService(activeFetcher, cimdCache, ov.cimdConfig.ClientNameBlocklist, b.logger)
 			clientResolver = oauth2service.NewAgentClientResolverWithCIMD(b.storage.Agents(), cimdSvc, b.logger)
+
+			keySetFetcher := b.cimdKeySetFetcher
+			if keySetFetcher == nil {
+				var concreteKeySetFetcher *adaptercmd.Fetcher
+				var fetchErr error
+				acceptedTypes := adaptercmd.WithAcceptedContentTypes("application/json", "application/jwk-set+json")
+				if b.config.Security.SkipCIMDSSRFValidation {
+					concreteKeySetFetcher, fetchErr = adaptercmd.NewFetcherInsecure(
+						ov.cimdConfig.ClientAuthentication.KeySetFetchTimeout,
+						int64(ov.cimdConfig.ClientAuthentication.KeySetMaxBytes),
+						acceptedTypes,
+					)
+				} else {
+					concreteKeySetFetcher, fetchErr = adaptercmd.NewFetcher(
+						ov.cimdConfig.ClientAuthentication.KeySetFetchTimeout,
+						int64(ov.cimdConfig.ClientAuthentication.KeySetMaxBytes),
+						ov.cimdConfig.SSRF.ExtraBlockedCIDRs,
+						acceptedTypes,
+					)
+				}
+				if fetchErr != nil {
+					return nil, fmt.Errorf("failed to create CIMD key-set fetcher: %w", fetchErr)
+				}
+				if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
+					concreteKeySetFetcher.WrapTransport(telemetryhttp.NewTransport)
+				}
+				keySetFetcher = concreteKeySetFetcher
+			}
+			keySetService := domaincimd.NewClientKeySetService(keySetFetcher, ov.cimdConfig.ClientAuthentication, nil, b.logger)
+			clientAssertionVerifier = oauth2server.NewClientAssertionVerifier(
+				keySetService,
+				b.storage.ClientAssertionReplays(),
+				[]string{ov.localIssuerURI, ov.localIssuerURI + "/oauth2/token"},
+				nil,
+				b.logger,
+			)
 			b.logger.Info("CIMD client resolution enabled",
 				"fetch_timeout", ov.cimdConfig.FetchTimeout,
 				"max_response_bytes", ov.cimdConfig.MaxResponseBytes,
@@ -884,6 +928,7 @@ func (b *Builder) Build() (*App, error) {
 			ov.localRefreshTokenTTL,
 			claimsExpr,
 			app.ConsentService,
+			clientAssertionVerifier,
 			b.logger,
 			b.storage,
 		)
@@ -1199,6 +1244,7 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.AuthorizationCodes(),
 			b.storage.PKCESessions(),
 			b.storage.RefreshTokenSessions(),
+			b.storage.ClientAssertionReplays(),
 			b.logger,
 		)
 		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())

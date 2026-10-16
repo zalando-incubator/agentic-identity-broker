@@ -27,6 +27,16 @@ func TestNewAdapter_Memory(t *testing.T) {
 	assert.NotNil(t, adapter.Users())
 }
 
+func TestNewAdapter_MemoryClientAssertionReplayRepository(t *testing.T) {
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	repo := adapter.ClientAssertionReplays()
+	require.NotNil(t, repo)
+	expiresAt := time.Now().Add(time.Minute)
+	require.NoError(t, repo.Consume(context.Background(), "client-a", "jti-1", expiresAt))
+	require.Error(t, repo.Consume(context.Background(), "client-a", "jti-1", expiresAt))
+}
+
 func TestNewAdapter_MemoryExposesSigningKeyBootstrapCoordinator(t *testing.T) {
 	config := &ports.StorageConfig{
 		Backend: "memory",
