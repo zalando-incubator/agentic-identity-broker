@@ -146,6 +146,395 @@ An operator runs the broker behind infrastructure such as a reverse proxy or ser
 - **Inline set that contains a broker public key**: The broker still never accepts broker-minted tokens as client assertions. The issuer check and the startup rejection of the broker's own issuer apply to every key source.
 - **Public key-set publication**: Keys from inline or file sources are verification inputs only. The broker never publishes them through its own public key-set endpoint.
 
+## Concrete Example Journeys *(mandatory)*
+
+All journeys share one cast. Every ID, key, coordinate, and token is synthetic. All times are 2026-10-16 UTC.
+
+- **Broker**: `https://broker.example.com`, `local` mode. Its own issuer is `https://broker.example.com`.
+- **Gateway**: agentgateway. It signs with a locally held P-256 key, `kid` `agentgateway-2026-10`, `alg` `ES256`. Its issuer value is `https://agentgateway.internal.example.com`, and no endpoint publishes metadata or keys there.
+- **User**: Alice, `alice@example.com`.
+- **Agent**: *Data Analysis Assistant*, `550e8400-e29b-41d4-a716-446655440000`.
+- **Service**: *GitHub Production*, resource `https://api.github.com`. Alice has an active grant for the agent and an active GitHub session.
+
+The public JWK Set used in the journeys is:
+
+```json
+{"keys":[{"kty":"EC","crv":"P-256","kid":"agentgateway-2026-10","use":"sig","alg":"ES256",
+          "x":"WbbXwVYGdJoP4Xm3qCkGvBRcRvKtEfXDbWYEksDTlKg","y":"SM9vRk8mL3Fh2N1t5dAqXyZr0bPcUeTgHjIoK4sVwQE"}]}
+```
+
+### Journey 1 — An operator trusts a locally signing gateway with an inline key set (User Story 1, Scenarios 1–3; User Story 3, Scenario 8)
+
+**Step 1 — 08:58:00: the operator configures the client-assertion trust anchor (excerpt)**
+
+```yaml
+oauth2_authorization_server:
+  mode: "local"                                   # the broker's issuer is https://broker.example.com
+  local:
+    token_claims_expression: '{"azp": agent.id, "aud": "token-exchange-broker"}'  # subject-token claims used in Step 3
+token_exchange:
+  client_assertion:
+    issuer_uri: "https://agentgateway.internal.example.com"  # expected iss; never contacted
+    jwks: |                                        # inline key set: no discovery, no key fetch
+      {"keys":[{"kty":"EC","crv":"P-256","kid":"agentgateway-2026-10","use":"sig","alg":"ES256",
+                "x":"WbbXwVYGdJoP4Xm3qCkGvBRcRvKtEfXDbWYEksDTlKg","y":"SM9vRk8mL3Fh2N1t5dAqXyZr0bPcUeTgHjIoK4sVwQE"}]}
+  claim_extraction:
+    principal_expression: "subject_token.sub"
+    agent_id_expression: "subject_token.azp"
+  authorization:
+    type: "cel"
+    cel:
+      expression: 'client_assertion.sub == "agentgateway"'   # only the gateway may exchange
+```
+
+**Step 2 — 08:58:01: the broker starts without any outbound key request**
+
+The broker validates the inline set and logs one entry. It sends no request to `agentgateway.internal.example.com`.
+
+```json
+{"level":"INFO","msg":"trust anchor key set loaded","trust_anchor":"token_exchange.client_assertion",
+ "key_source":"inline","key_count":1,"key_ids":["agentgateway-2026-10"]}
+```
+
+The log entry contains no `x` or `y` value.
+
+**Step 3 — 09:05:00: the gateway exchanges Alice's broker token for her GitHub token**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJhbGciOiJFUzI1NiIsImtpZCI6ImJyb2tlci0xIn0.SYNTHETIC-SUBJECT.sig
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&resource=https%3A%2F%2Fapi.github.com
+&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+&client_assertion=eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50Z2F0ZXdheS0yMDI2LTEwIn0.SYNTHETIC-CA1.sig
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+
+{
+  "access_token": "gho_SYNTHETICgithubtoken000000000000000",
+  "token_type": "Bearer",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "expires_in": 3600
+}
+```
+
+Line breaks in the form body are for display only. Decoded `client_assertion` (synthetic):
+
+```json
+{
+  "header": { "alg": "ES256", "kid": "agentgateway-2026-10" },
+  "payload": {
+    "iss": "https://agentgateway.internal.example.com",
+    "sub": "agentgateway",
+    "aud": "token-exchange-broker",
+    "iat": 1792141500,
+    "exp": 1792141800,
+    "jti": "4d0b6a2e-7f3c-4a1e-9b8d-2c5e6f7a8b9c"
+  }
+}
+```
+
+The broker finds `kid` `agentgateway-2026-10` in the inline set and verifies the signature. It checks `iss` against `issuer_uri` and `aud` against `token_exchange.expected_audience` (default `token-exchange-broker`), exactly as for a remote key set. Decoded `subject_token` (synthetic, minted by the broker):
+
+```json
+{
+  "header": { "alg": "ES256", "kid": "broker-1" },
+  "payload": {
+    "iss": "https://broker.example.com",
+    "sub": "alice@example.com",
+    "aud": "token-exchange-broker",
+    "azp": "550e8400-e29b-41d4-a716-446655440000",
+    "iat": 1792141080,
+    "exp": 1792144680
+  }
+}
+```
+
+The subject token still verifies against the broker's own published keys, not against the inline set.
+
+**Step 4 — 09:10:00: a credential signed with an unknown key is rejected**
+
+A client assertion with header `{"alg":"ES256","kid":"rogue-2026-10"}` and otherwise identical claims is sent in the same request.
+
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{"error": "invalid_client", "error_description": "client_assertion validation failed"}
+```
+
+This is the same response an unknown remote key produces. No token is issued.
+
+**Observable result**: the gateway exchanges tokens with no key-set endpoint in the deployment. `GET https://broker.example.com/oauth2/jwks.json` does not list `agentgateway-2026-10`.
+
+### Journey 2 — An operator rotates a key-set file mounted from a cluster Secret (User Story 2, Scenarios 1, 3, 4, 5, 9)
+
+**Step 1 — 08:50:00: the operator stores the public key set in a Secret and installs the chart**
+
+```bash
+kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./agentgateway-jwks.json
+```
+
+```yaml
+# Helm values (excerpt)
+broker:
+  security:
+    trustMaterial:
+      directory: "/etc/agentic-identity-broker/trust"   # becomes security.trust_material_dir
+      sources:
+        - secret:
+            name: agentgateway-jwks                       # existing Secret, no custom image
+            items:
+              - key: jwks.json
+                path: agentgateway-jwks.json
+  tokenExchange:
+    clientAssertion:
+      issuerUri: "https://agentgateway.internal.example.com"
+      jwksFile: "/etc/agentic-identity-broker/trust/agentgateway-jwks.json"
+      jwksMinRefresh: "5m"                                # re-read every 5 minutes
+      jwksMaxRefresh: "1h"                                # serve the last valid set for at most 1 hour after a good read
+```
+
+The kubelet projects the Secret as `/etc/agentic-identity-broker/trust/agentgateway-jwks.json` → `..data/agentgateway-jwks.json` → `..2026_10_16_08_50_00.123/agentgateway-jwks.json`. All links are relative and inside the trust directory, so startup succeeds and logs:
+
+```json
+{"level":"INFO","msg":"trust anchor key set loaded","trust_anchor":"token_exchange.client_assertion",
+ "key_source":"file","path":"/etc/agentic-identity-broker/trust/agentgateway-jwks.json",
+ "key_count":1,"key_ids":["agentgateway-2026-10"]}
+```
+
+**Step 2 — 09:12:00: the operator adds a new key and later removes the old one**
+
+The operator updates the Secret so that it holds `agentgateway-2026-10` and `agentgateway-2027-01`. The kubelet swaps `..data` to a new timestamped directory. At the first re-read after the swap, 09:15:00 in this example, the broker logs:
+
+```json
+{"level":"INFO","msg":"trust anchor key set changed","trust_anchor":"token_exchange.client_assertion",
+ "key_source":"file","path":"/etc/agentic-identity-broker/trust/agentgateway-jwks.json",
+ "key_count":2,"added_key_ids":["agentgateway-2027-01"],"removed_key_ids":[]}
+```
+
+When a later update removes `agentgateway-2026-10`, assertions signed by that key receive the Step 4 `401 invalid_client` response of Journey 1 after the next re-read.
+
+**Step 3 — 09:20:00: a bad Secret update fails a re-read**
+
+An operator accidentally stores `{"keys":[` in the Secret. The re-read fails. The broker keeps the last valid set and logs:
+
+```json
+{"level":"WARN","msg":"trust anchor key set re-read failed","trust_anchor":"token_exchange.client_assertion",
+ "key_source":"file","path":"/etc/agentic-identity-broker/trust/agentgateway-jwks.json",
+ "error_kind":"not_a_jwk_set","last_success_at":"2026-10-16T09:15:00Z","fails_closed_at":"2026-10-16T10:15:00Z"}
+```
+
+```http
+GET /health HTTP/1.1
+Host: broker.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"status":"healthy","timestamp":"2026-10-16T09:20:01Z","uptime_seconds":1801,
+ "components":{"trust_anchor_key_files":"degraded"}}
+```
+
+Token exchanges still succeed with the keys from the 09:15:00 read. If no valid re-read happens before 10:15:00, client-assertion verification fails closed:
+
+```http
+HTTP/1.1 500 Internal Server Error
+Content-Type: application/json
+
+{"error": "server_error", "error_description": "failed to fetch JWKS for client assertion validation"}
+```
+
+**Step 4 — 09:24:00: the operator restores the Secret**
+
+At the first re-read after the kubelet projects the restored Secret, 09:25:00 in this example, the broker logs `trust anchor key set recovered`, and `/health` reports `"trust_anchor_key_files":"healthy"`.
+
+**Observable result**: key rotation needs no restart, a bad update is visible as degraded health without interrupting traffic, and the broker never serves keys from a read older than one hour.
+
+### Journey 3 — An operator's mistakes stop startup without leaking keys (User Story 3, Scenarios 1 and 3; User Story 2, Scenarios 6 and 8)
+
+**Step 1 — two key sources on one trust anchor**
+
+```yaml
+token_exchange:
+  client_assertion:
+    issuer_uri: "https://agentgateway.internal.example.com"
+    jwks_uri: "https://agentgateway.internal.example.com/keys"
+    jwks: '{"keys":[...]}'
+```
+
+```text
+token_exchange.client_assertion: only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)
+```
+
+**Step 2 — a private key pasted as `jwks`**
+
+The pasted JWK also has the private member `"d":"q7T1nX9vYw3mZ4pL0aR8sK2eB6cJ5hU1oN3gF7iD9tE"`.
+
+```text
+token_exchange.client_assertion.jwks: key set contains private key material; only public keys are allowed
+```
+
+Neither the error nor any log line contains the `d`, `x`, or `y` value.
+
+**Step 3 — a key-set path outside the trust directory**
+
+```yaml
+security:
+  trust_material_dir: "/etc/agentic-identity-broker/trust"
+token_exchange:
+  client_assertion:
+    issuer_uri: "https://agentgateway.internal.example.com"
+    jwks_file: "/etc/agentic-identity-broker/config.yaml"
+```
+
+```text
+token_exchange.client_assertion.jwks_file: jwks_file "/etc/agentic-identity-broker/config.yaml" is outside security.trust_material_dir "/etc/agentic-identity-broker/trust"
+```
+
+The broker does not open the file. Without `security.trust_material_dir`, the same configuration fails with `token_exchange.client_assertion.jwks_file: jwks_file requires security.trust_material_dir to be set`.
+
+**Observable result**: each mistake stops the process before it accepts traffic, names the setting, and reveals no key material.
+
+### Journey 4 — An impersonation rule trusts the gateway's inline keys (User Story 4, Scenario 1)
+
+Additional cast: the target agent allows scope `read`. Alice has delegated to the agent (ADR 032).
+
+**Step 1 — rule configuration (excerpt)**
+
+```yaml
+oauth2_authorization_server:
+  local:
+    token_claims_expression: '{"aud": "https://api.example.com"}'
+  impersonation:
+    audience_prefix: "https://broker.example.com/impersonation"
+    rules:
+      - name: agentgateway
+        roles:
+          client_assertion: { expected_audience: "https://broker.example.com/impersonation", principal_expression: "client_assertion.sub" }
+          actor:            { expected_audience: "https://broker.example.com/impersonation", principal_expression: "actor_token.sub" }
+          subject:          { expected_audience: "https://broker.example.com/impersonation", principal_expression: "subject_token.sub" }
+        trusted_issuers:
+          - issuer_uri: "https://agentgateway.internal.example.com"
+            jwks: '{"keys":[{"kty":"EC","crv":"P-256","kid":"agentgateway-2026-10","use":"sig","alg":"ES256","x":"WbbXwVYGdJoP4Xm3qCkGvBRcRvKtEfXDbWYEksDTlKg","y":"SM9vRk8mL3Fh2N1t5dAqXyZr0bPcUeTgHjIoK4sVwQE"}]}'
+            allowed_algorithms: ["ES256"]                # an RS256 credential is rejected (Scenario 3)
+            signs_roles: ["client_assertion", "actor", "subject"]
+        authorization:
+          type: cel
+          cel: { expression: 'client_assertion.sub == "agentgateway"' }
+```
+
+**Step 2 — 09:30:00: the gateway requests a token for Alice**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&audience=https%3A%2F%2Fbroker.example.com%2Fimpersonation%2F550e8400-e29b-41d4-a716-446655440000
+&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+&client_assertion=eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50Z2F0ZXdheS0yMDI2LTEwIn0.SYNTHETIC-CA2.sig
+&actor_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+&actor_token=eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50Z2F0ZXdheS0yMDI2LTEwIn0.SYNTHETIC-ACTOR.sig
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+&subject_token=eyJhbGciOiJFUzI1NiIsImtpZCI6ImFnZW50Z2F0ZXdheS0yMDI2LTEwIn0.SYNTHETIC-SUBJ.sig
+&scope=read
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6ImJyb2tlci0xIn0.SYNTHETIC-IMP.sig",
+  "token_type": "Bearer",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "expires_in": 3600,
+  "scope": "read"
+}
+```
+
+All three credentials carry `iss` `https://agentgateway.internal.example.com`, `kid` `agentgateway-2026-10`, `alg` `ES256`, and `aud` `https://broker.example.com/impersonation`. The client assertion has `sub` `agentgateway`, the actor token `sub` `support-bot`, and the subject token `sub` `alice@example.com`. Decoded `access_token` (synthetic):
+
+```json
+{
+  "header": { "alg": "ES256", "kid": "broker-1" },
+  "payload": {
+    "iss": "https://broker.example.com",
+    "sub": "alice@example.com",
+    "aud": "https://api.example.com",
+    "iat": 1792143000,
+    "exp": 1792146600,
+    "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "scope": "read",
+    "act": { "iss": "https://agentgateway.internal.example.com", "sub": "support-bot" }
+  }
+}
+```
+
+**Observable result**: impersonation works exactly as with a remote key set, and the broker made no discovery request for the gateway issuer.
+
+### Journey 5 — A service mesh's identity JWT verifies against a key-set file (User Story 5, Scenario 1)
+
+Additional cast: the mesh signs identity JWTs with `kid` `mesh-2026-10`, `alg` `ES256`. Its public set is projected as `/etc/agentic-identity-broker/trust/mesh-jwks.json`.
+
+**Step 1 — configuration (excerpt)**
+
+```yaml
+security:
+  trust_material_dir: "/etc/agentic-identity-broker/trust"
+server:
+  enduser:
+    authentication:
+      jwt:
+        header_name: Authorization
+        verification: jwks                       # signature verification stays mandatory
+        jwks_file: "/etc/agentic-identity-broker/trust/mesh-jwks.json"   # re-read every 5 minutes
+        expected_issuer: "https://mesh.internal.example.com"
+        expected_audience: "agentic-identity-broker"
+        claim_extraction:
+          principal_expression: "claims.email"
+          display_name_expression: "claims.name"
+```
+
+**Step 2 — 09:30:00: Alice's browser request arrives through the mesh**
+
+```http
+GET /api/me HTTP/1.1
+Host: broker.example.com
+Authorization: Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6Im1lc2gtMjAyNi0xMCJ9.SYNTHETIC-MESH.sig
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"data": {"principal": "alice@example.com", "displayName": "Alice Example", "email": "alice@example.com"}}
+```
+
+Decoded mesh JWT (synthetic):
+
+```json
+{
+  "header": { "alg": "ES256", "kid": "mesh-2026-10" },
+  "payload": {
+    "iss": "https://mesh.internal.example.com",
+    "sub": "8c1f2e3d-4b5a-6978-8a9b-0c1d2e3f4a5b",
+    "aud": "agentic-identity-broker",
+    "iat": 1792142990,
+    "exp": 1792143290,
+    "email": "alice@example.com",
+    "name": "Alice Example"
+  }
+}
+```
+
+**Observable result**: the broker derives Alice's principal from a JWT whose public key lives only in a mounted file. A JWT with an unknown `kid` returns `401 Unauthorized`, as it does for a remote key set.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
