@@ -172,7 +172,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Constitution Reference**: Principle IX
 
-- [ ] T026 Record "no schema change" in the PR description: no migration, repository, or persisted entity. Per [data-model.md](./data-model.md), every concept is built from configuration at startup (Principle IX).
+- [X] T026 Record "no schema change" in the PR description: no migration, repository, or persisted entity. Per [data-model.md](./data-model.md), every concept is built from configuration at startup (Principle IX).
 
 **Checkpoint**: Confirmed that no database changes are needed.
 
@@ -180,7 +180,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
 
 **Constitution Reference**: Principle XI
 
-- [ ] T027 Record "no UI change" in the PR description. The feature changes no React code and has no UI state, so no Wireloom wireframes, Playwright tests, or screenshots apply (Principles XI, XIII, XIV).
+- [X] T027 Record "no UI change" in the PR description. The feature changes no React code and has no UI state, so no Wireloom wireframes, Playwright tests, or screenshots apply (Principles XI, XIII, XIV).
 
 **Checkpoint**: Confirmed that no design-system work is needed.
 
@@ -530,9 +530,9 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 **Purpose**: Success criteria that span the stories.
 
-- [ ] T085 Run `ginkgo -v --label-filter="inline-jwks-trust-anchors-parity" ./tests/e2e/`. The SC-003 table must give identical outcomes for remote, inline, and file sources across all five credentials.
-- [ ] T086 Run the existing token-exchange, approval, impersonation, and JWT pre-authentication E2E suites with `ginkgo -v ./tests/e2e/`. They must pass with no change to any existing test file (SC-005).
-- [ ] T087 [P] Walk through [quickstart.md](./quickstart.md) Scenarios A–D and §5 against a local binary. Confirm SC-001, SC-002, SC-006, and SC-007, and record any discrepancy as a spec, contract, or code fix in this PR.
+- [X] T085 Run `ginkgo -v --label-filter="inline-jwks-trust-anchors-parity" ./tests/e2e/`. The SC-003 table must give identical outcomes for remote, inline, and file sources across all five credentials.
+- [X] T086 Run the existing token-exchange, approval, impersonation, and JWT pre-authentication E2E suites with `ginkgo -v ./tests/e2e/`. They must pass with no change to any existing test file (SC-005).
+- [X] T087 [P] Walk through [quickstart.md](./quickstart.md) Scenarios A–D and §5 against a local binary. Confirm SC-001, SC-002, SC-006, and SC-007, and record any discrepancy as a spec, contract, or code fix in this PR.
 
 ---
 
@@ -542,61 +542,61 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Design Phase Verification [MANDATORY]
 
-- [ ] T088 Verify that every task traces to an FR, SR, SC, acceptance scenario, or binding constraint, and that no deferred finding from [research.md](./research.md) became a task (Feature Scope).
-- [ ] T089 Verify that `ARCHITECTURE.md` contains the Key Set Source, Local Key Set, and Trust Directory glossary entries and the updated trust-anchor entries (Principle V).
-- [ ] T090 Verify that `examples/config/trust-anchor-local-jwks.yaml` exists and loads, and that `examples/config/README.md` references it (Principle VII).
-- [ ] T091 Verify that `api/enduser/openapi.yaml` documents `trust_anchor_key_files`, and that the PR description records the stakeholder confirmation from T022 (Principles IV and X).
-- [ ] T092 Verify that the PR description records "no schema change" (T026) and "no UI change" (T027) (Principles IX and XI).
-- [ ] T093 Verify that `specs/052-inline-jwks-trust-anchors/spec.md` contains the five linked Concrete Example Journeys, with configuration, HTTP exchanges, and decoded JWT claims that match the implemented behaviour and OpenAPI. No Wireloom wireframes are required because the feature has no UI (Principle XIV).
-- [ ] T094 Verify that `tests/e2e/` holds exactly 30 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
+- [X] T088 Verify that every task traces to an FR, SR, SC, acceptance scenario, or binding constraint, and that no deferred finding from [research.md](./research.md) became a task (Feature Scope).
+- [X] T089 Verify that `ARCHITECTURE.md` contains the Key Set Source, Local Key Set, and Trust Directory glossary entries and the updated trust-anchor entries (Principle V).
+- [X] T090 Verify that `examples/config/trust-anchor-local-jwks.yaml` exists and loads, and that `examples/config/README.md` references it (Principle VII).
+- [X] T091 Verify that `api/enduser/openapi.yaml` documents `trust_anchor_key_files`, and that the PR description records the stakeholder confirmation from T022 (Principles IV and X).
+- [X] T092 Verify that the PR description records "no schema change" (T026) and "no UI change" (T027) (Principles IX and XI).
+- [X] T093 Verify that `specs/052-inline-jwks-trust-anchors/spec.md` contains the five linked Concrete Example Journeys, with configuration, HTTP exchanges, and decoded JWT claims that match the implemented behaviour and OpenAPI. No Wireloom wireframes are required because the feature has no UI (Principle XIV).
+- [X] T094 Verify that `tests/e2e/` holds exactly 30 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
 
 ### Implementation Phase Verification [MANDATORY]
 
 **Feature Scope**:
 
-- [ ] T095 Verify that the four deferred findings are not implemented, and that any user-approved issue URLs appear only under **Future Work** below.
+- [X] T095 Verify that the four deferred findings are not implemented, and that any user-approved issue URLs appear only under **Future Work** below.
 
 **API & Documentation** (Principles IV, X):
 
-- [ ] T096 [P] Verify that the `/health` response matches [contracts/health-endpoint.md](./contracts/health-endpoint.md) exactly. The component is present only with a file source, has the values `healthy` and `degraded`, and does not change the HTTP status.
-- [ ] T097 Verify that `docs/api/health.md` documents the `trust_anchor_key_files` component with examples that match `api/enduser/openapi.yaml`, and that `just docs-build` renders the updated Redoc `/health` page (Principle IV).
+- [X] T096 [P] Verify that the `/health` response matches [contracts/health-endpoint.md](./contracts/health-endpoint.md) exactly. The component is present only with a file source, has the values `healthy` and `degraded`, and does not change the HTTP status.
+- [X] T097 Verify that `docs/api/health.md` documents the `trust_anchor_key_files` component with examples that match `api/enduser/openapi.yaml`, and that `just docs-build` renders the updated Redoc `/health` page (Principle IV).
 
 **Architecture & Documentation** (Principle II):
 
-- [ ] T098 Verify that ADR 040 is Accepted, that its decisions match the merged code (Principle II: the final ADR and code must agree before merge), and that it is listed in `ARCHITECTURE.md` and the root `AGENTS.md`.
-- [ ] T099 [P] Verify that `internal/AGENTS.md`, `internal/domain/AGENTS.md`, and `internal/adapters/AGENTS.md` describe `trustanchor/`, `StaticAdapter`, `FileAdapter`, and `TrustDirectory`.
+- [X] T098 Verify that ADR 040 is Accepted, that its decisions match the merged code (Principle II: the final ADR and code must agree before merge), and that it is listed in `ARCHITECTURE.md` and the root `AGENTS.md`.
+- [X] T099 [P] Verify that `internal/AGENTS.md`, `internal/domain/AGENTS.md`, and `internal/adapters/AGENTS.md` describe `trustanchor/`, `StaticAdapter`, `FileAdapter`, and `TrustDirectory`.
 
 **Configuration** (Principle VII):
 
-- [ ] T100 [P] Verify that all seven keys flow only through `internal/ports/config.go`, `internal/config/loader.go`, and `internal/config/validator.go`, with no ad-hoc config loading.
-- [ ] T101 Verify that the Helm values, schema, ConfigMap and Deployment templates, and README in `charts/agentic-identity-broker/` cover every chart-managed setting from [contracts/helm-values.md](./contracts/helm-values.md), and that `helm lint` passes.
+- [X] T100 [P] Verify that all seven keys flow only through `internal/ports/config.go`, `internal/config/loader.go`, and `internal/config/validator.go`, with no ad-hoc config loading.
+- [X] T101 Verify that the Helm values, schema, ConfigMap and Deployment templates, and README in `charts/agentic-identity-broker/` cover every chart-managed setting from [contracts/helm-values.md](./contracts/helm-values.md), and that `helm lint` passes.
 
 **Database & Persistence** (Principle IX):
 
-- [ ] T102 Verify that no migration, repository, or storage adapter changed (`git diff --stat origin/main -- migrations/ internal/adapters/storage/ internal/ports/storage.go` is empty).
+- [X] T102 Verify that no migration, repository, or storage adapter changed (`git diff --stat origin/main -- migrations/ internal/adapters/storage/ internal/ports/storage.go` is empty).
 
 **Security** (Principles I, III):
 
-- [ ] T103 Verify fail-closed behaviour. No local-source failure falls back to discovery or another source, and the self-trust check applies to every source (SR-001, SR-005, FR-014).
-- [ ] T104 [P] Verify that only jwx and `os.Root` are used for key parsing, verification, and containment, with no custom cryptography or path resolution (SR-003, Principle III).
-- [ ] T105 [P] Verify the redaction guarantee. Grep the E2E and unit test logs to confirm that no error, log line, or `/health` output contains inline content, file contents, or key-member values (FR-008, SR-004).
+- [X] T103 Verify fail-closed behaviour. No local-source failure falls back to discovery or another source, and the self-trust check applies to every source (SR-001, SR-005, FR-014).
+- [X] T104 [P] Verify that only jwx and `os.Root` are used for key parsing, verification, and containment, with no custom cryptography or path resolution (SR-003, Principle III).
+- [X] T105 [P] Verify the redaction guarantee. Grep the E2E and unit test logs to confirm that no error, log line, or `/health` output contains inline content, file contents, or key-member values (FR-008, SR-004).
 
 **Architecture Patterns** (Principle VI):
 
-- [ ] T106 Verify hexagonal boundaries:
+- [X] T106 Verify hexagonal boundaries:
   - `internal/domain/trustanchor/` has no I/O imports;
   - `internal/adapters/jwtauth/` does not import `internal/adapters/jwks/`;
   - all wiring is in `internal/app/builder.go` (Principles VI and XII).
 
 **Testing** (Principle VIII):
 
-- [ ] T107 Verify that unit tests were written first and failed before each implementation (red-green TDD) and changed minimally afterwards. Every new package has branch-level coverage of `trustanchor` and of every `FileAdapter` state transition. No Bash script validates correctness.
-- [ ] T108 Run `just check`, `just test`, `just test-integration`, and `just verify`, and confirm that all of them are green.
+- [X] T107 Verify that unit tests were written first and failed before each implementation (red-green TDD) and changed minimally afterwards. Every new package has branch-level coverage of `trustanchor` and of every `FileAdapter` state transition. No Bash script validates correctness.
+- [X] T108 Run `just check`, `just test`, `just test-integration`, and `just verify`, and confirm that all of them are green.
 
 **E2E Acceptance Testing** (Principle XIII):
 
-- [ ] T109 Verify that each `It()` maps to exactly one spec scenario, uses `Describe` → `Context` → `It`, cites its scenario ID in a comment, and changed only in fixtures during implementation.
-- [ ] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 30 scenarios and the SC-003 parity table.
+- [X] T109 Verify that each `It()` maps to exactly one spec scenario, uses `Describe` → `Context` → `It`, cites its scenario ID in a comment, and changed only in fixtures during implementation.
+- [X] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 30 scenarios and the SC-003 parity table.
 
 ---
 

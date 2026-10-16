@@ -444,7 +444,7 @@ Key settings:
 
 **Usage:**
 ```bash
-./agentic-identity-broker --config ./examples/config/trust-anchor-local-jwks.yaml
+IDENTITY_BROKER_CONFIG_PATH=./examples/config/trust-anchor-local-jwks.yaml ./agentic-identity-broker
 ```
 
 ### Hybrid Mode (`oauth2-hybrid-mode.yaml`)

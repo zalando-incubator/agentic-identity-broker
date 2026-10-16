@@ -76,7 +76,7 @@ public JWK Set in the steps below.
 1. Configure local mode and token exchange. Set `token_exchange.client_assertion.issuer_uri` to an
    unreachable host such as `https://agentgateway.invalid`. Set `token_exchange.client_assertion.jwks`
    to the public JWK Set.
-2. Start `./bin/agentic-identity-broker --config <file>`.
+2. Start `IDENTITY_BROKER_CONFIG_PATH=<file> ./bin/agentic-identity-broker`.
 3. Expected: startup succeeds. The log has one `trust anchor key set loaded` event with
    `key_source=inline`, `key_count=1`, and the key identifier. No log line contains the `x` or `y`
    coordinate. No DNS lookup or connection for `agentgateway.invalid` occurs.

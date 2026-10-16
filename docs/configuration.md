@@ -1202,7 +1202,7 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 
 #### jwks, jwks_file, and security.trust_material_dir
 
-**Description**: A trust anchor is an authority whose signed credentials the broker verifies. Each trust anchor takes its public verification keys from one **key set source**: a remote `jwks_uri` (or discovery), an inline `jwks` document, or a `jwks_file` that the broker reads from the trust directory. Inline and file sources need no network-reachable key-publishing service and cause no outbound request. See [ADR 040](../adrs/040-trust-anchor-local-key-sets.md).
+**Description**: A trust anchor is an authority whose signed credentials the broker verifies. Each trust anchor takes its public verification keys from one **key set source**: a remote `jwks_uri` (or discovery), an inline `jwks` document, or a `jwks_file` that the broker reads from the trust directory. Inline and file sources need no network-reachable key-publishing service and cause no outbound request. See `adrs/040-trust-anchor-local-key-sets.md`.
 
 The in-scope trust anchors are:
 
