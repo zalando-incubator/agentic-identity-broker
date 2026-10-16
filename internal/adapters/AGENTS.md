@@ -52,6 +52,10 @@ Trust anchors can use a local key set instead of a remote `jwks_uri` ([ADR 040](
 
 The builder creates these adapters and injects them. `adapters/jwtauth/` receives a `ports.JWKSPort` through its config and never imports `adapters/jwks/`. Errors and logs never include document content or key material.
 
+### Outbound HTTP (`outboundhttp/`)
+
+The SSRF-hardened fetcher implements `ports.CIMDFetcher`. The builder creates separate fetcher instances for client documents and client key sets, with independent accepted media types, timeout, and response-size limits.
+
 ### Storage (`storage/`)
 
 | Package | Purpose |

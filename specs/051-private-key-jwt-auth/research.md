@@ -86,7 +86,7 @@ All technical-context unknowns are resolved. Evidence paths are relative to the 
 
 **Rationale:** SSRF is enforced in the dialer `Control` hook after DNS resolution, which covers every connection, and redirects are never followed (`fetcher.go:96-98, 158-173`). That meets FR-018 without new network code. Timeout and size are baked into each instance (defaults 1 s and 5 KiB), so key sets, which the spec budgets at 5 s and 64 KiB, need their own instance. The current fetcher rejects any `Content-Type` that does not start with `application/json` (`fetcher.go:136-138`), which would reject RFC 7517 `application/jwk-set+json`.
 
-**Alternatives considered:** `jwx-go/jwkfetch` cache, already used by `jwtauth`, and the `jwk.Cache` adapter pattern of ADR 008 (Accepted, merged). Rejected for client key sets: the CIMD fetcher does not expose its `*http.Client`, and neither offers the per-client "refetch at most once per interval on unknown `kid`, fail closed" behaviour or the audited SSRF dialer. ADR 041 records this and supersedes ADR 008 in part where they differ (task T007). A fully custom HTTP client: rejected, it would duplicate and weaken the audited SSRF path.
+**Alternatives considered:** `jwx-go/jwkfetch` cache, already used by `jwtauth`, and the `jwk.Cache` adapter pattern of ADR 008 (Accepted, merged). Rejected for client key sets: the CIMD fetcher does not expose its `*http.Client`, and neither offers the per-client "refetch at most once per interval on unknown `kid`, fail closed" behaviour or the audited SSRF dialer. ADR 043 records this and supersedes ADR 008 in part where they differ (task T007). A fully custom HTTP client: rejected, it would duplicate and weaken the audited SSRF path.
 
 ## D7 – Key-set cache and refetch policy
 
@@ -160,5 +160,5 @@ All technical-context unknowns are resolved. Evidence paths are relative to the 
 
 - Migration `035_add_cimd_private_key_jwt_authentication` belongs to spec 046 (outbound) and is unrelated.
 - After rebase, migrations 038 and 039 are occupied, so this feature uses migrations 040 and 041. The `refresh_token_sessions` change must still be reviewed against feature 049.
-- ADR 040 is occupied by the protected-resource discovery decision, so this feature uses ADR 041. The earlier ADR 040 draft on the reused branch is discarded.
+- ADR 040 is occupied by the protected-resource discovery decision, ADR 041 by the OAuth2 client-secret file override decision, and ADR 042 by the Agent-allowlisted private-use redirect decision, so this feature uses ADR 043. The earlier ADR 040 draft on the reused branch is discarded.
 - `docs/api/enduser-api.md` exists and gets the client-authentication section.

@@ -2,7 +2,7 @@
 
 **Feature**: `051-private-key-jwt-auth` | **Date**: 2026-10-15
 **Canonical source**: [`api/enduser/openapi.yaml`](../../../api/enduser/openapi.yaml), `OAuth2MetadataResponse` and the metadata endpoint example
-**Status**: **PROPOSED**. Requires stakeholder confirmation before implementation (API-003).
+**Status**: Confirmed by the user on 2026-10-16. The authorization-server metadata delta is approved as proposed (API-003).
 
 ## Summary of the delta
 

@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -25,13 +28,26 @@ type Fetcher struct {
 	client           *http.Client
 	blocklist        netpolicy.SSRFBlocklist
 	maxResponseBytes int64
+	acceptedTypes    []string
+}
+
+// FetcherOption configures accepted response media types.
+type FetcherOption func(*Fetcher)
+
+// WithAcceptedContentTypes replaces the default application/json allowlist.
+func WithAcceptedContentTypes(contentTypes ...string) FetcherOption {
+	return func(fetcher *Fetcher) {
+		if len(contentTypes) > 0 {
+			fetcher.acceptedTypes = append([]string(nil), contentTypes...)
+		}
+	}
 }
 
 // NewFetcher creates a new SSRF-hardened CIMD fetcher.
 // fetchTimeout is the maximum time to wait for a response.
 // maxResponseBytes is the maximum allowed response body size.
 // extraBlockedCIDRs are operator-configured additional blocked CIDR ranges.
-func NewFetcher(fetchTimeout time.Duration, maxResponseBytes int64, extraBlockedCIDRs []string) (*Fetcher, error) {
+func NewFetcher(fetchTimeout time.Duration, maxResponseBytes int64, extraBlockedCIDRs []string, options ...FetcherOption) (*Fetcher, error) {
 	blocklist, err := netpolicy.NewSSRFBlocklist(extraBlockedCIDRs)
 	if err != nil {
 		return nil, fmt.Errorf("building SSRF blocklist: %w", err)
@@ -60,13 +76,13 @@ func NewFetcher(fetchTimeout time.Duration, maxResponseBytes int64, extraBlocked
 		Timeout:   fetchTimeout,
 	}
 
-	return NewFetcherWithClient(client, blocklist, maxResponseBytes), nil
+	return NewFetcherWithClient(client, blocklist, maxResponseBytes, options...), nil
 }
 
 // NewFetcherInsecure creates a fetcher with SSRF protection and TLS verification disabled.
 // For development/test environments only — allows fetching from private IPs and
 // self-signed certificates. NEVER use in production.
-func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64) (*Fetcher, error) {
+func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64, options ...FetcherOption) (*Fetcher, error) {
 	// Empty blocklist: allow all IPs including RFC 1918 ranges.
 	blocklist := netpolicy.SSRFBlocklist{}
 
@@ -87,20 +103,27 @@ func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64) (*Fe
 		Timeout:   fetchTimeout,
 	}
 
-	return NewFetcherWithClient(client, blocklist, maxResponseBytes), nil
+	return NewFetcherWithClient(client, blocklist, maxResponseBytes, options...), nil
 }
 
 // NewFetcherWithClient creates a Fetcher with an injected HTTP client, for testing.
 // The no-redirect policy is always enforced regardless of the client's CheckRedirect setting.
-func NewFetcherWithClient(client *http.Client, blocklist netpolicy.SSRFBlocklist, maxResponseBytes int64) *Fetcher {
+func NewFetcherWithClient(client *http.Client, blocklist netpolicy.SSRFBlocklist, maxResponseBytes int64, options ...FetcherOption) *Fetcher {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &Fetcher{
+	fetcher := &Fetcher{
 		client:           client,
 		blocklist:        blocklist,
 		maxResponseBytes: maxResponseBytes,
+		acceptedTypes:    []string{"application/json"},
 	}
+	for _, option := range options {
+		if option != nil {
+			option(fetcher)
+		}
+	}
+	return fetcher
 }
 
 // WrapTransport replaces the fetcher's HTTP transport with wrap(existingTransport).
@@ -121,25 +144,33 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*ports.CIMDFetchRes
 	if err != nil {
 		return nil, fmt.Errorf("building CIMD request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", strings.Join(f.acceptedTypes, ", "))
 
 	resp, err := f.client.Do(req)
 	if err != nil {
+		var ssrfErr *ports.SSRFBlockedError
+		if !errors.As(err, &ssrfErr) {
+			return nil, &ports.CIMDUnavailableError{Cause: err}
+		}
 		return nil, fmt.Errorf("fetching CIMD document: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return nil, &ports.CIMDUnavailableError{Cause: fmt.Errorf("CIMD endpoint returned status %d", resp.StatusCode)}
+		}
 		return nil, fmt.Errorf("CIMD endpoint returned status %d", resp.StatusCode)
 	}
 
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		return nil, fmt.Errorf("CIMD endpoint returned non-JSON Content-Type: %q", ct)
+	contentType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || !slices.Contains(f.acceptedTypes, contentType) {
+		return nil, fmt.Errorf("CIMD endpoint returned non-JSON Content-Type: %q", resp.Header.Get("Content-Type"))
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, f.maxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("reading CIMD response body: %w", err)
+		return nil, &ports.CIMDUnavailableError{Cause: err}
 	}
 	if int64(len(body)) > f.maxResponseBytes {
 		return nil, fmt.Errorf("CIMD response exceeds %d byte limit", f.maxResponseBytes)

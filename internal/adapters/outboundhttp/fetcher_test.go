@@ -74,6 +74,43 @@ func TestFetcher_NonJSONContentType(t *testing.T) {
 	assert.Contains(t, err.Error(), "non-JSON Content-Type")
 }
 
+func TestFetcher_AcceptedContentTypes(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/json, application/jwk-set+json", r.Header.Get("Accept"))
+		w.Header().Set("Content-Type", "application/jwk-set+json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	defer srv.Close()
+
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+
+	fetcher := NewFetcherWithClient(
+		srv.Client(),
+		bl,
+		5120,
+		WithAcceptedContentTypes("application/json", "application/jwk-set+json"),
+	)
+	result, err := fetcher.Fetch(context.Background(), srv.URL+"/keys")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"keys":[]}`, string(result.Body))
+}
+
+func TestFetcher_ServerErrorIsUnavailable(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+
+	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
+	_, err = fetcher.Fetch(context.Background(), srv.URL+"/client")
+	var unavailable *ports.CIMDUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+}
+
 func TestFetcher_Non200(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

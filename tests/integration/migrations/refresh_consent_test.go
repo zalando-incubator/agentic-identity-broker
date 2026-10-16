@@ -26,7 +26,7 @@ func TestMigration036RefreshTokenGrantIdentity(t *testing.T) {
 			('legacy-unused', 'request-unused', '10000000-0000-0000-0000-000000000036', 'client', 'user@example.com', 'offline_access', '2030-01-01', NULL, NULL, ''),
 			('legacy-used', 'request-used', '10000000-0000-0000-0000-000000000036', 'client', 'user@example.com', 'read', '2030-01-01', '2026-01-01', 'user@example.com', 'User');
 	`))
-	snapshotSQL := `SELECT jsonb_agg(to_jsonb(r) - 'grant_id' ORDER BY signature)::text FROM refresh_token_sessions r`
+	snapshotSQL := `SELECT jsonb_agg(to_jsonb(r) - 'grant_id' - 'client_auth_method' ORDER BY signature)::text FROM refresh_token_sessions r`
 	before, err := f.QuerySQL(t, snapshotSQL)
 	require.NoError(t, err)
 	require.NoError(t, f.UpAll(t))

@@ -100,7 +100,7 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", grant.Principal)
 			require.NoError(t, err)
-			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 			require.NoError(t, err)
 			repo := provider.fositeStorage.refreshRepo
 			signature := sha256Hex(issued.RefreshToken)
@@ -166,7 +166,7 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 				}}
 			}
 
-			rotated, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+			rotated, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, issued.RefreshToken, "")
 			if expected == nil {
 				require.NoError(t, err)
 				successor, err := repo.FindBySignature(ctx, sha256Hex(rotated.RefreshToken))
@@ -210,7 +210,7 @@ func TestProvider_RefreshContinuingConsent(t *testing.T) {
 			assert.Nil(t, untouched.UsedAt)
 			if name == "grant replaced during rotation" {
 				provider.fositeStorage.refreshRepo = repo
-				again, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, rotated.RefreshToken, "")
+				again, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, rotated.RefreshToken, "")
 				require.ErrorIs(t, err, ErrInvalidGrant)
 				assert.Nil(t, again)
 				successor, err := repo.FindBySignature(ctx, sha256Hex(rotated.RefreshToken))
@@ -266,7 +266,7 @@ func TestProvider_RefreshConsentRevokedBeforeRotation(t *testing.T) {
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)
 			require.NoError(t, err)
-			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 			require.NoError(t, err)
 
 			rotationReady, resumeRotation := make(chan struct{}), make(chan struct{})
@@ -287,7 +287,7 @@ func TestProvider_RefreshConsentRevokedBeforeRotation(t *testing.T) {
 			}
 			completed := make(chan result, 1)
 			go func() {
-				response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+				response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, issued.RefreshToken, "")
 				completed <- result{response, err}
 			}()
 			select {
@@ -363,7 +363,7 @@ func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)
 			require.NoError(t, err)
-			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 			require.NoError(t, err)
 
 			consumed, resume := make(chan struct{}), make(chan struct{})
@@ -382,7 +382,7 @@ func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
 			}
 			completed := make(chan result, 1)
 			go func() {
-				response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+				response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, issued.RefreshToken, "")
 				completed <- result{response, err}
 			}()
 			select {
@@ -441,7 +441,7 @@ func TestProvider_RefreshIssuanceRequiresConsent(t *testing.T) {
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access", "state", generateS256Challenge(verifier), "S256", id.Principal("user@example.com"))
 			require.NoError(t, err)
-			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 			require.ErrorIs(t, err, expected)
 			var protocolErr *RFC6749Error
 			require.ErrorAs(t, err, &protocolErr)
@@ -465,12 +465,12 @@ func TestProvider_RefreshSuccessorStorageFailure(t *testing.T) {
 	verifier := "refresh-consent-verifier-12345678901234567890"
 	code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access", "state", generateS256Challenge(verifier), "S256", id.Principal("user@example.com"))
 	require.NoError(t, err)
-	issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, agent.RedirectURIs[0], verifier)
 	require.NoError(t, err)
 	repo := &failingRefreshSuccessor{RefreshTokenSessionRepository: provider.fositeStorage.refreshRepo}
 	provider.fositeStorage.refreshRepo = repo
 
-	response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+	response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, issued.RefreshToken, "")
 	assert.True(t, repo.called, "failure must occur during successor creation")
 	assert.Nil(t, response)
 	require.ErrorIs(t, err, ErrServerError)

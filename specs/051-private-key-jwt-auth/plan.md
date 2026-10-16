@@ -14,7 +14,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 
 ## Technical Context
 
-**Language/Version**: Go 1.27.1
+**Language/Version**: Go 1.27.2
 
 **Primary Dependencies**: `github.com/lestrrat-go/jwx/v4` v4.5.0 (JWT and JWK parsing and verification), `github.com/ory/fosite` v0.49.0 (grant handlers only), chi v5, sqlx and pgx v5, Viper, Ginkgo v2, Gomega, testify. No new dependencies.
 
@@ -64,7 +64,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 
 - [x] **Security-First**: Enforcement is always on and fails closed (SR-001, SR-003).
 - [x] **Architecture Docs**: `ARCHITECTURE.md` updated in the same PR: token-endpoint client authentication, replay protection, glossary, and the metadata advertisement rule.
-- [x] **ADRs**: A new ADR is required (verifier outside fosite; persisted authentication method; fixed profile). It also records the partial supersession of spec 028 FR-022, and it addresses ADR 008 (JWKS adapter pattern) explicitly: either why client key sets are not fetched through that pattern, or that ADR 041 supersedes ADR 008 in part. It takes number `041` because ADR 040 is already accepted (see R1). Because it is introduced on this branch it can be Accepted in this PR (Constitution Principle II).
+- [x] **ADRs**: ADR 043 records the verifier outside fosite, persisted authentication method, fixed profile, partial supersession of spec 028 FR-022, and relationship to ADR 008 (JWKS adapter pattern). It takes number `043` because ADRs 041 and 042 are occupied (see R1). Because it is introduced on this branch it can be Accepted in this PR (Constitution Principle II).
 - [x] **Library-First Security**: `jwx` v4 for everything cryptographic.
 - [x] **Zalando Guidelines**: The token endpoint follows RFC 6749 and RFC 7523 error semantics; no new REST resources.
 - [x] **End-User Docs**: `docs/api/enduser-api.md` gets a client-authentication section with a worked example.
@@ -131,11 +131,11 @@ internal/
 │   ├── builder.go                   # wire key-set fetcher, service, verifier, replay repo
 │   └── local_strategy.go            # adapt to ClientCredentials
 migrations/
-├── 038_create_client_assertion_replays.{up,down}.sql
-└── 039_add_refresh_token_client_auth_method.{up,down}.sql
+├── 040_create_client_assertion_replays.{up,down}.sql
+└── 041_add_refresh_token_client_auth_method.{up,down}.sql
 api/enduser/openapi.yaml             # token endpoint and metadata schema
 justfile                             # backend E2E targets exclude label docker; new test-e2e-docker
-adrs/041-inbound-cimd-private-key-jwt.md
+adrs/043-inbound-cimd-private-key-jwt.md
 docs/                                # configuration.md, api/enduser-api.md
 examples/config/cimd.yaml            # new keys; correct the draft citation
 charts/agentic-identity-broker/      # values.yaml, values.schema.json, README
@@ -280,7 +280,7 @@ Locations: `internal/ports/config.go` (`DefaultCIMDConfig`, validation next to `
 
 ## Risks and Open Points
 
-- **R1 – Numbering collisions.** After rebasing, migrations 038 and 039 and ADR 040 are already present, and feature number 050 is used by protected-resource discovery. This feature therefore uses feature 051, ADR 041, and migrations 040 and 041. The `refresh_token_sessions` column must still be reviewed against feature 049 before implementation.
+- **R1 – Numbering collisions.** After rebasing, migrations 038 and 039 and ADR 040 are already present, and feature number 050 is used by protected-resource discovery. ADR 041 is occupied by the OAuth2 client-secret file override decision, and ADR 042 by Agent-allowlisted private-use redirect URIs. This feature therefore uses feature 051, ADR 043, and migrations 040 and 041. The `refresh_token_sessions` column must still be reviewed against feature 049 before implementation.
 - **R2 – Refresh path ordering (FR-013).** `HandleRefreshToken` authenticates before the stored session is read. The plan reads the stored session first and applies the stricter of (stored method, current document method). A missing or unknown session must not change the error returned before authentication has been attempted, to avoid a probing oracle.
 - **R3 – Dependency errors in resolution.** `resolveCIMD` currently turns every document error into `invalid_client`. Changing fetch and timeout failures to `server_error` affects the authorisation path too. Existing E2E and unit tests that pin this are updated in Phase 2.5, and the change is called out in the PR.
 - **R4 – JWKS content type.** The current fetcher requires `application/json…`; RFC 7517 allows `application/jwk-set+json`. The key-set fetcher accepts both. Whether ChatGPT's `jwks.json` sends either has to be confirmed against the real endpoint in the quickstart's manual check.

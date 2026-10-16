@@ -869,6 +869,30 @@
                   "type": "array",
                   "items": { "type": "string" },
                   "description": "Keyword blocklist for CIMD client_name values (case-insensitive)"
+                },
+                "clientAuthentication": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Inbound CIMD private_key_jwt key-set limits",
+                  "properties": {
+                    "keySetCacheTtl": {
+                      "type": "string",
+                      "description": "Maximum key-set cache age (Go duration); values above 24h are rejected"
+                    },
+                    "keySetMinRefetchInterval": {
+                      "type": "string",
+                      "description": "Minimum interval between key-set refetches for an unknown kid"
+                    },
+                    "keySetMaxBytes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Maximum key-set response size in bytes"
+                    },
+                    "keySetFetchTimeout": {
+                      "type": "string",
+                      "description": "Timeout for key-set HTTP requests"
+                    }
+                  }
                 }
               }
             },

@@ -370,12 +370,20 @@ type MultiAgentClientConfig struct {
 // CIMDConfig holds Client ID Metadata Document fetch and validation settings.
 // CIMD is disabled by default (Enabled: false); SSRF protection is always active.
 type CIMDConfig struct {
-	Enabled             bool            `mapstructure:"enabled"`
-	FetchTimeout        time.Duration   `mapstructure:"fetch_timeout"`
-	MaxResponseBytes    int             `mapstructure:"max_response_bytes"`
-	Cache               CIMDCacheConfig `mapstructure:"cache"`
-	SSRF                CIMDSSRFConfig  `mapstructure:"ssrf"`
-	ClientNameBlocklist []string        `mapstructure:"client_name_blocklist"`
+	Enabled              bool                           `mapstructure:"enabled"`
+	FetchTimeout         time.Duration                  `mapstructure:"fetch_timeout"`
+	MaxResponseBytes     int                            `mapstructure:"max_response_bytes"`
+	Cache                CIMDCacheConfig                `mapstructure:"cache"`
+	SSRF                 CIMDSSRFConfig                 `mapstructure:"ssrf"`
+	ClientNameBlocklist  []string                       `mapstructure:"client_name_blocklist"`
+	ClientAuthentication CIMDClientAuthenticationConfig `mapstructure:"client_authentication"`
+}
+
+type CIMDClientAuthenticationConfig struct {
+	KeySetCacheTTL           time.Duration `mapstructure:"key_set_cache_ttl"`
+	KeySetMinRefetchInterval time.Duration `mapstructure:"key_set_min_refetch_interval"`
+	KeySetMaxBytes           int           `mapstructure:"key_set_max_bytes"`
+	KeySetFetchTimeout       time.Duration `mapstructure:"key_set_fetch_timeout"`
 }
 
 // CIMDCacheConfig holds operator TTL bounds and entry cap for CIMD response caching.
@@ -400,6 +408,12 @@ func DefaultCIMDConfig() CIMDConfig {
 			MaxTTL:     1 * time.Hour,
 			MinTTL:     60 * time.Second,
 			MaxEntries: 1000,
+		},
+		ClientAuthentication: CIMDClientAuthenticationConfig{
+			KeySetCacheTTL:           time.Hour,
+			KeySetMinRefetchInterval: 5 * time.Minute,
+			KeySetMaxBytes:           65536,
+			KeySetFetchTimeout:       5 * time.Second,
 		},
 	}
 }
@@ -623,6 +637,22 @@ func (c *OAuth2AuthServerConfig) applySharedDefaults(defaultGrantTypes []string)
 func (c *OAuth2AuthServerConfig) validateCIMDCache() error {
 	if c.CIMD.Enabled && c.CIMD.Cache.MinTTL > c.CIMD.Cache.MaxTTL {
 		return c.newValidationError("oauth2_authorization_server.cimd.cache.min_ttl must not exceed max_ttl")
+	}
+	if !c.CIMD.Enabled {
+		return nil
+	}
+	auth := c.CIMD.ClientAuthentication
+	if auth.KeySetCacheTTL <= 0 || auth.KeySetCacheTTL > 24*time.Hour {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_cache_ttl must be positive and not exceed 24h")
+	}
+	if auth.KeySetMinRefetchInterval <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_min_refetch_interval must be positive")
+	}
+	if auth.KeySetMaxBytes <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_max_bytes must be positive")
+	}
+	if auth.KeySetFetchTimeout <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_fetch_timeout must be positive")
 	}
 	return nil
 }

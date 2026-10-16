@@ -498,6 +498,15 @@ broker:
         extraBlockedCidrs: []
       # -- Keyword blocklist for CIMD client_name values (case-insensitive). Default: [].
       clientNameBlocklist: []
+      clientAuthentication:
+        # -- Maximum age of a cached client key set. Values above 24h are rejected at startup.
+        keySetCacheTtl: 1h
+        # -- Minimum time between key-set refetches for an unknown kid.
+        keySetMinRefetchInterval: 5m
+        # -- Maximum key-set response size in bytes.
+        keySetMaxBytes: 65536
+        # -- Timeout for key-set HTTP requests.
+        keySetFetchTimeout: 5s
 
     # Local token issuance configuration (local/hybrid mode)
     local:

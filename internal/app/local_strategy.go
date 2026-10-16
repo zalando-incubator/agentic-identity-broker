@@ -20,12 +20,12 @@ func (s *localMintingStrategy) HandleClientCredentials(ctx context.Context, clie
 	return s.provider.HandleClientCredentials(ctx, string(clientID), clientSecret, scope)
 }
 
-func (s *localMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, clientSecret, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
-	return s.provider.HandleAuthorizationCodeExchange(ctx, string(clientID), clientSecret, code, redirectURI, codeVerifier)
+func (s *localMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
+	return s.provider.HandleAuthorizationCodeExchange(ctx, string(clientID), creds, code, redirectURI, codeVerifier)
 }
 
-func (s *localMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, clientSecret, refreshToken, scope string) (*ports.TokenResponse, error) {
-	return s.provider.HandleRefreshToken(ctx, string(clientID), clientSecret, refreshToken, scope)
+func (s *localMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, refreshToken, scope string) (*ports.TokenResponse, error) {
+	return s.provider.HandleRefreshToken(ctx, string(clientID), creds, refreshToken, scope)
 }
 
 type localCodeIssuer struct {
