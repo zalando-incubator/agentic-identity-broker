@@ -12,6 +12,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/matchers"
 )
@@ -162,7 +163,7 @@ broker:
 			configFile := env.trust.WriteOutsideFile("config.yaml", rendered.ConfigYAML)
 			GinkgoT().Setenv("IDENTITY_BROKER_CONFIG_PATH", configFile)
 			GinkgoT().Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
-			GinkgoT().Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", "YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODk=")
+			GinkgoT().Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", fixtures.TestKEKMaterialDeterministic())
 			GinkgoT().Setenv("IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
 			GinkgoT().Setenv("IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
 			loaded, err := config.NewLoader().GetConfig(GinkgoT().Context())

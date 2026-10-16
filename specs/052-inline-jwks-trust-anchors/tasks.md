@@ -379,7 +379,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 1 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T060 [US1] Write builder tests in `internal/app/builder_test.go`:
+- [X] T060 [US1] Write builder tests in `internal/app/builder_test.go`:
   - an inline client-assertion source creates a `StaticAdapter` and never calls `DiscoverOAuth2Endpoints` (FR-004);
   - "client-assertion config unset" now also requires empty `jwks` and `jwks_file`;
   - in proxy and hybrid modes with an empty `issuer_uri`, the expected issuer is the upstream issuer and the adapter is the static one, not the shared upstream adapter (FR-015);
@@ -388,10 +388,10 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Implementation for User Story 1
 
-- [ ] T061 [US1] In `internal/app/builder.go`, resolve the client-assertion `KeySetSource` with `trustanchor.ResolveKeySetSource` before any discovery. Add the `inline` branch to the client-assertion source switch. It parses with `trustanchor.ParseLocalKeySet` and builds `jwks.NewStaticAdapter`. Extend the "unset" condition with `JWKS` and `JWKSFile`. Keep the self-trust check and the approval-auth issuer requirement ahead of source loading (FR-014). Supports FR-001, FR-004, FR-006, and FR-015.
-- [ ] T062 [US1] Emit the `trust anchor key set loaded` log in `internal/app/builder.go` after the inline source loads, with only the [contracts/configuration.md](./contracts/configuration.md) §3 fields. Supports FR-018 and SR-004.
-- [ ] T063 [US1] Confirm that machine-facing approval authentication (`POST /api/approvals` with `X-Client-Assertion`) uses the same client-assertion validator built in T061, with no separate change. Cover it with the US1-S4 E2E test, and make no code change unless that test shows a separate path.
-- [ ] T064 [US1] Run `go test ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 1" ./tests/e2e/`. US1-S1 to US1-S5 must be green, with no E2E change beyond fixture adjustments.
+- [X] T061 [US1] In `internal/app/builder.go`, resolve the client-assertion `KeySetSource` with `trustanchor.ResolveKeySetSource` before any discovery. Add the `inline` branch to the client-assertion source switch. It parses with `trustanchor.ParseLocalKeySet` and builds `jwks.NewStaticAdapter`. Extend the "unset" condition with `JWKS` and `JWKSFile`. Keep the self-trust check and the approval-auth issuer requirement ahead of source loading (FR-014). Supports FR-001, FR-004, FR-006, and FR-015.
+- [X] T062 [US1] Emit the `trust anchor key set loaded` log in `internal/app/builder.go` after the inline source loads, with only the [contracts/configuration.md](./contracts/configuration.md) §3 fields. Supports FR-018 and SR-004.
+- [X] T063 [US1] Confirm that machine-facing approval authentication (`POST /api/approvals` with `X-Client-Assertion`) uses the same client-assertion validator built in T061, with no separate change. Cover it with the US1-S4 E2E test, and make no code change unless that test shows a separate path.
+- [X] T064 [US1] Run `go test ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 1" ./tests/e2e/`. US1-S1 to US1-S5 must be green, with no E2E change beyond fixture adjustments.
 
 **Checkpoint**: The MVP is in place. A locally signing gateway works for token exchange and approvals with an inline key set.
 
@@ -405,26 +405,26 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 2 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T065 [US2] Write builder tests in `internal/app/builder_test.go`:
+- [X] T065 [US2] Write builder tests in `internal/app/builder_test.go`:
   - a file client-assertion source opens the trust directory once and creates a `FileAdapter`;
   - with no `jwks_file` anywhere, the filesystem is never touched;
   - `App.Shutdown` closes the file adapter and the trust directory;
   - `App.EnduserHealthComponents()` includes `trust_anchor_key_files` only when a file source exists, is `degraded` when any file adapter is degraded, and merges with `upstream_jwks` in every OAuth2 mode.
 
   Supports FR-011, FR-019, FR-022, and research R11/R12.
-- [ ] T066 [P] [US2] Write Helm integration tests in `tests/integration/helm_chart_test.go`:
+- [X] T066 [P] [US2] Write Helm integration tests in `tests/integration/helm_chart_test.go`:
   - render with a Secret source and with a ConfigMap source; assert the projected `trust-material` volume, the `readOnly: true` mount at `directory` without `subPath`, and `security.trust_material_dir` in `config.yaml`;
   - `clientAssertion.jwks` renders as a block scalar and `clientAssertion.jwksFile` renders as `jwks_file`;
   - `sources` without a `directory` fails with `broker.security.trustMaterial.directory is required when sources are set`.
 
   Supports FR-020.
-- [ ] T067 [P] [US2] Add a test to `tests/integration/config_test.go` that loads `examples/config/trust-anchor-local-jwks.yaml` through the broker loader and validator with no error. Supports FR-021.
+- [X] T067 [P] [US2] Add a test to `tests/integration/config_test.go` that loads `examples/config/trust-anchor-local-jwks.yaml` through the broker loader and validator with no error. Supports FR-021.
 
 ### Implementation for User Story 2
 
-- [ ] T068 [US2] In `internal/app/builder.go`, open the `jwks.TrustDirectory` from `security.trust_material_dir` only when at least one trust anchor declares `jwks_file`, and chain its `Close` into `App.Shutdown`. Add the `file` branch to the client-assertion source switch, building `jwks.NewFileAdapter` with the anchor's `RefreshBounds` and the `token_exchange.client_assertion` config path, and chain its `Shutdown`. Emit `trust anchor key set loaded` with `key_source=file` and `path`. Supports FR-010, FR-011, FR-018, FR-022, and FR-023.
-- [ ] T069 [US2] Report `trust_anchor_key_files` from `App.EnduserHealthComponents()` in `internal/app/builder.go`, replacing the T041 no-op. Return `degraded` if any registered `FileAdapter.HealthState()` is degraded and `healthy` otherwise, and omit the component when no file adapter exists. Do not change the HTTP status in `internal/adapters/http/health.go`. Supports FR-019 and [contracts/health-endpoint.md](./contracts/health-endpoint.md).
-- [ ] T070 [US2] Run `go test ./internal/app/... ./tests/integration/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 2" ./tests/e2e/`. US2-S1 to US2-S9 must be green.
+- [X] T068 [US2] In `internal/app/builder.go`, open the `jwks.TrustDirectory` from `security.trust_material_dir` only when at least one trust anchor declares `jwks_file`, and chain its `Close` into `App.Shutdown`. Add the `file` branch to the client-assertion source switch, building `jwks.NewFileAdapter` with the anchor's `RefreshBounds` and the `token_exchange.client_assertion` config path, and chain its `Shutdown`. Emit `trust anchor key set loaded` with `key_source=file` and `path`. Supports FR-010, FR-011, FR-018, FR-022, and FR-023.
+- [X] T069 [US2] Report `trust_anchor_key_files` from `App.EnduserHealthComponents()` in `internal/app/builder.go`, replacing the T041 no-op. Return `degraded` if any registered `FileAdapter.HealthState()` is degraded and `healthy` otherwise, and omit the component when no file adapter exists. Do not change the HTTP status in `internal/adapters/http/health.go`. Supports FR-019 and [contracts/health-endpoint.md](./contracts/health-endpoint.md).
+- [X] T070 [US2] Run `go test ./internal/app/... ./tests/integration/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 2" ./tests/e2e/`. US2-S1 to US2-S9 must be green.
 
 **Checkpoint**: File-based client-assertion keys work with rotation, health reporting, containment, and Helm projection.
 
@@ -438,7 +438,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 3 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T071 [US3] Write builder tests in `internal/app/builder_test.go`. For each of the three trust-anchor kinds and each category, check that `Build()` returns `<path>: <message>`: `conflicting_key_sources`, `refresh_bounds_with_inline`, `too_large`, `not_a_jwk_set`, `empty_key_set`, `symmetric_key`, `private_key`, `unapproved_algorithm`, `duplicate_kid`, `relative_path`, `missing_trust_directory`, `invalid_trust_directory`, `outside_trust_directory`, `not_found`, `unreadable`, and `not_regular_file`. Also check:
+- [X] T071 [US3] Write builder tests in `internal/app/builder_test.go`. For each of the three trust-anchor kinds and each category, check that `Build()` returns `<path>: <message>`: `conflicting_key_sources`, `refresh_bounds_with_inline`, `too_large`, `not_a_jwk_set`, `empty_key_set`, `symmetric_key`, `private_key`, `unapproved_algorithm`, `duplicate_kid`, `relative_path`, `missing_trust_directory`, `invalid_trust_directory`, `outside_trust_directory`, `not_found`, `unreadable`, and `not_regular_file`. Also check:
   - no outbound request or file read happens before resolution fails;
   - the self-trust check fires for inline and file sources;
   - neither the error nor the buffered log contains the base64url `x`, `y`, `n`, or `d` values.
@@ -447,9 +447,9 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Implementation for User Story 3
 
-- [ ] T072 [US3] In `internal/app/builder.go`, resolve and validate **every** trust anchor's `KeySetSource` before any discovery, adapter creation, or file read, so that no misconfigured anchor triggers I/O. Format builder errors as `<path>: <category description>`, with the source setting (`….jwks` or `….jwks_file`) as `<path>` for key-set rules. Supports FR-007, FR-009, SR-001, and research R12.
-- [ ] T073 [US3] Check that the error-wrapping paths in `internal/app/builder.go` and `internal/adapters/jwks/` never format a `LocalKeySet`, a document, or a jwx error with `%v` or `%w`. Fix any path that T071 shows leaking. Supports FR-008 and SR-004.
-- [ ] T074 [US3] Run `go test ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 3" ./tests/e2e/`. US3-S1 to US3-S8 must be green.
+- [X] T072 [US3] In `internal/app/builder.go`, resolve and validate **every** trust anchor's `KeySetSource` before any discovery, adapter creation, or file read, so that no misconfigured anchor triggers I/O. Format builder errors as `<path>: <category description>`, with the source setting (`….jwks` or `….jwks_file`) as `<path>` for key-set rules. Supports FR-007, FR-009, SR-001, and research R12.
+- [X] T073 [US3] Check that the error-wrapping paths in `internal/app/builder.go` and `internal/adapters/jwks/` never format a `LocalKeySet`, a document, or a jwx error with `%v` or `%w`. Fix any path that T071 shows leaking. Supports FR-008 and SR-004.
+- [X] T074 [US3] Run `go test ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 3" ./tests/e2e/`. US3-S1 to US3-S8 must be green.
 
 **Checkpoint**: The fail-closed matrix is complete for every trust anchor.
 
@@ -463,7 +463,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 4 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T075 [US4] Write builder tests in `internal/app/builder_test.go` for `newImpersonationJWKSFactory`:
+- [X] T075 [US4] Write builder tests in `internal/app/builder_test.go` for `newImpersonationJWKSFactory`:
   - the sharing key is `{kind, issuer_uri, jwks_uri, inline document, jwks_file, min, max}`, so entries with the same issuer and different local sources get different providers, and identical sources share one provider;
   - inline and file entries skip discovery;
   - each new static or file adapter is chained into `App.Shutdown`;
@@ -473,14 +473,14 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Implementation for User Story 4
 
-- [ ] T076 [US4] Extend `newImpersonationJWKSFactory` in `internal/app/builder.go` to dispatch on `KeySetSource.Kind`:
+- [X] T076 [US4] Extend `newImpersonationJWKSFactory` in `internal/app/builder.go` to dispatch on `KeySetSource.Kind`:
   - `inline` → `jwks.NewStaticAdapter`;
   - `file` → `jwks.NewFileAdapter` through the shared `TrustDirectory`;
   - `remote` → the existing discovery and `jwks.NewJWKSAdapter` path.
 
   Use the extended sharing key, chain `Shutdown` for each new adapter only, and log per FR-018. Keep the issuer self-trust check at its current position (FR-014). Supports FR-017 and research R10.
-- [ ] T077 [US4] Confirm that `allowed_algorithms` enforcement in `internal/domain/impersonation/` applies to local sources unchanged. US4-S3 covers this; make no code change unless the test fails. Supports FR-005.
-- [ ] T078 [US4] Run `go test ./internal/app/... ./internal/domain/impersonation/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 4" ./tests/e2e/`. US4-S1 to US4-S4 must be green.
+- [X] T077 [US4] Confirm that `allowed_algorithms` enforcement in `internal/domain/impersonation/` applies to local sources unchanged. US4-S3 covers this; make no code change unless the test fails. Supports FR-005.
+- [X] T078 [US4] Run `go test ./internal/app/... ./internal/domain/impersonation/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 4" ./tests/e2e/`. US4-S1 to US4-S4 must be green.
 
 **Checkpoint**: Impersonation trusted issuers support local key sets with per-entry isolation.
 
@@ -494,14 +494,14 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 5 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T079 [P] [US5] Write tests in `internal/adapters/jwtauth/jwx_authenticator_test.go`:
+- [X] T079 [P] [US5] Write tests in `internal/adapters/jwtauth/jwx_authenticator_test.go`:
   - an injected `KeySet` bypasses `jwkfetch` and the startup fetch (no HTTP server is contacted);
   - it verifies with `jwt.WithKeySet(set, jws.WithInferAlgorithmFromKey(true))`, the same options as the remote path;
   - an unknown `kid` returns the existing error;
-  - `Shutdown` shuts down the injected file adapter.
+  - the authenticator does not own the injected adapter; the builder chains the adapter's shutdown into `App.Shutdown` (matching the `KeySet` field contract).
 
   Supports FR-005 and research R9.
-- [ ] T080 [P] [US5] Write tests in `internal/config/validator_test.go` and `internal/app/builder_test.go`:
+- [X] T080 [P] [US5] Write tests in `internal/config/validator_test.go` and `internal/app/builder_test.go`:
   - `server.admin.authentication.jwt.jwks` and `.jwks_file` are accepted and validated with the same structural rules as the end-user server, with errors naming `server.admin.authentication.jwt.…`;
   - `verification: none` with `jwks` or `jwks_file` on either server fails with the `verification_disabled_with_key_source` message;
   - the builder creates a separate adapter for each server, even when both declare identical sources;
@@ -511,16 +511,16 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Implementation for User Story 5
 
-- [ ] T081 [US5] Implement the injected-key-set path in `internal/adapters/jwtauth/jwx_authenticator.go` so that T079 passes. When `KeySet` is set, skip `jwkfetch` creation and the startup `Refresh`, and verify against `KeySet.GetKeySet(ctx)` with the same options as the remote path.
-- [ ] T082 [US5] In `internal/app/builder.go`:
+- [X] T081 [US5] Implement the injected-key-set path in `internal/adapters/jwtauth/jwx_authenticator.go` so that T079 passes. When `KeySet` is set, skip `jwkfetch` creation and the startup `Refresh`, and verify against `KeySet.GetKeySet(ctx)` with the same options as the remote path.
+- [X] T082 [US5] In `internal/app/builder.go`:
   - in the existing per-server loop, resolve each server's source (`server.enduser.authentication.jwt`, `server.admin.authentication.jwt`) with fixed JWT pre-authentication `RefreshBounds` (5m/15m);
   - build the static or file adapter, inject it into `jwtauthadapter.JWXAuthenticatorConfig.KeySet`, and chain shutdown;
   - extend the existing `verification: none` defense-in-depth check to `JWKS` and `JWKSFile`;
   - log `trust anchor key set loaded` with `trust_anchor=server.<name>.authentication.jwt`.
 
   Supports FR-002, FR-013, and FR-018.
-- [ ] T083 [US5] Make `validateJWTConfig` in `internal/config/validator.go` apply the key-source structural rules for both server prefixes, so that T080 passes. Remove the unused `CategoryUnsupportedTrustAnchor` from `internal/domain/trustanchor/errors.go`. Supports FR-002 and research R9.
-- [ ] T084 [US5] Run `go test ./internal/adapters/jwtauth/... ./internal/config/... ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 5" ./tests/e2e/`. US5-S1 to US5-S4 must be green.
+- [X] T083 [US5] Make `validateJWTConfig` in `internal/config/validator.go` apply the key-source structural rules for both server prefixes, so that T080 passes. Remove the unused `CategoryUnsupportedTrustAnchor` from `internal/domain/trustanchor/errors.go`. Supports FR-002 and research R9.
+- [X] T084 [US5] Run `go test ./internal/adapters/jwtauth/... ./internal/config/... ./internal/app/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 5" ./tests/e2e/`. US5-S1 to US5-S4 must be green.
 
 **Checkpoint**: All five user stories work independently.
 

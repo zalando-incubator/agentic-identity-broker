@@ -56,6 +56,7 @@ import (
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -99,6 +100,7 @@ type App struct {
 	Logger *slog.Logger
 
 	jwksPublisherHealth ports.JWKSPublisherHealthPort
+	keyFileHealth       []ports.JWKSHealthPort
 
 	// Shutdown must be called on graceful shutdown to release background resources
 	// (e.g. permission-set eviction and OAuth2 expired-record cleanup).
@@ -121,9 +123,32 @@ func (a *App) EnduserHealthComponents() map[string]string {
 	return components
 }
 
-// addKeyFileHealth contributes trust_anchor_key_files when a trust anchor uses jwks_file.
+// addKeyFileHealth contributes trust_anchor_key_files when a trust anchor uses jwks_file. It is
+// degraded while the latest re-read of any key-set file has failed.
 func (a *App) addKeyFileHealth(components map[string]string) {
-	_ = components
+	if len(a.keyFileHealth) == 0 {
+		return
+	}
+	state := ports.ComponentHealthHealthy
+	for _, file := range a.keyFileHealth {
+		if file.HealthState() == ports.ComponentHealthDegraded {
+			state = ports.ComponentHealthDegraded
+			break
+		}
+	}
+	components["trust_anchor_key_files"] = string(state)
+}
+
+// chainShutdown runs stop before the previously registered shutdown.
+func (a *App) chainShutdown(stop func(context.Context) error) {
+	prev := a.Shutdown
+	a.Shutdown = func(ctx context.Context) error {
+		var prevErr error
+		if prev != nil {
+			prevErr = prev(ctx)
+		}
+		return errors.Join(stop(ctx), prevErr)
+	}
 }
 
 // Builder is a chainable builder for constructing App instances.
@@ -511,6 +536,21 @@ func (b *Builder) Build() (*App, error) {
 		}
 	}
 
+	// Resolve every trust anchor's key source before any discovery, key fetch, or file read,
+	// so a misconfigured trust anchor causes no I/O (ADR 040).
+	trustAnchors, err := b.resolveTrustAnchorSources()
+	if err != nil {
+		return nil, abortBuild(app, err)
+	}
+	var trustDir *jwks.TrustDirectory
+	if trustAnchors.usesFile {
+		trustDir, err = jwks.OpenTrustDirectory(b.config.Security.TrustMaterialDir)
+		if err != nil {
+			return nil, abortBuild(app, err)
+		}
+		app.chainShutdown(func(context.Context) error { return trustDir.Close() })
+	}
+
 	approvalAuthRequested := b.config.TokenExchange.ClaimExtraction.PrincipalExpression != "" ||
 		b.config.TokenExchange.ClaimExtraction.AgentIDExpression != "" ||
 		b.config.TokenExchange.Authorization.CEL.Expression != ""
@@ -687,17 +727,29 @@ func (b *Builder) Build() (*App, error) {
 		}
 	}
 
-	var clientAssertionJWKS *jwks.Adapter
+	var clientAssertionJWKS tokenexchange.JWKSProvider
 	clientAssertionConfig := b.config.TokenExchange.ClientAssertion
 	clientAssertionConfigUnset := clientAssertionConfig.IssuerURI == "" &&
 		clientAssertionConfig.JWKSURI == "" &&
+		clientAssertionConfig.JWKS == "" &&
+		clientAssertionConfig.JWKSFile == "" &&
 		clientAssertionConfig.JWKSMinRefresh == 0 &&
 		clientAssertionConfig.JWKSMaxRefresh == 0
 	switch {
 	case clientAssertionIssuerURI == "":
 		// Token exchange and approval authentication are disabled.
+	case trustAnchors.clientAssertion.local():
+		// A local key set skips discovery. In proxy and hybrid modes without issuer_uri, the
+		// upstream issuer stays the expected issuer while only the local keys verify assertions.
+		adapter, err := b.localKeySetAdapter(app, trustDir, trustAnchors.clientAssertion)
+		if err != nil {
+			return nil, abortBuild(app, err)
+		}
+		clientAssertionJWKS = adapter
 	case clientAssertionConfigUnset:
-		clientAssertionJWKS = sharedUpstreamJWKS
+		if sharedUpstreamJWKS != nil {
+			clientAssertionJWKS = sharedUpstreamJWKS
+		}
 	default:
 		clientAssertionJWKSURI := clientAssertionConfig.JWKSURI
 		if clientAssertionJWKSURI == "" {
@@ -762,11 +814,6 @@ func (b *Builder) Build() (*App, error) {
 		if jwtCfg == nil {
 			continue
 		}
-		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
-			err := fmt.Errorf("server.%s.authentication.jwt: verification 'none' and jwks_uri are mutually exclusive", server.name)
-			return nil, errors.Join(err, app.Shutdown(context.Background()))
-		}
-
 		celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
 			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
 			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
@@ -777,11 +824,20 @@ func (b *Builder) Build() (*App, error) {
 			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
+		var keySet ports.JWKSPort
+		if source := trustAnchors.jwt[server.name]; source.local() {
+			keySet, err = b.localKeySetAdapter(app, trustDir, source)
+			if err != nil {
+				return nil, abortBuild(app, err)
+			}
+		}
+
 		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
 			JWTConfig:    jwtCfg,
 			CELEvaluator: celEval,
 			HTTPClient:   &http.Client{Timeout: 10 * time.Second},
 			Logger:       b.logger,
+			KeySet:       keySet,
 		})
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
@@ -1060,7 +1116,23 @@ func (b *Builder) Build() (*App, error) {
 			}
 		}
 
-		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
+		localProviders := map[impersonationSourceKey]tokenexchange.JWKSProvider{}
+		for i, rule := range impCfg.Rules {
+			for j, issuer := range rule.TrustedIssuers {
+				source := trustAnchors.impersonation[impersonationIssuerPath(i, j)]
+				key := impersonationSourceKeyOf(issuer)
+				if _, shared := localProviders[key]; shared || !source.local() {
+					continue
+				}
+				adapter, err := b.localKeySetAdapter(app, trustDir, source)
+				if err != nil {
+					return nil, abortBuild(app, err)
+				}
+				localProviders[key] = adapter
+			}
+		}
+
+		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}
@@ -1298,20 +1370,41 @@ func newTokenExchangeAgentIDResolver(agentService *agentsservice.Service, timeou
 // jwks_uri is not set explicitly.
 const impersonationDiscoveryTimeout = 30 * time.Second
 
-// newImpersonationJWKSFactory shares a cached JWKS provider across rules with the same
-// issuer and JWKS settings, discovering the JWKS URI when it is not configured.
-func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersonation.JWKSProviderFactory {
-	type source struct {
-		issuerURI, jwksURI     string
-		minRefresh, maxRefresh time.Duration
+// impersonationSourceKey identifies a trusted issuer's key source. Trusted issuers share a provider
+// only when every element matches, so issuers with the same issuer_uri but different key sources
+// verify only against their own keys (FR-017).
+type impersonationSourceKey struct {
+	issuerURI, jwksURI, jwks, jwksFile string
+	minRefresh, maxRefresh             time.Duration
+}
+
+func impersonationSourceKeyOf(issuer ports.TrustedTokenIssuerConfig) impersonationSourceKey {
+	return impersonationSourceKey{
+		issuerURI:  issuer.IssuerURI,
+		jwksURI:    issuer.JWKSURI,
+		jwks:       issuer.JWKS,
+		jwksFile:   issuer.JWKSFile,
+		minRefresh: issuer.JWKSMinRefresh,
+		maxRefresh: issuer.JWKSMaxRefresh,
 	}
-	providers := make(map[source]tokenexchange.JWKSProvider)
+}
+
+func impersonationIssuerPath(rule, issuer int) string {
+	return fmt.Sprintf("oauth2_authorization_server.impersonation.rules[%d].trusted_issuers[%d]", rule, issuer)
+}
+
+// newImpersonationJWKSFactory returns the prebuilt provider of a local key source, and otherwise
+// shares a cached remote JWKS provider across rules with the same issuer and JWKS settings,
+// discovering the JWKS URI when it is not configured.
+func (b *Builder) newImpersonationJWKSFactory(
+	httpClient *http.Client,
+	local map[impersonationSourceKey]tokenexchange.JWKSProvider,
+) impersonation.JWKSProviderFactory {
+	providers := make(map[impersonationSourceKey]tokenexchange.JWKSProvider)
 	return func(issuer ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
-		key := source{
-			issuerURI:  issuer.IssuerURI,
-			jwksURI:    issuer.JWKSURI,
-			minRefresh: issuer.JWKSMinRefresh,
-			maxRefresh: issuer.JWKSMaxRefresh,
+		key := impersonationSourceKeyOf(issuer)
+		if provider, ok := local[key]; ok {
+			return provider, nil
 		}
 		if provider, ok := providers[key]; ok {
 			return provider, nil
@@ -1345,4 +1438,150 @@ func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersona
 		providers[key] = adapter
 		return adapter, nil
 	}
+}
+
+// trustAnchorSource is one trust anchor's resolved key source; an inline key set is already
+// validated.
+type trustAnchorSource struct {
+	anchor trustanchor.AnchorRef
+	source trustanchor.KeySetSource
+	inline trustanchor.LocalKeySet
+}
+
+func (s trustAnchorSource) local() bool {
+	return s.source.Kind == trustanchor.SourceInline || s.source.Kind == trustanchor.SourceFile
+}
+
+// trustAnchorSources holds the resolved key source of every trust anchor. JWT pre-authentication
+// sources are keyed by server name, impersonation sources by configuration path.
+type trustAnchorSources struct {
+	clientAssertion trustAnchorSource
+	jwt             map[string]trustAnchorSource
+	impersonation   map[string]trustAnchorSource
+	usesFile        bool
+}
+
+// resolveTrustAnchorSources applies the key-source rules to every trust anchor and validates every
+// inline key set. It performs no I/O.
+func (b *Builder) resolveTrustAnchorSources() (trustAnchorSources, error) {
+	sources := trustAnchorSources{
+		jwt:           map[string]trustAnchorSource{},
+		impersonation: map[string]trustAnchorSource{},
+	}
+	resolve := func(anchor trustanchor.AnchorRef, in trustanchor.SourceInput) (trustAnchorSource, error) {
+		in.TrustDirectory = b.config.Security.TrustMaterialDir
+		source, err := trustanchor.ResolveKeySetSource(anchor, in)
+		if err != nil {
+			return trustAnchorSource{}, err
+		}
+		resolved := trustAnchorSource{anchor: anchor, source: source}
+		switch source.Kind {
+		case trustanchor.SourceInline:
+			resolved.inline, err = trustanchor.ParseLocalKeySet(source.Document)
+			if err != nil {
+				return trustAnchorSource{}, trustanchor.At(anchor.ConfigPath+".jwks", err)
+			}
+		case trustanchor.SourceFile:
+			sources.usesFile = true
+		}
+		return resolved, nil
+	}
+
+	clientAssertion := b.config.TokenExchange.ClientAssertion
+	var err error
+	sources.clientAssertion, err = resolve(
+		trustanchor.AnchorRef{Kind: trustanchor.AnchorClientAssertion, ConfigPath: "token_exchange.client_assertion"},
+		trustanchor.SourceInput{
+			JWKSURI:    clientAssertion.JWKSURI,
+			JWKS:       clientAssertion.JWKS,
+			JWKSFile:   clientAssertion.JWKSFile,
+			MinRefresh: clientAssertion.JWKSMinRefresh,
+			MaxRefresh: clientAssertion.JWKSMaxRefresh,
+		})
+	if err != nil {
+		return trustAnchorSources{}, err
+	}
+
+	for _, server := range [...]struct {
+		name   string
+		config *ports.JWTConfig
+	}{
+		{"enduser", b.config.Server.EndUser.Authentication.JWT},
+		{"admin", b.config.Server.Admin.Authentication.JWT},
+	} {
+		if server.config == nil {
+			continue
+		}
+		source, err := resolve(
+			trustanchor.AnchorRef{Kind: trustanchor.AnchorJWTPreauth, ConfigPath: "server." + server.name + ".authentication.jwt"},
+			trustanchor.SourceInput{
+				JWKSURI:              server.config.JWKSURI,
+				JWKS:                 server.config.JWKS,
+				JWKSFile:             server.config.JWKSFile,
+				VerificationDisabled: server.config.Verification == "none",
+			})
+		if err != nil {
+			return trustAnchorSources{}, err
+		}
+		sources.jwt[server.name] = source
+	}
+
+	if impCfg := b.config.OAuth2AuthServer.Impersonation; impCfg != nil {
+		for i, rule := range impCfg.Rules {
+			for j, issuer := range rule.TrustedIssuers {
+				path := impersonationIssuerPath(i, j)
+				source, err := resolve(
+					trustanchor.AnchorRef{Kind: trustanchor.AnchorImpersonationIssuer, ConfigPath: path},
+					trustanchor.SourceInput{
+						JWKSURI:    issuer.JWKSURI,
+						JWKS:       issuer.JWKS,
+						JWKSFile:   issuer.JWKSFile,
+						MinRefresh: issuer.JWKSMinRefresh,
+						MaxRefresh: issuer.JWKSMaxRefresh,
+					})
+				if err != nil {
+					return trustAnchorSources{}, err
+				}
+				sources.impersonation[path] = source
+			}
+		}
+	}
+	return sources, nil
+}
+
+// localKeySetAdapter creates the static or file adapter of a local key source, registers its
+// shutdown and health, and logs the loaded key set without key material (FR-018).
+func (b *Builder) localKeySetAdapter(app *App, trustDir *jwks.TrustDirectory, resolved trustAnchorSource) (ports.JWKSPort, error) {
+	attrs := []any{"trust_anchor", resolved.anchor.ConfigPath, "key_source", string(resolved.source.Kind)}
+	var adapter ports.JWKSPort
+	var set trustanchor.LocalKeySet
+	switch resolved.source.Kind {
+	case trustanchor.SourceInline:
+		adapter, set = jwks.NewStaticAdapter(resolved.inline), resolved.inline
+	case trustanchor.SourceFile:
+		file, err := jwks.NewFileAdapter(trustDir, resolved.source.Path, resolved.source.Refresh, resolved.anchor.ConfigPath, b.logger)
+		if err != nil {
+			return nil, err
+		}
+		app.chainShutdown(file.Shutdown)
+		app.keyFileHealth = append(app.keyFileHealth, file)
+		adapter, set = file, file.LocalKeySet()
+		attrs = append(attrs, "path", resolved.source.Path)
+	default:
+		return nil, fmt.Errorf("%s: not a local key source", resolved.anchor.ConfigPath)
+	}
+	keyIDs := set.KeyIDs
+	if keyIDs == nil {
+		keyIDs = []string{}
+	}
+	b.logger.Info("trust anchor key set loaded", append(attrs, "key_count", set.Set.Len(), "key_ids", keyIDs)...)
+	return adapter, nil
+}
+
+// abortBuild releases what Build already started before it returns err.
+func abortBuild(app *App, err error) error {
+	if app.Shutdown == nil {
+		return err
+	}
+	return errors.Join(err, app.Shutdown(context.Background()))
 }
