@@ -114,6 +114,9 @@ var _ = Describe("ExtProc Approval Journey", func() {
 		Expect(sync.Data.Pairs[0].Approvals).To(HaveLen(1))
 		pending := sync.Data.Pairs[0].Approvals[0]
 		Expect(pending.Status).To(Equal("pending"))
+		Expect(pending.ParamsPattern["amount"]).To(Equal("1"))
+		Expect(pending.ParamsPattern["count"]).To(Equal("9007199254740993"))
+		Expect(pending.ParamsPattern["nested"]).To(Equal(`{"values":[100000,1]}`))
 
 		detail := approvalJourneyDetail(broker, pending.ID, principal)
 		Expect(approvalURL).To(Equal(detail.Data.ApprovalURL))
@@ -176,7 +179,7 @@ func approvalJourneyToolCall(client extprocv3.ExternalProcessorClient, subjectTo
 		WithHeader("Mcp-Session-Id", approvalJourneySessionID).
 		WithAgentgatewayProtocol("mcp").
 		BuildWithMetadata()
-	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app","title":"Approval journey"}}}`)
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app","title":"Approval journey","amount":1.0,"count":9007199254740993,"nested":{"values":[0.1e6,1.0]}}}}`)
 	return extprochelpers.SendHeadersAndBody(context.Background(), client, headers, body)
 }
 
