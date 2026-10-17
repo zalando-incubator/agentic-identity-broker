@@ -59,6 +59,18 @@ func TestHelmTemplate_ProxyUpstreamTimeout(t *testing.T) {
 	})
 }
 
+func TestHelmTemplate_LocalModeLeavesTokenExchangeUnconfigured(t *testing.T) {
+	output := renderHelmTemplate(t,
+		"--set", "broker.oauth2AuthorizationServer.mode=local",
+	)
+
+	require.Contains(t, output, `principal_expression: ""`)
+	require.Contains(t, output, `agent_id_expression: ""`)
+	require.Contains(t, output, `expression: ""`)
+	require.NotContains(t, output, `principal_expression: "subject_token.sub"`)
+	require.NotContains(t, output, `agent_id_expression: "resolveAgentIdByClientId(subject_token.azp)"`)
+}
+
 func TestHelmTemplate_ManagedKeysUseBase64StringData(t *testing.T) {
 	key := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 	output := renderHelmTemplate(t,
