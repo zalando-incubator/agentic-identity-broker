@@ -311,8 +311,8 @@ Content-Type: application/json
 **Step 3 — the job fails without retrying**
 
 ```text
-curl: (22) The requested URL returned error: 403
 {"error":"forbidden"}
+session sweep failed: HTTP 403
 ```
 
 The log contains the status and body, not the `Authorization` header.
@@ -432,12 +432,13 @@ sequenceDiagram
 
 **Value Objects** (things without identity):
 - **Session Health State**: `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`, derived at query time. Never stored.
+- **Session Health Snapshot**: per-service counts of sessions in each state, built once per export cycle and not retained.
 - **Session Sweep Schedule**: the chart-managed CronJob that calls the sweep, with its period, lookahead, target, and request credentials.
 
 **Domain Events** (state changes of business significance):
 - **SessionSweepRun** (existing audit event): now also timed in a histogram by outcome.
 
-*Add Session Health State and Session Sweep Schedule to the `ARCHITECTURE.md` glossary.*
+*Add Session Health State, Session Health Snapshot, and Session Sweep Schedule to the `ARCHITECTURE.md` glossary.*
 
 ### Configuration Requirements *(if applicable - document before implementation)*
 
