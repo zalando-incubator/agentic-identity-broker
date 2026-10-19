@@ -207,13 +207,13 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ### Implementation for User Story 1
 
-- [ ] T028 [US1] Add these helpers to `charts/agentic-identity-broker/templates/_helpers.tpl`:
+- [X] T028 [US1] Add these helpers to `charts/agentic-identity-broker/templates/_helpers.tpl`:
   - `agentic-identity-broker.sessionSweep.validate`: the three `fail` checks with the exact messages in `contracts/chart-values.md` (FR-011, FR-012, SR-002)
   - `.podLabels`: instance, part-of, managed-by, then `commonLabels`, then `sessionSweep.podLabels`, then a fixed `app.kubernetes.io/component: session-sweep`, never `app.kubernetes.io/name` (research R6, FR-016)
   - `.url` and `.host`: the target table in `contracts/sweep-job.md`, using `urlParse` and the `<fullname>.<namespace>.svc:<service.ports.admin>` default (research R3, FR-006)
   - `.body`: key order `lookahead_duration`, `dry_run`, optional `page_size` (FR-004, FR-005)
   - `.curlConfigLiteral`: escape `\` and `"`, sort header names (research R2, FR-007)
-- [ ] T029 [P] [US1] Create `charts/agentic-identity-broker/templates/serviceaccount-session-sweep.yaml`:
+- [X] T029 [P] [US1] Create `charts/agentic-identity-broker/templates/serviceaccount-session-sweep.yaml`:
   - gated on `sessionSweep.enabled`
   - name `<fullname>-session-sweep`, the chart namespace helper
   - `agentic-identity-broker.labels` plus `app.kubernetes.io/component: session-sweep`
@@ -221,7 +221,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - no hook annotations
 
   (FR-015)
-- [ ] T030 [US1] Create `charts/agentic-identity-broker/templates/cronjob-session-sweep.yaml` per `contracts/sweep-job.md` "CronJob (fields fixed by the chart)":
+- [X] T030 [US1] Create `charts/agentic-identity-broker/templates/cronjob-session-sweep.yaml` per `contracts/sweep-job.md` "CronJob (fields fixed by the chart)":
   - call `.validate` first
   - `concurrencyPolicy: Forbid`, `backoffLimit: 0`, `restartPolicy: Never`
   - `timeZone` only when set
@@ -231,15 +231,15 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - `podAnnotations`
 
   (FR-002, FR-003, FR-014, FR-015, SR-004)
-- [ ] T031 [US1] Render the container `command: ["/bin/sh", "-ec", <script>]` in `cronjob-session-sweep.yaml`, implementing `contracts/sweep-job.md` "Script contract" steps 1 to 5:
+- [X] T031 [US1] Render the container `command: ["/bin/sh", "-ec", <script>]` in `cronjob-session-sweep.yaml`, implementing `contracts/sweep-job.md` "Script contract" steps 1 to 5:
   - read file headers in sorted order, with the missing/empty and unsupported-character messages
   - generate curl config lines and pipe them to `curl --config -` with `--silent --show-error --connect-timeout 10 --max-time <timeoutSeconds> --request POST --data '<body>' --write-out '\n%{http_code}'`, plus TLS flags when set
   - print the body; exit `0` only for `2xx`, otherwise print `session sweep failed: HTTP <status>` and exit `1`
   - no heredocs, `set -x`, `--verbose`, or `--trace`
 
   (FR-008, FR-009, FR-012, FR-013, SR-003, SR-005; research R1, R2, R7, R8)
-- [ ] T032 [US1] Run `docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'type printf; curl --version | head -1'` and record the output in `research.md` R7. If `printf` is not a builtin, stop and propose an alternative that keeps file values out of argv before continuing (SR-003).
-- [ ] T033 [US1] Add a "Scheduled session sweep" section to `charts/agentic-identity-broker/README.md`:
+- [X] T032 [US1] Run `docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'type printf; curl --version | head -1'` and record the output in `research.md` R7. If `printf` is not a builtin, stop and propose an alternative that keeps file values out of argv before continuing (SR-003).
+- [X] T033 [US1] Add a "Scheduled session sweep" section to `charts/agentic-identity-broker/README.md`:
   - the values table from `contracts/chart-values.md`, with the warning that literal headers are rendered into the manifest
   - two recipes, both through the authenticating proxy: a projected ServiceAccount token (spec Journey 1) and a TLS client certificate. Document `headers` only as a mechanism for non-secret headers. Do not add a direct-call recipe (spec Architecture Decisions)
   - the trust guidance from FR-025
@@ -247,7 +247,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - `helm template --show-only templates/cronjob-session-sweep.yaml`
 
   Replace the line 40 instruction to route sweep CronJobs through the proxy (FR-026).
-- [ ] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` until US1-S1 to US1-S11 are green, changing fixtures only.
+- [X] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` until US1-S1 to US1-S11 are green, changing fixtures only.
 
 **Checkpoint**: US1 is shippable alone: the sweep runs hourly from the chart.
 

@@ -74,6 +74,8 @@ Static shape and ranges (types, minimums, the ISO 8601 pattern, `additionalPrope
 
 **Alternatives considered**: The broker image: it has no shell or curl. A purpose-built Go client: a new binary and image for one HTTP call.
 
+**Verification (T032, 2026-10-19)**: In `curlimages/curl:8.16.0`, `type printf` reports `printf is a shell builtin` and `curl --version` reports `curl 8.16.0`. The rendered script, run in that image with a read-only root filesystem as UID 1000, did three things: sent a CRLF-terminated file token as `Bearer tok-abc123`, sent a literal header containing `'` and `"` unchanged, and rejected a file value containing `"` before sending.
+
 ## R8 — Job outcome and log
 
 **Decision**: The script runs curl with these options:
