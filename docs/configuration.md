@@ -309,6 +309,8 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 | `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
 | `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. PostgreSQL separately limits all locked-session operations to 20 across background, on-demand, sweep, and reconnect traffic. |
 | `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
+| `token_refresh.health_metrics.enabled` | bool | `true` | `true`, `false` | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED` | `--token_refresh.health_metrics.enabled` | Publish the `oauth2_sessions{service_id,state}` gauge. Takes effect only when telemetry metrics are exported. |
+| `token_refresh.health_metrics.query_timeout` | Go duration string | `5s` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT` | `--token_refresh.health_metrics.query_timeout` | Timeout of the per-export session count query. A slower query reports no gauge data for that export cycle. |
 
 
 #### Encryption Configuration
@@ -789,9 +791,12 @@ token_refresh:
   background_workers: 10
   sweep:
     default_page_size: 100
+  health_metrics:
+    enabled: true
+    query_timeout: 5s
 ```
 
-The source order is CLI flags > environment variables > YAML file > defaults. The three flags use the exact names in the [reference table](#token-refresh-configuration).
+The source order is CLI flags > environment variables > YAML file > defaults. The five flags use the exact names in the [reference table](#token-refresh-configuration).
 
 Set `lookahead_duration` to less than the shortest access-token lifetime that your providers issue. Otherwise, every token exchange can submit a refresh while the token remains valid.
 
@@ -801,7 +806,9 @@ The PostgreSQL adapter separately limits locked-session operations to 20 across 
 
 Each admitted refresh holds its connection through all provider attempts, retry waits, and token persistence. Two maximum `Retry-After` waits add 20 connection-seconds per refresh, before provider latency. The bounded refresh context limits the total duration. Lower background concurrency leaves more of the shared admission capacity for on-demand refreshes and sweeps.
 
-The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
+With `health_metrics.enabled`, each replica runs one grouped count of stored sessions per metric export cycle and publishes `oauth2_sessions` by service and health state. The query reads no token material. A failed or slow query exports no points for that cycle and logs `session health query failed` at WARN. Consumers aggregate the gauge across replicas with `max`.
+
+The broker does not schedule the admin sweep. Enable the chart's `sessionSweep` CronJob, or schedule `POST /api/sessions/sweep` with another external job. See the [session sweep runbook](operations/session-sweep.md) for scheduling, credentials, and monitoring.
 
 ### Encryption Backend Configuration
 
@@ -1757,7 +1764,7 @@ telemetry:
 | `telemetry.traces.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_TRACES_ENABLED` | Enable trace export. Disabling traces suppresses otelchi HTTP spans and storage child spans. |
 | `telemetry.traces.sampling_rate` | float64 | `1.0` | `IDENTITY_BROKER_TELEMETRY_TRACES_SAMPLING_RATE` | Fractional sampling rate for traces (0.0–1.0). `1.0` = 100% sampled. Uses `ParentBased(TraceIDRatioBased(rate))`. |
 | `telemetry.traces.propagators` | []string | `["ottrace","b3multi","baggage"]` | N/A (config file only) | Propagators to register globally. Supported values: `ottrace` (OpenTracing interop), `b3multi` (Zipkin B3 multiple headers), `b3` (B3 single header), `tracecontext` (W3C), `baggage` (W3C). Propagators are registered unconditionally when telemetry is enabled, even if `traces.enabled` is false. |
-| `telemetry.metrics.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED` | Enable metrics export. When enabled, process runtime metrics (goroutines, memory, GC) and HTTP request metrics (via otelchi) are exported automatically. |
+| `telemetry.metrics.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED` | Enable metrics export. When enabled, process runtime metrics (goroutines, memory, GC) and HTTP request metrics (via otelchi) are exported automatically, along with the session refresh and sweep instruments and the `oauth2_sessions` gauge when `token_refresh.health_metrics.enabled` is true. |
 | `telemetry.metrics.export_interval` | duration | `30s` | `IDENTITY_BROKER_TELEMETRY_METRICS_EXPORT_INTERVAL` | How often metrics are pushed to the collector. Must be positive. Example: `30s`, `1m`. |
 | `telemetry.logs.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_LOGS_ENABLED` | Enable OTLP log export via the `slog` bridge. Set to `false` if the collector does not support `opentelemetry.proto.collector.logs.v1.LogsService`. |
 | `telemetry.exporter.protocol` | string | `"grpc"` | `IDENTITY_BROKER_TELEMETRY_EXPORTER_PROTOCOL` | OTLP transport protocol. Accepted values: `grpc`, `http`, `https`. The `https` protocol uses the HTTP OTLP exporter with TLS; bare `host:port` endpoints are auto-prefixed with `https://`. |

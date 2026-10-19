@@ -326,7 +326,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ## Phase 6: Documentation
 
-- [ ] T044 Rewrite "Schedule sweeps" and "Monitor and resolve failures" in `docs/operations/session-sweep.md` per FR-025:
+- [X] T044 Rewrite "Schedule sweeps" and "Monitor and resolve failures" in `docs/operations/session-sweep.md` per FR-025:
   - the chart values replace the hand-written CronJob, plus a `helm template` path for plain manifests
   - both lookahead constraints (keep the guidance already corrected on this branch)
   - proxy recipes with a projected ServiceAccount token and a TLS client certificate
@@ -337,15 +337,15 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - the example queries and kube-state-metrics signals from `contracts/observability.md`
 
   Also update "How refresh works" so it no longer says the broker cannot be scheduled from the chart.
-- [ ] T045 [P] Update `docs/configuration.md`:
+- [X] T045 [P] Update `docs/configuration.md`:
   - two rows in the Token Refresh table (`:248-255`)
   - the YAML block and "The three flags" sentence (`:700-712`)
   - replace `:722` with a pointer to the chart schedule and runbook
   - mention `oauth2_sessions` in the telemetry reference (`:1486-1503`)
 
   (FR-026)
-- [ ] T046 [P] Update `api/admin/openapi.yaml` description text only, at `:1701` (operator-managed job becomes the chart-managed schedule or another external job) and the example at `:1752` (an hourly CronJob with `PT2H`). Validate the file with the repository's OpenAPI check. No field, status, or schema change (API-002).
-- [ ] T047 [P] Update `ARCHITECTURE.md`:
+- [X] T046 [P] Update `api/admin/openapi.yaml` description text only, at `:1701` (operator-managed job becomes the chart-managed schedule or another external job) and the example at `:1752` (an hourly CronJob with `PT2H`). Validate the file with the repository's OpenAPI check. No field, status, or schema change (API-002).
+- [X] T047 [P] Update `ARCHITECTURE.md`:
   - the admin sweep text (`:538-542`)
   - `:573`: keep "no broker timer" and add the chart CronJob
   - session metrics (`:750-763`): add the gauge, histogram, and skipped counter

@@ -2095,8 +2095,8 @@ paths:
       description: |
         Refreshes every stored third-party user session whose access token expires within the
         lookahead window, across all principals and services. Intended to be called on a schedule
-        by an operator-managed job (for example a Kubernetes CronJob); the broker runs no internal
-        scheduler.
+        by an external job, such as the CronJob the broker Helm chart renders when
+        `sessionSweep.enabled` is true; the broker runs no internal scheduler.
 
         **Selection**: A session is a candidate when its access token has a recorded expiry at or
         before `now + lookahead_duration`. Sessions with no access-token expiry are never
@@ -2146,9 +2146,9 @@ paths:
                 summary: Use configured lookahead and page size
                 value: {}
               scheduled:
-                summary: Ten-minute window for a CronJob that runs every five minutes
+                summary: Two-hour window for the chart's hourly CronJob
                 value:
-                  lookahead_duration: PT10M
+                  lookahead_duration: PT2H
               dry_run_wide:
                 summary: Preview a one-day window without refreshing
                 value:
