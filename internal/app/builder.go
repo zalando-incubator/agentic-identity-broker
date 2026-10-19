@@ -1337,6 +1337,15 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}
 
+	var healthMetrics *oauth2session.SessionHealthMetrics
+	if b.config.TokenRefresh.HealthMetrics.Enabled {
+		healthMetrics, err = oauth2session.NewSessionHealthMetrics(b.storage.SessionHealth(),
+			b.config.TokenRefresh.LookaheadDuration, b.config.TokenRefresh.HealthMetrics.QueryTimeout, b.logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session health metrics: %w", err)
+		}
+	}
+
 	// Drain admitted refreshes while telemetry and the upstream transport are still live.
 	prevSessionShutdown := app.Shutdown
 	app.Shutdown = func(ctx context.Context) error {
@@ -1345,6 +1354,13 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			return errors.Join(refreshErr, prevSessionShutdown(ctx))
 		}
 		return refreshErr
+	}
+
+	if healthMetrics != nil {
+		prevHealthShutdown := app.Shutdown
+		app.Shutdown = func(ctx context.Context) error {
+			return errors.Join(healthMetrics.Close(), prevHealthShutdown(ctx))
+		}
 	}
 
 	// Start maintenance only after all fallible construction has completed.

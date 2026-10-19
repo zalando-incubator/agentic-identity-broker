@@ -82,7 +82,6 @@ Built from the groups by summing counts per `(service, state)`. Validation: a gr
 | `repo ports.UserSessionHealthRepository` | Health query port |
 | `lookahead time.Duration` | Copy of `token_refresh.lookahead_duration` |
 | `queryTimeout time.Duration` | `token_refresh.health_metrics.query_timeout` |
-| `now func() time.Time` | Clock, injectable for tests |
 | `registration metric.Registration` | Unregistered by `Close` |
 
 Lifecycle:
