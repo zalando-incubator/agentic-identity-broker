@@ -62,7 +62,12 @@ If you get `403`, check the proxy URL, Host header, and browser origin. If you g
 
 ## Schedule sweeps
 
-Choose a lookahead shorter than the shortest access-token lifetime that your providers issue. Otherwise, token exchanges can submit another refresh soon after one succeeds. Choose a schedule that reaches inactive sessions before their tokens expire. For example, use a five-minute schedule and ten-minute lookahead only if all relevant providers issue longer-lived access tokens. Allow for provider latency and missed runs when you set timeouts.
+Choose the schedule and lookahead together:
+
+- The lookahead must cover the schedule interval plus a margin for one missed or late run. Otherwise, inactive sessions can expire between runs and wait for an on-demand refresh.
+- The lookahead should be shorter than the shortest access-token lifetime that your providers issue. A token refreshed by one run expires within the next run's window when the lookahead is longer, so every run refreshes every session of that provider. This adds provider calls and locked-session load but does not break sessions.
+
+For example, an hourly schedule with a two-hour lookahead (`PT2H`) suits providers that issue access tokens valid for more than two hours. Allow for provider latency and the number of sessions due when you set timeouts, and keep the Job deadline above the request timeout.
 
 The broker Helm chart does not create a sweep CronJob. The following example is for an administrator-managed Kubernetes deployment. The CronJob omits `dry_run`, so each Job performs a real sweep. The example assumes that the admin proxy accepts service-account tokens with audience `broker-admin-proxy` and authorizes the service account as a sweep operator. If your proxy uses another authentication method, adapt the Job before you deploy it.
 
