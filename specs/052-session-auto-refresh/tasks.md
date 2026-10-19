@@ -261,7 +261,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ### Tests for User Story 2
 
-- [ ] T035 [US2] Write failing unit tests in `internal/domain/oauth2session/health_metrics_test.go`, using the ManualReader pattern from `sweep_test.go:262-266` and a hand-written port fake with function fields:
+- [X] T035 [US2] Write failing unit tests in `internal/domain/oauth2session/health_metrics_test.go`, using the ManualReader pattern from `sweep_test.go:262-266` and a hand-written port fake with function fields:
   - `ClassifySessionHealth` table for all six `(AccessExpiry, RefreshUsable)` shapes plus an invalid class
   - zero-fill of all four states per present service; absent services produce no points
   - exact attribute set `{service_id, state}`
@@ -274,20 +274,20 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] Implement `internal/domain/oauth2session/health_metrics.go` per `contracts/ports.md` §2:
+- [X] T036 [US2] Implement `internal/domain/oauth2session/health_metrics.go` per `contracts/ports.md` §2:
   - `SessionHealthState` constants
   - `ClassifySessionHealth`
   - `NewSessionHealthMetrics(repo, lookahead, queryTimeout, logger)`, which registers `Int64ObservableGauge("oauth2_sessions", unit "{session}")` and one callback on `otel.Meter("oauth2session")`, with the callback steps 1 to 4
   - `Close()` via `Registration.Unregister`
 
   Makes T035 green.
-- [ ] T037 [US2] Wire `NewSessionHealthMetrics(b.storage.SessionHealth(), b.config.TokenRefresh.LookaheadDuration, b.config.TokenRefresh.HealthMetrics.QueryTimeout, b.logger)` in `internal/app/builder.go`:
+- [X] T037 [US2] Wire `NewSessionHealthMetrics(b.storage.SessionHealth(), b.config.TokenRefresh.LookaheadDuration, b.config.TokenRefresh.HealthMetrics.QueryTimeout, b.logger)` in `internal/app/builder.go`:
   - only when `HealthMetrics.Enabled` (research R11)
   - add `Close` to the shutdown chain beside `OAuth2SessionService.Close` (`:1185-1193`), before telemetry shutdown
   - call `Close` on builder failure paths after construction
 
   (FR-021, Principle XII)
-- [ ] T038 [US2] Run `ginkgo -v --focus-file session_metrics_test.go --focus "US2" ./tests/e2e/` until US2-S1 to US2-S9 are green, changing fixtures only.
+- [X] T038 [US2] Run `ginkgo -v --focus-file session_metrics_test.go --focus "US2" ./tests/e2e/` until US2-S1 to US2-S9 are green, changing fixtures only.
 
 **Checkpoint**: US2 works without US1.
 
@@ -301,8 +301,8 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ### Tests for User Story 3
 
-- [ ] T039 [P] [US3] Extend `internal/domain/oauth2session/sweep_test.go`. Assert `session_sweep_skipped_total{triggered_by=sweep}` for a deleted candidate and a no-longer-due candidate, and no increment in a dry run. Extend `sweepMetrics` (`:937-961`) to include the new name (FR-024).
-- [ ] T040 [P] [US3] Extend `internal/adapters/http/handlers/admin/session_sweep_handler_test.go` with a ManualReader:
+- [X] T039 [P] [US3] Extend `internal/domain/oauth2session/sweep_test.go`. Assert `session_sweep_skipped_total{triggered_by=sweep}` for a deleted candidate and a no-longer-due candidate, and no increment in a dry run. Extend `sweepMetrics` (`:937-961`) to include the new name (FR-024).
+- [X] T040 [P] [US3] Extend `internal/adapters/http/handlers/admin/session_sweep_handler_test.go` with a ManualReader:
   - one `session_sweep_duration_seconds` data point per outcome `completed`, `rejected` (parse error and `ErrInvalidSweepRequest`), `aborted`, and `canceled`, each with the correct `dry_run`
   - unit `s` and the bucket boundaries `1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600`
   - nothing recorded when the operator principal is missing
@@ -311,14 +311,14 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Add `skippedCounter` (`session_sweep_skipped_total`, unit `{refresh}`, description from `contracts/ports.md` §4) in `NewSessionSweepService` (`internal/domain/oauth2session/sweep.go:55-65`). Increment it at both real-sweep `result.Skipped++` sites with `sweepMetricAttributes`. Makes T039 green.
-- [ ] T042 [US3] In `internal/adapters/http/handlers/admin/session_sweep_handler.go`:
+- [X] T041 [US3] Add `skippedCounter` (`session_sweep_skipped_total`, unit `{refresh}`, description from `contracts/ports.md` §4) in `NewSessionSweepService` (`internal/domain/oauth2session/sweep.go:55-65`). Increment it at both real-sweep `result.Skipped++` sites with `sweepMetricAttributes`. Makes T039 green.
+- [X] T042 [US3] In `internal/adapters/http/handlers/admin/session_sweep_handler.go`:
   - create the histogram in `NewSessionSweepHandler` per `contracts/ports.md` §5
   - record `time.Since(started).Seconds()` with `outcome` and `dry_run` in the existing deferred block, after the audit log
   - keep the missing-principal return before `started`
 
   Makes T040 green.
-- [ ] T043 [US3] Run `ginkgo -v --focus-file session_metrics_test.go --focus "US3" ./tests/e2e/` until US3-S1 to US3-S3 are green, changing fixtures only.
+- [X] T043 [US3] Run `ginkgo -v --focus-file session_metrics_test.go --focus "US3" ./tests/e2e/` until US3-S1 to US3-S3 are green, changing fixtures only.
 
 **Checkpoint**: All three stories work independently.
 

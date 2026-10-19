@@ -7,9 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type sessionSweeper interface {
@@ -31,12 +35,16 @@ type sessionSweepResponse struct {
 }
 
 type SessionSweepHandler struct {
-	sweeper sessionSweeper
-	logger  *slog.Logger
+	sweeper  sessionSweeper
+	logger   *slog.Logger
+	duration metric.Float64Histogram
 }
 
 func NewSessionSweepHandler(sweeper sessionSweeper, logger *slog.Logger) *SessionSweepHandler {
-	return &SessionSweepHandler{sweeper: sweeper, logger: logger}
+	duration, _ := otel.Meter("oauth2session").Float64Histogram("session_sweep_duration_seconds",
+		metric.WithDescription("Duration of admin session sweep requests by outcome"), metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600))
+	return &SessionSweepHandler{sweeper: sweeper, logger: logger, duration: duration}
 }
 
 func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +77,8 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 			"total_evaluated", result.TotalEvaluated,
 			"duration_ms", time.Since(started).Milliseconds(),
 			"outcome", outcome)
+		h.duration.Record(r.Context(), time.Since(started).Seconds(), metric.WithAttributeSet(attribute.NewSet(
+			attribute.String("outcome", outcome), attribute.String("dry_run", strconv.FormatBool(request.DryRun)))))
 	}()
 
 	var err error
