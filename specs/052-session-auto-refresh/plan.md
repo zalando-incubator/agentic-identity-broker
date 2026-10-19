@@ -48,7 +48,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 **Scale/Scope**:
 - Chart: 2 templates, 1 helper, a values block, the schema, and the README.
 - Broker: 1 port method in 2 adapters, 1 domain file, edits to `sweep.go` and the sweep handler, config keys, and builder wiring.
-- Tests: 2 E2E files with 22 scenarios.
+- Tests: 2 E2E files with 23 scenarios.
 - Docs: runbook, configuration reference, `ARCHITECTURE.md`, and the OpenAPI description text.
 
 ## Constitution Check
@@ -67,7 +67,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 - [x] **API Documentation**: N/A for `docs/api/` (admin API). The operator runbook is updated (FR-025).
 - [x] **API Changes**: None.
 - [x] **Database Design**: No schema change and no migration (DB-001). The new query reads existing columns (DB-002, DB-003).
-- [x] **E2E Acceptance Tests**: All 22 scenarios have E2E tests in two files, written before implementation (Testing Strategy).
+- [x] **E2E Acceptance Tests**: All 23 scenarios have E2E tests in two files, written before implementation (Testing Strategy).
 - [x] **E2E Test Mapping**: 1:1 `It()` per scenario, tabulated below.
 - [x] **E2E Red Phase**: Each test asserts real output that does not exist yet:
   - US1: rendered resources, the request seen by the admin server, the script's exit status, and its log.
@@ -191,7 +191,7 @@ examples/config/{telemetry.yaml,config.production.yaml}
 - [x] Phase 0 (refactoring): skip. The handler, sweep service, and adapters accept the additions without restructuring.
 - [x] Phase 2.7 (entity boilerplate): skip. No new entity.
 
-US1 and US2 are independent, so they can proceed in parallel after Phase 2.5. US3 depends only on Phase 2.
+US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in parallel once their prerequisites are met.
 
 ## Testing Strategy
 
@@ -213,6 +213,7 @@ US1 and US2 are independent, so they can proceed in parallel after Phase 2.5. US
 | US1-S8 | same | `It("succeeds and logs the summary on 200 even when failed is non-zero")` |
 | US1-S9 | same | `It("fails without retry on non-2xx, timeout, or unreachable target and never logs request headers")` |
 | US1-S10 | same | `It("keeps the job pod out of the broker Service and PDB selectors and labels it session-sweep")` |
+| US1-S11 | same | `It("rejects a timeout not below the deadline, an unpaired TLS file, or a non-ISO lookahead at render time")` |
 | US2-S1 | `tests/e2e/session_metrics_test.go` | `It("reports one value per service and state that sums to the stored sessions")` |
 | US2-S2 | same | `It("reports zero for states without sessions")` |
 | US2-S3 | same | `It("counts a session expiring after the lookahead as valid")` |

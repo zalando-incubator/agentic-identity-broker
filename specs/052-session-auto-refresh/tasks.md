@@ -96,11 +96,13 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2f: E2E Acceptance Test Design
 
-- [ ] T014 [P] [US1] Write `tests/e2e/session_sweep_schedule_test.go` with one `It()` per scenario US1-S1 to US1-S10, using the descriptions in the plan's mapping table. Give each a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment and use `Describe → Context → It`.
+- [ ] T013a Add `tests/e2e/fixtures/session_sweep.go` with the shared test data for T014 to T016: `SweepAdminPublicURL()` (`https://broker-admin.example.test`), `SweepOperatorHeader()` (`X-Operator`), `SweepOperatorPrincipal()` (`session-sweep`), `SweepChartValues(overrides map[string]any)` with the identity configured, and session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's seven sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
+
+- [ ] T014 [P] [US1] Write `tests/e2e/session_sweep_schedule_test.go` with one `It()` per scenario US1-S1 to US1-S11, using the descriptions in the plan's mapping table. Give each a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment and use `Describe → Context → It`.
   - **Setup**: Use T002 and T003. Bootstrap the admin server with `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer`:
-    - Set `server.admin.public_url` to `https://broker-admin.example.test`.
-    - Set `server.admin.authentication.preauth.principal_header_name` to `X-Operator`.
-    - Set a literal `sessionSweep.headers.X-Operator: session-sweep`.
+    - Set `server.admin.public_url` to `fixtures.SweepAdminPublicURL()`.
+    - Set `server.admin.authentication.preauth.principal_header_name` to `fixtures.SweepOperatorHeader()`.
+    - Render with `fixtures.SweepChartValues(...)`, which sets the literal operator header to `fixtures.SweepOperatorPrincipal()`.
     - Seed sessions with the fixtures used by `tests/e2e/proactive_token_refresh_test.go`.
   - **US1-S1**: Rendering with defaults produces no `CronJob` and no `ServiceAccount` named `*-session-sweep`. A render with `enabled: false` plus non-default `schedule`, `headers`, `url`, and `podLabels` is byte-identical to the default render.
   - **US1-S2**:
@@ -119,10 +121,11 @@ description: "Task list for feature 052: automatic third-party session refresh"
     - `podLabels` override a shared `commonLabels` key
     - `automountServiceAccountToken: false` on the pod and the ServiceAccount
     - container `securityContext.readOnlyRootFilesystem: true`
+  - **US1-S11**: Three renders with an identity configured, each failing: `timeoutSeconds: 60, activeDeadlineSeconds: 60` errors with the exact timeout message from `contracts/chart-values.md`; `tls.certFile` without `tls.keyFile` errors with the exact TLS message; `lookaheadDuration: 2h` errors with a schema error naming `sessionSweep.lookaheadDuration`.
 
   (FR-001 to FR-016, SR-002 to SR-005)
 - [ ] T015 [P] [US2] Write `tests/e2e/session_metrics_test.go` with US2-S1 to US2-S9 as separate `It()` blocks with spec comments.
-  - **Setup**: Install `sdkmetric.NewManualReader()` as the global MeterProvider in `BeforeEach` with `DeferCleanup` before `BuildApp`, as in `tests/e2e/approval_api_test.go:136-143`. Set `config.TokenRefresh.LookaheadDuration = 5*time.Minute`, `config.TokenRefresh.HealthMetrics = {Enabled: true, QueryTimeout: 2*time.Second}`. Seed sessions for two services matching spec Journey 2's table, with expiries relative to `time.Now()`. Collect and filter `oauth2_sessions`.
+  - **Setup**: Install `sdkmetric.NewManualReader()` as the global MeterProvider in `BeforeEach` with `DeferCleanup` before `BuildApp`, as in `tests/e2e/approval_api_test.go:136-143`. Set `config.TokenRefresh.LookaheadDuration = 5*time.Minute`, `config.TokenRefresh.HealthMetrics = {Enabled: true, QueryTimeout: 2*time.Second}`. Seed sessions with `fixtures.HealthJourneySessions(now)` and the per-state builders from T013a. Collect and filter `oauth2_sessions`.
   - **US2-S1**: one point per `(service_id, state)`, and the per-service sum equals the seeded count.
   - **US2-S2**: zero-valued points are present.
   - **US2-S3 to US2-S6**: the expected state per seeded session shape. S4 uses an expiry already in the past with a usable refresh token. S5 covers both a missing refresh token and an expired refresh expiry.
@@ -140,7 +143,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
 - [ ] T017 Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` and `ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/`. Record one concrete semantic failure per scenario under "Red phase results" in `plan.md`, for example "US1-S2: no CronJob document" or "US2-S1: no oauth2_sessions metric". Confirm both files compile and contain no `Skip`, `XIt`, `PIt`, placeholder assertions, or red-phase comments (Principle XIII).
 - [ ] T018 Review spec Journeys 1 to 4 against US1-S3, S5, S7, S8, S9 and US2-S1 to S7, and against `contracts/sweep-job.md`. Check the values, rendered CronJob excerpt, HTTP exchanges, log lines, and metric names. Fix mismatches in `spec.md`. No Wireloom or JWT claims apply (Principle XIV).
 
-**Checkpoint**: Glossary, config contract, chart values and schema, and 22 compiling red E2E tests.
+**Checkpoint**: Glossary, config contract, chart values and schema, and 23 compiling red E2E tests.
 
 ---
 
@@ -238,12 +241,13 @@ T014 (E2E) is the test for this story. It must be red before T028.
 - [ ] T032 [US1] Run `docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'type printf; curl --version | head -1'` and record the output in `research.md` R7. If `printf` is not a builtin, stop and propose an alternative that keeps file values out of argv before continuing (SR-003).
 - [ ] T033 [US1] Add a "Scheduled session sweep" section to `charts/agentic-identity-broker/README.md`:
   - the values table from `contracts/chart-values.md`, with the warning that literal headers are rendered into the manifest
-  - recipes: in-cluster with a literal header; proxy with a projected ServiceAccount token (spec Journey 1); proxy with a TLS client certificate
+  - two recipes, both through the authenticating proxy: a projected ServiceAccount token (spec Journey 1) and a TLS client certificate. Document `headers` only as a mechanism for non-secret headers. Do not add a direct-call recipe (spec Architecture Decisions)
   - the trust guidance from FR-025
+  - a recommendation to give the job a dedicated operator principal, so the sweep audit event distinguishes scheduled sweeps from manual ones (SR-006)
   - `helm template --show-only templates/cronjob-session-sweep.yaml`
 
   Replace the line 40 instruction to route sweep CronJobs through the proxy (FR-026).
-- [ ] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` until US1-S1 to US1-S10 are green, changing fixtures only.
+- [ ] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` until US1-S1 to US1-S11 are green, changing fixtures only.
 
 **Checkpoint**: US1 is shippable alone: the sweep runs hourly from the chart.
 
@@ -328,6 +332,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - proxy recipes with a projected ServiceAccount token and a TLS client certificate
   - the admin-authenticates-but-does-not-authorize trust statement, with an example NetworkPolicy selecting `app.kubernetes.io/component: session-sweep`
   - why `failed > 0` succeeds
+  - a recommendation to give the job a dedicated operator principal (SR-006)
   - the new instruments, `max` versus `sum` aggregation, the OTLP name-translation note
   - the example queries and kube-state-metrics signals from `contracts/observability.md`
 
@@ -359,7 +364,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 - [ ] T051 Verify `api/admin/openapi.yaml` changed only in descriptive text and examples (API-001, API-002, Principles IV, X).
 - [ ] T052 Verify there is no file in `migrations/` from this branch (DB-001, Principle IX).
 - [ ] T053 Verify spec Journeys 1 to 4 match the implemented values, rendered manifests, HTTP exchanges, logs, and metric names (Principle XIV).
-- [ ] T054 Verify all 22 E2E scenarios exist, one `It()` each, with spec comments and red results recorded in `plan.md` (Principle XIII).
+- [ ] T054 Verify all 23 E2E scenarios exist, one `It()` each, with spec comments and red results recorded in `plan.md` (Principle XIII).
 
 #### Implementation Phase Verification
 
@@ -401,7 +406,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 ### Within phases
 
 - T006 before T015 (the config field must compile).
-- T002 and T003 before T014.
+- T002, T003, and T013a before T014. T013a before T015 and T016.
 - T019 before T020. T021 and T022 before T023 to T026. T023 before T025. T024 before T026. T025 and T026 before T027.
 - T028 before T030 and T031. T031 before T032 and T034.
 - T035 before T036 before T037 before T038.

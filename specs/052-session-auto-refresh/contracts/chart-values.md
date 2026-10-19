@@ -116,7 +116,7 @@ The schema adds `healthMetrics` to `broker.tokenRefresh` with `enabled: boolean`
 
 `charts/agentic-identity-broker/README.md` gains a "Scheduled session sweep" section:
 - the values table
-- three recipes: in-cluster with a literal header, proxy with a projected ServiceAccount token, and proxy with a TLS client certificate
+- two recipes, both through the authenticating proxy: a projected ServiceAccount token, and a TLS client certificate. `headers` is documented only as a mechanism for non-secret headers, sent as given and rendered into the manifest, with no direct-call recipe.
 - the trust guidance from FR-025
 - a `helm template --show-only templates/cronjob-session-sweep.yaml` example
 

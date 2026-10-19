@@ -43,6 +43,7 @@ An operator deploying the broker with the Helm chart enables the scheduled sessi
 8. **Given** the broker returns `200`, including a summary with `failed` greater than zero, **When** the job finishes, **Then** the job succeeds and its log contains the response summary.
 9. **Given** the target returns a non-`2xx` status, the request times out, or the target is unreachable, **When** the job finishes, **Then** the job fails, is not retried, and its log contains the status and response body but no request header.
 10. **Given** the sweep is enabled, **When** the manifests are generated, **Then** the job's pod does not match the broker Service or PodDisruptionBudget selector, and carries `app.kubernetes.io/component: session-sweep` for network policies to select.
+11. **Given** the sweep is enabled with a `timeoutSeconds` not shorter than `activeDeadlineSeconds`, with only one of `tls.certFile` and `tls.keyFile`, or with a `lookaheadDuration` that is not an ISO 8601 duration of days, hours, minutes, and seconds, **When** the manifests are generated, **Then** rendering fails with a message that names the offending value.
 
 ---
 
