@@ -33,7 +33,7 @@ An operator deploying the broker with the Helm chart enables the scheduled sessi
 
 **Acceptance Scenarios**:
 
-1. **Given** the chart is rendered with the sweep disabled (the default), **When** the manifests are generated, **Then** no sweep resources are produced and the rest of the release is unchanged.
+1. **Given** the chart is rendered with the sweep disabled (the default), **When** the manifests are generated, **Then** no sweep resources are produced, and setting other `sessionSweep` values changes no rendered resource.
 2. **Given** the sweep is enabled with default scheduling and target values and one configured header, **When** the manifests are generated, **Then** an hourly CronJob is produced that never runs two jobs at once, does not retry a failed job, requests a `PT2H` lookahead, targets the release's admin Service and admin port, and sends the host of `broker.server.admin.publicUrl` as `Host`.
 3. **Given** `sessionSweep.url` is set, **When** the job runs, **Then** it sends the request to that URL and overrides `Host` only when `sessionSweep.host` is also set.
 4. **Given** literal headers are configured, **When** the job runs, **Then** each header is sent with its configured value.
@@ -344,7 +344,7 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 
 **Scheduled sweep (chart)**
 
-- **FR-001**: The Helm chart MUST offer a scheduled sweep that is disabled by default. With it disabled, the rendered manifests MUST be identical to those rendered before this feature.
+- **FR-001**: The Helm chart MUST offer a scheduled sweep that is disabled by default. With it disabled, the chart MUST render no sweep resources, and `sessionSweep` values MUST NOT affect any other rendered resource.
 - **FR-002**: When enabled, the chart MUST render a CronJob that calls `POST /api/sessions/sweep` once per schedule period. The default schedule is hourly.
 - **FR-003**: The CronJob MUST use `concurrencyPolicy: Forbid` and `backoffLimit: 0`. Its late-start window and active deadline MUST be configurable.
 - **FR-004**: The request MUST send a configurable lookahead. The default is `PT2H`. The values schema MUST accept only the ISO 8601 duration form accepted by the sweep endpoint.

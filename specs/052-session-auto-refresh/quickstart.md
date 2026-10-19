@@ -42,12 +42,14 @@ Expected:
 - With only `enabled=true`, the second command fails with the identity message from [contracts/chart-values.md](contracts/chart-values.md#render-time-checks-fail).
 - With `--set-string 'sessionSweep.headers.X-Request-Source=session-sweep'` added, it renders an hourly `Forbid` CronJob that targets `http://broker-agentic-identity-broker.identity.svc:14000`.
 
-Also confirm that the disabled render is unchanged:
+Also confirm that sweep values have no effect while the sweep is disabled:
 
 ```sh
-git stash && helm template broker ./charts/agentic-identity-broker > /tmp/before.yaml && git stash pop
-helm template broker ./charts/agentic-identity-broker > /tmp/after.yaml
-diff /tmp/before.yaml /tmp/after.yaml     # no output (FR-001)
+helm template broker ./charts/agentic-identity-broker > /tmp/default.yaml
+helm template broker ./charts/agentic-identity-broker \
+  --set-string 'sessionSweep.headers.X-Request-Source=session-sweep' \
+  --set sessionSweep.schedule='*/5 * * * *' > /tmp/disabled-with-values.yaml
+diff /tmp/default.yaml /tmp/disabled-with-values.yaml   # no output (FR-001)
 ```
 
 ## 4. Default image check

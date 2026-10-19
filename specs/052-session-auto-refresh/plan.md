@@ -203,7 +203,7 @@ US1 and US2 are independent, so they can proceed in parallel after Phase 2.5. US
 
 | Spec Scenario | E2E Test Location | Test Description |
 |---|---|---|
-| US1-S1 | `tests/e2e/session_sweep_schedule_test.go` | `It("renders no sweep resources and an unchanged release when disabled")` |
+| US1-S1 | `tests/e2e/session_sweep_schedule_test.go` | `It("renders no sweep resources and ignores other sessionSweep values when disabled")` |
 | US1-S2 | same | `It("renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H")` |
 | US1-S3 | same | `It("sends the request to sessionSweep.url and overrides Host only when sessionSweep.host is set")` |
 | US1-S4 | same | `It("sends configured literal headers")` |
