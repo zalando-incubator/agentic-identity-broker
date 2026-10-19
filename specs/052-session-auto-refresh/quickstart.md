@@ -60,14 +60,25 @@ docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'curl --version |
 
 Expected: a curl 8.16.0 version line. Config variables need curl 8.3 or later (research R1).
 
-## 5. E2E acceptance suites
+## 5. Acceptance checks
 
 ```sh
-ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/
+go test ./tests/integration/ -run 'TestHelmTemplate_SessionSweep' -v
 ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/
 ```
 
-Expected: every scenario in the plan's mapping table passes. The schedule suite renders the chart, runs the rendered script against the production-bootstrapped admin server, and checks the response, logs, and exit status. The metrics suite reads `oauth2_sessions`, `session_sweep_duration_seconds`, and `session_sweep_skipped_total` from a ManualReader.
+Expected: every scenario in the plan's mapping table passes. The chart render checks need `helm` on `PATH` and skip otherwise. The metrics suite reads `oauth2_sessions`, `session_sweep_duration_seconds`, and `session_sweep_skipped_total` from a ManualReader.
+
+The run-time behavior of the rendered script is verified by hand. Render the CronJob (step 3), write a token to a file, and run the container command with the default image against a local echo server or the admin server:
+
+```sh
+helm template broker ./charts/agentic-identity-broker -n identity -f values.yaml \
+  --show-only templates/cronjob-session-sweep.yaml | yq '.spec.jobTemplate.spec.template.spec.containers[0].command[2]' > /tmp/sweep.sh
+docker run --rm -v /tmp/sweep.sh:/sweep.sh:ro -v /tmp/token:/var/run/secrets/session-sweep/token:ro \
+  --read-only --user 1000 --network host curlimages/curl:8.16.0 /bin/sh -ec "$(cat /tmp/sweep.sh)"
+```
+
+Expected: the target sees `Authorization: Bearer <token>` with no quoting artifacts, the response body is printed, and a non-2xx status or missing file exits non-zero without printing the token.
 
 ## 6. Manual cluster check (optional)
 

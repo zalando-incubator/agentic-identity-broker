@@ -13,7 +13,7 @@ PR #196 added `POST /api/sessions/sweep`, but nothing schedules it. This feature
    - It targets the release's admin Service by default and derives `Host` from the admin public URL.
    - It sends credentials the operator supplies: literal headers, headers read from mounted files at run time, or a TLS client certificate.
    - The chart has no identity model. It refuses to render without an identity, and it keeps file contents out of the manifest, argv, environment, and log by letting curl read each file through a config variable (research R1).
-2. **Session-health gauge (US2)**: `oauth2_sessions{service_id,state}`.
+2. **Session-health gauge (US2)**: `oauth2_sessions{service_id,expiry,refreshable}`.
    - One grouped count query runs per metric export cycle, through a new read-only ISP port.
    - The domain classifies the groups into four states and zero-fills them.
 3. **Sweep run metrics (US3)**: a `session_sweep_duration_seconds{outcome,dry_run}` histogram recorded beside the existing audit event, and a `session_sweep_skipped_total` counter.
@@ -24,7 +24,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 
 **Language/Version**: Go 1.27.1. Helm 3 chart templates (Sprig). POSIX `sh` for the job script.
 
-**Primary Dependencies**: OpenTelemetry Go (`metric`, global providers per ADR 011), sqlx + pgx v5, Viper/Cobra. The default job image is `curlimages/curl:8.16.0`, a public image already used in the runbook. **No new Go module.** CI adds the pinned `azure/setup-helm` action, already used by the lint job, to the backend E2E job.
+**Primary Dependencies**: OpenTelemetry Go (`metric`, global providers per ADR 011), sqlx + pgx v5, Viper/Cobra. The default job image is `curlimages/curl:8.16.0`, a public image already used in the runbook. **No new Go module and no CI change.** The chart render checks skip when `helm` is not installed, like the existing ones.
 
 **Storage**: PostgreSQL and in-memory. Reads `user_sessions` metadata columns only. No schema change (DB-001).
 
@@ -57,7 +57,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 
 **Design Preconditions (BLOCKING)**:
 
-- [x] **Domain Model**: [data-model.md](data-model.md). No new entity. The new value objects are `AccessExpiryClass`, `SessionExpiryGroup`, `SessionHealthState`, and `SessionHealthSnapshot`. The process-scoped component is `SessionHealthMetrics`, with a lifecycle diagram. The existing `SessionSweepRun` audit event gains a duration measurement.
+- [x] **Domain Model**: [data-model.md](data-model.md). No new entity. The new value objects are `AccessExpiryClass`, `SessionExpiryGroup`, `SessionHealthKey`, and `SessionHealthSnapshot`. The process-scoped component is `SessionHealthMetrics`, with a lifecycle diagram. The existing `SessionSweepRun` audit event gains a duration measurement.
 - [x] **Domain Concepts**: Session Health State, Session Health Snapshot, and Session Sweep Schedule go into the `ARCHITECTURE.md` glossary under Third-Party OAuth2 Session Management (`ARCHITECTURE.md:1502`).
 - [x] **Entity IDs**: N/A. There is no new UUID-keyed entity. Groups use the existing `id.ServiceID`.
 - [x] **Configuration Design**: [contracts/configuration.md](contracts/configuration.md) lists both keys with defaults, env vars, flags, and validation. [contracts/chart-values.md](contracts/chart-values.md) lists every `sessionSweep.*` value and its schema.
@@ -163,10 +163,8 @@ internal/
 └── app/builder.go
 
 cmd/agentic-identity-broker/root.go                # flags
-tests/e2e/session_sweep_schedule_test.go           # new, US1
+tests/integration/helm_chart_test.go              # US1 render checks (skips without helm)
 tests/e2e/session_metrics_test.go                  # new, US2 + US3
-tests/e2e/helpers/                                 # helm render + script runner (test code only)
-.github/workflows/ci.yml                           # setup-helm in e2e-backend
 docs/operations/session-sweep.md, docs/configuration.md, ARCHITECTURE.md, api/admin/openapi.yaml (text only)
 examples/config/{telemetry.yaml,config.production.yaml}
 ```
@@ -178,8 +176,8 @@ examples/config/{telemetry.yaml,config.production.yaml}
 | Phase | Purpose | Included |
 |---|---|---|
 | Phase 0 | Pre-implementation refactoring | Skip. No structural change is needed first. |
-| Phase 1 | Setup | `setup-helm` in the E2E CI job. E2E helpers to render the chart and run the script. |
-| Phase 2 | Design preconditions | Glossary, config contract, chart values and schema skeleton, the two E2E files in red. |
+| Phase 1 | Setup | Skip. The chart render checks reuse `tests/integration/helm_chart_test.go`, which skips without `helm`; no CI change. |
+| Phase 2 | Design preconditions | Glossary, config contract, chart values and schema skeleton, the metrics E2E file and the chart render checks in red. |
 | Phase 2.7 | Entity boilerplate | Skip. No new entity. |
 | Phase 2.5 | Foundational | Port, both adapters with parity tests, factory accessor, config keys. |
 | Phase 3 | US1 (P1) chart schedule | Templates, helper, script, fail checks, README. |
@@ -203,47 +201,39 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 | Spec Scenario | E2E Test Location | Test Description |
 |---|---|---|
-| US1-S1 | `tests/e2e/session_sweep_schedule_test.go` | `It("renders no sweep resources and ignores other sessionSweep values when disabled")` |
-| US1-S2 | same | `It("renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H")` |
-| US1-S3 | same | `It("sends the request to sessionSweep.url and overrides Host only when sessionSweep.host is set")` |
-| US1-S4 | same | `It("sends configured literal headers")` |
-| US1-S5 | same | `It("reads file headers at run time and keeps their contents out of the manifest, argv, env, and log")` |
-| US1-S6 | same | `It("presents the configured client certificate and trusts the configured CA")` |
-| US1-S7 | same | `It("fails to render when no identity is configured")` |
-| US1-S8 | same | `It("succeeds and logs the summary on 200 even when failed is non-zero")` |
-| US1-S9 | same | `It("fails without retry on non-2xx, timeout, or unreachable target and never logs request headers")` |
-| US1-S10 | same | `It("keeps the job pod out of the broker Service and PDB selectors and labels it session-sweep")` |
-| US1-S11 | same | `It("rejects a timeout not below the deadline, an unpaired TLS file, or a non-ISO lookahead at render time")` |
-| US2-S1 | `tests/e2e/session_metrics_test.go` | `It("reports one value per service and state that sums to the stored sessions")` |
-| US2-S2 | same | `It("reports zero for states without sessions")` |
+| US1-S1 | `tests/integration/helm_chart_test.go` (`TestHelmTemplate_SessionSweep`) | `renders no sweep resources when disabled` |
+| US1-S2 | same | `renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H` |
+| US1-S3, S4 | render check (same subtest as US1-S2 asserts the `url`, `Host`, and literal header lines); run-time behavior verified manually (quickstart §5) | — |
+| US1-S5 | same file: `reads file headers through curl config variables and never renders their value`; argv/env hygiene is curl's `variable@file` behavior, verified manually | — |
+| US1-S6, S8, S9 | manual verification against the admin server (quickstart §5); curl's TLS and status handling are not the chart's to test | — |
+| US1-S7 | same file | `fails to render with an invalid sweep configuration/no identity` |
+| US1-S10 | same file | `keeps the job pod out of the broker Service and PDB selectors` |
+| US1-S11 | same file | `fails to render with an invalid sweep configuration/{timeout not below the deadline, unpaired TLS certificate, non-ISO lookahead}` |
+| US2-S1 | `tests/e2e/session_metrics_test.go` | `It("reports one value per service and series that sums to the stored sessions")` |
+| US2-S2 | same | `It("reports zero for series without sessions")` |
 | US2-S3 | same | `It("counts a session expiring after the lookahead as valid")` |
-| US2-S4 | same | `It("counts a due session with a usable refresh token as expiring_refreshable")` |
-| US2-S5 | same | `It("counts a due session without a usable refresh token as expired_unrefreshable")` |
-| US2-S6 | same | `It("counts a session without recorded expiry as unknown_expiry")` |
+| US2-S4 | same | `It("counts a due session as expiring and an already expired one as expired, both refreshable")` |
+| US2-S5 | same | `It("counts expired sessions without a usable refresh token as expired and unrefreshable")` |
+| US2-S6 | same | `It("counts a session without recorded expiry under unknown")` |
 | US2-S7 | same | `It("reports no points and logs a warning when the query fails, then recovers")` |
 | US2-S8 | same | `It("issues no health query when health metrics are disabled")` |
-| US2-S9 | same | `It("exports only service_id and state attributes")` |
+| US2-S9 | same | `It("exports only service_id, expiry, and refreshable attributes")` |
 | US3-S1 | same | `It("records a completed run with its dry_run value in the duration histogram")` |
 | US3-S2 | same | `It("records rejected, aborted, and canceled runs under their outcome and no completed run")` |
 | US3-S3 | same | `It("increments the skipped counter for already-refreshed or deleted candidates")` |
 
-**Red Phase Requirements**: As in the template. No `Skip`, `XIt`, or `PIt`. US1 tests fail on render assertions until the templates exist. US2 and US3 tests fail on missing data points until the instruments exist.
+**Red Phase Requirements**: As in the template. No `Skip`, `XIt`, or `PIt` in the E2E suite. The chart render checks follow the existing `tests/integration/helm_chart_test.go` convention and skip only when `helm` is not installed. US1 checks fail on render assertions until the templates exist. US2 and US3 tests fail on missing data points until the instruments exist.
 
 **Test Data Strategy**:
 - Existing fixtures: `fixtures.AdminPrincipal()`, the third-party service and session fixtures used by `tests/e2e/proactive_token_refresh_test.go`.
-- New fixtures: chart values files built per test in a temp directory; session sets with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshTokenExpiresAt` for each health state.
+- New fixtures: `tests/e2e/fixtures/session_health.go` session builders with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshTokenExpiresAt` for each `(expiry, refreshable)` series.
 
 **Bootstrap Strategy**:
 - Admin server via `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer` (production builder).
-- The config sets `server.admin.public_url` so the `Host` check is exercised. Admin authentication uses the plain principal header, so the rendered script's literal header supplies the operator.
-- US1-S6 wraps the admin handler in `httptest.NewUnstartedServer` with a TLS config that requires and verifies a client certificate from a test CA generated in `BeforeEach`.
 - US2 and US3 install a `sdkmetric.ManualReader` as the global MeterProvider in `BeforeEach` with `DeferCleanup`, as in `tests/e2e/approval_api_test.go:136-143`, before `BuildApp`.
 - US2-S7 uses a storage decorator in `tests/e2e/` that fails the health query on demand. US2-S8 uses the same decorator to count calls. Both are test code only.
 
-**Helper Utilities** (test code in `tests/e2e/helpers/`):
-- `RenderChart(values map[string]any) ([]map[string]any, error)`: runs `helm template` and decodes the documents with `go.yaml.in/yaml/v3`, already in the module graph as an indirect dependency; it becomes direct. No new module or Kubernetes client is added. It fails with a clear message when `helm` is not on `PATH`.
-- `RunSweepScript(cronJob, env) (exitCode int, stdout, stderr string)`: runs the rendered command with `/bin/sh` in a temp working directory.
-- For US1-S5, a `curl` shim placed first on the script's `PATH` records its argv and environment, then runs the real `curl`. The test asserts that the secret file value appears in neither.
+**Chart render checks** (`tests/integration/helm_chart_test.go`): `runHelmTemplate` wraps the existing `renderHelmTemplate` so a subtest can assert on helm's stderr for the render-time `fail` paths. No new helper package, module, or CI dependency.
 
 ### Unit & Integration Tests
 
@@ -272,9 +262,11 @@ Both files compile and contain no `Skip`, `XIt`, `PIt`, or placeholder assertion
 | Scenario | Failure before implementation |
 |---|---|
 | US1-S1 | Enabled render has no `CronJob` or `ServiceAccount` named `broker-agentic-identity-broker-session-sweep` |
-| US1-S2, S3, S4, S5, S6, S8, S9, S10 | `rendered chart has no CronJob broker-agentic-identity-broker-session-sweep` |
+| US1-S2, S5, S10 | rendered chart has no CronJob `broker-agentic-identity-broker-session-sweep` |
 | US1-S7 | Render without identity returned no error |
 | US1-S11 | Timeout-versus-deadline render returned no error |
+
+The script-run scenarios (US1-S3, S4, S6, S8, S9) were first covered by a backend E2E harness that was later removed as disproportionate (research R14); they are verified manually per quickstart §5.
 | US2-S1 to S6, S9 | No `oauth2_sessions` metric collected |
 | US2-S7 | No `session health query failed` WARN while `user_sessions` was locked |
 | US2-S8 | Positive control with health metrics enabled logged no WARN under the lock |

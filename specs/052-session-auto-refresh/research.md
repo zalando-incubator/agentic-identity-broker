@@ -25,11 +25,11 @@ Each entry records a decision, why it was chosen, and the alternatives considere
 **Decision**:
 - The template escapes `\` and `"` in every value it writes into a curl configuration line.
 - The values schema keeps CR and LF out of literal header values and `Host`, keeps braces out of file-header prefixes (they would start a curl expansion), and restricts header and TLS file paths to `^/[A-Za-z0-9._/-]+$`.
-- Before calling curl, the script validates each header file: it fails when the file is missing or empty, or when the value, after its trailing LF and CR are removed, is empty or contains `"`, `\`, CR, or LF.
+- curl reads each header file through a config variable and expands it with `trim` and `json`, so a value with a quote, backslash, CR, or LF cannot alter the request. A missing file fails curl before any request.
 
-**Rationale**: Bearer tokens, JWTs, and API keys never need these characters, so failing before the request is clearer than sending a mangled credential. The path pattern needs no shell quoting. An empty value would otherwise send an empty header (spec edge case).
+**Rationale**: Bearer tokens, JWTs, and API keys never contain these characters, so the escaping is a safety net rather than a validation step. The path pattern needs no shell quoting. A malformed or empty value reaches the target as a malformed credential and the target's rejection fails the job, which is diagnosable from the HTTP status in the log.
 
-**Alternatives considered**: Relying on curl's `json` escaping alone: safe against header injection, but it sends a malformed credential instead of failing before the request.
+**Alternatives considered**: A shell pre-check that reads each file and rejects unsupported characters before calling curl. Dropped: it duplicated curl's escaping, put the credential in a shell variable, and needed its own run-time tests.
 
 ## R3 — Default target and `Host`
 
@@ -127,7 +127,7 @@ The memory adapter applies the same predicates to its snapshots with the supplie
 
 **Alternatives considered**:
 - Returning the four states from SQL: moves domain precedence into two adapters.
-- Paging `ListExpiringSessions`: misses `unknown_expiry` sessions and loads token blobs.
+- Paging `ListExpiringSessions`: misses sessions without a recorded expiry and loads token blobs.
 - Extending `UserSessionRepository`: widens an existing ISP interface used by many callers.
 
 ## R10 — Query cost
@@ -142,7 +142,7 @@ The memory adapter applies the same predicates to its snapshots with the supplie
 
 **Decision**: A new domain type `SessionHealthMetrics` in `internal/domain/oauth2session` registers the following on `otel.Meter("oauth2session")`:
 - An `Int64ObservableGauge` named `oauth2_sessions`, unit `{session}`.
-- One callback that runs the query under `context.WithTimeout(ctx, query_timeout)` and observes every `(service_id, state)` pair.
+- One callback that runs the query under `context.WithTimeout(ctx, query_timeout)` and observes every `(service_id, expiry, refreshable)` combination.
 
 On error, the callback observes nothing, logs `session health query failed` at WARN with the storage error kind, and returns `nil`. `builder.go` constructs it only when `token_refresh.health_metrics.enabled` is true, and calls `Registration.Unregister` in the shutdown chain before telemetry shuts down.
 
@@ -181,18 +181,14 @@ On error, the callback observes nothing, logs `session health query failed` at W
 
 ## R14 — Testing the chart
 
-**Decision**: Add a Ginkgo E2E file, `tests/e2e/session_sweep_schedule_test.go`.
-- It runs the `helm` binary (`helm template`) with per-scenario values, decodes the multi-document output, and asserts on the CronJob, ServiceAccount, labels, and selector disjointness.
-- For run-time scenarios, it extracts the rendered container `command`, then runs it with the host's `/bin/sh` and `curl` against the production-bootstrapped admin test server.
-- Header and TLS file paths point at per-test temporary files.
-- TLS scenarios wrap the admin handler in an `httptest` TLS server that requires a client certificate.
-- The CI backend E2E job gains the pinned `azure/setup-helm` step that the lint job already uses (`.github/workflows/ci.yml:441-442`).
+**Decision**: Test the chart at render time only, in `tests/integration/helm_chart_test.go`, next to the existing chart render checks.
+- `TestHelmTemplate_SessionSweep` runs `helm template` with per-case values and asserts on the CronJob defaults, the rendered curl configuration, the pod labels, and the three render-time failures.
+- It skips when `helm` is not on `PATH`, like the existing chart tests, so no CI job needs a new dependency.
+- The run-time behavior of the rendered script (file headers, TLS, exit codes) is verified manually against the admin server (quickstart §5) and by the author's run in `curlimages/curl:8.16.0`.
 
 **Rationale**:
-- Principle XIII requires E2E tests in `tests/e2e/`, mapped 1:1 to scenarios.
-- No chart render test exists today. CI only runs `helm lint` (`ci.yml:429-443`), and `scripts/validate-helm-chart.sh` needs Kind.
-- Running the rendered script tests what ships: argv hygiene, escaping, file checks, exit codes, and the real admin handler, including the `Host` check and the operator principal.
-- On GitHub's Ubuntu runners, `/bin/sh` is `dash`, which also checks that the script is POSIX.
+- A first version ran the rendered script from the backend E2E suite against the production-bootstrapped admin server. It needed `helm` and curl 8.3+ on every E2E runner, about 1,400 lines of harness (chart render, recording proxy, script runner, test CA), and the Zalando CDP pipeline had neither binary. That was out of proportion to a dozen lines of shell.
+- Render checks cover what the chart itself decides: defaults, URL and `Host` derivation, the curl configuration lines, label disjointness, and the `fail` paths. curl's own behavior for `variable@file` and `expand-header` is not the chart's to test.
 - Chart changes already count as `code` in the CI change filter (`ci.yml:76-84`), so the backend E2E job runs for them.
 
 **Alternatives considered**:

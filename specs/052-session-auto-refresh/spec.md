@@ -49,23 +49,23 @@ An operator deploying the broker with the Helm chart enables the scheduled sessi
 
 ### User Story 2 - Session Health Visible Per Service (Priority: P1)
 
-An operator wants to know, for every third-party service, how many stored user sessions are healthy, how many are due for refresh and can be refreshed, how many have expired and cannot be refreshed without the user reconnecting, and how many have no recorded expiry and therefore are never swept. The broker publishes these counts through its existing OpenTelemetry pipeline. The operator can chart and alert on them in any metrics backend that receives the broker's export.
+An operator wants to know, for every third-party service, how many stored user sessions are healthy, how many are due for refresh, how many have already expired but could still be refreshed by the next sweep, how many have expired and cannot be refreshed without the user reconnecting, and how many have no recorded expiry and therefore are never swept. The broker publishes these counts through its existing OpenTelemetry pipeline. The operator can chart and alert on them in any metrics backend that receives the broker's export.
 
 **Why this priority**: This is the second acceptance criterion. A single sweep response covers only the candidates inside its window. Operators need the whole population to judge whether the schedule keeps sessions usable and how many users must reconnect.
 
-**Independent Test**: Start a broker with telemetry metrics enabled. Store sessions for two services in each health state. Read the exported gauge after one export cycle. Confirm that each `(service_id, state)` pair reports the expected count, including zero-count states.
+**Independent Test**: Start a broker with telemetry metrics enabled. Store sessions for two services in each health state. Read the exported gauge after one export cycle. Confirm that each `(service_id, expiry, refreshable)` combination reports the expected count, including zero-count series.
 
 **Acceptance Scenarios**:
 
-1. **Given** telemetry metrics are enabled and sessions exist for two services, **When** one export cycle has elapsed, **Then** the session-health gauge reports one value per `(service_id, state)` pair, and the sum over all states for a service equals the number of stored sessions for that service.
-2. **Given** a service has no sessions in a given state, **When** the gauge is read, **Then** that `(service_id, state)` pair is reported as `0` rather than omitted.
-3. **Given** a session whose access token expires later than the configured refresh lookahead, **When** the gauge is read, **Then** the session is counted as `valid`.
-4. **Given** a session whose access token expires within the lookahead or has already expired, and whose refresh token is present and not expired, **When** the gauge is read, **Then** the session is counted as `expiring_refreshable`.
-5. **Given** a session whose access token expires within the lookahead or has already expired, and whose refresh token is missing or expired, **When** the gauge is read, **Then** the session is counted as `expired_unrefreshable`.
-6. **Given** a session with no recorded access-token expiry, **When** the gauge is read, **Then** the session is counted as `unknown_expiry`.
+1. **Given** telemetry metrics are enabled and sessions exist for two services, **When** one export cycle has elapsed, **Then** the session-health gauge reports one value per `(service_id, expiry, refreshable)` combination, and the sum over all series of a service equals the number of stored sessions for that service.
+2. **Given** a service has no sessions in a given series, **When** the gauge is read, **Then** that `(service_id, expiry, refreshable)` combination is reported as `0` rather than omitted.
+3. **Given** a session whose access token expires later than the configured refresh lookahead, **When** the gauge is read, **Then** the session is counted under `expiry="valid"`.
+4. **Given** a session whose access token expires within the lookahead and one whose access token has already expired, both with a refresh token that is present and not expired, **When** the gauge is read, **Then** the first is counted under `expiry="expiring",refreshable="true"` and the second under `expiry="expired",refreshable="true"`, so an operator can see expired sessions the sweep has not yet renewed.
+5. **Given** a session whose access token has already expired and whose refresh token is missing or expired, **When** the gauge is read, **Then** the session is counted under `expiry="expired",refreshable="false"`.
+6. **Given** a session with no recorded access-token expiry, **When** the gauge is read, **Then** the session is counted under `expiry="unknown"`.
 7. **Given** the count query fails or exceeds its timeout, **When** that export cycle runs, **Then** the gauge reports no data points for that cycle, the broker logs the failure, and the next cycle queries again.
 8. **Given** telemetry metrics are disabled or the health metrics option is disabled, **When** the broker runs, **Then** the broker issues no session-health query.
-9. **Given** the health metrics are exported, **When** their attributes are inspected, **Then** they carry `service_id` and `state` only and never a user principal or session identifier.
+9. **Given** the health metrics are exported, **When** their attributes are inspected, **Then** they carry `service_id`, `expiry`, and `refreshable` only and never a user principal or session identifier.
 
 ---
 
@@ -95,7 +95,7 @@ An operator wants to confirm from the metrics backend that the scheduled sweep r
 - A provider issues access tokens shorter than the sweep lookahead: every run refreshes all of that provider's sessions. This is safe, but adds one refresh per session per run. The operations guide explains the tradeoff.
 - The sweep lookahead is shorter than the schedule period: sessions expiring between runs are refreshed only when an agent uses them. The documentation warns about this pairing, and the shipped defaults avoid it.
 - The request reaches the broker without an identity the admin server accepts: the broker returns `500 server_misconfiguration` before it starts a sweep. The job fails, and no `completed` run appears in metrics.
-- A configured header file or TLS file is missing or empty at run time: the job fails before it sends a request and does not print file contents or an empty header.
+- A configured header file or TLS file is missing at run time: `curl` fails before it sends a request and does not print file contents. An empty header file sends an empty credential, and the target's rejection fails the job.
 - An operator puts a secret in a literal header: the chart cannot detect this. The values schema and documentation state that literal headers appear in the manifest and that secrets belong in file headers.
 - Multiple broker replicas publish the health gauge: every replica reports the same totals, so consumers aggregate with `max`. The sweep histogram and counters come only from the replica that served the run, so consumers aggregate them with `sum`.
 - `dryRun: true` is configured for the schedule: the job succeeds on `200`, nothing is refreshed, and the histogram shows `dry_run=true`, so an alert on real completed runs fires.
@@ -226,7 +226,7 @@ session_sweep_failed_total{triggered_by="sweep"}                            +1
 
 ### Journey 2 — Operator reads session health per service (User Story 2, Scenarios 1 to 7)
 
-**Cast**: Same release. Telemetry metrics export every 30 seconds. The broker's refresh lookahead is `5m`. At 2026-10-16T16:05:00Z the broker stores seven sessions: five for `svc-calendar` (`3f9c…`) and two for `svc-tickets` (`a1d2…`).
+**Cast**: Same release. Telemetry metrics export every 30 seconds. The broker's refresh lookahead is `5m`. At 2026-10-16T16:05:00Z the broker stores eight sessions: six for `svc-calendar` (`3f9c…`) and two for `svc-tickets` (`a1d2…`).
 
 **Step 1 — Broker configuration**
 
@@ -236,7 +236,7 @@ telemetry:
     enabled: true                 # false disables every metric in this feature
     export_interval: 30s          # the health query runs once per export cycle per replica
 token_refresh:
-  lookahead_duration: 5m          # boundary between valid and expiring_refreshable
+  lookahead_duration: 5m          # boundary between expiry="valid" and expiry="expiring"
   health_metrics:
     enabled: true                 # default true; effective only when telemetry metrics are enabled
     query_timeout: 5s             # a slower query reports no data for that cycle
@@ -244,30 +244,41 @@ token_refresh:
 
 **Step 2 — 16:05:00Z: the export cycle runs the count query**
 
-| Session owner | Service | Access token expiry | Refresh token | State |
-|---|---|---|---|---|
-| `u-7f3a` | `svc-calendar` | 2026-10-16T22:02:00Z | usable | `valid` |
-| `u-0b19` | `svc-calendar` | 2026-10-16T16:08:00Z | usable | `expiring_refreshable` |
-| `u-5c44` | `svc-calendar` | 2026-10-16T09:00:00Z | stored expiry passed | `expired_unrefreshable` |
-| `u-9e01` | `svc-calendar` | none recorded | usable | `unknown_expiry` |
-| `u-2d87` | `svc-calendar` | 2026-10-16T22:00:00Z | usable | `valid` |
-| `u-7f3a` | `svc-tickets` | 2026-10-16T20:00:00Z | usable | `valid` |
-| `u-4a60` | `svc-tickets` | 2026-10-16T12:00:00Z | none | `expired_unrefreshable` |
+| Session owner | Service | Access token expiry | Refresh token | `expiry` | `refreshable` |
+|---|---|---|---|---|---|
+| `u-7f3a` | `svc-calendar` | 2026-10-16T22:02:00Z | usable | `valid` | `true` |
+| `u-0b19` | `svc-calendar` | 2026-10-16T16:08:00Z | usable | `expiring` | `true` |
+| `u-5c44` | `svc-calendar` | 2026-10-16T09:00:00Z | stored expiry passed | `expired` | `false` |
+| `u-3c21` | `svc-calendar` | 2026-10-16T14:00:00Z | usable | `expired` | `true` |
+| `u-9e01` | `svc-calendar` | none recorded | usable | `unknown` | `true` |
+| `u-2d87` | `svc-calendar` | 2026-10-16T22:00:00Z | usable | `valid` | `true` |
+| `u-7f3a` | `svc-tickets` | 2026-10-16T20:00:00Z | usable | `valid` | `true` |
+| `u-4a60` | `svc-tickets` | 2026-10-16T12:00:00Z | none | `expired` | `false` |
+
+`u-3c21` is an inactive user whose token expired two hours ago; the next sweep run renews it. If that series stays above zero across runs, no sweep is reaching these sessions.
 
 **Step 3 — the gauge is exported, zero-filled per service**
 
 ```text
-oauth2_sessions{service_id="3f9c…",state="valid"}                  2
-oauth2_sessions{service_id="3f9c…",state="expiring_refreshable"}   1
-oauth2_sessions{service_id="3f9c…",state="expired_unrefreshable"}  1
-oauth2_sessions{service_id="3f9c…",state="unknown_expiry"}         1
-oauth2_sessions{service_id="a1d2…",state="valid"}                  1
-oauth2_sessions{service_id="a1d2…",state="expiring_refreshable"}   0
-oauth2_sessions{service_id="a1d2…",state="expired_unrefreshable"}  1
-oauth2_sessions{service_id="a1d2…",state="unknown_expiry"}         0
+oauth2_sessions{service_id="3f9c…",expiry="valid",refreshable="true"}      2
+oauth2_sessions{service_id="3f9c…",expiry="valid",refreshable="false"}     0
+oauth2_sessions{service_id="3f9c…",expiry="expiring",refreshable="true"}   1
+oauth2_sessions{service_id="3f9c…",expiry="expiring",refreshable="false"}  0
+oauth2_sessions{service_id="3f9c…",expiry="expired",refreshable="true"}    1
+oauth2_sessions{service_id="3f9c…",expiry="expired",refreshable="false"}   1
+oauth2_sessions{service_id="3f9c…",expiry="unknown",refreshable="true"}    1
+oauth2_sessions{service_id="3f9c…",expiry="unknown",refreshable="false"}   0
+oauth2_sessions{service_id="a1d2…",expiry="valid",refreshable="true"}      1
+oauth2_sessions{service_id="a1d2…",expiry="valid",refreshable="false"}     0
+oauth2_sessions{service_id="a1d2…",expiry="expiring",refreshable="true"}   0
+oauth2_sessions{service_id="a1d2…",expiry="expiring",refreshable="false"}  0
+oauth2_sessions{service_id="a1d2…",expiry="expired",refreshable="true"}    0
+oauth2_sessions{service_id="a1d2…",expiry="expired",refreshable="false"}   1
+oauth2_sessions{service_id="a1d2…",expiry="unknown",refreshable="true"}    0
+oauth2_sessions{service_id="a1d2…",expiry="unknown",refreshable="false"}   0
 ```
 
-No attribute names a user. The sum for `3f9c…` is 5 and for `a1d2…` is 2.
+No attribute names a user. The sum for `3f9c…` is 6 and for `a1d2…` is 2.
 
 **Step 4 — 16:05:30Z: the session store is briefly unavailable**
 
@@ -276,18 +287,26 @@ The query fails within `query_timeout`. That cycle exports no `oauth2_sessions` 
 **Step 5 — the operator's dashboard and alerts (PromQL shown as an example query language)**
 
 ```promql
-# Sessions per service and state; replicas report identical totals
-max by (service_id, state) (oauth2_sessions)
+# Sessions per service, expiry class, and refreshability
+max by (service_id, expiry, refreshable) (oauth2_sessions)
+
+# Expired sessions the sweep could refresh but has not. Alert when this stays above
+# zero for longer than two schedule periods: the sweep is not running or not keeping up.
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="true"}) > 0
 
 # Users who must reconnect, rising over a day
-max by (service_id) (oauth2_sessions{state="expired_unrefreshable"})
-  - max by (service_id) (oauth2_sessions{state="expired_unrefreshable"} offset 1d) > 0
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"})
+  - max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"} offset 1d) > 0
 
-# No completed real sweep in three hours
+# No completed real sweep in three hours (hourly schedule)
 sum(increase(session_sweep_duration_seconds_count{outcome="completed",dry_run="false"}[3h])) == 0
 
-# Health gauge missing for fifteen minutes
+# Health gauge missing for fifteen minutes although it reported sessions before
 absent_over_time(oauth2_sessions[15m])
+  and on() (max(max_over_time(oauth2_sessions[1h] offset 15m)) > 0)
+
+# Sweep failures over a day
+sum(increase(session_sweep_failed_total[1d])) > 0
 ```
 
 **Observable result**: The dashboard shows two users who must reconnect, one per service, and one session that the sweep cannot reach because it has no recorded expiry. None of the alerts needs access to broker logs or the database.
@@ -364,13 +383,11 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 
 **Session health metrics (broker)**
 
-- **FR-017**: The broker MUST publish an `oauth2_sessions` gauge through the existing telemetry pipeline. The gauge counts stored third-party sessions by `service_id` and `state`, where `state` is exactly one of `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`.
-- **FR-018**: Session state MUST be derived only from stored fields and the configured refresh lookahead. Precedence:
-  1. `unknown_expiry` when no access-token expiry is recorded.
-  2. Otherwise, `valid` when the access token expires after now plus `token_refresh.lookahead_duration`.
-  3. Otherwise, `expiring_refreshable` when a refresh token is present and not expired.
-  4. Otherwise, `expired_unrefreshable`.
-- **FR-019**: Every `(service_id, state)` pair MUST be reported for every service that has at least one session. A state with no sessions reports `0`.
+- **FR-017**: The broker MUST publish an `oauth2_sessions` gauge through the existing telemetry pipeline. The gauge counts stored third-party sessions by `service_id`, `expiry`, and `refreshable`, where `expiry` is exactly one of `valid`, `expiring`, `expired`, or `unknown` and `refreshable` is `true` or `false`.
+- **FR-018**: Both attributes MUST be derived only from stored fields, the current time, and the configured refresh lookahead:
+  - `expiry` is `unknown` when no access-token expiry is recorded; otherwise `valid` when the access token expires after now plus `token_refresh.lookahead_duration`; otherwise `expiring` when it expires after now; otherwise `expired`.
+  - `refreshable` is `true` when a refresh token is present and not expired at now.
+- **FR-019**: Every `(service_id, expiry, refreshable)` combination MUST be reported for every service that has at least one session. A combination with no sessions reports `0`.
 - **FR-020**: The counts MUST be computed by one grouped query per export cycle, bounded by `token_refresh.health_metrics.query_timeout`. A failed or timed-out query MUST report no points for that cycle and MUST be logged without session or principal data.
 - **FR-021**: The query MUST run only when telemetry metrics and `token_refresh.health_metrics.enabled` are both enabled.
 - **FR-022**: Health and sweep metrics MUST NOT carry a user principal, session identifier, or token material as an attribute or value. `service_id` is the only identifying attribute permitted.
@@ -399,12 +416,15 @@ No new entities are stored. The feature adds one derived value object and reuses
 ```mermaid
 flowchart TD
     A["Stored session"] --> B{Access expiry recorded?}
-    B -- no --> U["unknown_expiry"]
+    B -- no --> U["expiry=unknown"]
     B -- yes --> C{Expires after now + refresh lookahead?}
-    C -- yes --> V["valid"]
-    C -- no --> D{Refresh token present and not expired?}
-    D -- yes --> R["expiring_refreshable"]
-    D -- no --> X["expired_unrefreshable"]
+    C -- yes --> V["expiry=valid"]
+    C -- no --> D{Expires after now?}
+    D -- yes --> R["expiry=expiring"]
+    D -- no --> X["expiry=expired"]
+    A --> E{Refresh token present and not expired?}
+    E -- yes --> T["refreshable=true"]
+    E -- no --> F["refreshable=false"]
 ```
 
 ```mermaid
@@ -424,7 +444,7 @@ sequenceDiagram
     Broker-->>Target: 200 {refreshed, skipped, failed, total_evaluated, dry_run}
     Target-->>Job: 200
     Broker->>Backend: session_sweep_duration_seconds, session_sweep_skipped_total
-    Broker->>Backend: oauth2_sessions{service_id,state} (every export cycle)
+    Broker->>Backend: oauth2_sessions{service_id,expiry,refreshable} (every export cycle)
 ```
 
 **Entities** (things with unique identity):
@@ -432,8 +452,8 @@ sequenceDiagram
 - **ThirdpartyOAuth2Service** (existing): the service a session belongs to; its ID is the only identifying metric attribute.
 
 **Value Objects** (things without identity):
-- **Session Health State**: `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`, derived at query time. Never stored.
-- **Session Health Snapshot**: per-service counts of sessions in each state, built once per export cycle and not retained.
+- **Session Health State**: the `expiry` class (`valid`, `expiring`, `expired`, or `unknown`) and `refreshable` flag of a session, derived at query time. Never stored.
+- **Session Health Snapshot**: per-service counts of sessions in each `(expiry, refreshable)` series, built once per export cycle and not retained.
 - **Session Sweep Schedule**: the chart-managed CronJob that calls the sweep, with its period, lookahead, target, and request credentials.
 
 **Domain Events** (state changes of business significance):
@@ -540,7 +560,7 @@ No ADR is added or superseded. The chart-managed job is an external operator sch
 - An hourly schedule with a two-hour lookahead is an acceptable default when access tokens live longer than two hours. Deployments with shorter-lived tokens accept one refresh per session per run, or shorten the schedule and lookahead together.
 - Sessions whose provider rejected the refresh token stay stored and are retried on each run until the user reconnects or the session is removed. Persisting the refresh outcome is out of scope.
 - Health counts are broken down by service only. Per-user health is not exposed as a metric.
-- The broker refresh lookahead (`token_refresh.lookahead_duration`) is the boundary between `valid` and `expiring_refreshable`, because it is where the broker itself starts refreshing an active session. The sweep lookahead is a separate request value.
+- The broker refresh lookahead (`token_refresh.lookahead_duration`) is the boundary between `expiry="valid"` and `expiry="expiring"`, because it is where the broker itself starts refreshing an active session. The boundary between `expiring` and `expired` is the current time. The sweep lookahead is a separate request value.
 - "No port or repository contract changes" in the feature input applies to the sweep. One additive read-only repository operation is accepted for the health gauge (DB-002).
 - Running one grouped count query per export cycle per replica is cheap compared with token-exchange traffic. Deployments with large session tables can disable the gauge or lengthen the export interval.
 - Every replica publishes the same health totals, and consumers aggregate with `max`. Leader election is out of scope.

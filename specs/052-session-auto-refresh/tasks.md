@@ -36,18 +36,9 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 **Purpose**: Tooling the E2E suites need.
 
-- [X] T001 Add the pinned `azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1` step to the `e2e-backend` job in `.github/workflows/ci.yml`, before "Backend E2E suite with JUnit". This is the same pin the `helm` lint job uses (research R14, Principle XIII).
-- [X] T002 [P] Add `RenderChart(values map[string]any) ([]map[string]any, error)` and `FindResource(docs, kind, name)` in `tests/e2e/helpers/helm_chart.go`.
-  - Write the values to a temp file.
-  - Run `helm template broker ../../charts/agentic-identity-broker -n identity -f <file>`, using a path resolved from the module root.
-  - Return stderr in the error on non-zero exit.
-  - Decode the documents with `go.yaml.in/yaml/v3` (already in the module graph).
-  - When `helm` is not on `PATH`, return an error that names the missing binary. Never skip (research R14).
-- [X] T003 [P] Add `RunSweepScript(cronJob map[string]any, opts SweepScriptOptions) (exitCode int, stdout, stderr string)` in `tests/e2e/helpers/sweep_script.go`.
-  - Extract `spec.jobTemplate.spec.template.spec.containers[0].command`.
-  - Run it with `/bin/sh` in a temp directory under a context timeout.
-  - Let callers prepend a `curl` shim directory to `PATH`. The shim records its argv and environment to a file, then runs the real `curl` found at setup.
-  - Return the recorded argv and environment for US1-S5 (research R1, SR-003).
+- [X] T001 Removed. The chart render checks live in `tests/integration/helm_chart_test.go`, which skips when `helm` is absent, so no CI job gains a Helm step (research R14).
+- [X] T002 Removed with T001: no E2E chart render helper.
+- [X] T003 Removed with T001: no script runner; run-time script behavior is verified manually (quickstart §5).
 
 ---
 
@@ -63,7 +54,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - `data-model.md`: the classification flowchart and the `AccessExpiryClass` table, where "at or before `threshold`" is inclusive
   - `contracts/ports.md` §1 and §2
 
-  They must agree on the precedence `unknown_expiry` → `valid` → `expiring_refreshable` → `expired_unrefreshable`, on `threshold = now + token_refresh.lookahead_duration`, and on "refresh usable = present and expiry nil or after now". Record any correction in `spec.md` (Principle II).
+  They must agree on the classes `unknown` → `after_threshold` → `due` → `expired` (an expiry equal to `now` is expired), on `threshold = now + token_refresh.lookahead_duration`, and on "refresh usable = present and expiry nil or after now". Record any correction in `spec.md` (Principle II).
 
 ### Phase 2b: Configuration Design
 
@@ -96,42 +87,25 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2f: E2E Acceptance Test Design
 
-- [X] T013a Add `tests/e2e/fixtures/session_sweep.go` with the shared test data for T014 to T016: `SweepAdminPublicURL()` (`https://broker-admin.example.test`), `SweepOperatorHeader()` (`X-Operator`), `SweepOperatorPrincipal()` (`session-sweep`), `SweepChartValues(overrides map[string]any)` with the identity configured, and session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's seven sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
+- [X] T013a Add `tests/e2e/fixtures/session_health.go` with the shared test data for T014 to T016: session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's eight sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
 
-- [X] T014 [P] [US1] Write `tests/e2e/session_sweep_schedule_test.go` with one `It()` per scenario US1-S1 to US1-S11, using the descriptions in the plan's mapping table. Give each a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment and use `Describe → Context → It`.
-  - **Setup**: Use T002 and T003. Bootstrap the admin server with `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer`:
-    - Set `server.admin.public_url` to `fixtures.SweepAdminPublicURL()`.
-    - Set `server.admin.authentication.preauth.principal_header_name` to `fixtures.SweepOperatorHeader()`.
-    - Render with `fixtures.SweepChartValues(...)`, which sets the literal operator header to `fixtures.SweepOperatorPrincipal()`.
-    - Seed sessions with the fixtures used by `tests/e2e/proactive_token_refresh_test.go`.
-  - **US1-S1**: Rendering with defaults produces no `CronJob` and no `ServiceAccount` named `*-session-sweep`. A render with `enabled: false` plus non-default `schedule`, `headers`, `url`, and `podLabels` is byte-identical to the default render.
-  - **US1-S2**:
-    - `schedule: "0 * * * *"`, `concurrencyPolicy: Forbid`, `backoffLimit: 0`
-    - command contains `http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep`, `Host: broker-admin.example.test`, and `"lookahead_duration":"PT2H"`
-  - **US1-S3**: Set `url` to the test server and no `host`. Assert that no `Host` override is sent. Then set `host: broker-admin.example.test`. The admin `Host` check passes, and the run reaches the sweep.
-  - **US1-S4**: The test server receives the literal header.
-  - **US1-S5**: Write a random token to a temp file. Configure `headersFromFile.Authorization: {path, prefix: "Bearer "}`, behind a reverse proxy in the test that checks `Authorization` and then forwards. Assert the request header. Assert that the token string appears in neither the rendered YAML, the curl shim's argv and environment, nor stdout and stderr.
-  - **US1-S6**: `httptest.NewUnstartedServer` with `tls.Config{ClientAuth: tls.RequireAndVerifyClientCert}` from a CA generated in `BeforeEach`, and `tls.{certFile,keyFile,caFile}` set. The run succeeds. Without `certFile` and `keyFile` (with a literal header kept), the handshake fails and the exit code is non-zero.
-  - **US1-S7**: `RenderChart({sessionSweep: {enabled: true}})` errors with the exact message from `contracts/chart-values.md`.
-  - **US1-S8**: The upstream provider rejects one refresh. Exit `0`. Stdout contains the JSON with `"failed":1`.
-  - **US1-S9**: A target returns `302`, `403`, and `500`, then hangs past `timeoutSeconds: 2` (with `activeDeadlineSeconds: 5`), then is unreachable. Each run exits non-zero. Stderr contains `session sweep failed: HTTP <code>` for the status cases. No output contains `X-Operator: session-sweep`. The test server sees exactly one request per run.
-  - **US1-S10**:
-    - pod labels lack `app.kubernetes.io/name`, so they do not match the Service and PDB `selector` labels
-    - include `app.kubernetes.io/component: session-sweep`
-    - `podLabels` override a shared `commonLabels` key
-    - `automountServiceAccountToken: false` on the pod and the ServiceAccount
-    - container `securityContext.readOnlyRootFilesystem: true`
-  - **US1-S11**: Three renders with an identity configured, each failing: `timeoutSeconds: 60, activeDeadlineSeconds: 60` errors with the exact timeout message from `contracts/chart-values.md`; `tls.certFile` without `tls.keyFile` errors with the exact TLS message; `lookaheadDuration: 2h` errors with a schema error naming `sessionSweep.lookaheadDuration`.
+- [X] T014 [P] [US1] Add `TestHelmTemplate_SessionSweep` to `tests/integration/helm_chart_test.go`, one subtest per render-time scenario with a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment:
+  - **US1-S1**: a render with `enabled: false` plus a non-default `schedule` and `headers` contains no `CronJob` and nothing named `session-sweep`.
+  - **US1-S2**: `schedule: "0 * * * *"`, `concurrencyPolicy: Forbid`, `backoffLimit: 0`, `activeDeadlineSeconds: 2100`; the curl configuration contains `url = "http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep"`, `header = "Host: broker-admin.example.test"`, the literal operator header, the PT2H body, and `max-time = 1800`.
+  - **US1-S5** (render-time part): a `headersFromFile` entry renders `variable = "header_0@<path>"` and `expand-header = "<Name>: <prefix>{{header_0:trim:json}}"`, and the script never reads the file itself.
+  - **US1-S7, US1-S11**: renders without an identity, with `timeoutSeconds >= activeDeadlineSeconds`, with `tls.certFile` alone, and with `lookaheadDuration: 2h` fail with the messages from `contracts/chart-values.md` (the last through the values schema).
+  - **US1-S10**: the pod template carries `app.kubernetes.io/component: session-sweep` and no `app.kubernetes.io/name`.
+  - US1-S3, S4, S6, S8, S9 (run-time behavior of the rendered script) are verified manually per quickstart §5.
 
   (FR-001 to FR-016, SR-002 to SR-005)
 - [X] T015 [P] [US2] Write `tests/e2e/session_metrics_test.go` with US2-S1 to US2-S9 as separate `It()` blocks with spec comments.
   - **Setup**: Install `sdkmetric.NewManualReader()` as the global MeterProvider in `BeforeEach` with `DeferCleanup` before `BuildApp`, as in `tests/e2e/approval_api_test.go:136-143`. Set `config.TokenRefresh.LookaheadDuration = 5*time.Minute`, `config.TokenRefresh.HealthMetrics = {Enabled: true, QueryTimeout: 2*time.Second}`. Seed sessions with `fixtures.HealthJourneySessions(now)` and the per-state builders from T013a. Collect and filter `oauth2_sessions`.
-  - **US2-S1**: one point per `(service_id, state)`, and the per-service sum equals the seeded count.
+  - **US2-S1**: one point per `(service_id, expiry, refreshable)`, and the per-service sum equals the seeded count.
   - **US2-S2**: zero-valued points are present.
-  - **US2-S3 to US2-S6**: the expected state per seeded session shape. S4 uses an expiry already in the past with a usable refresh token. S5 covers both a missing refresh token and an expired refresh expiry.
+  - **US2-S3 to US2-S6**: the expected `(expiry, refreshable)` series per seeded session shape. S4 seeds one session due within the lookahead and one already expired, both with a usable refresh token, and expects `expiring/true` and `expired/true`. S5 covers both a missing refresh token and an expired refresh expiry.
   - **US2-S7**: Use `bootstrap.NewPostgresFixture` storage. Hold `LOCK TABLE user_sessions IN ACCESS EXCLUSIVE MODE` in a separate open transaction. Collect: no `oauth2_sessions` points, and one WARN `session health query failed` with `error_kind` through `bootstrap.NewBufferedJSONLogger`. Release the lock and collect again: points return.
   - **US2-S8**: Postgres fixture, `HealthMetrics.Enabled = false`, the lock held. Collect: completes within 1s, no `oauth2_sessions`, no WARN. This proves no query was issued.
-  - **US2-S9**: every point's attribute set has exactly the keys `service_id` and `state`.
+  - **US2-S9**: every point's attribute set has exactly the keys `service_id`, `expiry`, and `refreshable`.
 
   (FR-017 to FR-022, SR-007)
 - [X] T016 [P] [US3] Add US3-S1 to US3-S3 to `tests/e2e/session_metrics_test.go`, with the same reader.
@@ -140,10 +114,10 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - **US3-S3**: One candidate is refreshed by token exchange before the sweep evaluates it, and one is deleted. `session_sweep_skipped_total{triggered_by=sweep}` increases by 2.
 
   (FR-023, FR-024)
-- [X] T017 Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` and `ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/`. Record one concrete semantic failure per scenario under "Red phase results" in `plan.md`, for example "US1-S2: no CronJob document" or "US2-S1: no oauth2_sessions metric". Confirm both files compile and contain no `Skip`, `XIt`, `PIt`, placeholder assertions, or red-phase comments (Principle XIII).
+- [X] T017 Run `go test ./tests/integration/ -run TestHelmTemplate_SessionSweep` and `ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/`. Record one concrete semantic failure per scenario under "Red phase results" in `plan.md`, for example "US1-S2: no CronJob document" or "US2-S1: no oauth2_sessions metric". Confirm the E2E file compiles and contains no `Skip`, `XIt`, `PIt`, placeholder assertions, or red-phase comments (Principle XIII).
 - [X] T018 Review spec Journeys 1 to 4 against US1-S3, S5, S7, S8, S9 and US2-S1 to S7, and against `contracts/sweep-job.md`. Check the values, rendered CronJob excerpt, HTTP exchanges, log lines, and metric names. Fix mismatches in `spec.md`. No Wireloom or JWT claims apply (Principle XIV).
 
-**Checkpoint**: Glossary, config contract, chart values and schema, and 23 compiling red E2E tests.
+**Checkpoint**: Glossary, config contract, chart values and schema, red chart render checks, and red metrics E2E tests.
 
 ---
 
@@ -247,7 +221,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - `helm template --show-only templates/cronjob-session-sweep.yaml`
 
   Replace the line 40 instruction to route sweep CronJobs through the proxy (FR-026).
-- [X] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` until US1-S1 to US1-S11 are green, changing fixtures only.
+- [X] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `go test ./tests/integration/ -run TestHelmTemplate_SessionSweep` until the render checks are green, then run the rendered script manually per quickstart §5.
 
 **Checkpoint**: US1 is shippable alone: the sweep runs hourly from the chart.
 
@@ -255,16 +229,16 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ## Phase 4: User Story 2 - Session Health Visible Per Service (Priority: P1)
 
-**Goal**: The `oauth2_sessions{service_id,state}` gauge for all services and users.
+**Goal**: The `oauth2_sessions{service_id,expiry,refreshable}` gauge for all services and users.
 
 **Independent Test**: T015 passes. Unit tests in `health_metrics_test.go` pass.
 
 ### Tests for User Story 2
 
 - [X] T035 [US2] Write failing unit tests in `internal/domain/oauth2session/health_metrics_test.go`, using the ManualReader pattern from `sweep_test.go:262-266` and a hand-written port fake with function fields:
-  - `ClassifySessionHealth` table for all six `(AccessExpiry, RefreshUsable)` shapes plus an invalid class
-  - zero-fill of all four states per present service; absent services produce no points
-  - exact attribute set `{service_id, state}`
+  - `ClassifySessionHealth` table for all eight `(AccessExpiry, RefreshUsable)` shapes plus an invalid class
+  - zero-fill of all eight `(expiry, refreshable)` series per present service; absent services produce no points
+  - exact attribute set `{service_id, expiry, refreshable}`
   - repo error gives no points, one WARN `session health query failed` with `error_kind`, and a callback that returns `nil`
   - a blocking fake returns `context.DeadlineExceeded` after `queryTimeout`
   - `Close` stops further queries and is idempotent
@@ -275,7 +249,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 ### Implementation for User Story 2
 
 - [X] T036 [US2] Implement `internal/domain/oauth2session/health_metrics.go` per `contracts/ports.md` §2:
-  - `SessionHealthState` constants
+  - `SessionHealthExpiry` constants and `SessionHealthKey`
   - `ClassifySessionHealth`
   - `NewSessionHealthMetrics(repo, lookahead, queryTimeout, logger)`, which registers `Int64ObservableGauge("oauth2_sessions", unit "{session}")` and one callback on `otel.Meter("oauth2session")`, with the callback steps 1 to 4
   - `Close()` via `Registration.Unregister`
@@ -373,7 +347,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 - [X] T057 Verify security defaults:
   - sweep disabled by default
   - render fails without an identity
-  - no credential in the manifest, argv, environment, or log (US1-S5)
+  - no credential in the manifest or the rendered script (US1-S5); curl reads the file itself
   - hardened pod
   - no principal or session attribute on any metric
 
