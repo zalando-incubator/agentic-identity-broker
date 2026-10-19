@@ -65,7 +65,7 @@ with the Secret example, the no-`subPath` rule, and the rotation behaviour.
 ## Verification
 
 - `helm lint charts/agentic-identity-broker`
-- `tests/integration/helm_chart_test.go`: render with a Secret and a ConfigMap source and assert the
+- `tests/integration/helm_trust_material_test.go`: render with a Secret and a ConfigMap source and assert the
   projected volume, the read-only mount without `subPath`, and `security.trust_material_dir`.
 - `tests/e2e/`: User Story 2 scenario 5 renders the chart and boots the broker from the rendered
   configuration ([../quickstart.md](../quickstart.md) Scenario 5).

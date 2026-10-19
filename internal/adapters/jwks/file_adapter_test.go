@@ -136,6 +136,10 @@ func TestFileAdapterStartupFailures(t *testing.T) {
 		{name: "invalid document names the setting", doc: `{"keys":["` + contentMarker,
 			message: testAnchor + ".jwks_file: key set is not a valid JWK Set document"},
 		{name: "empty set", doc: `{"keys":[]}`, message: testAnchor + ".jwks_file: key set contains no keys"},
+		{name: "missing kid", doc: `{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}]}`,
+			message: testAnchor + ".jwks_file: key at index 0 requires a non-empty kid"},
+		{name: "empty kid", doc: `{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","kid":"","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}]}`,
+			message: testAnchor + ".jwks_file: key at index 0 requires a non-empty kid"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -144,6 +148,8 @@ func TestFileAdapterStartupFailures(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tc.message, err.Error())
 			assert.NotContains(t, err.Error(), contentMarker)
+			assert.NotContains(t, err.Error(), "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU")
+			assert.NotContains(t, err.Error(), "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0")
 		})
 	}
 }

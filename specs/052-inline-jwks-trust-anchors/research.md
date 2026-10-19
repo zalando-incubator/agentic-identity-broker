@@ -198,7 +198,7 @@ order. Each failure returns a fixed category error that never wraps library erro
    - reject a symmetric key (`jwk.SymmetricKey`, `kty: oct`);
    - reject a private key (`jwk.IsPrivateKey`);
    - when `alg` is present, require it to be in the approved set (R6).
-6. Reject two keys with the same non-empty `kid`. The error names the duplicate identifier.
+6. Reject a key with a missing or empty `kid`, reporting `missing_kid` and its zero-based index only. Then reject duplicate `kid` values, naming the duplicate identifier. Algorithm validation runs first: an unapproved `alg` on a key without `kid` reports `unapproved_algorithm` with its index.
 
 Probe results with jwx v4.5.0:
 
@@ -221,16 +221,18 @@ Probe results with jwx v4.5.0:
 - jwx error text can quote document content. FR-008 forbids any part of the content in errors and
   logs, so the broker maps parse failures to fixed categories.
 - A key without `alg` stays valid at startup. Selection then follows each trust anchor's existing
-  rules (spec edge cases). For example, token exchange and impersonation skip a key without `alg`,
-  exactly as they do for a remote key set. The configuration reference recommends `alg` on every
-  key.
+  rules. Token exchange and impersonation skip a key without `alg`, exactly as they do for a remote
+  key set. The configuration reference recommends `alg` on every key.
+- A local key without `kid` cannot match a credential: existing verifiers require a token `kid`.
+  Rejecting it at startup does not change remote key-set acceptance or verifier configuration.
 
 **Alternatives considered**:
 
 - *`jwk.PublicSetOf`*: it silently drops private parts and `oct` keys instead of rejecting them.
   SR-002 requires rejection.
-- *Requiring `alg` and `kid` on every key*: that would change key selection relative to remote
-  sources (FR-005 and the "Keys without key identifiers" edge case).
+- *Requiring `alg` on every key*: this would reject local keys that remote sources accept, even
+  though `alg` remains optional in the local document contract. `kid` is required locally because
+  a key without it cannot match any credential under the existing verifiers.
 
 ## R6. Broker-approved asymmetric algorithm set
 
@@ -434,7 +436,7 @@ without superseding them. It records:
 - the trust-directory boundary and `os.Root`, including the absolute-symbolic-link consequence;
 - the file re-read cadence and staleness window;
 - the `trust_anchor_key_files` health component;
-- the end-user-only scope for JWT pre-authentication.
+- the end-user and admin server scope for JWT pre-authentication.
 
 The ADR must be Accepted before implementation tasks start (Principle II and the spec's
 Dependencies section). Number 040 is the next free number after `039-concurrent-session-expiry-index.md`.

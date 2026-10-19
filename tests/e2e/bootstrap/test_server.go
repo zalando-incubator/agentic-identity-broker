@@ -563,12 +563,17 @@ func NewAdminTestServer(app *app.App, logger *slog.Logger) (*TestServer, error) 
 	return NewTestServerV2(app, logger, WithServerType(ServerTypeAdmin))
 }
 
-// Close stops the server and the application's background workers.
-// All servers sharing this application must finish their requests before Close.
-func (ts *TestServer) Close() {
+// CloseListener stops the HTTP server without shutting down the shared application.
+func (ts *TestServer) CloseListener() {
 	if ts.server != nil {
 		ts.server.Close()
 	}
+}
+
+// Close stops the server and the application's background workers.
+// All servers sharing this application must finish their requests before Close.
+func (ts *TestServer) Close() {
+	ts.CloseListener()
 	if ts.app != nil && ts.app.Shutdown != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

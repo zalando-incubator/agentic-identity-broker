@@ -37,7 +37,7 @@ Expected:
 ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/
 ```
 
-Expected: one passing `It()` per acceptance scenario, 29 in total. The mapping table is in
+Expected: one passing `It()` per acceptance scenario, 30 in total. The mapping table is in
 [plan.md](./plan.md). Each failure message names the scenario through its
 `// USn-Sm from specs/052-inline-jwks-trust-anchors/spec.md` comment.
 

@@ -53,11 +53,10 @@ The two JWT pre-authentication trust anchors are independent: each has its own s
 | No `kty: oct` key | `symmetric_key` |
 | No private key members | `private_key` |
 | `alg`, when present, is one of RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, EdDSA | `unapproved_algorithm` |
-| Non-empty `kid` values are unique | `duplicate_kid` |
+| Every key has a non-empty `kid` | `missing_kid` |
+| `kid` values are unique | `duplicate_kid` |
 
-`alg` and `kid` are optional, as for remote key sets. Token exchange and impersonation skip a key
-without `alg`, and every trust anchor requires a token `kid`, exactly as with remote key sets. The
-configuration reference recommends both members on every key.
+Only `alg` is optional for local keys. Token exchange and impersonation skip a key without `alg`, as they do for remote keys. Every trust anchor requires a token `kid`, so a local key without `kid` cannot match. Remote key-set acceptance does not change. Set `alg` on every local key for token exchange and impersonation.
 
 ### 1.6 Key-set file rules
 
@@ -108,10 +107,10 @@ Builder errors use this format:
 | `symmetric_key` | `key set contains a symmetric key; only public asymmetric keys are allowed` |
 | `private_key` | `key set contains private key material; only public keys are allowed` |
 | `unapproved_algorithm` | `key "<kid>" declares an algorithm outside the approved asymmetric set` |
+| `missing_kid` | `key at index <zero-based index> requires a non-empty kid` |
 | `duplicate_kid` | `key identifier "<kid>" appears more than once` |
 
-For key-set rules, `<path>` is the source setting: `….jwks` or `….jwks_file`. For an
-`unapproved_algorithm` key without `kid`, the message uses the key's zero-based index instead.
+For key-set rules, `<path>` is the source setting: `….jwks` or `….jwks_file`. A missing or empty key `kid` reports only its zero-based index, not key material. An unapproved-algorithm key without `kid` reports `unapproved_algorithm` first, using its index.
 
 Unchanged startup errors also apply to every source: the self-trust rejection (FR-014), a missing
 issuer for local-mode approval authentication, and JWT verification with no key source.
@@ -136,7 +135,7 @@ A re-read with unchanged content logs nothing.
 | Invariant | Requirement |
 |---|---|
 | An inline or file source performs no discovery and no outbound request for that trust anchor | FR-004, SC-002 |
-| Credential validation is identical for all three sources | FR-005, SC-003 |
+| Credentials verified against valid local and remote sets use the same key selection and claim policy | FR-005, SC-003 |
 | A local source is used only by the trust anchor that declares it, is never published at `/oauth2/jwks.json`, and never validates subject tokens | FR-016 |
 | Impersonation entries share an adapter only when every source attribute matches | FR-017 |
 | Proxy or hybrid mode with no `issuer_uri` and a local source: the expected issuer is the upstream issuer; client assertions verify only against the local keys | FR-015 |

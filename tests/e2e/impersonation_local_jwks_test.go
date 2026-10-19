@@ -13,6 +13,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	appcore "github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
@@ -25,6 +26,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 		logger         *slog.Logger
 		storageFactory *bootstrap.StorageFactory
 		testStorage    *storageadapter.Adapter
+		application    *appcore.App
 		enduserServer  *bootstrap.TestServer
 		adminServer    *bootstrap.TestServer
 		issuer         *helpers.CountingServer
@@ -58,11 +60,21 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 	AfterEach(func() {
 		for _, server := range []*bootstrap.TestServer{enduserServer, adminServer} {
 			if server != nil {
-				server.Close()
+				server.CloseListener()
 			}
 		}
-		issuer.Close()
-		_ = storageFactory.CloseStorage(testStorage)
+		var shutdownErr error
+		if application != nil && application.Shutdown != nil {
+			shutdownErr = application.Shutdown(context.Background())
+		}
+		if issuer != nil {
+			issuer.Close()
+		}
+		if testStorage != nil && storageFactory != nil {
+			_ = storageFactory.CloseStorage(testStorage)
+		}
+		application, enduserServer, adminServer, issuer, testStorage = nil, nil, nil, nil, nil
+		Expect(shutdownErr).To(Succeed())
 	})
 
 	localRule := func(name, authz string, issuerConfig func(*ports.TrustedTokenIssuerConfig)) ports.ImpersonationRuleConfig {
@@ -80,11 +92,12 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 		config.OAuth2AuthServer.Local.TokenClaimsExpression = `{"aud": "https://policy.example.com"}`
 		config.OAuth2AuthServer.Impersonation = &ports.ImpersonationConfig{AudiencePrefix: imperAudience, Rules: rules}
 
-		app, err := bootstrap.NewServerFactory(config, logger).BuildApp(testStorage)
+		var err error
+		application, err = bootstrap.NewServerFactory(config, logger).BuildApp(testStorage)
 		Expect(err).ToNot(HaveOccurred())
-		adminServer, err = bootstrap.NewAdminTestServer(app, logger)
+		adminServer, err = bootstrap.NewAdminTestServer(application, logger)
 		Expect(err).ToNot(HaveOccurred())
-		enduserServer, err = bootstrap.NewEndUserTestServer(app, logger)
+		enduserServer, err = bootstrap.NewEndUserTestServer(application, logger)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).To(Succeed())
 	}

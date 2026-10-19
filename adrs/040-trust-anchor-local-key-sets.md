@@ -51,9 +51,9 @@ A Local Key Set must satisfy these rules. Each failure maps to a fixed category 
 - at least one key;
 - no symmetric (`oct`) key and no private key material;
 - `alg`, when present, in RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, or EdDSA;
-- unique non-empty `kid` values.
+- every key has a unique non-empty `kid`.
 
-`alg` and `kid` stay optional, as for remote key sets. Key selection follows each trust anchor's existing rules. The configuration reference recommends both members on every key. jwx parses, classifies, and verifies keys (Constitution Principle III); the broker adds invariant checks only.
+Only `alg` is optional for local keys, as it is for remote keys. A local key without `kid` cannot match credentials under any existing verifier. Each verifier requires a token `kid`. The broker rejects missing or empty local `kid` values at startup with `missing_kid` and `key at index <zero-based index> requires a non-empty kid`. An unapproved `alg` takes precedence and reports `unapproved_algorithm` at that index. Key selection follows each trust anchor's existing rules. The configuration reference recommends `alg` on every key. jwx parses, classifies, and verifies keys (Constitution Principle III); the broker adds invariant checks only.
 
 An inline set with explicit `jwks_min_refresh` or `jwks_max_refresh` fails startup, because an inline set never refreshes. For JWT pre-authentication, `verification: none` is mutually exclusive with every explicit key source.
 
@@ -147,7 +147,7 @@ The Helm chart gains a trust directory value and a read-only projected volume th
 ### Risks
 
 - A trust directory that holds more than trust material widens what a configuration mistake can expose. Choosing a narrow directory is the operator's responsibility. The broker rejects `/`.
-- A key set without `alg` or `kid` is valid but may not match credentials, because each trust anchor keeps its existing key selection. The configuration reference recommends both members on every key.
+- A key set without `alg` is valid but its key may not match credentials: token exchange and impersonation skip keys without `alg`. Local keys without `kid` fail startup because no existing verifier can match them. The configuration reference recommends `alg` on every key.
 - Operators who rely on `/health` for alerting must watch `components`, because the component never changes the HTTP status.
 
 ### Out of Scope

@@ -28,6 +28,7 @@ const (
 	CategorySymmetricKey            Category = "symmetric_key"
 	CategoryPrivateKey              Category = "private_key"
 	CategoryUnapprovedAlgorithm     Category = "unapproved_algorithm"
+	CategoryMissingKID              Category = "missing_kid"
 	CategoryDuplicateKID            Category = "duplicate_kid"
 	CategoryStale                   Category = "stale"
 )
@@ -102,6 +103,8 @@ func (e *Error) message() string {
 			return fmt.Sprintf("key %q declares an algorithm outside the approved asymmetric set", kid)
 		}
 		return "key at index " + d[DetailIndex] + " declares an algorithm outside the approved asymmetric set"
+	case CategoryMissingKID:
+		return "key at index " + d[DetailIndex] + " requires a non-empty kid"
 	case CategoryDuplicateKID:
 		return fmt.Sprintf("key identifier %q appears more than once", d[DetailKID])
 	case CategoryStale:

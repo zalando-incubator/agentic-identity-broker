@@ -2,6 +2,9 @@ package integration
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 const trustMaterialValues = `
@@ -50,7 +55,10 @@ func renderedManifests(t *testing.T, output string) []map[string]any {
 	for {
 		var doc map[string]any
 		if err := decoder.Decode(&doc); err != nil {
-			break
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err, "decode rendered manifest")
 		}
 		if doc != nil {
 			manifests = append(manifests, doc)
@@ -87,6 +95,57 @@ func dig(t *testing.T, value any, path ...any) any {
 		}
 	}
 	return value
+}
+
+func TestRenderChartConcurrentValues(t *testing.T) {
+	realHelm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm is not installed")
+	}
+	realHelm, err = filepath.Abs(realHelm)
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	wrapperDir := filepath.Join(root, "helm")
+	require.NoError(t, os.Mkdir(wrapperDir, 0o755))
+	const wrapper = `#!/bin/sh
+set -eu
+printf 'x\n' >> "$HELM_BARRIER"
+attempt=0
+while [ "$(wc -l < "$HELM_BARRIER")" -lt 2 ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 500 ] || exit 1
+    sleep 0.01
+done
+exec "$REAL_HELM" "$@"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(wrapperDir, "helm"), []byte(wrapper), 0o755))
+	t.Setenv("REAL_HELM", realHelm)
+	t.Setenv("HELM_BARRIER", filepath.Join(root, "barrier"))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	type result struct {
+		directory string
+		chart     *helpers.RenderedChart
+		err       error
+	}
+	results := make(chan result, 2)
+	for _, directory := range []string{"/etc/trust-a", "/etc/trust-b"} {
+		go func(directory string) {
+			chart, err := helpers.RenderChart(fmt.Sprintf("broker:\n  security:\n    trustMaterial:\n      directory: %s\n", directory))
+			results <- result{directory: directory, chart: chart, err: err}
+		}(directory)
+	}
+	var rendered [2]result
+	for i := range rendered {
+		rendered[i] = <-results
+	}
+	for _, got := range rendered {
+		require.NoError(t, got.err, "render %s", got.directory)
+		var config map[string]any
+		require.NoError(t, yaml.Unmarshal([]byte(got.chart.ConfigYAML), &config))
+		assert.Equal(t, got.directory, dig(t, config, "security", "trust_material_dir"))
+	}
 }
 
 func TestHelmTemplate_TrustMaterial(t *testing.T) {

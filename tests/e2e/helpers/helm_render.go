@@ -37,14 +37,21 @@ func RenderChart(valuesYAML string) (*RenderedChart, error) {
 		return nil, fmt.Errorf("helm binary not found on PATH; install Helm 3 to run chart-rendering E2E tests: %w", err)
 	}
 
-	valuesFile := filepath.Join(os.TempDir(), fmt.Sprintf("helm-values-%d.yaml", os.Getpid()))
-	if err := os.WriteFile(valuesFile, []byte(valuesYAML), 0o600); err != nil {
+	file, err := os.CreateTemp("", "helm-values-*.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("create values file: %w", err)
+	}
+	defer func() { _ = os.Remove(file.Name()) }()
+	if _, err := file.WriteString(valuesYAML); err != nil {
+		_ = file.Close()
 		return nil, fmt.Errorf("write values file: %w", err)
 	}
-	defer func() { _ = os.Remove(valuesFile) }()
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close values file: %w", err)
+	}
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(helm, "template", "broker", ChartDir(), "--values", valuesFile)
+	cmd := exec.Command(helm, "template", "broker", ChartDir(), "--values", file.Name())
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("helm template failed: %w: %s", err, stderr.String())

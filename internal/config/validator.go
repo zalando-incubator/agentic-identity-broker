@@ -580,7 +580,7 @@ func validateMemoryConfig(cfg *ports.MemoryConfig) error {
 
 // validateJWTConfig validates JWT pre-authentication configuration.
 // Applies defaults for HeaderName, Verification, and PrincipalExpression when not set.
-// Enforces mutual exclusivity between verification: none and jwks_uri.
+// Enforces mutual exclusivity between verification: none and every explicit key source.
 // Enforces HTTPS for JWKS URI per SR-004.
 func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.SecurityConfig) error {
 	// Apply defaults for fields that have default values

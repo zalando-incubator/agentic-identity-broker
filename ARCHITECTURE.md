@@ -612,7 +612,7 @@ End-User Server (Port 8000):
 
 **Resolution order for one trust anchor**: The builder rejects conflicting sources, refresh bounds with `jwks`, and `verification: none` with any key source. For `jwks_file`, it requires an absolute path, a configured Trust Directory, and a path inside that directory. It then selects the one declared source, or the existing discovery behavior when none is declared. A failed local source never falls back to discovery or to another source.
 
-**Local key set validation**: `trustanchor.ParseLocalKeySet` applies the Local Key Set rules to inline and file documents. It rejects documents over 1 MiB, non-JWK-Set documents, empty sets, symmetric keys, private key material, algorithms outside the approved asymmetric set, and duplicate `kid` values. Errors use fixed categories and never quote document content. `jwks.StaticAdapter` serves an inline set and is always healthy. `jwks.FileAdapter` serves a file set. Both implement `ports.JWKSPort`, so token exchange and impersonation validation do not change.
+**Local key set validation**: `trustanchor.ParseLocalKeySet` applies the Local Key Set rules to inline and file documents. It rejects documents over 1 MiB, non-JWK-Set documents, empty sets, symmetric keys, private key material, algorithms outside the approved asymmetric set, missing or empty `kid` values, and duplicate `kid` values. A present `alg` must be approved; absent `alg` is allowed. Missing or empty `kid` reports `missing_kid` with `key at index <zero-based index> requires a non-empty kid`. An unapproved `alg` on a key without `kid` reports `unapproved_algorithm` first, using its index. Errors never quote document content. Remote JWKS acceptance and verifier configuration remain unchanged. `jwks.StaticAdapter` serves an inline set and is always healthy. `jwks.FileAdapter` serves a file set. Both implement `ports.JWKSPort`, so token exchange and impersonation validation do not change.
 
 **Trust directory**: `security.trust_material_dir` has no default and is required by any `jwks_file`. At startup the broker resolves it with symbolic links and opens it once with `os.Root`. On startup and on every re-read, the cleaned `jwks_file` path must lie under the cleaned directory. The broker opens the relative name through the root, so a path that leaves the directory through `..` or a symbolic link is refused. The regular-file check and the read use the same file descriptor. Absolute symbolic links inside the directory are rejected; relative links (Kubernetes Secret, ConfigMap, and projected volumes) are accepted.
 
@@ -1328,7 +1328,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 ### RFC 8693 Token Exchange
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
-- [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Proposed. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
 
 ### Security & Encryption
 
@@ -1700,7 +1700,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **Key Set Source**: The origin of one trust anchor's public verification keys: `remote` (explicit or discovered `jwks_uri`, or ADR 029 upstream reuse), `inline` (`jwks`), or `file` (`jwks_file`). Exactly one per trust anchor, immutable after startup, never shared with another trust anchor's verification. It is distinct from the JWKS Aggregation domain's **KeySource**, which describes inputs to the broker's *published* key set.
 
-**Local Key Set**: A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one key, public asymmetric keys only, approved algorithms only when `alg` is present, unique key identifiers, and at most 1 MiB. It is never published.
+**Local Key Set**: A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one public asymmetric key, a unique non-empty `kid` on every key, approved algorithms when `alg` is present, and at most 1 MiB of data. It is never published.
 
 **Trust Directory**: The operator-designated directory (`security.trust_material_dir`) that is the only place from which the broker reads key-set files. It is absolute, resolves to an existing directory, and is not the filesystem root. The broker opens files beneath it through `os.Root`.
 

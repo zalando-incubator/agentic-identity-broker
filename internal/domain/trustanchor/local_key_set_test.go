@@ -86,12 +86,12 @@ func TestParseLocalKeySetAcceptsPublicAsymmetricKeys(t *testing.T) {
 	assert.Equal(t, 3, set.Set.Len())
 	assert.Equal(t, []string{"ec-1", "rsa-1", "ed-1"}, set.KeyIDs)
 
-	t.Run("keys without kid or alg are accepted", func(t *testing.T) {
-		bare := withField(withField(ec.public, "kid", nil), "alg", nil)
-		set, err := ParseLocalKeySet(keySet(t, bare, rsaKey.public))
+	t.Run("keys with kid but without alg are accepted", func(t *testing.T) {
+		withoutAlg := withField(ec.public, "alg", nil)
+		set, err := ParseLocalKeySet(keySet(t, withoutAlg, rsaKey.public))
 		require.NoError(t, err)
 		assert.Equal(t, 2, set.Set.Len())
-		assert.Equal(t, []string{"rsa-1"}, set.KeyIDs)
+		assert.Equal(t, []string{"ec-1", "rsa-1"}, set.KeyIDs)
 	})
 
 	t.Run("exactly the size bound is accepted", func(t *testing.T) {
@@ -137,6 +137,12 @@ func TestParseLocalKeySetInvariants(t *testing.T) {
 			want: CategoryUnapprovedAlgorithm, message: `key "gw-1" declares an algorithm outside the approved asymmetric set`},
 		{name: "7: unapproved alg without kid names the index", doc: keySet(t, ec.public, withField(withField(other.public, "kid", nil), "alg", "none")),
 			want: CategoryUnapprovedAlgorithm, message: "key at index 1 declares an algorithm outside the approved asymmetric set"},
+		{name: "8: missing kid at index zero", doc: keySet(t, withField(ec.public, "kid", nil)),
+			want: CategoryMissingKID, message: "key at index 0 requires a non-empty kid"},
+		{name: "8: empty kid at index zero", doc: keySet(t, withField(ec.public, "kid", "")),
+			want: CategoryMissingKID, message: "key at index 0 requires a non-empty kid"},
+		{name: "8: missing kid at index one", doc: keySet(t, ec.public, withField(other.public, "kid", nil)),
+			want: CategoryMissingKID, message: "key at index 1 requires a non-empty kid"},
 		{name: "8: duplicate kid", doc: keySet(t, withField(ec.public, "kid", "dup-1"), withField(other.public, "kid", "dup-1")),
 			want: CategoryDuplicateKID, message: `key identifier "dup-1" appears more than once`},
 	}

@@ -95,13 +95,14 @@ func newTrustAnchorEnv() *trustAnchorEnv {
 }
 
 func (e *trustAnchorEnv) close() {
-	if e.app != nil && e.app.Shutdown != nil {
-		_ = e.app.Shutdown(context.Background())
-	}
 	for _, server := range []*bootstrap.TestServer{e.adminServer, e.enduserServer} {
 		if server != nil {
-			server.Close()
+			server.CloseListener()
 		}
+	}
+	var shutdownErr error
+	if e.app != nil && e.app.Shutdown != nil {
+		shutdownErr = e.app.Shutdown(context.Background())
 	}
 	if e.issuer != nil {
 		e.issuer.Close()
@@ -112,6 +113,7 @@ func (e *trustAnchorEnv) close() {
 	if e.storage != nil {
 		_ = e.storageFactory.CloseStorage(e.storage)
 	}
+	Expect(shutdownErr).To(Succeed())
 }
 
 func tokenExchangeDefaults() ports.TokenExchangeConfig {

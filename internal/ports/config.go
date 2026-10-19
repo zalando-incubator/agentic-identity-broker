@@ -136,24 +136,24 @@ type JWTConfig struct {
 	HeaderName string `mapstructure:"header_name"`
 
 	// Verification controls JWT signature verification behavior.
-	// "jwks" (default): Signature verified against JWKS endpoint (requires JWKSURI).
+	// "jwks" (default): Signature verified with one of JWKSURI, JWKS, or JWKSFile.
 	// "none": Unsigned JWTs accepted (for trusted upstream/service mesh environments).
-	// Mutually exclusive with JWKSURI when set to "none".
+	// "none" is mutually exclusive with every explicit key source.
 	// Default: "jwks"
 	Verification string `mapstructure:"verification"`
 
-	// JWKSURI is the URL of the JWKS endpoint for signature verification.
-	// Required when Verification is "jwks" (or omitted). Must be HTTPS unless
-	// Security.SkipThirdpartyHTTPSValidation is true.
-	// MUST NOT be set when Verification is "none".
+	// JWKSURI is the URL of a remote JWKS endpoint for signature verification.
+	// It is one alternative when Verification is "jwks" (or omitted). It must be HTTPS
+	// unless Security.SkipThirdpartyHTTPSValidation is true, and cannot be set with
+	// JWKS, JWKSFile, or Verification "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
 
-	// JWKS is an inline JWK Set for signature verification. End-user server only;
-	// mutually exclusive with JWKSURI and JWKSFile, and with Verification "none".
+	// JWKS is an inline JWK Set for signature verification on either server.
+	// It is mutually exclusive with JWKSURI, JWKSFile, and Verification "none".
 	JWKS string `mapstructure:"jwks"`
 
-	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
-	// End-user server only; mutually exclusive with JWKSURI and JWKS, and with Verification "none".
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir
+	// for either server. It is mutually exclusive with JWKSURI, JWKS, and Verification "none".
 	JWKSFile string `mapstructure:"jwks_file"`
 
 	// ExpectedAudience is the expected value in the JWT aud claim.

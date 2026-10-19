@@ -16,7 +16,7 @@ const MaxKeySetBytes = 1 << 20
 // LocalKeySet is a validated JWK Set from an inline or file key source.
 type LocalKeySet struct {
 	Set jwk.Set
-	// KeyIDs lists the non-empty kid values in document order. It is used only for logs.
+	// KeyIDs lists all validated identifiers in document order. It is used only for logs.
 	KeyIDs []string
 }
 
@@ -64,10 +64,10 @@ func ParseLocalKeySet(doc []byte) (LocalKeySet, error) {
 		}
 	}
 	var keyIDs []string
-	for _, key := range keys {
+	for i, key := range keys {
 		kid, _ := key.KeyID()
 		if kid == "" {
-			continue
+			return LocalKeySet{}, newError(CategoryMissingKID, DetailIndex, strconv.Itoa(i))
 		}
 		if slices.Contains(keyIDs, kid) {
 			return LocalKeySet{}, newError(CategoryDuplicateKID, DetailKID, kid)

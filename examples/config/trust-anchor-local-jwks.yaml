@@ -12,8 +12,10 @@
 # `jwks` or `jwks_file`, so the issuer need not publish metadata or keys.
 #
 # Key sets hold PUBLIC asymmetric keys only (RS*, PS*, ES*, EdDSA). Private key
-# material, symmetric keys, duplicate `kid` values, and documents over 1 MiB fail
-# startup. Set `kid` and `alg` on every key.
+# material, symmetric keys, missing or empty `kid`, duplicate `kid` values, and
+# documents over 1 MiB fail startup. Every key needs a unique non-empty `kid`.
+# Set `alg` on every key: it is optional, but token exchange and impersonation
+# skip keys without it.
 #
 # `jwks_file` paths must lie inside security.trust_material_dir. The broker
 # re-reads each file every jwks_min_refresh (JWT pre-authentication: 5m), keeps

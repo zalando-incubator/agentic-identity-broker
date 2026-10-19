@@ -91,7 +91,7 @@ A validated JWK Set from an `inline` or `file` source.
 | Field | Type | Notes |
 |---|---|---|
 | `Set` | `jwk.Set` | Parsed by jwx with strict key-set parsing |
-| `KeyIDs` | `[]string` | Non-empty `kid` values in document order. Used only for logs. |
+| `KeyIDs` | `[]string` | All validated `kid` values in document order. Used only for logs. |
 
 Constructor: `trustanchor.ParseLocalKeySet(doc []byte) (LocalKeySet, error)`.
 
@@ -106,7 +106,8 @@ Invariants (FR-007, SR-002, SR-003):
 | 5 | No symmetric (`oct`) key | `symmetric_key` |
 | 6 | No private key material | `private_key` |
 | 7 | A present `alg` is in the approved asymmetric set | `unapproved_algorithm` |
-| 8 | Non-empty `kid` values are unique | `duplicate_kid`, naming the identifier |
+| 8 | Every key has a non-empty `kid` | `missing_kid`, naming the zero-based index only |
+| 9 | `kid` values are unique | `duplicate_kid`, naming the identifier |
 
 Errors never include document bytes or jwx error text (FR-008).
 
@@ -185,7 +186,7 @@ See [contracts/health-endpoint.md](./contracts/health-endpoint.md).
 | Term | Definition to add |
 |---|---|
 | **Key Set Source** | The origin of one trust anchor's public verification keys: `remote` (explicit or discovered `jwks_uri`, or ADR 029 upstream reuse), `inline` (`jwks`), or `file` (`jwks_file`). Exactly one per trust anchor, immutable after startup, never shared with another trust anchor's verification. It is distinct from the JWKS Aggregation domain's **KeySource**, which describes inputs to the broker's *published* key set. |
-| **Local Key Set** | A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one key, public asymmetric keys only, approved algorithms only when `alg` is present, unique key identifiers, and at most 1 MiB. It is never published. |
+| **Local Key Set** | A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one key, public asymmetric keys only, approved algorithms only when `alg` is present, a unique non-empty `kid` on every key, and at most 1 MiB. It is never published. |
 | **Trust Directory** | The operator-designated directory (`security.trust_material_dir`) that is the only place from which the broker reads key-set files. It is absolute, resolves to an existing directory, and is not the filesystem root. The broker opens files beneath it through `os.Root`. |
 
 Update the existing **ClientAssertion Trust Anchor**, **Trusted Token Issuer**, and **JWTAuthConfig**

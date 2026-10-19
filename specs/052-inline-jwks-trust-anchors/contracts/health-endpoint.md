@@ -2,8 +2,8 @@
 
 **Feature**: [../spec.md](../spec.md) | **Decision**: [../research.md](../research.md) R11
 
-**Status**: Proposed. This is an additive change to `api/enduser/openapi.yaml`. Constitution
-Principles IV and X require stakeholder confirmation before implementation.
+**Status**: Confirmed. The stakeholder confirmed this additive contract on 2026-10-16
+(spec.md Clarifications); it is documented in api/enduser/openapi.yaml.
 
 ## Change
 

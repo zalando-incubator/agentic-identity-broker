@@ -76,7 +76,7 @@ var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorL
 	}
 
 	stopEnduser := func() {
-		env.enduserServer.Close()
+		env.enduserServer.CloseListener()
 		Expect(env.app.Shutdown(context.Background())).To(Succeed())
 		env.enduserServer, env.app = nil, nil
 	}

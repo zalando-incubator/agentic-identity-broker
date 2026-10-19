@@ -63,7 +63,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - write a plain key-set file;
   - write the Kubernetes layout: `<name>` → `..data/<name>` → `..<timestamp>/<name>`, using relative links only;
   - swap atomically to a new timestamped directory and delete the old one;
-  - create a relative link escaping to `../outside.json` and an absolute link to a file outside the directory;
+  - create a relative link escaping to `../outside/<name>` and an absolute link to a file outside the directory;
   - write a corrupt (truncated) file in place.
 
   Supports US2-S3, US2-S4, US2-S7, US2-S9, and research R4.
@@ -232,7 +232,7 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US5-S2**: `verification: none` with `jwks`, and with `jwks_file`, gives `verification 'none' and jwks are mutually exclusive` (or `… jwks_file …`).
   - **US5-S3**: `verification: jwks` with no source fails startup with the existing message.
   - **US5-S4**: The admin server with an inline admin key set and the end-user server with a different file key set. `POST /api/sessions/sweep` (dry run) with an admin-key JWT returns `200`, and with an end-user-key JWT is rejected as for an unknown remote key.
-- [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `tests/e2e/helpers/mock_jwks_server.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
+- [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `httptest.NewServer` in `tests/e2e/trust_anchor_key_source_parity_test.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
 - [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 30 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
 - [X] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
 
@@ -307,11 +307,12 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   5. No `oct` key → `symmetric_key`.
   6. No private key material, covering EC and RSA → `private_key`.
   7. A present `alg` is approved → `unapproved_algorithm`.
-  8. Non-empty `kid` values are unique → `duplicate_kid`, naming the identifier.
+  8. Every key has a non-empty `kid` → `missing_kid`, with `key at index <zero-based index> requires a non-empty kid`.
+  9. `kid` values are unique → `duplicate_kid`, naming the identifier.
 
   Add these extra cases:
-  - malformed JSON, an unknown `kty`, a key without `kid` (accepted), and a key without `alg` (accepted);
-  - an `unapproved_algorithm` key without `kid`, which names the zero-based index;
+  - malformed JSON, an unknown `kty`, a key without `kid` (rejected), an empty `kid` (rejected), a mixed set with a missing `kid` at index 1 (rejected), and a key without `alg` (accepted);
+  - an `unapproved_algorithm` key without `kid`, which reports `unapproved_algorithm` first and names the zero-based index;
   - `KeyIDs` in document order;
   - `DiffKeyIDs` returning added and removed identifiers.
 
@@ -361,9 +362,9 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Configuration loader and validator (test-first)
 
-- [X] T055 [P] Write loader tests in `internal/config/loader_test.go`. The three new `BindEnv` keys load from `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE`, and `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`. A bound multi-line JSON value is accepted without expansion. A YAML `jwks: |` block scalar loads for all three trust anchors. `jwks: ${VAR}` loads a multi-line environment value, and a multi-line YAML value that contains a `${VAR}` reference is rejected, as today. Supports FR-006 and research R8.
+- [X] T055 [P] Write loader tests in `internal/config/loader_trust_anchor_test.go`. The three new `BindEnv` keys load from `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE`, and `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`. A bound multi-line JSON value is accepted without expansion. A YAML `jwks: |` block scalar loads for all three trust anchors. `jwks: ${VAR}` loads a multi-line environment value, and a multi-line YAML value that contains a `${VAR}` reference is rejected, as today. Supports FR-006 and research R8.
 - [X] T056 Add the three `BindEnv` calls in `internal/config/loader.go` next to the existing client-assertion bindings so that T055 passes.
-- [X] T057 [P] Write validator tests in `internal/config/validator_test.go`. Structural rules 1–6 run at load time for every in-scope trust anchor, with full config paths such as `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1].jwks_file`. `security.trust_material_dir` string invariants are enforced. Every `ConfigError` about an inline set uses the value `[inline JWK Set redacted]` and never echoes the document. Supports FR-007, FR-008, FR-009, FR-012, FR-013, FR-022, and research R7.
+- [X] T057 [P] Write validator tests in `internal/config/validator_trust_anchor_test.go`. Structural rules 1–6 run at load time for every in-scope trust anchor, with full config paths such as `oauth2_authorization_server.impersonation.rules[0].trusted_issuers[1].jwks_file`. `security.trust_material_dir` string invariants are enforced. Every `ConfigError` about an inline set uses the value `[inline JWK Set redacted]` and never echoes the document. Supports FR-007, FR-008, FR-009, FR-012, FR-013, FR-022, and research R7.
 - [X] T058 Call the `trustanchor` structural rules from `internal/config/validator.go` (`validateTokenExchangeConfig`, the impersonation trusted-issuer loop, and `validateJWTConfig`) so that T057 passes. Use the `[inline JWK Set redacted]` placeholder for inline values.
 - [X] T059 Run `just check` and `go test ./internal/domain/trustanchor/... ./internal/domain/impersonation/... ./internal/adapters/jwks/... ./internal/config/...`, and confirm that all of them pass.
 
@@ -379,7 +380,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 1 [MANDATORY - Principle VIII] ⚠️
 
-- [X] T060 [US1] Write builder tests in `internal/app/builder_test.go`:
+- [X] T060 [US1] Write builder tests in `internal/app/builder_trust_anchor_test.go`:
   - an inline client-assertion source creates a `StaticAdapter` and never calls `DiscoverOAuth2Endpoints` (FR-004);
   - "client-assertion config unset" now also requires empty `jwks` and `jwks_file`;
   - in proxy and hybrid modes with an empty `issuer_uri`, the expected issuer is the upstream issuer and the adapter is the static one, not the shared upstream adapter (FR-015);
@@ -405,14 +406,14 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 2 [MANDATORY - Principle VIII] ⚠️
 
-- [X] T065 [US2] Write builder tests in `internal/app/builder_test.go`:
+- [X] T065 [US2] Write builder tests in `internal/app/builder_trust_anchor_test.go`:
   - a file client-assertion source opens the trust directory once and creates a `FileAdapter`;
   - with no `jwks_file` anywhere, the filesystem is never touched;
   - `App.Shutdown` closes the file adapter and the trust directory;
   - `App.EnduserHealthComponents()` includes `trust_anchor_key_files` only when a file source exists, is `degraded` when any file adapter is degraded, and merges with `upstream_jwks` in every OAuth2 mode.
 
   Supports FR-011, FR-019, FR-022, and research R11/R12.
-- [X] T066 [P] [US2] Write Helm integration tests in `tests/integration/helm_chart_test.go`:
+- [X] T066 [P] [US2] Write Helm integration tests in `tests/integration/helm_trust_material_test.go`:
   - render with a Secret source and with a ConfigMap source; assert the projected `trust-material` volume, the `readOnly: true` mount at `directory` without `subPath`, and `security.trust_material_dir` in `config.yaml`;
   - `clientAssertion.jwks` renders as a block scalar and `clientAssertion.jwksFile` renders as `jwks_file`;
   - `sources` without a `directory` fails with `broker.security.trustMaterial.directory is required when sources are set`.
@@ -438,7 +439,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 3 [MANDATORY - Principle VIII] ⚠️
 
-- [X] T071 [US3] Write builder tests in `internal/app/builder_test.go`. For each of the three trust-anchor kinds and each category, check that `Build()` returns `<path>: <message>`: `conflicting_key_sources`, `refresh_bounds_with_inline`, `too_large`, `not_a_jwk_set`, `empty_key_set`, `symmetric_key`, `private_key`, `unapproved_algorithm`, `duplicate_kid`, `relative_path`, `missing_trust_directory`, `invalid_trust_directory`, `outside_trust_directory`, `not_found`, `unreadable`, and `not_regular_file`. Also check:
+- [X] T071 [US3] Write builder tests in `internal/app/builder_trust_anchor_test.go`. For each of the three trust-anchor kinds and each category, check that `Build()` returns `<path>: <message>`: `conflicting_key_sources`, `refresh_bounds_with_inline`, `too_large`, `not_a_jwk_set`, `empty_key_set`, `symmetric_key`, `private_key`, `unapproved_algorithm`, `missing_kid`, `duplicate_kid`, `relative_path`, `missing_trust_directory`, `invalid_trust_directory`, `outside_trust_directory`, `not_found`, `unreadable`, and `not_regular_file`. Also check:
   - no outbound request or file read happens before resolution fails;
   - the self-trust check fires for inline and file sources;
   - neither the error nor the buffered log contains the base64url `x`, `y`, `n`, or `d` values.
@@ -463,7 +464,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 4 [MANDATORY - Principle VIII] ⚠️
 
-- [X] T075 [US4] Write builder tests in `internal/app/builder_test.go` for `newImpersonationJWKSFactory`:
+- [X] T075 [US4] Write builder tests in `internal/app/builder_trust_anchor_test.go` for `newImpersonationJWKSFactory`:
   - the sharing key is `{kind, issuer_uri, jwks_uri, inline document, jwks_file, min, max}`, so entries with the same issuer and different local sources get different providers, and identical sources share one provider;
   - inline and file entries skip discovery;
   - each new static or file adapter is chained into `App.Shutdown`;
@@ -494,14 +495,14 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 ### Tests for User Story 5 [MANDATORY - Principle VIII] ⚠️
 
-- [X] T079 [P] [US5] Write tests in `internal/adapters/jwtauth/jwx_authenticator_test.go`:
+- [X] T079 [P] [US5] Write tests in `internal/adapters/jwtauth/jwx_authenticator_keyset_test.go`:
   - an injected `KeySet` bypasses `jwkfetch` and the startup fetch (no HTTP server is contacted);
   - it verifies with `jwt.WithKeySet(set, jws.WithInferAlgorithmFromKey(true))`, the same options as the remote path;
   - an unknown `kid` returns the existing error;
   - the authenticator does not own the injected adapter; the builder chains the adapter's shutdown into `App.Shutdown` (matching the `KeySet` field contract).
 
   Supports FR-005 and research R9.
-- [X] T080 [P] [US5] Write tests in `internal/config/validator_test.go` and `internal/app/builder_test.go`:
+- [X] T080 [P] [US5] Write tests in `internal/config/validator_trust_anchor_test.go` and `internal/app/builder_trust_anchor_test.go`:
   - `server.admin.authentication.jwt.jwks` and `.jwks_file` are accepted and validated with the same structural rules as the end-user server, with errors naming `server.admin.authentication.jwt.…`;
   - `verification: none` with `jwks` or `jwks_file` on either server fails with the `verification_disabled_with_key_source` message;
   - the builder creates a separate adapter for each server, even when both declare identical sources;
@@ -660,19 +661,19 @@ T033 jwt_preauth_local_jwks_test.go  |  T034 trust_anchor_key_source_parity_test
 ```text
 T043 algorithms_test.go  |  T044 source_test.go  |  T045 local_key_set_test.go
 T049 trust_directory_test.go  |  T051 static_adapter_test.go  |  T053 file_adapter_test.go
-T055 loader_test.go  |  T057 validator_test.go
+T055 internal/config/loader_trust_anchor_test.go  |  T057 internal/config/validator_trust_anchor_test.go
 ```
 
 ### User Story 2
 
 ```text
-T066 tests/integration/helm_chart_test.go  |  T067 tests/integration/config_test.go
+T066 tests/integration/helm_trust_material_test.go  |  T067 tests/integration/config_test.go
 ```
 
 ### User Story 5
 
 ```text
-T079 internal/adapters/jwtauth/jwx_authenticator_test.go  |  T080 validator_test.go and builder_test.go
+T079 internal/adapters/jwtauth/jwx_authenticator_keyset_test.go  |  T080 internal/config/validator_trust_anchor_test.go and internal/app/builder_trust_anchor_test.go
 ```
 
 ---

@@ -94,7 +94,7 @@ An operator makes a mistake in a local key set. For example, the operator config
 **Acceptance Scenarios**:
 
 1. **Given** a trust anchor that declares more than one of a key-set URI, an inline key set, and a key-set file, **When** the broker starts, **Then** startup fails and identifies the trust anchor and the conflicting settings.
-2. **Given** an inline or file key set that is not a valid JWK Set document, contains no keys, or exceeds the size bound, **When** the broker starts, **Then** startup fails and identifies the trust anchor.
+2. **Given** an inline or file key set that is not a valid JWK Set document, contains no keys, exceeds the size bound, or contains a key with a missing or empty `kid`, **When** the broker starts, **Then** startup fails and identifies the trust anchor; for a missing or empty `kid`, it names only the invalid key's zero-based index.
 3. **Given** an inline or file key set that contains private key material, **When** the broker starts, **Then** startup fails, and the error and logs do not contain any part of the key material.
 4. **Given** an inline or file key set that contains a symmetric key, or a key that declares an algorithm outside the broker-approved asymmetric set, **When** the broker starts, **Then** startup fails and identifies the trust anchor.
 5. **Given** an inline or file key set that contains two keys with the same key identifier, **When** the broker starts, **Then** startup fails and identifies the duplicate identifier.
@@ -142,7 +142,7 @@ An operator runs the broker behind infrastructure such as a reverse proxy or ser
 
 - **No new settings**: A trust anchor with no inline or file key set behaves as it does today. This includes discovery from issuer metadata and ADR 029's reuse of the upstream key set in proxy and hybrid modes.
 - **Environment-variable configuration**: An operator can supply the inline key set through the broker's existing environment-variable override for that setting. The broker validates it as it validates a value from the configuration file.
-- **Keys without key identifiers**: Key selection follows the same rules as for remotely fetched key sets. A local source does not relax or tighten which keys a credential can match.
+- **Keys without key identifiers**: An inline or file set with a missing or empty key `kid` fails startup. Remote key-set acceptance is unchanged. Existing verifiers require a token `kid`, so a local key without one cannot match a credential.
 - **Mixed algorithms in one set**: A set can contain keys for different approved asymmetric algorithms. Existing algorithm restrictions, including each impersonation issuer's permitted-algorithm list, still apply.
 - **Symlinked file**: Cluster platforms commonly mount secret and configuration files through relative symbolic links. The broker follows relative symbolic links to a regular file, and that file must still be inside the trust directory (FR-023). The broker refuses an absolute symbolic link inside the trust directory, even when its target is also inside. A path that resolves to a directory fails startup.
 - **Symbolic link retargeted after startup**: A re-read applies the containment check again. If a symbolic link now leads outside the trust directory, the re-read fails (FR-011). The broker keeps the last valid key set and never reads the outside file.
@@ -557,7 +557,7 @@ The same configuration under `server.admin.authentication.jwt` works identically
   - Admin JWT pre-authentication (`server.admin.authentication.jwt`). Each server's JWT pre-authentication is a separate trust anchor.
 - **FR-003**: When a trust anchor declares no explicit key source, its current behavior MUST stay unchanged. This includes issuer-metadata discovery, ADR 029's reuse of the upstream key set, and the existing startup error for JWT pre-authentication with signature verification and no key source.
 - **FR-004**: When a trust anchor declares an inline or file key set, the broker MUST NOT perform issuer-metadata discovery or any outbound request to get that trust anchor's keys.
-- **FR-005**: Credential validation MUST give the same result for every key source. This covers key selection, algorithm restrictions, and issuer, audience, expiry, and claim checks. Only the origin of the public keys can differ.
+- **FR-005**: Credentials verified against valid local and remote key sets MUST use the same key selection, algorithm restrictions, and issuer, audience, expiry, and claim checks. Only the origin of the public keys can differ.
 - **FR-006**: The broker MUST accept an inline key set as JSON text in the standard JWK Set representation (RFC 7517 §5). It MUST accept that text from both the configuration file and the existing environment-variable override mechanism.
 - **FR-007**: The broker MUST validate inline and file key sets at startup. Startup MUST fail with an actionable error that names the trust anchor's configuration path in any of these cases:
   - The document is not a parseable JWK Set.
@@ -566,6 +566,7 @@ The same configuration under `server.admin.authentication.jwt` works identically
   - A key includes private key material.
   - A key is symmetric.
   - A key declares an algorithm outside the broker-approved asymmetric set.
+  - A key has a missing or empty `kid`.
   - Two keys share a key identifier.
 - **FR-008**: Errors, logs, audit records, and health output MUST NOT include inline key-set content, file contents, or any part of the key material.
 - **FR-009**: When one trust anchor declares more than one explicit key source, startup MUST fail with an error that names the trust anchor and the conflicting settings.
@@ -642,7 +643,7 @@ stateDiagram-v2
   - **File**: A JWK Set at an absolute path. The broker re-reads it within the trust anchor's refresh bounds (FR-011).
 
   It is immutable once resolved at startup and is never shared with another trust anchor's verification.
-- **Local Key Set**: A validated JWK Set from an inline or file source. Its invariants are that it contains at least one key, it contains public asymmetric keys only, its key identifiers are unique, and it stays within the size bound.
+- **Local Key Set**: A validated JWK Set from an inline or file source. It contains at least one public asymmetric key, a unique non-empty `kid` on every key, an approved algorithm when `alg` is present, and no more than 1 MiB of data.
 - **Trust Directory**: The one operator-designated directory that holds key-set files. It is the only place from which the broker reads trust material. Its invariants are that it is absolute, resolves to an existing directory, and is not the filesystem root.
 
 *Add "Key Set Source" and "Trust Directory" to the glossary in `ARCHITECTURE.md` (Constitution Principle V).*

@@ -1267,11 +1267,12 @@ The inline value and the file contents are JSON text of an RFC 7517 section 5 JW
 | No `kty: oct` (symmetric) key | `symmetric_key` |
 | No private key members | `private_key` |
 | `alg`, when present, is one of `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, `EdDSA` | `unapproved_algorithm` |
-| Non-empty `kid` values are unique | `duplicate_kid` |
+| Every key has a non-empty `kid` | `missing_kid` |
+| `kid` values are unique | `duplicate_kid` |
 
 A bare JWK without a `keys` array is rejected. A document that is only partly valid is rejected as a whole.
 
-**Set `alg` and `kid` on every key.** Both are optional, as for remote key sets, but each trust anchor keeps its existing key selection. Token exchange and impersonation skip a key without `alg`. Every trust anchor requires a `kid` in the credential header. A key without them can pass startup validation and still never match a credential.
+**Set `alg` on every key.** A local key must have a unique non-empty `kid`; a missing or empty `kid` fails startup. Only `alg` is optional. Token exchange and impersonation skip keys without `alg`, so those keys can pass startup but cannot verify credentials through those trust anchors. Every trust anchor requires a `kid` in the credential header. Remote key-set acceptance is unchanged.
 
 ##### Key-set file rules
 
@@ -1334,9 +1335,10 @@ Builder errors use `<path>: <message>`. For document rules, `<path>` is the sour
 | `symmetric_key` | `key set contains a symmetric key; only public asymmetric keys are allowed` |
 | `private_key` | `key set contains private key material; only public keys are allowed` |
 | `unapproved_algorithm` | `key "<kid>" declares an algorithm outside the approved asymmetric set` |
+| `missing_kid` | `key at index <zero-based index> requires a non-empty kid` |
 | `duplicate_kid` | `key identifier "<kid>" appears more than once` |
 
-For an `unapproved_algorithm` key without a `kid`, the message uses the key's zero-based index. The existing startup errors still apply to every source: the self-trust rejection, a missing issuer for local-mode approval authentication, and JWT verification with no key source.
+For a local key with a missing or empty `kid`, `missing_kid` reports its zero-based index only. An `unapproved_algorithm` key without `kid` reports `unapproved_algorithm` first, using that index. The existing startup errors still apply to every source: the self-trust rejection, a missing issuer for local-mode approval authentication, and JWT verification with no key source.
 
 ##### Log events
 

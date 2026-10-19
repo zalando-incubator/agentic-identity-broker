@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -153,13 +154,31 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S2 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails for a bare JWK, an empty key set, and an oversized key set", func() {
+		It("fails for a bare JWK, empty or oversized sets, and missing or empty key identifiers", func() {
 			env.expectStartupFailure(inlineConfig(helpers.BareJWK(env.gateway)),
 				clientAssertionPath+".jwks: key set is not a valid JWK Set document")
 			env.expectStartupFailure(inlineConfig(helpers.EmptyKeySet()),
 				clientAssertionPath+".jwks: key set contains no keys")
 			env.expectStartupFailure(inlineConfig(helpers.OversizedKeySet(env.gateway)),
 				clientAssertionPath+".jwks: key set exceeds 1048576 bytes")
+			missingKID := env.gateway.PublicMap()
+			delete(missingKID, "kid")
+			missingDoc, err := json.Marshal(map[string]any{"keys": []map[string]any{missingKID}})
+			Expect(err).ToNot(HaveOccurred())
+			missingErr := env.startupFailure(inlineConfig(string(missingDoc)),
+				clientAssertionPath+".jwks: key at index 0 requires a non-empty kid")
+			env.expectNoKeyMaterial(missingErr, env.gateway)
+
+			emptyKID := env.gateway.PublicMap()
+			emptyKID["kid"] = ""
+			emptyDoc, err := json.Marshal(map[string]any{"keys": []map[string]any{emptyKID}})
+			Expect(err).ToNot(HaveOccurred())
+			path := env.trust.WriteFile("empty-kid.json", string(emptyDoc))
+			emptyErr := env.startupFailure(env.localConfig(ports.ClientAssertionTrustConfig{
+				IssuerURI: env.issuer.URL(), JWKSFile: path,
+			}), clientAssertionPath+".jwks_file: key at index 0 requires a non-empty kid")
+			env.expectNoKeyMaterial(emptyErr, env.gateway)
+			Expect(env.issuer.Count()).To(BeZero())
 		})
 
 		// US3-S3 from specs/052-inline-jwks-trust-anchors/spec.md

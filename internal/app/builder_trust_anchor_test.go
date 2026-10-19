@@ -201,6 +201,24 @@ func TestBuilderKeySourceErrors(t *testing.T) {
 	issuer, requests := countingIssuer(t)
 	gateway := newTrustAnchorKey(t, "gw-1")
 	trustDir := newTrustDir(t)
+	var document struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(gateway.set), &document))
+	require.Len(t, document.Keys, 1)
+	key := document.Keys[0]
+	delete(key, "kid")
+	missingKID, err := json.Marshal(document)
+	require.NoError(t, err)
+	key["kid"] = ""
+	emptyKID, err := json.Marshal(document)
+	require.NoError(t, err)
+	var keyMaterial []string
+	for _, member := range []string{"x", "y"} {
+		value, ok := key[member].(string)
+		require.True(t, ok, "generated public key must include %s", member)
+		keyMaterial = append(keyMaterial, value)
+	}
 
 	tests := []struct {
 		name  string
@@ -210,6 +228,21 @@ func TestBuilderKeySourceErrors(t *testing.T) {
 		{name: "invalid inline document names the jwks setting",
 			cfg:   withClientAssertion(trustAnchorTestConfig(""), ports.ClientAssertionTrustConfig{IssuerURI: issuer.URL, JWKS: `{"keys":[]}`}),
 			error: "token_exchange.client_assertion.jwks: key set contains no keys"},
+		{name: "inline client assertion key without kid names the setting",
+			cfg: withClientAssertion(trustAnchorTestConfig(""), ports.ClientAssertionTrustConfig{
+				IssuerURI: issuer.URL, JWKS: string(missingKID),
+			}),
+			error: "token_exchange.client_assertion.jwks: key at index 0 requires a non-empty kid"},
+		{name: "inline admin JWT key with empty kid names the setting",
+			cfg: func() *ports.Config {
+				cfg := trustAnchorTestConfig("")
+				cfg.Server.Admin.Authentication.JWT = &ports.JWTConfig{
+					HeaderName: "Authorization", Verification: "jwks", JWKS: string(emptyKID),
+					ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+				}
+				return cfg
+			}(),
+			error: "server.admin.authentication.jwt.jwks: key at index 0 requires a non-empty kid"},
 		{name: "conflicting sources name the trust anchor",
 			cfg: withClientAssertion(trustAnchorTestConfig(""), ports.ClientAssertionTrustConfig{
 				IssuerURI: issuer.URL, JWKSURI: issuer.URL + "/keys", JWKS: gateway.set,
@@ -255,6 +288,10 @@ func TestBuilderKeySourceErrors(t *testing.T) {
 			assert.Equal(t, before, requests.Load(), "no request to the issuer before key sources resolve")
 			assert.NotContains(t, err.Error(), gateway.set)
 			assert.NotContains(t, logs.String(), gateway.set)
+			for _, secret := range keyMaterial {
+				assert.NotContains(t, err.Error(), secret)
+				assert.NotContains(t, logs.String(), secret)
+			}
 		})
 	}
 }
