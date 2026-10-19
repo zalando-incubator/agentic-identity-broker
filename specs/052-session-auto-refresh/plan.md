@@ -67,7 +67,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 - [x] **API Documentation**: N/A for `docs/api/` (admin API). The operator runbook is updated (FR-025).
 - [x] **API Changes**: None.
 - [x] **Database Design**: No schema change and no migration (DB-001). The new query reads existing columns (DB-002, DB-003).
-- [x] **E2E Acceptance Tests**: The 12 US2 and US3 scenarios have E2E tests in `tests/e2e/session_metrics_test.go`, written before implementation. US1 is a recorded deviation (Complexity Tracking): render checks cover US1-S1, S2, S7, S10, and S11 and the rendered parts of S3 to S5, and the run-time behavior of S3 to S6, S8, and S9 is verified manually.
+- [x] **E2E Acceptance Tests**: The 12 US2 and US3 scenarios have E2E tests in `tests/e2e/session_metrics_test.go`, written before implementation. US1 is a recorded deviation (Complexity Tracking): none of its 11 scenarios has an `It()` in `tests/e2e/`. Render checks in `tests/integration/helm_chart_test.go` cover US1-S1, S2, S7, S10, and S11 and the rendered parts of S3 to S5, and the run-time behavior of S3 to S6, S8, and S9 is verified manually.
 - [x] **E2E Test Mapping**: 1:1 `It()` per US2 and US3 scenario, and a render subtest per covered US1 scenario, tabulated below.
 - [x] **E2E Red Phase**: Each test asserts real output that does not exist yet:
   - US1: rendered resources and render-time failures.
@@ -249,7 +249,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
-| US1-S3 to S6, S8, and S9 have no E2E test (constitution: every acceptance scenario has one) | Their run-time behavior (header files, TLS, exit status) belongs to curl and the admin server, not the chart. Render checks cover what the chart controls. | A backend E2E harness (chart render helper, recording proxy, script runner, test CA) was built and removed as disproportionate: it added Helm and a recent curl to every E2E runner for behavior the chart does not own (research R14). |
+| No US1 scenario has an `It()` in `tests/e2e/` (constitution: every acceptance scenario has one). S1, S2, S5, S7, S10, and S11 are render subtests in `tests/integration/helm_chart_test.go`; the run-time behavior of S3 to S6, S8, and S9 is verified manually. | US1 is a chart feature. What the chart controls is its rendered output, which the render checks assert next to the existing chart tests. The run-time behavior (header files, TLS, exit status) belongs to curl and the admin server. This follows the chart precedent: spec 014 covered its chart scenarios outside `tests/e2e/` (`specs/014-helm-charts/plan.md`, "No Go E2E Tests Required"). | A backend E2E harness (chart render helper, recording proxy, script runner, test CA) was built and removed as disproportionate: it added Helm and a recent curl to every E2E runner for behavior the chart does not own (research R14). |
 
 ## Implementation Records
 
