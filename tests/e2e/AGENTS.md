@@ -36,6 +36,7 @@ tests/e2e/
     consent_page.go                Consent interactions
     tool_authorizations_page.go    Tool-authorization interactions
   extproc/                        Separate ExtProc Ginkgo suite; read `internal/extproc/AGENTS.md`
+  aibctl/                         Separate admin CLI suite; runs `aibctlcmd.Execute` in-process against `NewAdminTestServer`
   frontend/                       Frontend E2E tests; read frontend/AGENTS.md
   screenshots/                    Maintained screenshot artifacts
 ```
@@ -128,6 +129,7 @@ ginkgo -v --label-filter="!performance" --focus="pattern" ./tests/e2e/    # Focu
 ```
 
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
+Use `just test-e2e-aibctl` for the admin CLI suite; each `It()` maps to a scenario in `specs/048-admin-cli/spec.md`.
 `test-e2e-performance` runs the warmed local-mode, signed-subject 100-request SC-001 measurement with one Ginkgo worker. Its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` line is recorded in PR #464.
 
 ### Parallelism expectations

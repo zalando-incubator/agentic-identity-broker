@@ -9,11 +9,16 @@ VERSION := env_var_or_default("VERSION", `git describe --tags --always 2>/dev/nu
 REVISION := env_var_or_default("REVISION", `git rev-parse HEAD 2>/dev/null || echo "unknown"`)
 CREATED := env_var_or_default("CREATED", `git show -s --format=%cI HEAD 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ"`)
 LDFLAGS := env_var_or_default("LDFLAGS", "-s -w")
+# aibctl embeds its version; -X flags are appended so LDFLAGS="" still yields a debug build.
+AIBCTL_VERSION := env_var_or_default("AIBCTL_VERSION", VERSION)
+AIBCTL_COMMIT := env_var_or_default("AIBCTL_COMMIT", `git rev-parse --short HEAD 2>/dev/null || echo "none"`)
+AIBCTL_VERSION_PKG := "github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/version"
+AIBCTL_LDFLAGS := LDFLAGS + " -X " + AIBCTL_VERSION_PKG + ".Version=" + AIBCTL_VERSION + " -X " + AIBCTL_VERSION_PKG + ".Commit=" + AIBCTL_COMMIT
 # Base image for release Docker builds. Defaults to the public pinned digest
 # each Dockerfile declares; internal release pipelines override this to an
 # internally-mirrored/allowed base image (see delivery.yaml).
 BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60")
-GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
+GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/e2e/aibctl$|/tests/integration($|/))' | tr '\n' ' '`
 INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
@@ -137,6 +142,16 @@ test-e2e-extproc-coverage:
         exit 1; \
     fi
 
+
+# Run the aibctl admin CLI E2E acceptance suite with Ginkgo
+test-e2e-aibctl:
+    @echo "Running aibctl E2E suite..."
+    @if command -v ginkgo > /dev/null; then \
+        ginkgo -v --procs={{GINKGO_PROCS}} ./tests/e2e/aibctl/; \
+    else \
+        echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; \
+    fi
+
 # Run the frontend E2E acceptance suite against a built frontend bundle
 test-e2e-frontend: web-build
     #!/usr/bin/env bash
@@ -160,7 +175,7 @@ test-e2e-frontend-coverage: web-build
     echo "Frontend E2E coverage report generated at coverage/e2e-frontend.html"
 
 # Run all backend, ExtProc, and frontend E2E acceptance suites
-test-e2e: test-e2e-backend test-e2e-extproc test-e2e-frontend
+test-e2e: test-e2e-backend test-e2e-extproc test-e2e-aibctl test-e2e-frontend
     @echo "All E2E suites completed"
 
 # Run coverage for all backend, ExtProc, and frontend E2E acceptance suites
@@ -615,7 +630,7 @@ web-test-coverage: web-ensure-deps
 
 # Build both Go backend and web frontend in release quality
 # Produces artifacts: ./bin/{{NAME}} and ./web/dist/
-build-all: build web-build
+build-all: build aibctl-build web-build
     @echo "✓ Build complete: Go backend and web frontend"
 
 # =============================================================================
@@ -902,6 +917,55 @@ extproc-build:
     @mkdir -p bin
     go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/extproc-token-exchange ./cmd/extproc-token-exchange
     @echo "✓ Built: bin/extproc-token-exchange"
+
+# =============================================================================
+# aibctl (Admin CLI) Targets
+# =============================================================================
+
+# Build the aibctl admin CLI for the host platform
+aibctl-build:
+    @echo "Building aibctl {{AIBCTL_VERSION}}..."
+    @mkdir -p bin
+    go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/aibctl ./cmd/aibctl
+    @echo "✓ Built: bin/aibctl"
+
+# Build aibctl for Linux amd64
+aibctl-build-linux-amd64:
+    @mkdir -p bin/linux/amd64
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/linux/amd64/aibctl ./cmd/aibctl
+    @echo "✓ Built: bin/linux/amd64/aibctl"
+
+# Build aibctl for Linux arm64
+aibctl-build-linux-arm64:
+    @mkdir -p bin/linux/arm64
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/linux/arm64/aibctl ./cmd/aibctl
+    @echo "✓ Built: bin/linux/arm64/aibctl"
+
+# Build aibctl for macOS arm64
+aibctl-build-darwin-arm64:
+    @mkdir -p bin/darwin/arm64
+    GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/darwin/arm64/aibctl ./cmd/aibctl
+    @echo "✓ Built: bin/darwin/arm64/aibctl"
+
+# Build aibctl for macOS amd64
+aibctl-build-darwin-amd64:
+    @mkdir -p bin/darwin/amd64
+    GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/darwin/amd64/aibctl ./cmd/aibctl
+    @echo "✓ Built: bin/darwin/amd64/aibctl"
+
+# Build aibctl for Windows amd64
+aibctl-build-windows-amd64:
+    @mkdir -p bin/windows/amd64
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{AIBCTL_LDFLAGS}}" -o bin/windows/amd64/aibctl.exe ./cmd/aibctl
+    @echo "✓ Built: bin/windows/amd64/aibctl.exe"
+
+# Build aibctl for every release platform
+aibctl-build-all: aibctl-build-linux-amd64 aibctl-build-linux-arm64 aibctl-build-darwin-arm64 aibctl-build-darwin-amd64 aibctl-build-windows-amd64
+
+# Run aibctl unit tests with the race detector
+aibctl-test:
+    go test -race ./internal/aibctl/... ./cmd/aibctl/...
+
 
 # Run the extproc-token-exchange binary (requires EXTPROC_* env vars)
 extproc-run: extproc-build

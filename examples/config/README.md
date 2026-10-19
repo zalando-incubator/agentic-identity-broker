@@ -32,6 +32,15 @@ Use it as a full ExtProc configuration file:
 EXTPROC_CONFIG_PATH=./examples/config/extproc-tool-approvals.yaml ./extproc-token-exchange
 ```
 
+### `aibctl.yaml`
+
+Per-user configuration for `aibctl`, the admin CLI. It declares named contexts (admin API URL, Bearer token or token command, principal header) and output defaults. Copy it to the OS-specific location that `aibctl config path` prints, or point at it explicitly:
+
+```bash
+aibctl --config ./examples/config/aibctl.yaml context list
+aibctl --config ./examples/config/aibctl.yaml --context local health
+```
+
 ### `config.minimal.yaml`
 
 The most minimal valid configuration. Demonstrates:
