@@ -43,7 +43,7 @@ An operator deploying the broker with the Helm chart enables the scheduled sessi
 8. **Given** the broker returns `200`, including a summary with `failed` greater than zero, **When** the job finishes, **Then** the job succeeds and its log contains the response summary.
 9. **Given** the target returns a non-`2xx` status, the request times out, or the target is unreachable, **When** the job finishes, **Then** the job fails, is not retried, and its log contains the status and response body but no request header.
 10. **Given** the sweep is enabled, **When** the manifests are generated, **Then** the job's pod does not match the broker Service or PodDisruptionBudget selector, and carries `app.kubernetes.io/component: session-sweep` for network policies to select.
-11. **Given** the sweep is enabled with a `timeoutSeconds` not shorter than `activeDeadlineSeconds`, with only one of `tls.certFile` and `tls.keyFile`, or with a `lookaheadDuration` that is not an ISO 8601 duration of days, hours, minutes, and seconds, **When** the manifests are generated, **Then** rendering fails with a message that names the offending value.
+11. **Given** the sweep is enabled with a `timeoutSeconds` not shorter than `activeDeadlineSeconds`, with only one of `tls.certFile` and `tls.keyFile`, or with a `lookaheadDuration` that is zero or not an ISO 8601 duration of days, hours, minutes, and seconds, **When** the manifests are generated, **Then** rendering fails with a message that names the offending value.
 
 ---
 
@@ -367,7 +367,7 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 - **FR-001**: The Helm chart MUST offer a scheduled sweep that is disabled by default. With it disabled, the chart MUST render no sweep resources, and `sessionSweep` values MUST NOT affect any other rendered resource.
 - **FR-002**: When enabled, the chart MUST render a CronJob that calls `POST /api/sessions/sweep` once per schedule period. The default schedule is hourly.
 - **FR-003**: The CronJob MUST use `concurrencyPolicy: Forbid` and `backoffLimit: 0`. Its late-start window and active deadline MUST be configurable.
-- **FR-004**: The request MUST send a configurable lookahead. The default is `PT2H`. The values schema MUST accept only the ISO 8601 duration form accepted by the sweep endpoint.
+- **FR-004**: The request MUST send a configurable lookahead. The default is `PT2H`. The values schema MUST accept only the positive ISO 8601 duration form accepted by the sweep endpoint.
 - **FR-005**: The request MUST pass optional `dryRun` and `pageSize` values through unchanged.
 - **FR-006**: When `sessionSweep.url` is unset, the job MUST target the release's admin Service and admin port, and MUST send the host of `broker.server.admin.publicUrl` as `Host` unless that value is empty. When `sessionSweep.url` is set, the job MUST target it and override `Host` only when `sessionSweep.host` is set.
 - **FR-007**: The job MUST send each configured literal header with its configured value.

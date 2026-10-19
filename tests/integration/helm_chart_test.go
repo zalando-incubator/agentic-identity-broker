@@ -402,6 +402,8 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 				"sessionSweep.tls.certFile and sessionSweep.tls.keyFile must be set together"},
 			{"non-ISO lookahead", sessionSweepArgs("--set-string", "sessionSweep.lookaheadDuration=2h"),
 				"lookaheadDuration"},
+			{"zero lookahead", sessionSweepArgs("--set-string", "sessionSweep.lookaheadDuration=PT0S"),
+				"lookaheadDuration"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

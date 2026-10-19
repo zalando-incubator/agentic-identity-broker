@@ -208,7 +208,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 | US1-S6, S8, S9 | manual verification against the admin server (quickstart §5); curl's TLS and status handling are not the chart's to test | — |
 | US1-S7 | same file | `fails to render with an invalid sweep configuration/no identity` |
 | US1-S10 | same file | `keeps the job pod out of the broker Service and PDB selectors` |
-| US1-S11 | same file | `fails to render with an invalid sweep configuration/{timeout not below the deadline, unpaired TLS certificate, non-ISO lookahead}` |
+| US1-S11 | same file | `fails to render with an invalid sweep configuration/{timeout not below the deadline, unpaired TLS certificate, non-ISO lookahead, zero lookahead}` |
 | US2-S1 | `tests/e2e/session_metrics_test.go` | `It("reports one value per service and series that sums to the stored sessions")` |
 | US2-S2 | same | `It("reports zero for series without sessions")` |
 | US2-S3 | same | `It("counts a session expiring after the lookahead as valid")` |

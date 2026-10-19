@@ -60,9 +60,9 @@ Static shape and ranges (types, minimums, the ISO 8601 pattern, `additionalPrope
 **Decision**: `lookaheadDuration` uses `allOf` with three checks:
 - `pattern: "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$"`
 - `not: {pattern: "T$"}`
-- `not: {enum: ["P"]}`
+- `pattern: "[1-9]"`
 
-**Rationale**: This matches the grammar accepted by the sweep endpoint: days, hours, minutes, and seconds, with no years, months, or weeks (ADR 038). It avoids lookahead, which a Go-regexp-based schema validator would reject. The broker still validates the value. The schema gives an earlier error.
+**Rationale**: This matches the grammar accepted by the sweep endpoint: days, hours, minutes, and seconds, with no years, months, or weeks (ADR 038). The nonzero-digit check rejects `P`, `P0D`, and `PT0S`, which the endpoint also rejects, so a zero lookahead fails at render time instead of on every scheduled run. It avoids lookahead, which a Go-regexp-based schema validator would reject. The broker still validates the value. The schema gives an earlier error.
 
 **Alternatives considered**: One pattern with lookahead: not portable across Helm's schema validators.
 

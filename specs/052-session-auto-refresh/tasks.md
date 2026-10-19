@@ -69,7 +69,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - the header-name pattern
   - `headersFromFile` entries `required: [path]`
   - `pullPolicy` enum
-  - the `lookaheadDuration` `allOf` from research R5: `^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\.[0-9]+)?S)?)?$`, `not: {pattern: "T$"}`, `not: {enum: ["P"]}`
+  - the `lookaheadDuration` `allOf` from research R5: `^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\.[0-9]+)?S)?)?$`, `not: {pattern: "T$"}`, `pattern: "[1-9]"`
 
   (FR-003, FR-004, FR-005)
 
