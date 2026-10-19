@@ -44,8 +44,10 @@ parameter. Do not fetch, read, include, or infer requirements from issue
 comments. Do not follow the command's handoff to clarify in this session.
 
 Set `GIT_BRANCH_NAME` to `context.branch` for the mandatory feature-branch hook.
-Create exactly one feature. Preserve `.specify/feature.json` and the generated
-specification and checklists.
+Create exactly one new feature for this issue.
+Update `.specify/feature.json` to select the new feature.
+Include the updated pointer, generated specification, and checklists in the PR.
+Do not modify the previously selected feature's files.
 
 Create a draft PR on `context.branch`. Its body must start with a short summary
 of the feature to be built, not a summary of the automation. Include:

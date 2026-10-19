@@ -75,7 +75,11 @@ unchanged. Never push with git, call GitHub write APIs, or change workflows,
 skills, hooks, the constitution, or automation scripts.
 
 Read `AGENTS.md`, the constitution, relevant ADRs, and area-specific instructions.
-Use the existing feature from `.specify/feature.json`; never select another one.
+For PR phases, use `context.feature` from `.specify/feature.json`.
+Do not select another feature during a PR phase.
+For `specify`, create one new feature for the issue.
+Update `.specify/feature.json` to select that new feature.
+Do not modify the previously selected feature's files.
 Skip optional extension hooks in unattended runs. Execute required hooks, but
 stop and report a blocker if one needs a permission this workflow does not have.
 Do not run optional git-commit or agent-context-update hooks. Local commits, if
