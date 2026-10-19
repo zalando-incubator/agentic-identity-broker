@@ -19,10 +19,12 @@ import (
 	e2ebootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
+	testbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
 func TestRefreshConsentEuropeBerlin(t *testing.T) {
-	pg, dbName, connStr, cleanupDB := setupCIMDKeyDomainDatabase(t, 38)
+	pg := testbootstrap.RequireSharedPostgres(t)
+	dbName, connStr, cleanupDB := pg.SetupMigratedDatabase(t)
 	defer cleanupDB()
 	pg.ExecuteSQL(t, dbName, fmt.Sprintf("ALTER DATABASE %s SET timezone TO 'Europe/Berlin'", dbName))
 	require.Equal(t, "Europe/Berlin", pg.QuerySQL(t, dbName, "SHOW timezone"))

@@ -7,13 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
@@ -116,21 +111,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_035", func(t *testing.T, dbName string) {
-		projectRoot, err := bootstrap.FindProjectRoot()
-		require.NoError(t, err)
-		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
-		require.NoError(t, err)
-		migrationConnStr := sharedPostgres.ConnectionString(dbName)
-		migrationRunner, err := migrate.New("file://"+migrationsDir, migrationConnStr)
-		require.NoError(t, err)
-		defer func() { _, _ = migrationRunner.Close() }()
-
-		err = migrationRunner.Migrate(35)
-		if err != nil && err != migrate.ErrNoChange {
-			require.NoError(t, err)
-		}
-	})
+	dbName, connStr, cleanupDB := sharedPostgres.SetupMigratedDatabase(t)
 
 	config := &ports.StorageConfig{
 		Backend: "postgres",

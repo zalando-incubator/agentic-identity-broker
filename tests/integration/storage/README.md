@@ -67,6 +67,23 @@ Tests:
 - `TestPostgresAdapter_ContextCancellation` - Context cancellation handling
 - `TestPostgresAdapter_FullLifecycle_Integration` - Full lifecycle with real PostgreSQL container
 
+### Database schema setup
+
+Ordinary PostgreSQL tests use `bootstrap.RequireSharedPostgres(t)` followed by
+`(*SharedPostgres).SetupMigratedDatabase(t)`. The helper discovers every migration in
+`migrations/` with `golang-migrate`, prepares one fully migrated template per package,
+and clones an isolated database for each test. New migrations require no test fixture
+version or filename updates. The PostgreSQL adapter package and PostgreSQL E2E fixture
+also apply all discovered migrations.
+
+Only migration-specific upgrade and rollback tests can request a historical schema.
+For those tests, use `SetupDatabaseFromTemplate` with `ApplyMigrationsUpTo(t, dbName, version)`.
+Do not maintain SQL filename lists. Connection-error and uninitialized-adapter tests deliberately do not provision a schema.
+
+`just test-integration-infra` includes the bootstrap regression tests for current-schema
+discovery, clone isolation, and upgrading a historical fixture through the remaining
+migrations, including concurrent-index migrations.
+
 ## Container Runtime
 
 Locally, tests that require containers skip when Docker or Podman is unavailable. In CI, missing or failed containers fail the infra suites instead of passing without coverage.
