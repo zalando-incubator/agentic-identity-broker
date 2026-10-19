@@ -237,28 +237,16 @@ Escape a string for a double-quoted curl configuration value.
 {{- end }}
 
 {{/*
-Session sweep job script. The shell only validates header files; curl reads each file itself
-through a config variable, so a credential never reaches a process argument list, the
-environment, or the shell's output. The values schema restricts file paths to characters
-that need no shell quoting and keeps CR, LF, and braces out of configuration lines.
+Session sweep job script. curl reads each header file itself through a config variable, so a
+credential never reaches a process argument list, the environment, or the shell's output. A
+missing file fails the run before any request is sent. The values schema restricts file paths
+to characters that need no quoting and keeps CR, LF, and braces out of configuration lines.
 */}}
 {{- define "agentic-identity-broker.sessionSweep.script" -}}
 {{- $sweep := .Values.sessionSweep -}}
 {{- $fileHeaders := $sweep.headersFromFile | default dict -}}
 nl='
 '
-cr=$(printf '\r')
-check_header_file() {
-  [ -s "$1" ] || { printf 'session sweep: header file %s is missing or empty\n' "$1" >&2; exit 1; }
-  value=$(cat -- "$1")
-  value=${value%"$cr"}
-  case $value in
-    ""|*"$nl"*|*"$cr"*|*\"*|*\\*) printf 'session sweep: header file %s contains an unsupported character\n' "$1" >&2; exit 1 ;;
-  esac
-}
-{{- range $name := keys $fileHeaders | sortAlpha }}
-check_header_file {{ (get $fileHeaders $name).path }}
-{{- end }}
 out=$(curl --disable --config - <<'SESSION_SWEEP_CURL_CONFIG'
 url = "{{ include "agentic-identity-broker.curlConfigEscape" (printf "%s/api/sessions/sweep" (include "agentic-identity-broker.sessionSweep.url" .)) }}"
 request = "POST"

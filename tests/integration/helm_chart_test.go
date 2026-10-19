@@ -319,3 +319,96 @@ func TestHelmTemplate_DCRClientName(t *testing.T) {
 		require.Contains(t, output, "string")
 	})
 }
+
+// sessionSweepArgs enables the chart-managed sweep with a literal operator header, the
+// minimum identity the chart accepts, in the "identity" namespace with an admin public URL.
+func sessionSweepArgs(extra ...string) []string {
+	args := []string{
+		"--namespace", "identity",
+		"--set-string", "broker.server.admin.publicUrl=https://broker-admin.example.test",
+		"--set", "sessionSweep.enabled=true",
+		"--set-string", "sessionSweep.headers.X-Operator=session-sweep",
+	}
+	return append(args, extra...)
+}
+
+func TestHelmTemplate_SessionSweep(t *testing.T) {
+	// US1-S1 from specs/052-session-auto-refresh/spec.md
+	t.Run("renders no sweep resources when disabled", func(t *testing.T) {
+		output := renderHelmTemplate(t,
+			"--set-string", "sessionSweep.headers.X-Operator=session-sweep",
+			"--set-string", "sessionSweep.schedule=*/5 * * * *",
+		)
+		require.NotContains(t, output, "kind: CronJob")
+		require.NotContains(t, output, "session-sweep")
+	})
+
+	// US1-S2 from specs/052-session-auto-refresh/spec.md
+	t.Run("renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H", func(t *testing.T) {
+		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
+		for _, want := range []string{
+			"kind: CronJob",
+			"name: broker-agentic-identity-broker-session-sweep",
+			`schedule: "0 * * * *"`,
+			"concurrencyPolicy: Forbid",
+			"startingDeadlineSeconds: 3600",
+			"backoffLimit: 0",
+			"activeDeadlineSeconds: 2100",
+			"automountServiceAccountToken: false",
+			"readOnlyRootFilesystem: true",
+			`url = "http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep"`,
+			`header = "Host: broker-admin.example.test"`,
+			`header = "X-Operator: session-sweep"`,
+			`data = "{\"lookahead_duration\":\"PT2H\",\"dry_run\":false}"`,
+			"max-time = 1800",
+		} {
+			require.Contains(t, output, want)
+		}
+	})
+
+	// US1-S10 from specs/052-session-auto-refresh/spec.md
+	t.Run("keeps the job pod out of the broker Service and PDB selectors", func(t *testing.T) {
+		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
+		_, podTemplate, found := strings.Cut(output, "jobTemplate:")
+		require.True(t, found, "rendered CronJob has no jobTemplate")
+		require.NotContains(t, podTemplate, "app.kubernetes.io/name:")
+		require.Contains(t, podTemplate, "app.kubernetes.io/component: session-sweep")
+	})
+
+	// US1-S5 from specs/052-session-auto-refresh/spec.md (render-time part)
+	t.Run("reads file headers through curl config variables and never renders their value", func(t *testing.T) {
+		output := renderHelmTemplate(t, sessionSweepArgs(
+			"--show-only", "templates/cronjob-session-sweep.yaml",
+			"--set-string", "sessionSweep.headersFromFile.Authorization.path=/var/run/secrets/session-sweep/token",
+			"--set-string", "sessionSweep.headersFromFile.Authorization.prefix=Bearer ",
+		)...)
+		require.Contains(t, output, `variable = "header_0@/var/run/secrets/session-sweep/token"`)
+		require.Contains(t, output, `expand-header = "Authorization: Bearer {{header_0:trim:json}}"`)
+		require.NotContains(t, output, "cat ")
+	})
+
+	// US1-S7 and US1-S11 from specs/052-session-auto-refresh/spec.md
+	t.Run("fails to render with an invalid sweep configuration", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			args    []string
+			wantErr string
+		}{
+			{"no identity", []string{"--namespace", "identity", "--set", "sessionSweep.enabled=true"},
+				"sessionSweep.enabled requires an identity for the admin API"},
+			{"timeout not below the deadline", sessionSweepArgs("--set", "sessionSweep.timeoutSeconds=60", "--set", "sessionSweep.activeDeadlineSeconds=60"),
+				"sessionSweep.timeoutSeconds (60) must be shorter than sessionSweep.activeDeadlineSeconds (60)"},
+			{"unpaired TLS certificate", sessionSweepArgs("--set-string", "sessionSweep.tls.certFile=/var/run/secrets/session-sweep/tls.crt"),
+				"sessionSweep.tls.certFile and sessionSweep.tls.keyFile must be set together"},
+			{"non-ISO lookahead", sessionSweepArgs("--set-string", "sessionSweep.lookaheadDuration=2h"),
+				"lookaheadDuration"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				output, err := runHelmTemplate(t, tt.args...)
+				require.Error(t, err, output)
+				require.Contains(t, output, tt.wantErr)
+			})
+		}
+	})
+}

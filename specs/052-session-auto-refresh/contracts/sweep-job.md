@@ -62,19 +62,16 @@ The CronJob metadata labels are `agentic-identity-broker.labels` plus `app.kuber
 
 The script is rendered per release. It contains no secret: only the target, the `Host`, literal headers, file paths, and the JSON body. Its behavior:
 
-1. For each `headersFromFile` entry, in sorted header-name order, it validates the file without passing its value anywhere:
-   - If the file is missing or empty, it prints `session sweep: header file <path> is missing or empty` to stderr and exits `1`.
-   - It removes one trailing LF run and one trailing CR. If the value is then empty or contains `"`, `\`, CR, or LF, it prints `session sweep: header file <path> contains an unsupported character` and exits `1`.
-2. It runs `curl --disable --config -` and passes one configuration through a quoted heredoc, so the shell expands nothing:
+1. It runs `curl --disable --config -` and passes one configuration through a quoted heredoc, so the shell expands nothing:
    - `url`, `request = "POST"`, `header = "Content-Type: application/json"`
    - `header = "Host: <host>"`, only when a `Host` override applies (research R3)
    - one `header = "<Name>: <value>"` per literal header, escaped at render time (research R2)
    - per file header: `variable = "header_N@<path>"` and `expand-header = "<Name>: <prefix>{{header_N:trim:json}}"`, so curl reads the file itself
    - `data`, optional `cert`, `key`, and `cacert`, `connect-timeout = 10`, `max-time = <timeoutSeconds>`, `silent`, `show-error`, and `write-out = "\n%{http_code}"`
-3. It prints the response body.
-4. For a `2xx` status, it exits `0`. For any other status, it prints `session sweep failed: HTTP <status>` to stderr and exits `1`. If curl fails without a status (transport error or timeout), the script exits with curl's code after curl prints its error.
+2. It prints the response body.
+3. For a `2xx` status, it exits `0`. For any other status, it prints `session sweep failed: HTTP <status>` to stderr and exits `1`. If curl fails without a status (transport error or timeout), the script exits with curl's code after curl prints its error.
 
-The script never uses `set -x`, `--verbose`, or `--trace`, and never echoes configuration lines. `--disable` comes first so curl ignores any `.curlrc` in the image. The image needs curl 8.3 or later for config variables.
+The script never uses `set -x`, `--verbose`, or `--trace`, never reads a header file itself, and never echoes configuration lines. A missing header file makes curl fail while reading its configuration, before any request. curl's `trim` and `json` functions strip surrounding whitespace from the file value and escape quotes, backslashes, and line breaks in it, so a malformed value cannot alter the request. `--disable` comes first so curl ignores any `.curlrc` in the image. The image needs curl 8.3 or later for config variables.
 
 ### Request body
 
@@ -100,16 +97,6 @@ When `pageSize` is set, `,"page_size":<pageSize>` is added before the closing br
 ```sh
 nl='
 '
-cr=$(printf '\r')
-check_header_file() {
-  [ -s "$1" ] || { printf 'session sweep: header file %s is missing or empty\n' "$1" >&2; exit 1; }
-  value=$(cat -- "$1")
-  value=${value%"$cr"}
-  case $value in
-    ""|*"$nl"*|*"$cr"*|*\"*|*\\*) printf 'session sweep: header file %s contains an unsupported character\n' "$1" >&2; exit 1 ;;
-  esac
-}
-check_header_file /var/run/secrets/session-sweep/token
 out=$(curl --disable --config - <<'SESSION_SWEEP_CURL_CONFIG'
 url = "http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep"
 request = "POST"
@@ -135,4 +122,4 @@ printf 'session sweep failed: HTTP %s\n' "$status" >&2
 exit 1
 ```
 
-This example fixes the observable behavior, not the exact text. Implementation may restructure it as long as the behavior above holds and the E2E tests pass.
+This example fixes the observable behavior, not the exact text. Implementation may restructure it as long as the behavior above holds and the render checks in `tests/integration/helm_chart_test.go` pass.
