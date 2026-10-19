@@ -38,30 +38,30 @@ One row of the health query result.
 | `RefreshUsable` | `bool` | Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`) |
 | `Count` | `int` | Number of sessions in this group, `> 0` |
 
-Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result. At most six groups exist per service.
+Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result. At most eight groups exist per service.
 
-### `oauth2session.SessionHealthState` (`internal/domain/oauth2session`)
+### `oauth2session.SessionHealthKey` (`internal/domain/oauth2session`)
 
-| Value | Metric value |
-|---|---|
-| `SessionHealthValid` | `valid` |
-| `SessionHealthExpiringRefreshable` | `expiring_refreshable` |
-| `SessionHealthExpiredUnrefreshable` | `expired_unrefreshable` |
-| `SessionHealthUnknownExpiry` | `unknown_expiry` |
+| Field | Values | Metric attribute |
+|---|---|---|
+| `Expiry` (`SessionHealthExpiry`) | `valid`, `expiring`, `expired`, `unknown` | `expiry` |
+| `Refreshable` | `true`, `false` | `refreshable` |
 
-Classification (FR-018) of a group, evaluated in this order:
+Classification (FR-018) of a group:
 
 ```mermaid
 flowchart TD
     G["SessionExpiryGroup"] --> A{AccessExpiry}
-    A -- Unknown --> U["unknown_expiry"]
-    A -- AfterThreshold --> V["valid"]
-    A -- Due --> R{RefreshUsable}
-    R -- true --> E["expiring_refreshable"]
-    R -- false --> X["expired_unrefreshable"]
+    A -- Unknown --> U["expiry=unknown"]
+    A -- AfterThreshold --> V["expiry=valid"]
+    A -- Due --> E["expiry=expiring"]
+    A -- Expired --> X["expiry=expired"]
+    G --> R{RefreshUsable}
+    R -- true --> T["refreshable=true"]
+    R -- false --> F["refreshable=false"]
 ```
 
-`threshold = now + token_refresh.lookahead_duration`.
+`threshold = now + token_refresh.lookahead_duration`; `Due` means after `now` and at or before `threshold`, `Expired` means at or before `now`.
 
 ### `oauth2session.SessionHealthSnapshot`
 
@@ -69,9 +69,9 @@ The result of one classification, built per export cycle and not retained.
 
 | Field | Type | Invariant |
 |---|---|---|
-| `Counts` | `map[id.ServiceID]map[SessionHealthState]int` | Every service present has all four states, zero-filled (FR-019). Services with no sessions are absent. |
+| `Counts` | `map[id.ServiceID]map[SessionHealthKey]int` | Every service present has all eight `(expiry, refreshable)` combinations, zero-filled (FR-019). Services with no sessions are absent. |
 
-Built from the groups by summing counts per `(service, state)`. Validation: a group with `Count <= 0` or an unknown `AccessExpiry` is an adapter contract violation and fails the cycle.
+Built from the groups by summing counts per `(service, expiry, refreshable)`. Validation: a group with `Count <= 0` or an unknown `AccessExpiry` is an adapter contract violation and fails the cycle.
 
 ## Process-scoped component
 
@@ -105,6 +105,6 @@ stateDiagram-v2
 
 ## Glossary additions (`ARCHITECTURE.md`, Third-Party OAuth2 Session Management)
 
-- **Session Health State**: The classification of a stored session as `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`. It is derived from access-token expiry, refresh-token usability, and the refresh lookahead, and is never stored.
+- **Session Health State**: The classification of a stored session by access-token expiry (`valid`, `expiring`, `expired`, or `unknown`) and refresh-token usability (`refreshable`). It is derived from the stored expiries, the current time, and the refresh lookahead, and is never stored.
 - **Session Health Snapshot**: Per-service counts of sessions in each Session Health State, computed once per metric export cycle and published as the `oauth2_sessions` gauge.
 - **Session Sweep Schedule**: The optional chart-managed CronJob that calls `POST /api/sessions/sweep` on a schedule with operator-supplied request credentials.

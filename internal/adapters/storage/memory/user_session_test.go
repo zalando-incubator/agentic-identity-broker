@@ -678,15 +678,20 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		{name: "H6 refresh expiring at now is unusable", sessions: []*storage.UserSession{session(svc, &due, refresh, &now)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: false, Count: 1}}},
 		{name: "H7 absent refresh token is unusable", sessions: []*storage.UserSession{session(svc, &past, nil, nil)},
-			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: false, Count: 1}}},
+			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: false, Count: 1}}},
 		{name: "H8 groups per service and class", sessions: []*storage.UserSession{
 			session(svc, &due, refresh, &later), session(svc, &past, refresh, nil), session(svc, &after, refresh, &later),
-			session(other, nil, refresh, &later),
+			session(svc, &due, refresh, &later), session(other, nil, refresh, &later),
 		}, want: []storage.SessionExpiryGroup{
 			{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
+			{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1},
 			{ServiceID: svc, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
 			{ServiceID: other, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
 		}},
+		{name: "H10 expiry at now is expired", sessions: []*storage.UserSession{session(svc, &now, refresh, &later)},
+			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1}}},
+		{name: "H11 expired access with usable refresh is expired and refreshable", sessions: []*storage.UserSession{session(svc, &past, refresh, &later)},
+			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

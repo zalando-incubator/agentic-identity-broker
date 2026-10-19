@@ -38,7 +38,7 @@ func collectNamedMetric(reader *sdkmetric.ManualReader, name string) (metricdata
 	return metricdata.Metrics{}, false
 }
 
-// sessionHealthCounts returns oauth2_sessions values keyed by service ID, then state.
+// sessionHealthCounts returns oauth2_sessions values keyed by service ID, then "expiry/refreshable".
 func sessionHealthCounts(reader *sdkmetric.ManualReader) (map[string]map[string]int64, []attribute.Set) {
 	metric, ok := collectNamedMetric(reader, "oauth2_sessions")
 	if !ok {
@@ -50,11 +50,12 @@ func sessionHealthCounts(reader *sdkmetric.ManualReader) (map[string]map[string]
 	var attributes []attribute.Set
 	for _, point := range gauge.DataPoints {
 		service, _ := point.Attributes.Value("service_id")
-		state, _ := point.Attributes.Value("state")
+		expiry, _ := point.Attributes.Value("expiry")
+		refreshable, _ := point.Attributes.Value("refreshable")
 		if counts[service.AsString()] == nil {
 			counts[service.AsString()] = map[string]int64{}
 		}
-		counts[service.AsString()][state.AsString()] = point.Value
+		counts[service.AsString()][expiry.AsString()+"/"+refreshable.AsString()] = point.Value
 		attributes = append(attributes, point.Attributes)
 	}
 	return counts, attributes
@@ -91,6 +92,20 @@ func sweepSkippedTotal(reader *sdkmetric.ManualReader) int64 {
 		total += point.Value
 	}
 	return total
+}
+
+// healthSeries returns the eight zero-filled oauth2_sessions series of one service with overrides.
+func healthSeries(overrides map[string]int64) map[string]int64 {
+	series := map[string]int64{}
+	for _, expiry := range []string{"valid", "expiring", "expired", "unknown"} {
+		for _, refreshable := range []string{"true", "false"} {
+			series[expiry+"/"+refreshable] = 0
+		}
+	}
+	for key, value := range overrides {
+		series[key] = value
+	}
+	return series
 }
 
 func sweepRequest(admin *bootstrap.TestServer, ctx context.Context, principal, body string) (*http.Response, error) {
@@ -211,13 +226,13 @@ var _ = Describe("Session Metrics", func() {
 
 		Describe("User Story 2: session health per service", func() {
 			// US2-S1 from specs/052-session-auto-refresh/spec.md
-			It("reports one value per service and state that sums to the stored sessions", func() {
+			It("reports one value per service and series that sums to the stored sessions", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
 				counts, _ := sessionHealthCounts(reader)
 				Expect(counts).To(HaveLen(2))
 				for _, service := range []id.ServiceID{calendar, tickets} {
-					Expect(counts[service.String()]).To(HaveLen(4))
+					Expect(counts[service.String()]).To(HaveLen(8))
 				}
 				sum := func(states map[string]int64) (total int64) {
 					for _, value := range states {
@@ -225,17 +240,16 @@ var _ = Describe("Session Metrics", func() {
 					}
 					return total
 				}
-				Expect(sum(counts[calendar.String()])).To(Equal(int64(5)))
+				Expect(sum(counts[calendar.String()])).To(Equal(int64(6)))
 				Expect(sum(counts[tickets.String()])).To(Equal(int64(2)))
 			})
 
 			// US2-S2 from specs/052-session-auto-refresh/spec.md
-			It("reports zero for states without sessions", func() {
+			It("reports zero for series without sessions", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
 				counts, _ := sessionHealthCounts(reader)
-				Expect(counts[tickets.String()]).To(HaveKeyWithValue("expiring_refreshable", int64(0)))
-				Expect(counts[tickets.String()]).To(HaveKeyWithValue("unknown_expiry", int64(0)))
+				Expect(counts[tickets.String()]).To(Equal(healthSeries(map[string]int64{"valid/true": 1, "expired/false": 1})))
 			})
 
 			// US2-S3 from specs/052-session-auto-refresh/spec.md
@@ -244,53 +258,47 @@ var _ = Describe("Session Metrics", func() {
 				seed(fixtures.ValidSession("valid-a@example.com", calendar, now), fixtures.ValidSession("valid-b@example.com", calendar, now))
 				boot()
 				counts, _ := sessionHealthCounts(reader)
-				Expect(counts[calendar.String()]).To(Equal(map[string]int64{
-					"valid": 2, "expiring_refreshable": 0, "expired_unrefreshable": 0, "unknown_expiry": 0,
-				}))
+				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"valid/true": 2})))
 			})
 
 			// US2-S4 from specs/052-session-auto-refresh/spec.md
-			It("counts a due session with a usable refresh token as expiring_refreshable", func() {
+			It("counts a due session as expiring and an already expired one as expired, both refreshable", func() {
 				now := time.Now()
 				seed(fixtures.ExpiringRefreshableSession("due@example.com", calendar, now), fixtures.ExpiredRefreshableSession("expired@example.com", calendar, now))
 				boot()
 				counts, _ := sessionHealthCounts(reader)
-				Expect(counts[calendar.String()]).To(HaveKeyWithValue("expiring_refreshable", int64(2)))
-				Expect(counts[calendar.String()]).To(HaveKeyWithValue("valid", int64(0)))
+				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"expiring/true": 1, "expired/true": 1})))
 			})
 
 			// US2-S5 from specs/052-session-auto-refresh/spec.md
-			It("counts a due session without a usable refresh token as expired_unrefreshable", func() {
+			It("counts expired sessions without a usable refresh token as expired and unrefreshable", func() {
 				now := time.Now()
 				seed(fixtures.ExpiredUnrefreshableSession("lapsed@example.com", calendar, now), fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", calendar, now))
 				boot()
 				counts, _ := sessionHealthCounts(reader)
-				Expect(counts[calendar.String()]).To(HaveKeyWithValue("expired_unrefreshable", int64(2)))
-				Expect(counts[calendar.String()]).To(HaveKeyWithValue("expiring_refreshable", int64(0)))
+				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"expired/false": 2})))
 			})
 
 			// US2-S6 from specs/052-session-auto-refresh/spec.md
-			It("counts a session without recorded expiry as unknown_expiry", func() {
+			It("counts a session without recorded expiry under unknown", func() {
 				seed(fixtures.UnknownExpirySession("timeless@example.com", tickets, time.Now()))
 				boot()
 				counts, _ := sessionHealthCounts(reader)
-				Expect(counts[tickets.String()]).To(Equal(map[string]int64{
-					"valid": 0, "expiring_refreshable": 0, "expired_unrefreshable": 0, "unknown_expiry": 1,
-				}))
+				Expect(counts[tickets.String()]).To(Equal(healthSeries(map[string]int64{"unknown/true": 1})))
 			})
 
 			// US2-S9 from specs/052-session-auto-refresh/spec.md
-			It("exports only service_id and state attributes", func() {
+			It("exports only service_id, expiry, and refreshable attributes", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
 				_, attributes := sessionHealthCounts(reader)
-				Expect(attributes).To(HaveLen(8))
+				Expect(attributes).To(HaveLen(16))
 				for _, set := range attributes {
 					var keys []string
 					for _, kv := range set.ToSlice() {
 						keys = append(keys, string(kv.Key))
 					}
-					Expect(keys).To(ConsistOf("service_id", "state"))
+					Expect(keys).To(ConsistOf("service_id", "expiry", "refreshable"))
 				}
 			})
 		})

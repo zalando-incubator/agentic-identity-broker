@@ -309,8 +309,8 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 | `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
 | `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. PostgreSQL separately limits all locked-session operations to 20 across background, on-demand, sweep, and reconnect traffic. |
 | `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
-| `token_refresh.health_metrics.enabled` | bool | `true` | `true`, `false` | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED` | `--token_refresh.health_metrics.enabled` | Publish the `oauth2_sessions{service_id,state}` gauge. Takes effect only when telemetry metrics are exported. |
-| `token_refresh.health_metrics.query_timeout` | Go duration string | `5s` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT` | `--token_refresh.health_metrics.query_timeout` | Timeout of the per-export session count query. A slower query reports no gauge data for that export cycle. |
+| `token_refresh.health_metrics.enabled` | bool | `true` | `true`, `false` | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED` | `--token_refresh.health_metrics.enabled` | Publish the `oauth2_sessions{service_id,expiry,refreshable}` gauge. Takes effect only when telemetry metrics are exported. |
+| `token_refresh.health_metrics.query_timeout` | Go duration string | `5s` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT` | `--token_refresh.health_metrics.query_timeout` | Timeout of the per-export session count query, applied instead of `storage.timeouts.read`. A slower query reports no gauge data for that export cycle. |
 
 
 #### Encryption Configuration
@@ -806,7 +806,7 @@ The PostgreSQL adapter separately limits locked-session operations to 20 across 
 
 Each admitted refresh holds its connection through all provider attempts, retry waits, and token persistence. Two maximum `Retry-After` waits add 20 connection-seconds per refresh, before provider latency. The bounded refresh context limits the total duration. Lower background concurrency leaves more of the shared admission capacity for on-demand refreshes and sweeps.
 
-With `health_metrics.enabled`, each replica runs one grouped count of stored sessions per metric export cycle and publishes `oauth2_sessions` by service and health state. The query reads no token material. A failed or slow query exports no points for that cycle and logs `session health query failed` at WARN. Consumers aggregate the gauge across replicas with `max`.
+With `health_metrics.enabled`, each replica runs one grouped count of stored sessions per metric export cycle and publishes `oauth2_sessions` by service, access-token expiry class, and refreshability. The query reads no token material. A failed or slow query exports no points for that cycle and logs `session health query failed` at WARN. Consumers aggregate the gauge across replicas with `max`.
 
 The broker does not schedule the admin sweep. Enable the chart's `sessionSweep` CronJob, or schedule `POST /api/sessions/sweep` with another external job. See the [session sweep runbook](operations/session-sweep.md) for scheduling, credentials, and monitoring.
 

@@ -8,13 +8,13 @@ These names become a compatibility surface once released. All instruments use th
 
 | Instrument | Kind | Unit | Attributes | Recorded when |
 |---|---|---|---|---|
-| `oauth2_sessions` | `Int64ObservableGauge` | `{session}` | `service_id`, `state` | Each export cycle with a successful health query: one point per service with sessions and per state, zero-filled |
+| `oauth2_sessions` | `Int64ObservableGauge` | `{session}` | `service_id`, `expiry` (`valid`, `expiring`, `expired`, `unknown`), `refreshable` (`true`, `false`) | Each export cycle with a successful health query: one point per service with sessions and per `(expiry, refreshable)` combination, zero-filled |
 | `session_sweep_duration_seconds` | `Float64Histogram`, buckets `1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600` | `s` | `outcome` (`completed`, `rejected`, `aborted`, `canceled`), `dry_run` (`true`, `false`) | Each sweep request with an operator principal, at the same time as the `session sweep` audit record |
 | `session_sweep_skipped_total` | `Int64Counter` | `{refresh}` | `triggered_by="sweep"` | Each skipped candidate in a real sweep |
 
 The existing instruments `session_sweep_refreshed_total`, `session_sweep_failed_total`, and `proactive_refresh_*_total` are unchanged.
 
-Cardinality: `oauth2_sessions` has 4 × services series per replica. The histogram has 8 attribute combinations. No instrument carries a principal, session ID, or token (FR-022).
+Cardinality: `oauth2_sessions` has 8 × services series per replica. The histogram has 8 attribute combinations. No instrument carries a principal, session ID, or token (FR-022).
 
 ## New log record
 
@@ -36,12 +36,26 @@ Backends that translate OTLP names (for example to Prometheus naming) may add or
 ## Example queries (operations guide, PromQL as an example language)
 
 ```promql
-max by (service_id, state) (oauth2_sessions)
-max by (service_id) (oauth2_sessions{state="expired_unrefreshable"})
-  - max by (service_id) (oauth2_sessions{state="expired_unrefreshable"} offset 1d) > 0
+# Sessions per service, expiry class, and refreshability
+max by (service_id, expiry, refreshable) (oauth2_sessions)
+
+# Expired sessions the sweep could refresh but has not. Alert when this stays above
+# zero for longer than two schedule periods: the sweep is not running or not keeping up.
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="true"}) > 0
+
+# Users who must reconnect, rising over a day
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"})
+  - max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"} offset 1d) > 0
+
+# No completed real sweep in three hours (hourly schedule)
 sum(increase(session_sweep_duration_seconds_count{outcome="completed",dry_run="false"}[3h])) == 0
+
+# Health gauge missing for fifteen minutes although it reported sessions before
 absent_over_time(oauth2_sessions[15m])
-sum(rate(session_sweep_failed_total[1d])) > 0
+  and on() (max(max_over_time(oauth2_sessions[1h] offset 15m)) > 0)
+
+# Sweep failures over a day
+sum(increase(session_sweep_failed_total[1d])) > 0
 ```
 
 For clusters that run kube-state-metrics (optional):

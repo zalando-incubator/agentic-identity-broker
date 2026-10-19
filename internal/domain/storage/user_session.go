@@ -24,8 +24,10 @@ const (
 	AccessExpiryUnknown AccessExpiryClass = "unknown"
 	// AccessExpiryAfterThreshold means the expiry is strictly after the threshold.
 	AccessExpiryAfterThreshold AccessExpiryClass = "after_threshold"
-	// AccessExpiryDue means the expiry is at or before the threshold (inclusive, same as AccessTokenExpiresBy).
+	// AccessExpiryDue means the expiry is after now and at or before the threshold (inclusive, same as AccessTokenExpiresBy).
 	AccessExpiryDue AccessExpiryClass = "due"
+	// AccessExpiryExpired means the expiry is at or before now (the session's access token is no longer usable).
+	AccessExpiryExpired AccessExpiryClass = "expired"
 )
 
 // SessionExpiryGroup counts stored sessions of one service sharing an access-expiry class and

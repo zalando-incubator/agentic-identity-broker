@@ -30,11 +30,12 @@ ORDER BY access_token_expires_at, id
 LIMIT $4`
 
 // countSessionsByExpiryQuery mirrors storage.UserSession.AccessTokenExpiresBy ($1 is the
-// inclusive threshold) and CanRefresh ($2 is now) without reading token material.
+// inclusive threshold), SessionIsUsable ($2 is now) and CanRefresh without reading token material.
 const countSessionsByExpiryQuery = `SELECT service_id,
        CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
             WHEN access_token_expires_at > $1 THEN 'after_threshold'
-            ELSE 'due' END AS access_expiry,
+            WHEN access_token_expires_at > $2 THEN 'due'
+            ELSE 'expired' END AS access_expiry,
        (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
         AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
        COUNT(*) AS session_count
@@ -537,12 +538,12 @@ type sessionExpiryGroupRecord struct {
 }
 
 // CountSessionsByExpiry groups stored sessions by service, access-expiry class, and refresh usability.
+// The caller bounds the scan (token_refresh.health_metrics.query_timeout), so the adapter's
+// steady-state read timeout is not applied on top of it.
 func (r *PostgresUserSessionRepository) CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error) {
 	const operation = "CountSessionsByExpiry"
-	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	defer cancel()
 	var records []sessionExpiryGroupRecord
-	if err := r.adapter.db.SelectContext(queryCtx, &records, countSessionsByExpiryQuery, threshold, now); err != nil {
+	if err := r.adapter.db.SelectContext(ctx, &records, countSessionsByExpiryQuery, threshold, now); err != nil {
 		return nil, r.wrapError(err, operation)
 	}
 
@@ -550,7 +551,7 @@ func (r *PostgresUserSessionRepository) CountSessionsByExpiry(ctx context.Contex
 	for _, record := range records {
 		class := storage.AccessExpiryClass(record.AccessExpiry)
 		switch class {
-		case storage.AccessExpiryUnknown, storage.AccessExpiryAfterThreshold, storage.AccessExpiryDue:
+		case storage.AccessExpiryUnknown, storage.AccessExpiryAfterThreshold, storage.AccessExpiryDue, storage.AccessExpiryExpired:
 		default:
 			return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, nil, "unexpected access expiry class")
 		}

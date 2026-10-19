@@ -300,12 +300,14 @@ func (r *InMemoryUserSessionRepository) CountSessionsByExpiry(ctx context.Contex
 	}
 	counts := make(map[groupKey]int)
 	for _, session := range r.sessions {
-		key := groupKey{serviceID: session.ServiceID, accessExpiry: storage.AccessExpiryDue}
+		key := groupKey{serviceID: session.ServiceID, accessExpiry: storage.AccessExpiryExpired}
 		switch {
 		case session.AccessTokenExpiresAt == nil:
 			key.accessExpiry = storage.AccessExpiryUnknown
 		case session.AccessTokenExpiresAt.After(threshold):
 			key.accessExpiry = storage.AccessExpiryAfterThreshold
+		case session.AccessTokenExpiresAt.After(now):
+			key.accessExpiry = storage.AccessExpiryDue
 		}
 		key.refreshUsable = len(session.EncryptedRefreshToken) > 0 &&
 			(session.RefreshTokenExpiresAt == nil || session.RefreshTokenExpiresAt.After(now))

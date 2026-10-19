@@ -673,7 +673,7 @@ broker:
       # -- Default page size for the external POST /api/sessions/sweep (1-1000).
       defaultPageSize: 100
     healthMetrics:
-      # -- Publish the oauth2_sessions{service_id,state} gauge when telemetry metrics are enabled.
+      # -- Publish the oauth2_sessions{service_id,expiry,refreshable} gauge when telemetry metrics are enabled.
       # Each replica runs one grouped count query per metric export cycle.
       enabled: true
       # -- Timeout of the per-export health count query (Go duration).

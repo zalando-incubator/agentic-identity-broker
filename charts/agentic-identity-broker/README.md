@@ -231,7 +231,7 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
 | `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
 | `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
-| `broker.tokenRefresh.healthMetrics.enabled` | Boolean: publish the `oauth2_sessions{service_id,state}` gauge when telemetry metrics are enabled. Each replica runs one grouped count query per metric export cycle. | `true` |
+| `broker.tokenRefresh.healthMetrics.enabled` | Boolean: publish the `oauth2_sessions{service_id,expiry,refreshable}` gauge when telemetry metrics are enabled. Each replica runs one grouped count query per metric export cycle. | `true` |
 | `broker.tokenRefresh.healthMetrics.queryTimeout` | String (Go duration): timeout of the per-export health count query; a slower query reports no data for that cycle. | `"5s"` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
@@ -503,14 +503,14 @@ The chart only sends the request. It has no identity model of its own: you suppl
 | `sessionSweep.url` | Target URL; empty targets this release's admin Service, `http://<fullname>.<namespace>.svc:<service.ports.admin>` | `""` |
 | `sessionSweep.host` | `Host` override; empty derives it from `broker.server.admin.publicUrl` for the default target only | `""` |
 | `sessionSweep.headers` | Literal headers. They are rendered into the manifest, so never put secrets here | `{}` |
-| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Paths are absolute and use only letters, digits, `.`, `_`, `-`, and `/`. File values containing `"`, `\`, or a line break are rejected before sending | `{}` |
+| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Paths are absolute and use only letters, digits, `.`, `_`, `-`, and `/`. `curl` trims the file value and escapes quotes, backslashes, and line breaks in it | `{}` |
 | `sessionSweep.tls.certFile`, `.keyFile`, `.caFile` | TLS client certificate, key, and CA bundle paths | `""` |
 | `sessionSweep.volumes`, `sessionSweep.volumeMounts` | Volumes that provide header and TLS files | `[]` |
 | `sessionSweep.image.repository`, `.tag`, `.pullPolicy` | Image with a POSIX shell and `curl` 8.3 or later, which reads header files through config variables | `curlimages/curl`, `8.16.0`, `IfNotPresent` |
 | `sessionSweep.resources` | Container resources | `50m` CPU, `64Mi` memory |
 | `sessionSweep.podLabels`, `sessionSweep.podAnnotations` | Extra pod metadata; `podLabels` override `commonLabels` | `{}` |
 
-The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. Before sending, the job rejects a header file that is missing, empty, or contains `"`, `\`, or a line break inside the value. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
+The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent; `curl` trims and escapes the value, so a malformed file cannot alter the request and fails with the target's status. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
 
 ### Through the authenticating proxy with a projected ServiceAccount token
 

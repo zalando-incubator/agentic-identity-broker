@@ -106,7 +106,7 @@ oauth2_authorization_server:
 token_refresh:
   lookahead_duration: 5m
   health_metrics:
-    # Publishes oauth2_sessions{service_id,state} when telemetry metrics are enabled
+    # Publishes oauth2_sessions{service_id,expiry,refreshable} when telemetry metrics are enabled
     enabled: true
     query_timeout: 5s
 

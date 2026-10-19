@@ -1671,9 +1671,9 @@ The next five entries describe feature 051's implemented, unreleased model under
 
 **SessionTokensRefreshed**: The structured `session.oauth2.token_refreshed` log event after a `UserSession` refresh commits. It records the session owner's `principal`, session ID, service ID, and `RefreshTrigger` without token material. The broker has no event bus.
 
-**Session Health State**: The classification of a stored `UserSession` as `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`. It is derived from the access-token expiry, refresh-token usability, and the Refresh Lookahead Window, in that precedence: no recorded expiry, expiry after the window, then refresh-token usability. It is never stored.
+**Session Health State**: The classification of a stored `UserSession` by access-token expiry (`valid` after the Refresh Lookahead Window, `expiring` within it, `expired` once passed, or `unknown` when not recorded) and by refresh-token usability (`refreshable` true or false). It is derived at query time and never stored.
 
-**Session Health Snapshot**: Per-service counts of `UserSession` records in each Session Health State, computed by one grouped query in each metric export cycle and published as the `oauth2_sessions` gauge. Every state of a service with sessions is reported, with zero when empty. It is not retained between cycles.
+**Session Health Snapshot**: Per-service counts of `UserSession` records in each Session Health State, computed by one grouped query in each metric export cycle and published as the `oauth2_sessions` gauge. Every combination of expiry class and refreshability is reported for a service with sessions, with zero when empty. It is not retained between cycles.
 
 **Session Sweep Schedule**: The optional chart-managed CronJob that calls the Session Sweep endpoint on a schedule with request credentials the operator supplies. The chart adds no identity model and the broker still runs no scheduler.
 

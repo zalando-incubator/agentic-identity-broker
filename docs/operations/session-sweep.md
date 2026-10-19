@@ -75,7 +75,7 @@ The broker Helm chart renders an optional CronJob that calls the sweep. Set `ses
 
 A run succeeds on any `2xx` response, even when `failed` is greater than zero. A failed candidate needs either the user to reconnect or the provider to recover, and an immediate retry would fail the same way. The next run tries it again, and the health metrics below show how many sessions are affected. Any other status, a timeout, or an unreachable target fails the Job.
 
-The chart has no identity model. Supply the credential that your admin path accepts as literal headers, headers read from mounted files, or a TLS client certificate; rendering fails without one. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. Before sending, the job rejects a header file that is missing, empty, or contains `"`, `\`, or a line break inside the value. Literal headers are rendered into the manifest, so never put secrets in them. Give the job a dedicated operator principal, so the sweep audit event distinguishes scheduled sweeps from manual ones.
+The chart has no identity model. Supply the credential that your admin path accepts as literal headers, headers read from mounted files, or a TLS client certificate; rendering fails without one. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent. `curl` trims the value and escapes any quote, backslash, or line break in it, so a malformed file cannot alter the request and fails with the target's status. Literal headers are rendered into the manifest, so never put secrets in them. Give the job a dedicated operator principal, so the sweep audit event distinguishes scheduled sweeps from manual ones.
 
 Send the request through your authenticating proxy. With a projected ServiceAccount token:
 
@@ -152,7 +152,7 @@ If metrics are enabled, use the exported OpenTelemetry instruments. The broker d
 
 | Instrument | Kind | Meaning |
 |---|---|---|
-| `oauth2_sessions{service_id, state}` | Gauge | Stored sessions per service and health state: `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`. Every state of a service with sessions is reported, with zero when empty. |
+| `oauth2_sessions{service_id, expiry, refreshable}` | Gauge | Stored sessions per service, access-token expiry class (`valid`, `expiring`, `expired`, or `unknown`), and whether a usable refresh token exists (`true` or `false`). Every combination is reported for a service with sessions, with zero when empty. |
 | `session_sweep_duration_seconds{outcome, dry_run}` | Histogram | Duration of each sweep request with an operator principal. `outcome` is `completed`, `rejected`, `aborted`, or `canceled`. Its count series counts runs. |
 | `session_sweep_refreshed_total` | Counter | Sessions refreshed by real sweeps. |
 | `session_sweep_skipped_total` | Counter | Candidates a real sweep skipped because another refresh renewed them or they were deleted. |
@@ -161,9 +161,9 @@ If metrics are enabled, use the exported OpenTelemetry instruments. The broker d
 | `proactive_refresh_dropped_total` | Counter | Background refresh attempts dropped under load. |
 | `proactive_refresh_failed_total` | Counter | Accepted background refresh attempts that failed. |
 
-A session is `valid` when its access token expires after `token_refresh.lookahead_duration`. It is `expiring_refreshable` when it is due or expired and has a usable refresh token, `expired_unrefreshable` when it is due or expired without one, and `unknown_expiry` when no expiry is recorded. The sweep never reaches `unknown_expiry` sessions.
+`expiry` is `valid` when the access token expires after now plus `token_refresh.lookahead_duration`, `expiring` when it expires within that window, `expired` when it has already expired, and `unknown` when no expiry is recorded. `refreshable` is `true` when a refresh token is present and not expired. The series to watch is `expiry="expired",refreshable="true"`: these sessions the sweep could renew but has not, and inactive users accumulate there when no sweep runs. `expiry="expired",refreshable="false"` counts users who must reconnect. The sweep never reaches `unknown` sessions.
 
-Each replica runs one grouped count query for the gauge per metric export cycle, bounded by `token_refresh.health_metrics.query_timeout`. If the query fails or times out, that cycle exports no `oauth2_sessions` points and the broker logs `session health query failed` at WARN with `error_kind`. Set `token_refresh.health_metrics.enabled: false` to stop the query.
+Each replica runs one grouped count query for the gauge per metric export cycle, bounded by `token_refresh.health_metrics.query_timeout` alone; `storage.timeouts.read` does not apply to it. If the query fails or times out, that cycle exports no `oauth2_sessions` points and the broker logs `session health query failed` at WARN with `error_kind`. Set `token_refresh.health_metrics.enabled: false` to stop the query.
 
 Every replica reports the same `oauth2_sessions` totals, so aggregate the gauge with `max`. Only the replica that served a sweep records its counters and duration, so aggregate those with `sum`. Backends that translate OTLP metric names, for example to Prometheus naming, may change suffixes; look up the translated names in your backend.
 
@@ -172,18 +172,23 @@ Dry runs do not increment the refreshed, skipped, or failed counters. The durati
 Example queries, in PromQL:
 
 ```promql
-# Sessions per service and state
-max by (service_id, state) (oauth2_sessions)
+# Sessions per service, expiry class, and refreshability
+max by (service_id, expiry, refreshable) (oauth2_sessions)
+
+# Expired sessions the sweep could refresh but has not. Alert when this stays above
+# zero for longer than two schedule periods: the sweep is not running or not keeping up.
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="true"}) > 0
 
 # Users who must reconnect, rising over a day
-max by (service_id) (oauth2_sessions{state="expired_unrefreshable"})
-  - max by (service_id) (oauth2_sessions{state="expired_unrefreshable"} offset 1d) > 0
+max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"})
+  - max by (service_id) (oauth2_sessions{expiry="expired",refreshable="false"} offset 1d) > 0
 
 # No completed real sweep in three hours (hourly schedule)
 sum(increase(session_sweep_duration_seconds_count{outcome="completed",dry_run="false"}[3h])) == 0
 
-# Health gauge missing for fifteen minutes
+# Health gauge missing for fifteen minutes although it reported sessions before
 absent_over_time(oauth2_sessions[15m])
+  and on() (max(max_over_time(oauth2_sessions[1h] offset 15m)) > 0)
 
 # Sweep failures over a day
 sum(increase(session_sweep_failed_total[1d])) > 0

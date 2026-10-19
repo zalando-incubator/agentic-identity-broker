@@ -989,12 +989,17 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		{name: "H6 refresh expiring at now is unusable", seeds: []seed{{0, &due, refresh, &now}},
 			want: []group{{0, storage.AccessExpiryDue, false, 1}}},
 		{name: "H7 absent refresh token is unusable", seeds: []seed{{0, &past, nil, nil}},
-			want: []group{{0, storage.AccessExpiryDue, false, 1}}},
+			want: []group{{0, storage.AccessExpiryExpired, false, 1}}},
 		{name: "H8 groups per service and class", seeds: []seed{
-			{0, &due, refresh, &later}, {0, &past, refresh, nil}, {0, &after, refresh, &later}, {1, nil, refresh, &later},
+			{0, &due, refresh, &later}, {0, &past, refresh, nil}, {0, &after, refresh, &later}, {0, &due, refresh, &later}, {1, nil, refresh, &later},
 		}, want: []group{
-			{0, storage.AccessExpiryDue, true, 2}, {0, storage.AccessExpiryAfterThreshold, true, 1}, {1, storage.AccessExpiryUnknown, true, 1},
+			{0, storage.AccessExpiryDue, true, 2}, {0, storage.AccessExpiryExpired, true, 1},
+			{0, storage.AccessExpiryAfterThreshold, true, 1}, {1, storage.AccessExpiryUnknown, true, 1},
 		}},
+		{name: "H10 expiry at now is expired", seeds: []seed{{0, &now, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryExpired, true, 1}}},
+		{name: "H11 expired access with usable refresh is expired and refreshable", seeds: []seed{{0, &past, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryExpired, true, 1}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

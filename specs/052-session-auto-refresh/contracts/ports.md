@@ -33,25 +33,33 @@ Compile-time assertions `var _ ports.UserSessionHealthRepository = (*...)(nil)` 
 | H5 | due, refresh token present, refresh expiry nil | `RefreshUsable = true` |
 | H6 | due, refresh token present, refresh expiry at `now` | `RefreshUsable = false` |
 | H7 | due, refresh token absent (`NULL` / empty) | `RefreshUsable = false` |
-| H8 | two services, mixed states, two sessions in one group | one group per distinct key, counts summed |
+| H8 | two services, mixed classes, two sessions in one group | one group per distinct key, counts summed |
 | H9 | canceled context | timeout-kind storage error |
+| H10 | access expiry equal to now | `expired` |
+| H11 | access expiry in the past, usable refresh token | `expired`, refresh usable |
 
 PostgreSQL cases run under `//go:build integration` with `setupMigratedAdapter` and `insertTestService` (`just test-integration-infra`).
 
 ## 2. New domain component: `SessionHealthMetrics` (`internal/domain/oauth2session/health_metrics.go`)
 
 ```go
-type SessionHealthState string
+type SessionHealthExpiry string
 
 const (
-	SessionHealthValid                SessionHealthState = "valid"
-	SessionHealthExpiringRefreshable  SessionHealthState = "expiring_refreshable"
-	SessionHealthExpiredUnrefreshable SessionHealthState = "expired_unrefreshable"
-	SessionHealthUnknownExpiry        SessionHealthState = "unknown_expiry"
+	SessionHealthExpiryValid    SessionHealthExpiry = "valid"
+	SessionHealthExpiryExpiring SessionHealthExpiry = "expiring"
+	SessionHealthExpiryExpired  SessionHealthExpiry = "expired"
+	SessionHealthExpiryUnknown  SessionHealthExpiry = "unknown"
 )
 
-// ClassifySessionHealth maps a query group to its health state (FR-018).
-func ClassifySessionHealth(group storage.SessionExpiryGroup) (SessionHealthState, error)
+// SessionHealthKey identifies one oauth2_sessions series of a service.
+type SessionHealthKey struct {
+	Expiry      SessionHealthExpiry
+	Refreshable bool
+}
+
+// ClassifySessionHealth maps a query group to its gauge series (FR-018).
+func ClassifySessionHealth(group storage.SessionExpiryGroup) (SessionHealthKey, error)
 
 // NewSessionHealthMetrics registers the oauth2_sessions observable gauge on the global meter.
 func NewSessionHealthMetrics(
@@ -68,12 +76,12 @@ Callback behavior:
 1. `now := m.now()`, `threshold := now.Add(lookahead)`.
 2. Run `CountSessionsByExpiry` under `context.WithTimeout(ctx, queryTimeout)`.
 3. On error, or if a group fails classification, observe nothing. Log `session health query failed` at WARN with `error_kind` (the storage error kind) and return `nil`.
-4. Otherwise, build the snapshot, zero-fill all four states for every service present, and observe one point per `(service_id, state)` with exactly those two attributes.
+4. Otherwise, build the snapshot, zero-fill all eight `(expiry, refreshable)` combinations for every service present, and observe one point per `(service_id, expiry, refreshable)` with exactly those three attributes.
 
 Unit tests (`health_metrics_test.go`, ManualReader pattern from `sweep_test.go:262-266`):
-- classification table for all six group shapes
+- classification table for all eight group shapes
 - zero-filling
-- attribute set is exactly `{service_id, state}`
+- attribute set is exactly `{service_id, expiry, refreshable}`
 - error yields no points and one WARN record
 - timeout is applied: a blocking fake repo returns after `queryTimeout`
 - `Close` stops further callbacks

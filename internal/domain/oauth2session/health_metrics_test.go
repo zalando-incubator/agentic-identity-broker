@@ -57,9 +57,9 @@ func installHealthReader(t *testing.T) *sdkmetric.ManualReader {
 }
 
 type healthPoint struct {
-	service, state string
-	value          int64
-	keys           []string
+	service, expiry, refreshable string
+	value                        int64
+	keys                         []string
 }
 
 func collectHealth(t *testing.T, reader *sdkmetric.ManualReader) ([]healthPoint, bool) {
@@ -78,12 +78,13 @@ func collectHealth(t *testing.T, reader *sdkmetric.ManualReader) ([]healthPoint,
 			points := make([]healthPoint, 0, len(gauge.DataPoints))
 			for _, dp := range gauge.DataPoints {
 				service, _ := dp.Attributes.Value("service_id")
-				state, _ := dp.Attributes.Value("state")
+				expiry, _ := dp.Attributes.Value("expiry")
+				refreshable, _ := dp.Attributes.Value("refreshable")
 				var keys []string
 				for _, kv := range dp.Attributes.ToSlice() {
 					keys = append(keys, string(kv.Key))
 				}
-				points = append(points, healthPoint{service: service.AsString(), state: state.AsString(), value: dp.Value, keys: keys})
+				points = append(points, healthPoint{service: service.AsString(), expiry: expiry.AsString(), refreshable: refreshable.AsString(), value: dp.Value, keys: keys})
 			}
 			return points, true
 		}
@@ -117,14 +118,16 @@ func TestClassifySessionHealth(t *testing.T) {
 		name          string
 		accessExpiry  storage.AccessExpiryClass
 		refreshUsable bool
-		want          oauth2session.SessionHealthState
+		want          oauth2session.SessionHealthKey
 	}{
-		{"unknown expiry with usable refresh", storage.AccessExpiryUnknown, true, oauth2session.SessionHealthUnknownExpiry},
-		{"unknown expiry without refresh", storage.AccessExpiryUnknown, false, oauth2session.SessionHealthUnknownExpiry},
-		{"after threshold with usable refresh", storage.AccessExpiryAfterThreshold, true, oauth2session.SessionHealthValid},
-		{"after threshold without refresh", storage.AccessExpiryAfterThreshold, false, oauth2session.SessionHealthValid},
-		{"due with usable refresh", storage.AccessExpiryDue, true, oauth2session.SessionHealthExpiringRefreshable},
-		{"due without refresh", storage.AccessExpiryDue, false, oauth2session.SessionHealthExpiredUnrefreshable},
+		{"unknown expiry with usable refresh", storage.AccessExpiryUnknown, true, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryUnknown, Refreshable: true}},
+		{"unknown expiry without refresh", storage.AccessExpiryUnknown, false, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryUnknown}},
+		{"after threshold with usable refresh", storage.AccessExpiryAfterThreshold, true, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryValid, Refreshable: true}},
+		{"after threshold without refresh", storage.AccessExpiryAfterThreshold, false, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryValid}},
+		{"due with usable refresh", storage.AccessExpiryDue, true, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryExpiring, Refreshable: true}},
+		{"due without refresh", storage.AccessExpiryDue, false, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryExpiring}},
+		{"expired with usable refresh", storage.AccessExpiryExpired, true, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryExpired, Refreshable: true}},
+		{"expired without refresh", storage.AccessExpiryExpired, false, oauth2session.SessionHealthKey{Expiry: oauth2session.SessionHealthExpiryExpired}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -141,7 +144,7 @@ func TestClassifySessionHealth(t *testing.T) {
 	})
 }
 
-func TestSessionHealthMetricsObservesZeroFilledStatesPerService(t *testing.T) {
+func TestSessionHealthMetricsObservesZeroFilledSeriesPerService(t *testing.T) {
 	reader := installHealthReader(t)
 	calendar, tickets := id.NewServiceID(), id.NewServiceID()
 	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) {
@@ -149,6 +152,7 @@ func TestSessionHealthMetricsObservesZeroFilledStatesPerService(t *testing.T) {
 			{ServiceID: calendar, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
 			{ServiceID: calendar, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
 			{ServiceID: calendar, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: false, Count: 3},
+			{ServiceID: calendar, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 4},
 			{ServiceID: tickets, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
 		}, nil
 	}}
@@ -163,15 +167,24 @@ func TestSessionHealthMetricsObservesZeroFilledStatesPerService(t *testing.T) {
 	require.True(t, ok, "oauth2_sessions must be exported")
 	got := map[string]int64{}
 	for _, p := range points {
-		assert.ElementsMatch(t, []string{"service_id", "state"}, p.keys)
-		got[p.service+"/"+p.state] = p.value
+		assert.ElementsMatch(t, []string{"service_id", "expiry", "refreshable"}, p.keys)
+		got[p.service+"/"+p.expiry+"/"+p.refreshable] = p.value
 	}
-	assert.Equal(t, map[string]int64{
-		calendar.String() + "/valid": 4, calendar.String() + "/expiring_refreshable": 2,
-		calendar.String() + "/expired_unrefreshable": 0, calendar.String() + "/unknown_expiry": 0,
-		tickets.String() + "/valid": 0, tickets.String() + "/expiring_refreshable": 0,
-		tickets.String() + "/expired_unrefreshable": 0, tickets.String() + "/unknown_expiry": 1,
-	}, got)
+	want := map[string]int64{}
+	for _, service := range []id.ServiceID{calendar, tickets} {
+		for _, expiry := range []string{"valid", "expiring", "expired", "unknown"} {
+			for _, refreshable := range []string{"true", "false"} {
+				want[service.String()+"/"+expiry+"/"+refreshable] = 0
+			}
+		}
+	}
+	want[calendar.String()+"/expiring/true"] = 2
+	want[calendar.String()+"/valid/true"] = 1
+	want[calendar.String()+"/valid/false"] = 3
+	want[calendar.String()+"/expired/true"] = 4
+	want[tickets.String()+"/unknown/true"] = 1
+	assert.Equal(t, want, got)
+	assert.Len(t, got, 16, "eight series per service with sessions")
 
 	require.Equal(t, 1, repo.callCount())
 	call := repo.calls[0]

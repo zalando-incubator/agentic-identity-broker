@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,41 +17,52 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// SessionHealthState classifies a stored session for the oauth2_sessions gauge.
-type SessionHealthState string
+// SessionHealthExpiry classifies a stored session's access-token expiry for the oauth2_sessions gauge.
+type SessionHealthExpiry string
 
 const (
-	SessionHealthValid                SessionHealthState = "valid"
-	SessionHealthExpiringRefreshable  SessionHealthState = "expiring_refreshable"
-	SessionHealthExpiredUnrefreshable SessionHealthState = "expired_unrefreshable"
-	SessionHealthUnknownExpiry        SessionHealthState = "unknown_expiry"
+	// SessionHealthExpiryValid means the access token expires after now plus the refresh lookahead.
+	SessionHealthExpiryValid SessionHealthExpiry = "valid"
+	// SessionHealthExpiryExpiring means the access token expires within the refresh lookahead.
+	SessionHealthExpiryExpiring SessionHealthExpiry = "expiring"
+	// SessionHealthExpiryExpired means the access token has already expired.
+	SessionHealthExpiryExpired SessionHealthExpiry = "expired"
+	// SessionHealthExpiryUnknown means no access-token expiry is recorded.
+	SessionHealthExpiryUnknown SessionHealthExpiry = "unknown"
 )
 
-var sessionHealthStates = []SessionHealthState{
-	SessionHealthValid, SessionHealthExpiringRefreshable, SessionHealthExpiredUnrefreshable, SessionHealthUnknownExpiry,
+var sessionHealthExpiries = []SessionHealthExpiry{
+	SessionHealthExpiryValid, SessionHealthExpiryExpiring, SessionHealthExpiryExpired, SessionHealthExpiryUnknown,
 }
 
-// ClassifySessionHealth maps a session group to its health state. A session without a recorded
-// access-token expiry is unknown_expiry; one expiring after the refresh lookahead is valid; a due
-// session is expiring_refreshable only while its refresh token is usable.
-func ClassifySessionHealth(group storage.SessionExpiryGroup) (SessionHealthState, error) {
+// SessionHealthKey identifies one oauth2_sessions series of a service: the access-token expiry
+// class and whether the refresh token is present and not expired.
+type SessionHealthKey struct {
+	Expiry      SessionHealthExpiry
+	Refreshable bool
+}
+
+// ClassifySessionHealth maps a session group to its gauge series.
+func ClassifySessionHealth(group storage.SessionExpiryGroup) (SessionHealthKey, error) {
+	key := SessionHealthKey{Refreshable: group.RefreshUsable}
 	switch group.AccessExpiry {
 	case storage.AccessExpiryUnknown:
-		return SessionHealthUnknownExpiry, nil
+		key.Expiry = SessionHealthExpiryUnknown
 	case storage.AccessExpiryAfterThreshold:
-		return SessionHealthValid, nil
+		key.Expiry = SessionHealthExpiryValid
 	case storage.AccessExpiryDue:
-		if group.RefreshUsable {
-			return SessionHealthExpiringRefreshable, nil
-		}
-		return SessionHealthExpiredUnrefreshable, nil
+		key.Expiry = SessionHealthExpiryExpiring
+	case storage.AccessExpiryExpired:
+		key.Expiry = SessionHealthExpiryExpired
+	default:
+		return SessionHealthKey{}, fmt.Errorf("unknown access expiry class %q", group.AccessExpiry)
 	}
-	return "", fmt.Errorf("unknown access expiry class %q", group.AccessExpiry)
+	return key, nil
 }
 
-// SessionHealthSnapshot holds per-service session counts for every health state.
+// SessionHealthSnapshot holds per-service session counts for every gauge series.
 type SessionHealthSnapshot struct {
-	Counts map[id.ServiceID]map[SessionHealthState]int
+	Counts map[id.ServiceID]map[SessionHealthKey]int
 }
 
 // SessionHealthMetrics publishes the oauth2_sessions gauge. Each metric collection runs one
@@ -70,7 +82,7 @@ type SessionHealthMetrics struct {
 func NewSessionHealthMetrics(repo ports.UserSessionHealthRepository, lookahead, queryTimeout time.Duration, logger *slog.Logger) (*SessionHealthMetrics, error) {
 	meter := otel.Meter("oauth2session")
 	gauge, err := meter.Int64ObservableGauge("oauth2_sessions",
-		metric.WithDescription("Stored third-party sessions by service and health state"), metric.WithUnit("{session}"))
+		metric.WithDescription("Stored third-party sessions by service, access-token expiry class and refreshability"), metric.WithUnit("{session}"))
 	if err != nil {
 		return nil, fmt.Errorf("create oauth2_sessions gauge: %w", err)
 	}
@@ -90,21 +102,21 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 	if err != nil {
 		return SessionHealthSnapshot{}, err
 	}
-	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthState]int)}
+	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthKey]int)}
 	for _, group := range groups {
 		if group.Count <= 0 {
 			return SessionHealthSnapshot{}, fmt.Errorf("session expiry group count %d must be positive", group.Count)
 		}
-		state, err := ClassifySessionHealth(group)
+		key, err := ClassifySessionHealth(group)
 		if err != nil {
 			return SessionHealthSnapshot{}, err
 		}
-		states := snapshot.Counts[group.ServiceID]
-		if states == nil {
-			states = make(map[SessionHealthState]int, len(sessionHealthStates))
-			snapshot.Counts[group.ServiceID] = states
+		series := snapshot.Counts[group.ServiceID]
+		if series == nil {
+			series = make(map[SessionHealthKey]int, 2*len(sessionHealthExpiries))
+			snapshot.Counts[group.ServiceID] = series
 		}
-		states[state] += group.Count
+		series[key] += group.Count
 	}
 	return snapshot, nil
 }
@@ -120,11 +132,14 @@ func (m *SessionHealthMetrics) observe(ctx context.Context, observer metric.Obse
 		m.logger.WarnContext(ctx, "session health query failed", "error_kind", string(kind))
 		return nil
 	}
-	for serviceID, states := range snapshot.Counts {
+	for serviceID, series := range snapshot.Counts {
 		service := attribute.String("service_id", serviceID.String())
-		for _, state := range sessionHealthStates {
-			observer.ObserveInt64(m.gauge, int64(states[state]),
-				metric.WithAttributeSet(attribute.NewSet(service, attribute.String("state", string(state)))))
+		for _, expiry := range sessionHealthExpiries {
+			for _, refreshable := range []bool{true, false} {
+				key := SessionHealthKey{Expiry: expiry, Refreshable: refreshable}
+				observer.ObserveInt64(m.gauge, int64(series[key]), metric.WithAttributeSet(attribute.NewSet(service,
+					attribute.String("expiry", string(expiry)), attribute.String("refreshable", strconv.FormatBool(refreshable)))))
+			}
 		}
 	}
 	return nil
