@@ -71,7 +71,7 @@ For example, an hourly schedule with a two-hour lookahead (`PT2H`) suits provide
 
 ### Use the chart-managed schedule
 
-The broker Helm chart renders an optional CronJob that calls the sweep. Set `sessionSweep.enabled: true`; the [chart README](../../charts/agentic-identity-broker/README.md#scheduled-session-sweep) lists every value. The defaults run hourly with a `PT2H` lookahead, a 1800-second request timeout, a 2100-second Job deadline, and a one-hour late-start window. The CronJob never overlaps a running sweep and never retries a failed Job.
+The broker Helm chart renders an optional CronJob that calls the sweep. Set `sessionSweep.enabled: true`; the [chart README](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/charts/agentic-identity-broker/README.md#scheduled-session-sweep) lists every value. The defaults run hourly with a `PT2H` lookahead, a 1800-second request timeout, a 2100-second Job deadline, and a one-hour late-start window. The CronJob never overlaps a running sweep and never retries a failed Job.
 
 A run succeeds on any `2xx` response, even when `failed` is greater than zero. A failed candidate needs either the user to reconnect or the provider to recover, and an immediate retry would fail the same way. The next run tries it again, and the health metrics below show how many sessions are affected. Any other status, a timeout, or an unreachable target fails the Job.
 
