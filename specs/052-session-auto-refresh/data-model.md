@@ -25,7 +25,8 @@ Enumeration of where a session's access-token expiry falls relative to a thresho
 |---|---|
 | `AccessExpiryUnknown` | `AccessTokenExpiresAt == nil` |
 | `AccessExpiryAfterThreshold` | expiry is strictly after `threshold` |
-| `AccessExpiryDue` | expiry is at or before `threshold` (inclusive, same as `AccessTokenExpiresBy`) |
+| `AccessExpiryDue` | expiry is after `now` and at or before `threshold` (inclusive, same as `AccessTokenExpiresBy`) |
+| `AccessExpiryExpired` | expiry is at or before `now` |
 
 ### `storage.SessionExpiryGroup` (`internal/domain/storage`)
 

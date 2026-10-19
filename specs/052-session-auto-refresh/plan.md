@@ -15,7 +15,7 @@ PR #196 added `POST /api/sessions/sweep`, but nothing schedules it. This feature
    - The chart has no identity model. It refuses to render without an identity, and it keeps file contents out of the manifest, argv, environment, and log by letting curl read each file through a config variable (research R1).
 2. **Session-health gauge (US2)**: `oauth2_sessions{service_id,expiry,refreshable}`.
    - One grouped count query runs per metric export cycle, through a new read-only ISP port.
-   - The domain classifies the groups into four states and zero-fills them.
+   - The domain classifies each group into an `(expiry, refreshable)` pair and zero-fills all eight per service.
 3. **Sweep run metrics (US3)**: a `session_sweep_duration_seconds{outcome,dry_run}` histogram recorded beside the existing audit event, and a `session_sweep_skipped_total` counter.
 
 There is no migration, OpenAPI field change, or new module dependency. The chart change is self-contained. The broker change is one port with two adapters, one domain component, and two instruments.
@@ -28,14 +28,14 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 
 **Storage**: PostgreSQL and in-memory. Reads `user_sessions` metadata columns only. No schema change (DB-001).
 
-**Testing**: stdlib `testing` + testify (unit). testcontainers PostgreSQL (`-tags=integration`) for adapter parity. Ginkgo/Gomega E2E in `tests/e2e/`, including chart rendering through the `helm` binary and execution of the rendered script with the host `sh` and `curl` (research R14).
+**Testing**: stdlib `testing` + testify (unit). testcontainers PostgreSQL (`-tags=integration`) for adapter parity. Ginkgo/Gomega E2E in `tests/e2e/` for the metrics. Chart render checks through the `helm` binary in `tests/integration/helm_chart_test.go`; the rendered script's run-time behavior is verified manually (research R14).
 
 **Target Platform**: Linux containers on Kubernetes, deployed by the broker chart. The CronJob uses `batch/v1`. `timeZone` requires Kubernetes 1.27 or later and is omitted when unset.
 
 **Project Type**: Single Go service plus Helm chart in the monorepo. No frontend change.
 
 **Performance Goals**:
-- The health query runs once per export cycle (default 30s) per replica. It is one sequential scan with `GROUP BY`, bounded by `query_timeout` (default 5s) and the adapter read timeout (research R10).
+- The health query runs once per export cycle (default 30s) per replica. It is one sequential scan with `GROUP BY`, bounded by `query_timeout` (default 5s) alone; `storage.timeouts.read` does not apply (research R10).
 - The sweep job uses 50m CPU and 64Mi memory, and holds one HTTP request open for up to `timeoutSeconds`.
 
 **Constraints**:
@@ -48,7 +48,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 **Scale/Scope**:
 - Chart: 2 templates, 1 helper, a values block, the schema, and the README.
 - Broker: 1 port method in 2 adapters, 1 domain file, edits to `sweep.go` and the sweep handler, config keys, and builder wiring.
-- Tests: 2 E2E files with 23 scenarios.
+- Tests: 1 E2E file with the 12 US2 and US3 scenarios, and chart render checks for US1.
 - Docs: runbook, configuration reference, `ARCHITECTURE.md`, and the OpenAPI description text.
 
 ## Constitution Check
@@ -67,10 +67,10 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 - [x] **API Documentation**: N/A for `docs/api/` (admin API). The operator runbook is updated (FR-025).
 - [x] **API Changes**: None.
 - [x] **Database Design**: No schema change and no migration (DB-001). The new query reads existing columns (DB-002, DB-003).
-- [x] **E2E Acceptance Tests**: All 23 scenarios have E2E tests in two files, written before implementation (Testing Strategy).
-- [x] **E2E Test Mapping**: 1:1 `It()` per scenario, tabulated below.
+- [x] **E2E Acceptance Tests**: The 12 US2 and US3 scenarios have E2E tests in `tests/e2e/session_metrics_test.go`, written before implementation. US1 is a recorded deviation (Complexity Tracking): render checks cover US1-S1, S2, S7, S10, and S11 and the rendered parts of S3 to S5, and the run-time behavior of S3 to S6, S8, and S9 is verified manually.
+- [x] **E2E Test Mapping**: 1:1 `It()` per US2 and US3 scenario, and a render subtest per covered US1 scenario, tabulated below.
 - [x] **E2E Red Phase**: Each test asserts real output that does not exist yet:
-  - US1: rendered resources, the request seen by the admin server, the script's exit status, and its log.
+  - US1: rendered resources and render-time failures.
   - US2: `oauth2_sessions` data points.
   - US3: histogram and skipped-counter data points.
 
@@ -99,7 +99,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
   - The adapters implement the predicates, and the domain owns state precedence (research R9).
   - The histogram is recorded in the handler's existing audit block, because only the handler sees every outcome (research R12). It contains no business decision.
   - Wiring is in `builder.go`. No adapter imports another.
-- [x] **Persistence Patterns**: A focused one-method ISP port beside `UserSessionExpiryRepository`. sqlx `SelectContext` with the adapter read timeout and `wrapError`. Memory and PostgreSQL implementations get the same parity scenarios H1 to H9.
+- [x] **Persistence Patterns**: A focused one-method ISP port beside `UserSessionExpiryRepository`. sqlx `SelectContext` under the caller's `query_timeout` context, with `wrapError`. Memory and PostgreSQL implementations get the same parity scenarios H1 to H11.
 
 **Gate status**: PASS. No violation needs justification.
 
@@ -247,7 +247,9 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 ## Complexity Tracking
 
-No constitution violations to justify.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|---|---|---|
+| US1-S3 to S6, S8, and S9 have no E2E test (constitution: every acceptance scenario has one) | Their run-time behavior (header files, TLS, exit status) belongs to curl and the admin server, not the chart. Render checks cover what the chart controls. | A backend E2E harness (chart render helper, recording proxy, script runner, test CA) was built and removed as disproportionate: it added Helm and a recent curl to every E2E runner for behavior the chart does not own (research R14). |
 
 ## Implementation Records
 
@@ -265,14 +267,14 @@ Both files compile and contain no `Skip`, `XIt`, `PIt`, or placeholder assertion
 | US1-S2, S5, S10 | rendered chart has no CronJob `broker-agentic-identity-broker-session-sweep` |
 | US1-S7 | Render without identity returned no error |
 | US1-S11 | Timeout-versus-deadline render returned no error |
-
-The script-run scenarios (US1-S3, S4, S6, S8, S9) were first covered by a backend E2E harness that was later removed as disproportionate (research R14); they are verified manually per quickstart §5.
 | US2-S1 to S6, S9 | No `oauth2_sessions` metric collected |
 | US2-S7 | No `session health query failed` WARN while `user_sessions` was locked |
 | US2-S8 | Positive control with health metrics enabled logged no WARN under the lock |
 | US3-S1 | No `session_sweep_duration_seconds` data points |
 | US3-S2 | Timed out waiting for a `canceled` histogram data point |
 | US3-S3 | `session_sweep_skipped_total` was `0`, want `2` (the response already reported `skipped: 2`) |
+
+The script-run scenarios (US1-S3, S4, S6, S8, S9) were first covered by a backend E2E harness that was later removed as disproportionate (research R14); they are verified manually per quickstart §5.
 
 ### Verification results (T060, 2026-10-19)
 

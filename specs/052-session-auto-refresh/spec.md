@@ -535,7 +535,7 @@ No ADR is added or superseded. The chart-managed job is an external operator sch
 
 ### Key Entities *(include if feature involves data)*
 
-- **Session Health State**: a derived label for one session at one instant, one of four values.
+- **Session Health State**: a derived `(expiry, refreshable)` pair for one session at one instant, one of eight combinations.
 - **Session Sweep Schedule**: the chart-managed CronJob and its parameters.
 - **Session Sweep Run**: one sweep as seen by the broker, with an outcome, a duration, and refreshed, skipped, and failed counts.
 
@@ -544,7 +544,7 @@ No ADR is added or superseded. The chart-managed job is an external operator sch
 ### Measurable Outcomes
 
 - **SC-001**: With the schedule enabled, every stored session whose access token expires within the next two hours and that has a usable refresh token is attempted by the next run. Every candidate that the provider accepts is usable afterwards without a reconnect.
-- **SC-002**: For every service with sessions, an operator can read the count of sessions in each of the four health states from the metrics backend within one export cycle of the underlying change, without broker logs or database access.
+- **SC-002**: For every service with sessions, an operator can read the count of sessions in each of the eight `(expiry, refreshable)` combinations from the metrics backend within one export cycle of the underlying change, without broker logs or database access.
 - **SC-003**: Three hours without a completed real sweep are detectable from the metrics backend. A run that fails is visible as a failed job in the cluster.
 - **SC-004**: Rendering the chart with the feature disabled produces no additional resources. Rendering it enabled without an identity, or with a request timeout not below the active deadline, fails with a clear message.
 - **SC-005**: An operator who applies plain manifests can obtain the CronJob from `helm template` and apply it without editing it.

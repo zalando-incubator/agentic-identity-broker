@@ -157,7 +157,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
   Makes T023 green.
 - [X] T026 Implement `CountSessionsByExpiry` in `internal/adapters/storage/postgres/user_session.go`:
   - the `GROUP BY` query from research R9, with `$1 = threshold` and `$2 = now`
-  - `SelectContext` under `context.WithTimeout(ctx, r.adapter.timeouts.Read)`
+  - `SelectContext` under the caller's context, which `token_refresh.health_metrics.query_timeout` bounds (no `timeouts.Read`)
   - `wrapError`
   - an unknown `access_expiry` label returns an `ErrorKindUnknown` storage error
   - the compile-time assertion
@@ -338,7 +338,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 - [X] T051 Verify `api/admin/openapi.yaml` changed only in descriptive text and examples (API-001, API-002, Principles IV, X).
 - [X] T052 Verify there is no file in `migrations/` from this branch (DB-001, Principle IX).
 - [X] T053 Verify spec Journeys 1 to 4 match the implemented values, rendered manifests, HTTP exchanges, logs, and metric names (Principle XIV).
-- [X] T054 Verify all 23 E2E scenarios exist, one `It()` each, with spec comments and red results recorded in `plan.md` (Principle XIII).
+- [X] T054 Verify the 12 US2 and US3 E2E scenarios exist, one `It()` each, and the US1 render subtests, with spec comments and red results recorded in `plan.md` (Principle XIII).
 
 #### Implementation Phase Verification
 

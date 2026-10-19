@@ -128,11 +128,14 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: admin-proxy   # your authenticating proxy
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: admin-proxy        # your proxy's pod labels
       ports:
         - port: 14000                             # admin API
 ```
 
-Replace the namespace, release, and proxy selector with your values. A policy that selects the broker pods denies every ingress it does not list, so keep the end-user rule.
+Replace the namespace, release, and proxy selectors with your values. Keep `namespaceSelector` and `podSelector` in the same peer so that only the proxy pods in that namespace are admitted, not every pod there. A policy that selects the broker pods denies every ingress it does not list, so keep the end-user rule.
 
 ### Render the CronJob as plain manifests
 

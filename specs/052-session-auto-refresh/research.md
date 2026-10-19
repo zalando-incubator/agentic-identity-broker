@@ -101,7 +101,7 @@ It captures the output and splits off the last line as the status. It prints the
 
 ## R9 — Health query shape and ownership of classification
 
-**Decision**: Add one ISP port, `UserSessionHealthRepository.CountSessionsByExpiry(ctx, threshold, now)`. It returns rows of `(service_id, access_expiry, refresh_usable, count)`, where `access_expiry` is `unknown`, `after_threshold`, or `due`. The domain maps these groups to the four health states and zero-fills states per service.
+**Decision**: Add one ISP port, `UserSessionHealthRepository.CountSessionsByExpiry(ctx, threshold, now)`. It returns rows of `(service_id, access_expiry, refresh_usable, count)`, where `access_expiry` is `unknown`, `after_threshold`, `due`, or `expired`. The domain maps each group to an `(expiry, refreshable)` key and zero-fills all eight keys per service.
 
 PostgreSQL computes the groups in one query:
 
@@ -109,10 +109,11 @@ PostgreSQL computes the groups in one query:
 SELECT service_id,
        CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
             WHEN access_token_expires_at > $1 THEN 'after_threshold'
-            ELSE 'due' END AS access_expiry,
+            WHEN access_token_expires_at > $2 THEN 'due'
+            ELSE 'expired' END AS access_expiry,
        (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
         AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
-       COUNT(*) AS count
+       COUNT(*) AS session_count
 FROM user_sessions
 GROUP BY 1, 2, 3
 ```
@@ -121,12 +122,12 @@ The memory adapter applies the same predicates to its snapshots with the supplie
 
 **Rationale**:
 - The predicates mirror `UserSession.AccessTokenExpiresBy` (inclusive) and `CanRefresh` (`internal/domain/storage/user_session.go:125-133`), and the existing SQL refresh-presence test (`postgres/user_session.go:29-31`).
-- The precedence of the four states (FR-018) stays in the domain service, not in SQL. That avoids an anemic domain.
+- The mapping to metric attributes (FR-018) stays in the domain service, not in SQL. That avoids an anemic domain.
 - Passing `now` and `threshold` makes both adapters deterministic for parity tests. Only metadata columns are read (DB-003).
 - No existing operation fits. `ListExpiringSessions` excludes NULL expiries, and `CountByService` has no breakdown (`ports/storage.go:268, 280-291`).
 
 **Alternatives considered**:
-- Returning the four states from SQL: moves domain precedence into two adapters.
+- Returning the metric attributes from SQL: moves domain classification into two adapters.
 - Paging `ListExpiringSessions`: misses sessions without a recorded expiry and loads token blobs.
 - Extending `UserSessionRepository`: widens an existing ISP interface used by many callers.
 
@@ -134,7 +135,7 @@ The memory adapter applies the same predicates to its snapshots with the supplie
 
 **Decision**: Accept a sequential scan of `user_sessions` once per export cycle per replica. No index is added.
 
-**Rationale**: The query reads every row by definition, so an index does not change the plan. The table has one row per user and service, and the default 30-second export interval keeps the cost low. Token blobs are not read, apart from `octet_length`, which reads the stored length. The spec's Assumptions let operators disable the gauge or lengthen the interval. The adapter read timeout (5s default, `postgres/adapter.go:64-69`) and `query_timeout` both bound it.
+**Rationale**: The query reads every row by definition, so an index does not change the plan. The table has one row per user and service, and the default 30-second export interval keeps the cost low. Token blobs are not read, apart from `octet_length`, which reads the stored length. The spec's Assumptions let operators disable the gauge or lengthen the interval. `query_timeout` (5s default) bounds it through the caller's context; the adapter read timeout does not apply.
 
 **Alternatives considered**: A cached snapshot on a separate ticker. The user dropped it on 2026-10-19 for the simpler design.
 

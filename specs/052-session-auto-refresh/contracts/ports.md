@@ -9,15 +9,17 @@
 // It reads metadata columns only and never returns or decrypts token material.
 type UserSessionHealthRepository interface {
 	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
-	// relative to threshold (inclusive: an expiry equal to threshold is due), and by whether
-	// the refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// relative to now and threshold (after threshold; due when after now and at or before
+	// threshold; expired when at or before now; unknown when not recorded), and by whether the
+	// refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
 	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }
 ```
 
 | Adapter | Implementation |
 |---|---|
-| PostgreSQL (`internal/adapters/storage/postgres/user_session.go`) | The single `GROUP BY` query from research R9, run with `SelectContext` under `context.WithTimeout(ctx, timeouts.Read)`. Errors go through `wrapError`. A `CASE` label outside the three known values is an `ErrorKindUnknown` storage error. |
+| PostgreSQL (`internal/adapters/storage/postgres/user_session.go`) | The single `GROUP BY` query from research R9, run with `SelectContext` under the caller's context, which `token_refresh.health_metrics.query_timeout` bounds; `storage.timeouts.read` does not apply. Errors go through `wrapError`. A `CASE` label outside the four known values is an `ErrorKindUnknown` storage error. |
 | Memory (`internal/adapters/storage/memory/user_session.go`) | Under `RLock`, apply the same predicates to each stored session with the supplied `threshold` and `now`. Return `ErrorKindTimeout` when `ctx.Err() != nil`. |
 
 Compile-time assertions `var _ ports.UserSessionHealthRepository = (*...)(nil)` go in both adapters. `storage.Adapter` (`internal/adapters/storage/factory.go`) gains a `SessionHealth()` accessor, wired for both backends.
