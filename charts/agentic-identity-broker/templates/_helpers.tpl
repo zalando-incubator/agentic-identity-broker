@@ -230,13 +230,6 @@ Session sweep request body.
 {{- end }}
 
 {{/*
-Quote a string for a POSIX shell single-quoted word.
-*/}}
-{{- define "agentic-identity-broker.shellQuote" -}}
-{{- printf "'%s'" (replace "'" "'\\''" .) }}
-{{- end }}
-
-{{/*
 Escape a string for a double-quoted curl configuration value.
 */}}
 {{- define "agentic-identity-broker.curlConfigEscape" -}}
@@ -244,54 +237,60 @@ Escape a string for a double-quoted curl configuration value.
 {{- end }}
 
 {{/*
-Session sweep job script. File header values are read at run time, kept in shell variables,
-and passed to curl on stdin, so they never reach a process argument list or environment.
+Session sweep job script. The shell only validates header files; curl reads each file itself
+through a config variable, so a credential never reaches a process argument list, the
+environment, or the shell's output. The values schema restricts file paths to characters
+that need no shell quoting and keeps CR, LF, and braces out of configuration lines.
 */}}
 {{- define "agentic-identity-broker.sessionSweep.script" -}}
 {{- $sweep := .Values.sessionSweep -}}
+{{- $fileHeaders := $sweep.headersFromFile | default dict -}}
 nl='
 '
 cr=$(printf '\r')
-read_header_file() {
-  [ -s "$2" ] || { printf 'session sweep: header %s file %s is missing or empty\n' "$1" "$2" >&2; exit 1; }
-  value=$(cat -- "$2")
+check_header_file() {
+  [ -s "$1" ] || { printf 'session sweep: header file %s is missing or empty\n' "$1" >&2; exit 1; }
+  value=$(cat -- "$1")
   value=${value%"$cr"}
   case $value in
-    *"$nl"*|*"$cr"*|*\"*|*\\*) printf 'session sweep: header %s file %s contains an unsupported character\n' "$1" "$2" >&2; exit 1 ;;
+    ""|*"$nl"*|*"$cr"*|*\"*|*\\*) printf 'session sweep: header file %s contains an unsupported character\n' "$1" >&2; exit 1 ;;
   esac
-  printf '%s' "$value"
 }
-{{- $fileHeaders := $sweep.headersFromFile | default dict }}
-{{- range $index, $name := keys $fileHeaders | sortAlpha }}
-header_{{ $index }}=$(read_header_file {{ include "agentic-identity-broker.shellQuote" $name }} {{ include "agentic-identity-broker.shellQuote" (get $fileHeaders $name).path }})
+{{- range $name := keys $fileHeaders | sortAlpha }}
+check_header_file {{ (get $fileHeaders $name).path }}
 {{- end }}
-out=$(
-  {
-    printf '%s\n' 'header = "Content-Type: application/json"'
-    {{- with include "agentic-identity-broker.sessionSweep.host" . }}
-    printf '%s\n' {{ include "agentic-identity-broker.shellQuote" (printf "header = \"Host: %s\"" (include "agentic-identity-broker.curlConfigEscape" .)) }}
-    {{- end }}
-    {{- $literalHeaders := $sweep.headers | default dict }}
-    {{- range $name := keys $literalHeaders | sortAlpha }}
-    printf '%s\n' {{ include "agentic-identity-broker.shellQuote" (printf "header = \"%s: %s\"" (include "agentic-identity-broker.curlConfigEscape" $name) (include "agentic-identity-broker.curlConfigEscape" (toString (get $literalHeaders $name)))) }}
-    {{- end }}
-    {{- range $index, $name := keys $fileHeaders | sortAlpha }}
-    printf 'header = "%s: %s%s"\n' {{ include "agentic-identity-broker.shellQuote" (include "agentic-identity-broker.curlConfigEscape" $name) }} {{ include "agentic-identity-broker.shellQuote" (include "agentic-identity-broker.curlConfigEscape" ((get $fileHeaders $name).prefix | default "")) }} "$header_{{ $index }}"
-    {{- end }}
-  } | curl --disable --config - --silent --show-error \
-      --connect-timeout 10 --max-time {{ int $sweep.timeoutSeconds }} \
-      --request POST --data {{ include "agentic-identity-broker.shellQuote" (include "agentic-identity-broker.sessionSweep.body" .) }} \
-      --write-out '\n%{http_code}' \
-      {{- with $sweep.tls.certFile }}
-      --cert {{ include "agentic-identity-broker.shellQuote" . }} \
-      {{- end }}
-      {{- with $sweep.tls.keyFile }}
-      --key {{ include "agentic-identity-broker.shellQuote" . }} \
-      {{- end }}
-      {{- with $sweep.tls.caFile }}
-      --cacert {{ include "agentic-identity-broker.shellQuote" . }} \
-      {{- end }}
-      {{ include "agentic-identity-broker.shellQuote" (printf "%s/api/sessions/sweep" (include "agentic-identity-broker.sessionSweep.url" .)) }}
+out=$(curl --disable --config - <<'SESSION_SWEEP_CURL_CONFIG'
+url = "{{ include "agentic-identity-broker.curlConfigEscape" (printf "%s/api/sessions/sweep" (include "agentic-identity-broker.sessionSweep.url" .)) }}"
+request = "POST"
+header = "Content-Type: application/json"
+{{- with include "agentic-identity-broker.sessionSweep.host" . }}
+header = "Host: {{ include "agentic-identity-broker.curlConfigEscape" . }}"
+{{- end }}
+{{- $literalHeaders := $sweep.headers | default dict }}
+{{- range $name := keys $literalHeaders | sortAlpha }}
+header = "{{ include "agentic-identity-broker.curlConfigEscape" $name }}: {{ include "agentic-identity-broker.curlConfigEscape" (toString (get $literalHeaders $name)) }}"
+{{- end }}
+{{- range $index, $name := keys $fileHeaders | sortAlpha }}
+{{- $header := get $fileHeaders $name }}
+variable = "header_{{ $index }}@{{ $header.path }}"
+expand-header = "{{ include "agentic-identity-broker.curlConfigEscape" $name }}: {{ include "agentic-identity-broker.curlConfigEscape" ($header.prefix | default "") }}{{ printf "{{header_%d:trim:json}}" $index }}"
+{{- end }}
+data = "{{ include "agentic-identity-broker.curlConfigEscape" (include "agentic-identity-broker.sessionSweep.body" .) }}"
+{{- with $sweep.tls.certFile }}
+cert = "{{ . }}"
+{{- end }}
+{{- with $sweep.tls.keyFile }}
+key = "{{ . }}"
+{{- end }}
+{{- with $sweep.tls.caFile }}
+cacert = "{{ . }}"
+{{- end }}
+connect-timeout = 10
+max-time = {{ int $sweep.timeoutSeconds }}
+silent
+show-error
+write-out = "\n%{http_code}"
+SESSION_SWEEP_CURL_CONFIG
 )
 status=${out##*"$nl"}
 printf '%s\n' "${out%"$nl"*}"

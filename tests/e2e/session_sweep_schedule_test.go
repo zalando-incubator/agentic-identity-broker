@@ -109,8 +109,7 @@ var _ = Describe("Session Sweep Schedule", func() {
 			script := sweepScript(cronJob)
 			Expect(script).To(ContainSubstring("http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep"))
 			Expect(script).To(ContainSubstring(`Host: ` + strings.TrimPrefix(fixtures.SweepAdminPublicURL(), "https://")))
-			Expect(script).To(ContainSubstring(`"lookahead_duration":"PT2H"`))
-			Expect(script).To(ContainSubstring(`"dry_run":false`))
+			Expect(script).To(ContainSubstring(`data = "{\"lookahead_duration\":\"PT2H\",\"dry_run\":false}"`))
 		})
 
 		// US1-S7 from specs/052-session-auto-refresh/spec.md

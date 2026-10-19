@@ -6,22 +6,30 @@ Each entry records a decision, why it was chosen, and the alternatives considere
 
 ## R1 — Where the request credentials live in the job
 
-**Decision**: The job pipes a generated curl configuration into `curl --config -`. Literal headers are rendered into the script as configuration lines. File headers are read at run time and written to the same stream. TLS paths are passed as `--cert`, `--key`, and `--cacert` arguments.
+**Decision**: The script passes one curl configuration to `curl --disable --config -` through a quoted heredoc. Literal headers, the body, TLS paths, and timeouts are rendered as configuration lines. Each file header becomes `variable = "header_N@<path>"` plus `expand-header = "<Name>: <prefix>{{header_N:trim:json}}"`, so curl reads the file itself (curl 8.3 or later). Revised on 2026-10-19 after review; the first implementation had the shell read each file and pipe generated header lines to curl.
 
-**Rationale**: A header passed with `--header` on the curl command line is visible in the process table to every process in the pod's PID namespace. The stdin configuration keeps file contents out of argv and environment variables (SR-003). The current runbook example in `docs/operations/session-sweep.md` already uses `--config -` for the same reason. TLS paths are not secrets.
+**Rationale**:
+- A header passed with `--header` on the command line is visible in the process table to every process in the pod's PID namespace. With config variables, curl reads the file, so the value never reaches argv, the environment, or a pipe (SR-003). The shell only validates the file (R2).
+- The quoted heredoc disables shell expansion, so every value needs only curl-config escaping. There is no shell-quoting layer.
+- `trim` removes the file's trailing line ending. `json` escapes CR, LF, `"`, and `\`, so even a file that changes after validation cannot inject a header. It leaves token characters such as `.+/=_-~` unchanged (verified in `curlimages/curl:8.16.0`).
+- `--disable` comes first so curl ignores any `.curlrc` in the image.
 
 **Alternatives considered**:
 - `--header "Authorization: Bearer $(cat file)"`: puts the credential in curl's argv.
-- A rendered ConfigMap holding a curl configuration file: cannot include run-time file contents, and splits one request across two resources.
+- The first implementation, where the shell read the file into a variable and printed header lines to curl's stdin: it kept the value out of argv only while `printf` is a shell builtin, and it needed shell quoting on top of curl escaping.
+- A rendered ConfigMap holding the curl configuration: splits one request across two resources and still needs the same variables for file values.
 - An environment variable from a Secret: puts the credential in the environment, which SR-003 forbids.
 
-## R2 — Escaping header values
+## R2 — Escaping and validating values
 
-**Decision**: The template escapes `\` and `"` in literal header names and values before it writes curl configuration lines. The script strips trailing CR and LF from each file value and fails before sending when the value is empty or contains `"`, `\`, CR, or LF.
+**Decision**:
+- The template escapes `\` and `"` in every value it writes into a curl configuration line.
+- The values schema keeps CR and LF out of literal header values and `Host`, keeps braces out of file-header prefixes (they would start a curl expansion), and restricts header and TLS file paths to `^/[A-Za-z0-9._/-]+$`.
+- Before calling curl, the script validates each header file: it fails when the file is missing or empty, or when the value, after its trailing LF and CR are removed, is empty or contains `"`, `\`, CR, or LF.
 
-**Rationale**: curl configuration uses double-quoted strings with backslash escapes. Bearer tokens, JWTs, and API keys never need these characters, so rejecting them is safer than escaping secret material in shell. An empty value would otherwise send an empty header (spec edge case).
+**Rationale**: Bearer tokens, JWTs, and API keys never need these characters, so failing before the request is clearer than sending a mangled credential. The path pattern needs no shell quoting. An empty value would otherwise send an empty header (spec edge case).
 
-**Alternatives considered**: Escaping file values in shell with `sed`: correct but harder to review, and it accepts values that are almost certainly misconfigured.
+**Alternatives considered**: Relying on curl's `json` escaping alone: safe against header injection, but it sends a malformed credential instead of failing before the request.
 
 ## R3 — Default target and `Host`
 
@@ -68,13 +76,13 @@ Static shape and ranges (types, minimums, the ISO 8601 pattern, `additionalPrope
 
 ## R7 — Job image and filesystem
 
-**Decision**: The default image is `curlimages/curl:8.16.0`, already used in the runbook. The command is `["/bin/sh", "-ec", <script>]`. The script uses `printf` pipelines and no heredocs. It mounts an `emptyDir` at `/tmp`, as the migration Job does.
+**Decision**: The default image is `curlimages/curl:8.16.0`, already used in the runbook. The command is `["/bin/sh", "-ec", <script>]`. It mounts an `emptyDir` at `/tmp`, as the migration Job does.
 
-**Rationale**: The image has BusyBox `sh` and `curl`, which is all FR-014 requires. BusyBox `ash` writes heredocs to temporary files, which fail on a read-only root filesystem. The `/tmp` mount also covers images whose shell needs scratch space. `-e` stops on the first failed check. The script never enables `-x` (SR-005).
+**Rationale**: The image has BusyBox `sh` and curl 8.16, which is all FR-014 requires. The `/tmp` mount covers shells that write heredocs or other scratch data to `/tmp` on a read-only root filesystem. `-e` stops on the first failed check. The script never enables `-x` (SR-005).
 
 **Alternatives considered**: The broker image: it has no shell or curl. A purpose-built Go client: a new binary and image for one HTTP call.
 
-**Verification (T032, 2026-10-19)**: In `curlimages/curl:8.16.0`, `type printf` reports `printf is a shell builtin` and `curl --version` reports `curl 8.16.0`. The rendered script, run in that image with a read-only root filesystem as UID 1000, did three things: sent a CRLF-terminated file token as `Bearer tok-abc123`, sent a literal header containing `'` and `"` unchanged, and rejected a file value containing `"` before sending.
+**Verification of the first implementation (T032, 2026-10-19)**: In `curlimages/curl:8.16.0`, `type printf` reports `printf is a shell builtin` and `curl --version` reports `curl 8.16.0`. The rendered script, run in that image with a read-only root filesystem as UID 1000, did three things: sent a CRLF-terminated file token as `Bearer tok-abc123`, sent a literal header containing `'` and `"` unchanged, and rejected a file value containing `"` before sending.
 
 ## R8 — Job outcome and log
 
@@ -208,3 +216,6 @@ On error, the callback observes nothing, logs `session health query failed` at W
 
 - The migration Job's pod labels match the broker Service selector (`templates/job-migrate.yaml:22-23`). This is unrelated to this feature. Constitution v4.1.0 defers it.
 - Broker-side authentication and authorization of service callers on the admin API (spec Assumptions).
+
+**R1 revision verification (2026-10-19)**: The revised script ran in `curlimages/curl:8.16.0` and `amazonlinux:2023` (curl 8.21) with a read-only root filesystem as UID 1000. A CRLF-terminated token was sent as `Bearer <token>`, and a literal header containing `'` and `"` arrived unchanged. Files containing `"`, `\`, or an embedded line break, empty files, and missing files each failed before any request. The echo server saw only the valid request.
+

@@ -845,7 +845,7 @@ sessionSweep:
   # -- Mounts for those volumes in the sweep container
   volumeMounts: []
   image:
-    # -- Image with a POSIX shell and curl
+    # -- Image with a POSIX shell and curl 8.3 or later
     repository: curlimages/curl
     # -- Image tag
     tag: "8.16.0"

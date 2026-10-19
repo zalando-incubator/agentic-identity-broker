@@ -1570,12 +1570,13 @@
         },
         "url": {
           "type": "string",
-          "pattern": "^(https?://.+)?$",
+          "pattern": "^(https?://[^\\s]+)?$",
           "description": "Target URL; empty targets this release's admin Service"
         },
         "host": {
           "type": "string",
-          "description": "Host header override; empty derives it from broker.server.admin.publicUrl for the default target only"
+          "description": "Host header override; empty derives it from broker.server.admin.publicUrl for the default target only",
+          "pattern": "^[^\\r\\n]*$"
         },
         "headers": {
           "type": "object",
@@ -1583,9 +1584,10 @@
             "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
           },
           "additionalProperties": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[^\\r\\n]*$"
           },
-          "description": "Literal request headers; rendered into the manifest, so never secrets"
+          "description": "Literal request headers without line breaks; rendered into the manifest, so never secrets"
         },
         "headersFromFile": {
           "type": "object",
@@ -1601,12 +1603,13 @@
             "properties": {
               "path": {
                 "type": "string",
-                "minLength": 1,
-                "description": "Mounted file whose contents are the header value"
+                "description": "Absolute path of a mounted file whose contents are the header value; letters, digits, \".\", \"_\", \"-\", and \"/\" only",
+                "pattern": "^/[A-Za-z0-9._/-]+$"
               },
               "prefix": {
                 "type": "string",
-                "description": "Text sent before the file value, e.g. 'Bearer '"
+                "description": "Text sent before the file value, e.g. 'Bearer '; no braces or line breaks",
+                "pattern": "^[^\\r\\n{}]*$"
               }
             }
           },
@@ -1619,15 +1622,18 @@
           "properties": {
             "certFile": {
               "type": "string",
-              "description": "PEM client certificate path"
+              "description": "PEM client certificate path",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
             },
             "keyFile": {
               "type": "string",
-              "description": "PEM private key path for certFile"
+              "description": "PEM private key path for certFile",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
             },
             "caFile": {
               "type": "string",
-              "description": "PEM CA bundle path used to verify the target"
+              "description": "PEM CA bundle path used to verify the target",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
             }
           }
         },
@@ -1648,7 +1654,7 @@
         "image": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Image with a POSIX shell and curl",
+          "description": "Image with a POSIX shell and curl 8.3 or later",
           "properties": {
             "repository": {
               "type": "string",

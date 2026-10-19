@@ -503,14 +503,14 @@ The chart only sends the request. It has no identity model of its own: you suppl
 | `sessionSweep.url` | Target URL; empty targets this release's admin Service, `http://<fullname>.<namespace>.svc:<service.ports.admin>` | `""` |
 | `sessionSweep.host` | `Host` override; empty derives it from `broker.server.admin.publicUrl` for the default target only | `""` |
 | `sessionSweep.headers` | Literal headers. They are rendered into the manifest, so never put secrets here | `{}` |
-| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Values containing `"`, `\`, or a line break are rejected | `{}` |
+| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Paths are absolute and use only letters, digits, `.`, `_`, `-`, and `/`. File values containing `"`, `\`, or a line break are rejected before sending | `{}` |
 | `sessionSweep.tls.certFile`, `.keyFile`, `.caFile` | TLS client certificate, key, and CA bundle paths | `""` |
 | `sessionSweep.volumes`, `sessionSweep.volumeMounts` | Volumes that provide header and TLS files | `[]` |
-| `sessionSweep.image.repository`, `.tag`, `.pullPolicy` | Image with a POSIX shell and `curl` | `curlimages/curl`, `8.16.0`, `IfNotPresent` |
+| `sessionSweep.image.repository`, `.tag`, `.pullPolicy` | Image with a POSIX shell and `curl` 8.3 or later, which reads header files through config variables | `curlimages/curl`, `8.16.0`, `IfNotPresent` |
 | `sessionSweep.resources` | Container resources | `50m` CPU, `64Mi` memory |
 | `sessionSweep.podLabels`, `sessionSweep.podAnnotations` | Extra pod metadata; `podLabels` override `commonLabels` | `{}` |
 
-The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. File header values are read at run time and passed to `curl` on standard input, so they never appear in the manifest, a process argument list, the environment, or the log. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
+The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. Before sending, the job rejects a header file that is missing, empty, or contains `"`, `\`, or a line break inside the value. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
 
 ### Through the authenticating proxy with a projected ServiceAccount token
 

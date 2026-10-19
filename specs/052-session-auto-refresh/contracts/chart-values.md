@@ -47,7 +47,7 @@ sessionSweep:
   # -- Mounts for those volumes in the sweep container
   volumeMounts: []
   image:
-    # -- Image with a POSIX shell and curl
+    # -- Image with a POSIX shell and curl 8.3 or later
     repository: curlimages/curl
     # -- Image tag
     tag: "8.16.0"
@@ -77,11 +77,11 @@ sessionSweep:
 | `startingDeadlineSeconds`, `activeDeadlineSeconds`, `timeoutSeconds` | integer, `minimum: 1` |
 | `lookaheadDuration` | string, ISO 8601 pattern from research R5 |
 | `pageSize` | `null` or integer `1..1000` |
-| `url` | string; empty or `pattern: "^https?://"` |
-| `host` | string |
-| `headers` | object; property names `^[!#$%&'*+.^_`|~0-9A-Za-z-]+$`, values string |
-| `headersFromFile` | object; same property names; each value `{path: string minLength 1, prefix: string}` with `required: [path]` |
-| `tls.certFile`, `tls.keyFile`, `tls.caFile` | string |
+| `url` | string; empty or `^https?://` without whitespace |
+| `host` | string without CR or LF |
+| `headers` | object; property names `^[!#$%&'*+.^_`|~0-9A-Za-z-]+$`, values without CR or LF |
+| `headersFromFile` | object; same property names; each value `{path, prefix}` with `required: [path]`; `path` matches `^/[A-Za-z0-9._/-]+$`; `prefix` has no CR, LF, `{`, or `}` |
+| `tls.certFile`, `tls.keyFile`, `tls.caFile` | empty or matching `^/[A-Za-z0-9._/-]+$` |
 | `volumes`, `volumeMounts` | array of objects (Kubernetes shapes are not re-validated) |
 | `image.repository`, `image.tag` | string, `minLength: 1` |
 | `image.pullPolicy` | enum `Always`, `IfNotPresent`, `Never` |

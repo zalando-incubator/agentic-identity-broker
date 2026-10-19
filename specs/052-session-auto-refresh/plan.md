@@ -12,7 +12,7 @@ PR #196 added `POST /api/sessions/sweep`, but nothing schedules it. This feature
    - The job calls the sweep hourly with a `PT2H` lookahead.
    - It targets the release's admin Service by default and derives `Host` from the admin public URL.
    - It sends credentials the operator supplies: literal headers, headers read from mounted files at run time, or a TLS client certificate.
-   - The chart has no identity model. It refuses to render without an identity, and it keeps file contents out of the manifest, argv, environment, and log by piping a curl configuration on stdin (research R1).
+   - The chart has no identity model. It refuses to render without an identity, and it keeps file contents out of the manifest, argv, environment, and log by letting curl read each file through a config variable (research R1).
 2. **Session-health gauge (US2)**: `oauth2_sessions{service_id,state}`.
    - One grouped count query runs per metric export cycle, through a new read-only ISP port.
    - The domain classifies the groups into four states and zero-fills them.
@@ -43,7 +43,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 - No credential in the manifest, argv, environment, or log (SR-003, SR-005).
 - Metrics carry no principal or session ID (FR-022).
 - The job pod must not join the broker Service (FR-016, research R6).
-- `printf` must be a shell builtin in the job image (quickstart step 4).
+- The job image must provide curl 8.3 or later for config variables (quickstart step 4).
 
 **Scale/Scope**:
 - Chart: 2 templates, 1 helper, a values block, the schema, and the README.

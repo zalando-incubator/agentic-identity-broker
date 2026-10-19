@@ -358,7 +358,7 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 - **FR-011**: Rendering MUST fail when the sweep is enabled without at least one literal header, file header, or TLS client certificate.
 - **FR-012**: The job MUST fail when the response status is not `2xx`, when the request cannot be sent, or when the configured request timeout elapses. Rendering MUST fail when the request timeout is not shorter than the active deadline.
 - **FR-013**: The job MUST succeed on any `2xx` response regardless of the `failed` count, and MUST print the response body to its log.
-- **FR-014**: The job MUST need only a POSIX shell and `curl` in its image. The image MUST be configurable, with a pinned public default.
+- **FR-014**: The job MUST need only a POSIX shell and `curl` 8.3 or later in its image. The image MUST be configurable, with a pinned public default.
 - **FR-015**: The job MUST run under a dedicated service account with `automountServiceAccountToken: false` and the chart's restrictive pod and container security settings.
 - **FR-016**: The job's pod MUST NOT match the broker Service or PodDisruptionBudget selector. It MUST carry `app.kubernetes.io/component: session-sweep`. It MUST accept additional pod labels and annotations, and these MUST take precedence over `commonLabels` for keys they share.
 

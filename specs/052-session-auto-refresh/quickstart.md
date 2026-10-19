@@ -55,10 +55,10 @@ diff /tmp/default.yaml /tmp/disabled-with-values.yaml   # no output (FR-001)
 ## 4. Default image check
 
 ```sh
-docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'type printf; curl --version | head -1'
+docker run --rm --entrypoint /bin/sh curlimages/curl:8.16.0 -c 'curl --version | head -1'
 ```
 
-Expected: `printf is a shell builtin` and a curl 8.16.0 version line. This confirms that file header values never reach a child process's argv (research R1).
+Expected: a curl 8.16.0 version line. Config variables need curl 8.3 or later (research R1).
 
 ## 5. E2E acceptance suites
 
