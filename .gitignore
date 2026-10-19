@@ -91,3 +91,5 @@ mocks/opa/bundles/
 
 plans/*
 /web/.vitest-attachments
+
+.specify/feature.json
