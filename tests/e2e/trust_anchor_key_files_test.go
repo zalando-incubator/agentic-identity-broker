@@ -103,7 +103,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 		})
 
 		// US2-S4 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("keeps verifying after a corrupt re-read, reports degraded health without logging contents, and recovers", func() {
+		It("keeps verifying after a corrupt re-read, fails closed after the maximum refresh interval, reports degraded health without logging contents, and recovers", func() {
 			const marker = "FILE-CONTENT-MARKER-7f3a9c"
 			env.trust.SwapKubernetesLayout(gatewayKeyFile, `{"keys":["`+marker, "gen2")
 
@@ -119,12 +119,24 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			Expect(failures[0]).To(HaveKey("last_success_at"))
 			Expect(failures[0]).To(HaveKey("fails_closed_at"))
 			Expect(env.logs.Raw()).ToNot(ContainSubstring(marker))
+			Eventually(func() int { return exchangeStatus(env.gateway) }, 5*time.Second, 100*time.Millisecond).
+				Should(Equal(http.StatusInternalServerError))
+			stale := env.exchange(env.upstreamSubjectToken(), env.assertion(env.gateway, env.issuer.URL()))
+			Expect(stale).To(matchers.HaveStatusCode(http.StatusInternalServerError))
+			staleBody := decodeResponseBody(stale)
+			Expect(staleBody["error"]).To(Equal("server_error"))
+			Expect(staleBody).ToNot(HaveKey("access_token"))
+			Expect(env.healthComponents()["trust_anchor_key_files"]).To(Equal("degraded"))
+			expired := env.logRecords("trust anchor key set expired")
+			Expect(expired).To(HaveLen(1))
+			Expect(expired[0]).To(HaveKeyWithValue("error_kind", "stale"))
 
 			env.trust.SwapKubernetesLayout(gatewayKeyFile, helpers.PublicKeySet(env.gateway), "gen3")
 
 			Eventually(func() any { return env.healthComponents()["trust_anchor_key_files"] }, 3*time.Second, 50*time.Millisecond).
 				Should(Equal("healthy"))
 			Expect(env.logRecords("trust anchor key set recovered")).ToNot(BeEmpty())
+			Expect(exchangeStatus(env.gateway)).To(Equal(http.StatusOK))
 		})
 	})
 

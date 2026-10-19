@@ -143,11 +143,11 @@ func (a *App) addKeyFileHealth(components map[string]string) {
 func (a *App) chainShutdown(stop func(context.Context) error) {
 	prev := a.Shutdown
 	a.Shutdown = func(ctx context.Context) error {
-		var prevErr error
-		if prev != nil {
-			prevErr = prev(ctx)
+		stopErr := stop(ctx)
+		if prev == nil {
+			return stopErr
 		}
-		return errors.Join(stop(ctx), prevErr)
+		return errors.Join(stopErr, prev(ctx))
 	}
 }
 

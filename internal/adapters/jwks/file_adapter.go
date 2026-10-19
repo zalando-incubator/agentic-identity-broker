@@ -3,6 +3,7 @@ package jwks
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -62,6 +63,10 @@ func newFileAdapter(
 	anchorPath string,
 	logger *slog.Logger,
 ) (*FileAdapter, error) {
+	if bounds.Min <= 0 {
+		return nil, trustanchor.At(anchorPath+".jwks_min_refresh", errors.New("must be a positive duration"))
+	}
+
 	a := &FileAdapter{
 		reader:     reader,
 		path:       path,
@@ -82,7 +87,9 @@ func newFileAdapter(
 
 // GetKeySet returns the last valid key set, or a stale error once it has not been read
 // successfully within the maximum refresh interval.
-func (a *FileAdapter) GetKeySet(_ context.Context) (jwk.Set, error) {
+func (a *FileAdapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
+	_, endSpan := startFetchSpan(ctx)
+	defer func() { endSpan(err) }()
 	a.mu.RLock()
 	set, lastErr, lastSuccessAt := a.current.Set, a.lastErr, a.lastSuccessAt
 	a.mu.RUnlock()

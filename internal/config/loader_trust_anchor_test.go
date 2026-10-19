@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const trustAnchorTestKeySet = `{"keys":[{"kty":"EC","crv":"P-256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0","kid":"gw-1","alg":"ES256"}]}`
+
+const trustAnchorDocumentMarker = "SYNTHETIC-KEY-MATERIAL-7c41"
 
 const trustAnchorMultilineKeySet = `{
   "keys": [
@@ -50,6 +53,23 @@ func TestTrustAnchorKeySourceEnvironmentVariables(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "/etc/agentic-identity-broker/trust/gateway.json", cfg.TokenExchange.ClientAssertion.JWKSFile)
 		assert.Equal(t, "/etc/agentic-identity-broker/trust", cfg.Security.TrustMaterialDir)
+	})
+
+	t.Run("an unresolvable reference in client-assertion jwks is reported without the document", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("TRUST_ANCHOR_TEST_UNSET", "")
+		require.NoError(t, os.Unsetenv("TRUST_ANCHOR_TEST_UNSET"))
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI", "https://gateway.example.com")
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS",
+			`{"keys":[{"kid":"${TRUST_ANCHOR_TEST_UNSET}","d":"`+trustAnchorDocumentMarker+`"}]}`)
+
+		_, err := NewLoader().GetConfig(context.Background())
+
+		var configErr *domconfig.ConfigError
+		require.ErrorAs(t, err, &configErr)
+		assert.Equal(t, inlineRedacted, configErr.Value)
+		assert.Contains(t, err.Error(), "environment variable 'TRUST_ANCHOR_TEST_UNSET' is not set")
+		assert.NotContains(t, err.Error(), trustAnchorDocumentMarker)
 	})
 }
 
@@ -119,7 +139,7 @@ server:
 		assert.Equal(t, trustAnchorMultilineKeySet, cfg.Server.EndUser.Authentication.JWT.JWKS)
 	})
 
-	t.Run("a multi-line value that contains a ${VAR} reference is rejected, as before", func(t *testing.T) {
+	t.Run("a multi-line value that contains a ${VAR} reference is rejected without echoing the document", func(t *testing.T) {
 		setMinimalConfigEnv(t)
 		t.Setenv("MESH_KEY", `{"kty":"EC"}`)
 		writeTrustAnchorConfig(t, `server:
@@ -128,6 +148,7 @@ server:
       jwt:
         jwks: |
           {"keys": [
+            {"kty": "EC", "d": "`+trustAnchorDocumentMarker+`"},
             ${MESH_KEY}
           ]}
 `)
@@ -136,5 +157,7 @@ server:
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "shell metacharacter")
+		assert.Contains(t, err.Error(), inlineRedacted)
+		assert.NotContains(t, err.Error(), trustAnchorDocumentMarker)
 	})
 }

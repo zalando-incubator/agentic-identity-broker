@@ -167,6 +167,16 @@ func writeTrustFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+func TestChainShutdownStopsLaterRegistrationsFirst(t *testing.T) {
+	var stopped []string
+	app := &App{}
+	app.chainShutdown(func(context.Context) error { stopped = append(stopped, "trust directory"); return nil })
+	app.chainShutdown(func(context.Context) error { stopped = append(stopped, "file adapter"); return nil })
+
+	require.NoError(t, app.Shutdown(context.Background()))
+	assert.Equal(t, []string{"file adapter", "trust directory"}, stopped)
+}
+
 func TestBuilderClientAssertionInlineKeySetSkipsDiscovery(t *testing.T) {
 	issuer, requests := countingIssuer(t)
 	gateway := newTrustAnchorKey(t, "gw-1")

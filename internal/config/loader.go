@@ -495,11 +495,16 @@ func (l *Loader) expandEnvVars() error {
 			continue
 		}
 
+		reported := value
+		if isInlineKeySetKey(key) {
+			reported = inlineKeySetRedacted
+		}
+
 		// Validate against command injection patterns
 		if err := l.validateSecurePattern(value); err != nil {
 			return &config.ConfigError{
 				Field:    key,
-				Value:    value,
+				Value:    reported,
 				Expected: "environment variable reference without command injection patterns",
 				Source:   "yaml",
 				Err:      err,
@@ -511,7 +516,7 @@ func (l *Loader) expandEnvVars() error {
 		if err != nil {
 			return &config.ConfigError{
 				Field:    key,
-				Value:    value,
+				Value:    reported,
 				Expected: "resolvable environment variable reference",
 				Source:   "yaml",
 				Err:      err,
@@ -523,6 +528,11 @@ func (l *Loader) expandEnvVars() error {
 	}
 
 	return nil
+}
+
+// isInlineKeySetKey reports whether key holds an inline JWK Set, which configuration errors never echo.
+func isInlineKeySetKey(key string) bool {
+	return strings.HasSuffix(key, configutil.Delimiter+"jwks")
 }
 
 // expandWithCircularCheck expands environment variables with circular reference detection.

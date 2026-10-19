@@ -14,6 +14,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -143,6 +148,17 @@ func TestFileAdapterStartupFailures(t *testing.T) {
 	}
 }
 
+func TestFileAdapterRejectsANonPositiveRereadInterval(t *testing.T) {
+	reader := &fakeReader{doc: testKeySet}
+	bounds := trustanchor.RefreshBounds{Min: -time.Second, Max: time.Hour, Explicit: true}
+
+	_, err := newFileAdapter(reader, testFilePath, bounds, testAnchor, slog.New(slog.DiscardHandler))
+
+	require.Error(t, err)
+	assert.Equal(t, testAnchor+".jwks_min_refresh: must be a positive duration", err.Error())
+	assert.Zero(t, reader.count(), "the interval is checked before any read")
+}
+
 func TestFileAdapterReplacesTheSetOnAValidReRead(t *testing.T) {
 	reader := &fakeReader{doc: testKeySet}
 	adapter, logs := newTestFileAdapter(t, reader, fastBounds)
@@ -214,6 +230,28 @@ func TestFileAdapterFailsClosedAfterTheMaximumRefresh(t *testing.T) {
 	reader.set(otherKeySet, nil)
 	require.Eventually(t, func() bool { return slices.Equal(currentKIDs(t, adapter), []string{"k2"}) }, time.Second, 5*time.Millisecond)
 	assert.Equal(t, ports.ComponentHealthHealthy, adapter.HealthState())
+}
+
+func TestFileAdapterRecordsAFailedFetchSpanWhenStale(t *testing.T) {
+	reader := &fakeReader{doc: testKeySet}
+	adapter, _ := newTestFileAdapter(t, reader, fastBounds)
+	reader.set("", &trustanchor.Error{Category: trustanchor.CategoryNotFound, Detail: map[string]string{trustanchor.DetailPath: testFilePath}})
+	require.Eventually(t, func() bool { _, err := adapter.GetKeySet(context.Background()); return err != nil }, 2*time.Second, 10*time.Millisecond)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+
+	_, err := adapter.GetKeySet(context.Background())
+	require.Error(t, err)
+	require.NoError(t, provider.ForceFlush(context.Background()))
+	span := findSpanByName(recorder.Ended(), "jwks.fetch")
+	require.NotNil(t, span)
+	assert.Equal(t, codes.Error, span.Status().Code)
+	assert.Empty(t, span.Events(), "key-set errors must not become exception events")
+	assert.Contains(t, span.Attributes(), attribute.String("error.type", "jwks_unavailable"))
 }
 
 func TestFileAdapterNeverAppliesAPartiallyValidDocument(t *testing.T) {
