@@ -29,6 +29,18 @@ WHERE access_token_expires_at IS NOT NULL
 ORDER BY access_token_expires_at, id
 LIMIT $4`
 
+// countSessionsByExpiryQuery mirrors storage.UserSession.AccessTokenExpiresBy ($1 is the
+// inclusive threshold) and CanRefresh ($2 is now) without reading token material.
+const countSessionsByExpiryQuery = `SELECT service_id,
+       CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
+            WHEN access_token_expires_at > $1 THEN 'after_threshold'
+            ELSE 'due' END AS access_expiry,
+       (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
+        AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
+       COUNT(*) AS session_count
+FROM user_sessions
+GROUP BY 1, 2, 3`
+
 // SQL projection of storage.SessionIsUsable; both active-session reads share this predicate.
 const usableSessionPredicate = `(access_token_expires_at IS NULL OR access_token_expires_at > NOW()
 	OR (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
@@ -100,6 +112,7 @@ type PostgresUserSessionRepository struct {
 }
 
 var _ ports.UserSessionExpiryRepository = (*PostgresUserSessionRepository)(nil)
+var _ ports.UserSessionHealthRepository = (*PostgresUserSessionRepository)(nil)
 
 // NewUserSessionRepository creates a new PostgreSQL user session repository.
 func NewUserSessionRepository(adapter *Adapter) *PostgresUserSessionRepository {
@@ -514,6 +527,38 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 		return 0, r.wrapError(err, "CountByService")
 	}
 	return count, nil
+}
+
+type sessionExpiryGroupRecord struct {
+	ServiceID     id.ServiceID `db:"service_id"`
+	AccessExpiry  string       `db:"access_expiry"`
+	RefreshUsable bool         `db:"refresh_usable"`
+	Count         int          `db:"session_count"`
+}
+
+// CountSessionsByExpiry groups stored sessions by service, access-expiry class, and refresh usability.
+func (r *PostgresUserSessionRepository) CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error) {
+	const operation = "CountSessionsByExpiry"
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	var records []sessionExpiryGroupRecord
+	if err := r.adapter.db.SelectContext(queryCtx, &records, countSessionsByExpiryQuery, threshold, now); err != nil {
+		return nil, r.wrapError(err, operation)
+	}
+
+	groups := make([]storage.SessionExpiryGroup, 0, len(records))
+	for _, record := range records {
+		class := storage.AccessExpiryClass(record.AccessExpiry)
+		switch class {
+		case storage.AccessExpiryUnknown, storage.AccessExpiryAfterThreshold, storage.AccessExpiryDue:
+		default:
+			return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, nil, "unexpected access expiry class")
+		}
+		groups = append(groups, storage.SessionExpiryGroup{
+			ServiceID: record.ServiceID, AccessExpiry: class, RefreshUsable: record.RefreshUsable, Count: record.Count,
+		})
+	}
+	return groups, nil
 }
 
 // Helper function to wrap errors into StorageError

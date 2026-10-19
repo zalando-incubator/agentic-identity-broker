@@ -151,14 +151,14 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 **Purpose**: Config behavior and the health query port shared by US2. US1 does not depend on this phase.
 
-- [ ] T019 [P] Write failing tests in `internal/config/loader_test.go` and `internal/config/validator_test.go`:
+- [X] T019 [P] Write failing tests in `internal/config/loader_test.go` and `internal/config/validator_test.go`:
   - defaults `token_refresh.health_metrics.enabled = true` and `query_timeout = 5s`
   - `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED` and `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT`
   - flags `--token_refresh.health_metrics.enabled` and `--token_refresh.health_metrics.query_timeout`, with CLI > env > file > defaults precedence
   - a validation error for `query_timeout <= 0` with field `token_refresh.health_metrics.query_timeout` and expected "greater than 0"
 
   (contracts/configuration.md)
-- [ ] T020 Implement the config behavior:
+- [X] T020 Implement the config behavior:
   - `SetDefault` and `BindEnv` at `internal/config/loader.go:210-215`
   - default key list entries at `loader.go:304`
   - changed-flag copying in `bindFlags` (`loader.go:739-752`)
@@ -166,22 +166,22 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - the `query_timeout` check in `validateTokenRefreshConfig` (`internal/config/validator.go:688-699`) via `formatValidationError`
 
   Makes T019 green.
-- [ ] T021 Add `AccessExpiryClass` and `SessionExpiryGroup{ServiceID id.ServiceID; AccessExpiry AccessExpiryClass; RefreshUsable bool; Count int}` in `internal/domain/storage/user_session.go`.
+- [X] T021 Add `AccessExpiryClass` and `SessionExpiryGroup{ServiceID id.ServiceID; AccessExpiry AccessExpiryClass; RefreshUsable bool; Count int}` in `internal/domain/storage/user_session.go`.
   - `AccessExpiryClass` has three values: `AccessExpiryUnknown`, `AccessExpiryAfterThreshold`, and `AccessExpiryDue`.
   - Doc comments state the data-model constraints verbatim: "expiry is at or before `threshold` (inclusive, same as `AccessTokenExpiresBy`)", "Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`)", "Number of sessions in this group, `> 0`", and "Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result."
 
   (DB-002)
-- [ ] T022 Add `UserSessionHealthRepository` with `CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)` to `internal/ports/storage.go`. Use the doc comment from `contracts/ports.md` §1 (DB-002, DB-003, Principle IX ISP).
-- [ ] T023 [P] Write memory parity tests H1 to H9 from `contracts/ports.md` as `TestUserSessionCountSessionsByExpiry` in `internal/adapters/storage/memory/user_session_test.go`. Use a fixed `now` and `threshold` (DB-002).
-- [ ] T024 [P] Write PostgreSQL parity tests H1 to H9 in `internal/adapters/storage/postgres/user_session_test.go` (`//go:build integration`), using `setupMigratedAdapter` and `insertTestService` (DB-002, Principle IX).
-- [ ] T025 Implement `CountSessionsByExpiry` in `internal/adapters/storage/memory/user_session.go`:
+- [X] T022 Add `UserSessionHealthRepository` with `CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)` to `internal/ports/storage.go`. Use the doc comment from `contracts/ports.md` §1 (DB-002, DB-003, Principle IX ISP).
+- [X] T023 [P] Write memory parity tests H1 to H9 from `contracts/ports.md` as `TestUserSessionCountSessionsByExpiry` in `internal/adapters/storage/memory/user_session_test.go`. Use a fixed `now` and `threshold` (DB-002).
+- [X] T024 [P] Write PostgreSQL parity tests H1 to H9 in `internal/adapters/storage/postgres/user_session_test.go` (`//go:build integration`), using `setupMigratedAdapter` and `insertTestService` (DB-002, Principle IX).
+- [X] T025 Implement `CountSessionsByExpiry` in `internal/adapters/storage/memory/user_session.go`:
   - `RLock`
   - the same predicates with the supplied `threshold` and `now`
   - `ErrorKindTimeout` on `ctx.Err()`
   - the compile-time assertion `var _ ports.UserSessionHealthRepository`
 
   Makes T023 green.
-- [ ] T026 Implement `CountSessionsByExpiry` in `internal/adapters/storage/postgres/user_session.go`:
+- [X] T026 Implement `CountSessionsByExpiry` in `internal/adapters/storage/postgres/user_session.go`:
   - the `GROUP BY` query from research R9, with `$1 = threshold` and `$2 = now`
   - `SelectContext` under `context.WithTimeout(ctx, r.adapter.timeouts.Read)`
   - `wrapError`
@@ -189,7 +189,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - the compile-time assertion
 
   Makes T024 green with `just test-integration-infra`.
-- [ ] T027 Add `SessionHealth() ports.UserSessionHealthRepository` to `storage.Adapter` in `internal/adapters/storage/factory.go`, wired for the memory (`:98`) and PostgreSQL (`:134`) backends (Principle IX).
+- [X] T027 Add `SessionHealth() ports.UserSessionHealthRepository` to `storage.Adapter` in `internal/adapters/storage/factory.go`, wired for the memory (`:98`) and PostgreSQL (`:134`) backends (Principle IX).
 
 **Checkpoint**: Config and health port complete on both backends.
 

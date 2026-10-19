@@ -301,6 +301,16 @@ type UserSessionExpiryRepository interface {
 	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
 }
 
+// UserSessionHealthRepository counts stored sessions for session-health metrics.
+// It reads metadata columns only and never returns or decrypts token material.
+type UserSessionHealthRepository interface {
+	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
+	// relative to threshold (inclusive: an expiry equal to threshold is due), and by whether
+	// the refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// Failures return domain storage.StorageError values.
+	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.

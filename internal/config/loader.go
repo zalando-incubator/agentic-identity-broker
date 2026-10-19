@@ -225,9 +225,13 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("token_refresh", "lookahead_duration"), "5m")
 	l.v.SetDefault(configutil.Key("token_refresh", "background_workers"), 10)
 	l.v.SetDefault(configutil.Key("token_refresh", "sweep", "default_page_size"), 100)
+	l.v.SetDefault(configutil.Key("token_refresh", "health_metrics", "enabled"), true)
+	l.v.SetDefault(configutil.Key("token_refresh", "health_metrics", "query_timeout"), "5s")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "lookahead_duration"), "IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "background_workers"), "IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "sweep", "default_page_size"), "IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE")
+	_ = l.v.BindEnv(configutil.Key("token_refresh", "health_metrics", "enabled"), "IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("token_refresh", "health_metrics", "query_timeout"), "IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT")
 
 	// Telemetry configuration defaults
 	telDefaults := ports.DefaultTelemetryConfig()
@@ -320,6 +324,7 @@ func (l *Loader) setDefaults() {
 			credentialFilesConfigKey,
 			"security.skip_thirdparty_https_validation",
 			"token_refresh.lookahead_duration", "token_refresh.background_workers", "token_refresh.sweep.default_page_size",
+			"token_refresh.health_metrics.enabled", "token_refresh.health_metrics.query_timeout",
 			"telemetry.enabled", "telemetry.service_name",
 			"telemetry.traces.enabled", "telemetry.traces.sampling_rate", "telemetry.traces.propagators",
 			"telemetry.metrics.enabled", "telemetry.metrics.export_interval",
@@ -802,6 +807,16 @@ func (l *Loader) bindFlags() error {
 		pageSize, _ := l.cmd.Flags().GetInt("token_refresh.sweep.default_page_size")
 		l.v.Set(configutil.Key("token_refresh", "sweep", "default_page_size"), pageSize)
 		cliKeys = append(cliKeys, "token_refresh.sweep.default_page_size")
+	}
+	if l.cmd.Flags().Changed("token_refresh.health_metrics.enabled") {
+		enabled, _ := l.cmd.Flags().GetBool("token_refresh.health_metrics.enabled")
+		l.v.Set(configutil.Key("token_refresh", "health_metrics", "enabled"), enabled)
+		cliKeys = append(cliKeys, "token_refresh.health_metrics.enabled")
+	}
+	if l.cmd.Flags().Changed("token_refresh.health_metrics.query_timeout") {
+		queryTimeout, _ := l.cmd.Flags().GetDuration("token_refresh.health_metrics.query_timeout")
+		l.v.Set(configutil.Key("token_refresh", "health_metrics", "query_timeout"), queryTimeout)
+		cliKeys = append(cliKeys, "token_refresh.health_metrics.query_timeout")
 	}
 
 	// Bind third_party_oauth2.client_name flag

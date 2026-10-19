@@ -794,6 +794,9 @@ func validateTokenRefreshConfig(cfg *ports.TokenRefreshConfig) error {
 	if cfg.Sweep.DefaultPageSize < 1 || cfg.Sweep.DefaultPageSize > 1000 {
 		return formatValidationError("token_refresh.sweep.default_page_size", strconv.Itoa(cfg.Sweep.DefaultPageSize), "between 1 and 1000", nil)
 	}
+	if cfg.HealthMetrics.QueryTimeout <= 0 {
+		return formatValidationError("token_refresh.health_metrics.query_timeout", cfg.HealthMetrics.QueryTimeout.String(), "greater than 0", nil)
+	}
 	return nil
 }
 

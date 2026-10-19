@@ -455,6 +455,8 @@ func init() {
 	rootCmd.PersistentFlags().Int("token_refresh.background_workers", 0, "maximum concurrent background refreshes (default: 10)")
 	rootCmd.PersistentFlags().Int("token_refresh.sweep.default_page_size", 0, "default session sweep page size (default: 100)")
 	rootCmd.PersistentFlags().String("third_party_oauth2.credential_files", "{}", "JSON object mapping exact service canonical IDs to client_id_file and client_secret_file absolute paths")
+	rootCmd.PersistentFlags().Bool("token_refresh.health_metrics.enabled", false, "publish the oauth2_sessions gauge when telemetry metrics are enabled (default: true)")
+	rootCmd.PersistentFlags().Duration("token_refresh.health_metrics.query_timeout", 0, "session health count query timeout (default: 5s)")
 
 	// Third-party OAuth2 client registration configuration
 	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")

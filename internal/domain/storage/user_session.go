@@ -16,6 +16,29 @@ type SessionExpiryCursor struct {
 	ID                   id.SessionID
 }
 
+// AccessExpiryClass places a session's access-token expiry relative to a threshold.
+type AccessExpiryClass string
+
+const (
+	// AccessExpiryUnknown means no access-token expiry is recorded.
+	AccessExpiryUnknown AccessExpiryClass = "unknown"
+	// AccessExpiryAfterThreshold means the expiry is strictly after the threshold.
+	AccessExpiryAfterThreshold AccessExpiryClass = "after_threshold"
+	// AccessExpiryDue means the expiry is at or before the threshold (inclusive, same as AccessTokenExpiresBy).
+	AccessExpiryDue AccessExpiryClass = "due"
+)
+
+// SessionExpiryGroup counts stored sessions of one service sharing an access-expiry class and
+// refresh usability. Each (ServiceID, AccessExpiry, RefreshUsable) appears at most once per result.
+type SessionExpiryGroup struct {
+	ServiceID    id.ServiceID
+	AccessExpiry AccessExpiryClass
+	// RefreshUsable means a refresh token is present and its expiry is nil or after now (same as CanRefresh).
+	RefreshUsable bool
+	// Count is the number of sessions in this group, > 0.
+	Count int
+}
+
 // UserSession represents an authenticated OAuth2 session between a user and a third-party service.
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.

@@ -283,6 +283,46 @@ func compareSessionExpiryKey(session *storage.UserSession, expiry time.Time, ses
 
 var _ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)
 
+// CountSessionsByExpiry groups stored sessions by service, access-expiry class, and refresh usability.
+func (r *InMemoryUserSessionRepository) CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error) {
+	const operation = "CountSessionsByExpiry"
+	if err := ctx.Err(); err != nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	type groupKey struct {
+		serviceID     id.ServiceID
+		accessExpiry  storage.AccessExpiryClass
+		refreshUsable bool
+	}
+	counts := make(map[groupKey]int)
+	for _, session := range r.sessions {
+		key := groupKey{serviceID: session.ServiceID, accessExpiry: storage.AccessExpiryDue}
+		switch {
+		case session.AccessTokenExpiresAt == nil:
+			key.accessExpiry = storage.AccessExpiryUnknown
+		case session.AccessTokenExpiresAt.After(threshold):
+			key.accessExpiry = storage.AccessExpiryAfterThreshold
+		}
+		key.refreshUsable = len(session.EncryptedRefreshToken) > 0 &&
+			(session.RefreshTokenExpiresAt == nil || session.RefreshTokenExpiresAt.After(now))
+		counts[key]++
+	}
+
+	groups := make([]storage.SessionExpiryGroup, 0, len(counts))
+	for key, count := range counts {
+		groups = append(groups, storage.SessionExpiryGroup{
+			ServiceID: key.serviceID, AccessExpiry: key.accessExpiry, RefreshUsable: key.refreshUsable, Count: count,
+		})
+	}
+	return groups, nil
+}
+
+var _ ports.UserSessionHealthRepository = (*InMemoryUserSessionRepository)(nil)
+
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.
 func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
