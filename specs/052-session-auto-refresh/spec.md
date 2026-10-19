@@ -271,7 +271,7 @@ No attribute names a user. The sum for `3f9c…` is 5 and for `a1d2…` is 2.
 
 **Step 4 — 16:05:30Z: the session store is briefly unavailable**
 
-The query fails within `query_timeout`. That cycle exports no `oauth2_sessions` points, and the broker logs `session health query failed` with the error class. The 16:06:00Z cycle succeeds and the series resume.
+The query fails within `query_timeout`. That cycle exports no `oauth2_sessions` points, and the broker logs `session health query failed` at WARN with `error_kind`. The 16:06:00Z cycle succeeds and the series resume.
 
 **Step 5 — the operator's dashboard and alerts (PromQL shown as an example query language)**
 

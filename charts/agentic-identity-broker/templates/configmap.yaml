@@ -91,6 +91,9 @@ data:
       background_workers: {{ .Values.broker.tokenRefresh.backgroundWorkers }}
       sweep:
         default_page_size: {{ .Values.broker.tokenRefresh.sweep.defaultPageSize }}
+      health_metrics:
+        enabled: {{ .Values.broker.tokenRefresh.healthMetrics.enabled }}
+        query_timeout: {{ .Values.broker.tokenRefresh.healthMetrics.queryTimeout | quote }}
 
     {{- if or .Values.broker.encryption.memory.rawKey .Values.broker.encryption.awsKms.keyArn }}
     # Encryption configuration

@@ -241,7 +241,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 - US2-S7 uses a storage decorator in `tests/e2e/` that fails the health query on demand. US2-S8 uses the same decorator to count calls. Both are test code only.
 
 **Helper Utilities** (test code in `tests/e2e/helpers/`):
-- `RenderChart(values map[string]any) ([]map[string]any, error)`: runs `helm template` and decodes the documents with `gopkg.in/yaml.v3`, which the repository already uses. No Kubernetes client module is added. It fails with a clear message when `helm` is not on `PATH`.
+- `RenderChart(values map[string]any) ([]map[string]any, error)`: runs `helm template` and decodes the documents with `go.yaml.in/yaml/v3`, already in the module graph as an indirect dependency; it becomes direct. No new module or Kubernetes client is added. It fails with a clear message when `helm` is not on `PATH`.
 - `RunSweepScript(cronJob, env) (exitCode int, stdout, stderr string)`: runs the rendered command with `/bin/sh` in a temp working directory.
 - For US1-S5, a `curl` shim placed first on the script's `PATH` records its argv and environment, then runs the real `curl`. The test asserts that the secret file value appears in neither.
 
@@ -258,3 +258,26 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 ## Complexity Tracking
 
 No constitution violations to justify.
+
+## Implementation Records
+
+- **API (T011)**: No endpoint, field, status, or schema change (API-001). Only the description text at `api/admin/openapi.yaml:1701` and the example at `:1752` change (API-002, T046). No stakeholder API sign-off is required.
+- **Database (T012)**: No schema change and no migration (DB-001). The health query reads `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_expires_at` only (DB-002, DB-003).
+- **Frontend (T013)**: N/A, no UI change.
+
+### Red phase results (T017, 2026-10-19)
+
+Both files compile and contain no `Skip`, `XIt`, `PIt`, or placeholder assertions. Each scenario failed on its own assertion before implementation:
+
+| Scenario | Failure before implementation |
+|---|---|
+| US1-S1 | Enabled render has no `CronJob` or `ServiceAccount` named `broker-agentic-identity-broker-session-sweep` |
+| US1-S2, S3, S4, S5, S6, S8, S9, S10 | `rendered chart has no CronJob broker-agentic-identity-broker-session-sweep` |
+| US1-S7 | Render without identity returned no error |
+| US1-S11 | Timeout-versus-deadline render returned no error |
+| US2-S1 to S6, S9 | No `oauth2_sessions` metric collected |
+| US2-S7 | No `session health query failed` WARN while `user_sessions` was locked |
+| US2-S8 | Positive control with health metrics enabled logged no WARN under the lock |
+| US3-S1 | No `session_sweep_duration_seconds` data points |
+| US3-S2 | Timed out waiting for a `canceled` histogram data point |
+| US3-S3 | `session_sweep_skipped_total` was `0`, want `2` (the response already reported `skipped: 2`) |

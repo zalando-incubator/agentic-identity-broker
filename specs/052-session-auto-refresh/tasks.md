@@ -36,14 +36,14 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 **Purpose**: Tooling the E2E suites need.
 
-- [ ] T001 Add the pinned `azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1` step to the `e2e-backend` job in `.github/workflows/ci.yml`, before "Backend E2E suite with JUnit". This is the same pin the `helm` lint job uses (research R14, Principle XIII).
-- [ ] T002 [P] Add `RenderChart(values map[string]any) ([]map[string]any, error)` and `FindResource(docs, kind, name)` in `tests/e2e/helpers/helm_chart.go`.
+- [X] T001 Add the pinned `azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1` step to the `e2e-backend` job in `.github/workflows/ci.yml`, before "Backend E2E suite with JUnit". This is the same pin the `helm` lint job uses (research R14, Principle XIII).
+- [X] T002 [P] Add `RenderChart(values map[string]any) ([]map[string]any, error)` and `FindResource(docs, kind, name)` in `tests/e2e/helpers/helm_chart.go`.
   - Write the values to a temp file.
   - Run `helm template broker ../../charts/agentic-identity-broker -n identity -f <file>`, using a path resolved from the module root.
   - Return stderr in the error on non-zero exit.
-  - Decode the documents with `gopkg.in/yaml.v3`.
+  - Decode the documents with `go.yaml.in/yaml/v3` (already in the module graph).
   - When `helm` is not on `PATH`, return an error that names the missing binary. Never skip (research R14).
-- [ ] T003 [P] Add `RunSweepScript(cronJob map[string]any, opts SweepScriptOptions) (exitCode int, stdout, stderr string)` in `tests/e2e/helpers/sweep_script.go`.
+- [X] T003 [P] Add `RunSweepScript(cronJob map[string]any, opts SweepScriptOptions) (exitCode int, stdout, stderr string)` in `tests/e2e/helpers/sweep_script.go`.
   - Extract `spec.jobTemplate.spec.template.spec.containers[0].command`.
   - Run it with `/bin/sh` in a temp directory under a context timeout.
   - Let callers prepend a `curl` shim directory to `PATH`. The shim records its argv and environment to a file, then runs the real `curl` found at setup.
@@ -57,8 +57,8 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2a: Domain Model & Glossary
 
-- [ ] T004 [P] Add Session Health State, Session Health Snapshot, and Session Sweep Schedule to the "Third-Party OAuth2 Session Management" glossary in `ARCHITECTURE.md` (starts at line 1502). Use the definitions in `specs/052-session-auto-refresh/data-model.md` (Principle V).
-- [ ] T005 Verify that these agree before code changes:
+- [X] T004 [P] Add Session Health State, Session Health Snapshot, and Session Sweep Schedule to the "Third-Party OAuth2 Session Management" glossary in `ARCHITECTURE.md` (starts at line 1502). Use the definitions in `specs/052-session-auto-refresh/data-model.md` (Principle V).
+- [X] T005 Verify that these agree before code changes:
   - spec FR-018
   - `data-model.md`: the classification flowchart and the `AccessExpiryClass` table, where "at or before `threshold`" is inclusive
   - `contracts/ports.md` §1 and §2
@@ -67,11 +67,11 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2b: Configuration Design
 
-- [ ] T006 Add `TokenRefreshHealthMetricsConfig{Enabled bool "enabled"; QueryTimeout time.Duration "query_timeout"}` and the field `TokenRefreshConfig.HealthMetrics` (`mapstructure:"health_metrics"`) in `internal/ports/config.go`, exactly as in `contracts/configuration.md`. This is the contract type only. Defaults, bindings, and validation come in T019 and T020.
-- [ ] T007 [P] Add the `token_refresh.health_metrics` block with `enabled: true` and `query_timeout: 5s` to `examples/config/telemetry.yaml` and `examples/config/config.production.yaml`, with comments from `contracts/configuration.md` (Principle VII).
-- [ ] T008 Reference the new keys in the telemetry and production entries of `examples/config/README.md` (Principle VII).
-- [ ] T009 [P] Add `broker.tokenRefresh.healthMetrics.{enabled: true, queryTimeout: 5s}` to `charts/agentic-identity-broker/values.yaml`. Add it to the strict `tokenRefresh` object in `charts/agentic-identity-broker/values.schema.json` (`:1173`), with `enabled` boolean and `queryTimeout` using the existing Go duration pattern (`:1180`). Render `token_refresh.health_metrics.enabled` and `query_timeout` in `charts/agentic-identity-broker/templates/configmap.yaml` (`:81-86`). Add both rows to the README parameter table (`README.md:179-181`) (Principle VII, Helm contract).
-- [ ] T010 [P] Add the `sessionSweep` block to `charts/agentic-identity-broker/values.yaml`, with every key, default, and `# --` comment from `contracts/chart-values.md`. Add the strict `sessionSweep` object to `values.schema.json` with every rule in the "Schema rules" table:
+- [X] T006 Add `TokenRefreshHealthMetricsConfig{Enabled bool "enabled"; QueryTimeout time.Duration "query_timeout"}` and the field `TokenRefreshConfig.HealthMetrics` (`mapstructure:"health_metrics"`) in `internal/ports/config.go`, exactly as in `contracts/configuration.md`. This is the contract type only. Defaults, bindings, and validation come in T019 and T020.
+- [X] T007 [P] Add the `token_refresh.health_metrics` block with `enabled: true` and `query_timeout: 5s` to `examples/config/telemetry.yaml` and `examples/config/config.production.yaml`, with comments from `contracts/configuration.md` (Principle VII).
+- [X] T008 Reference the new keys in the telemetry and production entries of `examples/config/README.md` (Principle VII).
+- [X] T009 [P] Add `broker.tokenRefresh.healthMetrics.{enabled: true, queryTimeout: 5s}` to `charts/agentic-identity-broker/values.yaml`. Add it to the strict `tokenRefresh` object in `charts/agentic-identity-broker/values.schema.json` (`:1173`), with `enabled` boolean and `queryTimeout` using the existing Go duration pattern (`:1180`). Render `token_refresh.health_metrics.enabled` and `query_timeout` in `charts/agentic-identity-broker/templates/configmap.yaml` (`:81-86`). Add both rows to the README parameter table (`README.md:179-181`) (Principle VII, Helm contract).
+- [X] T010 [P] Add the `sessionSweep` block to `charts/agentic-identity-broker/values.yaml`, with every key, default, and `# --` comment from `contracts/chart-values.md`. Add the strict `sessionSweep` object to `values.schema.json` with every rule in the "Schema rules" table:
   - `additionalProperties: false` at every level
   - integers `minimum: 1`
   - `pageSize` `null` or `1..1000`
@@ -84,21 +84,21 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2c: API Design
 
-- [ ] T011 Confirm in `plan.md` that the feature adds no endpoint or field (API-001) and that only descriptive text and examples change (API-002, T046). No stakeholder API sign-off is needed (Principle X).
+- [X] T011 Confirm in `plan.md` that the feature adds no endpoint or field (API-001) and that only descriptive text and examples change (API-002, T046). No stakeholder API sign-off is needed (Principle X).
 
 ### Phase 2d: Database Design
 
-- [ ] T012 Confirm in `plan.md` that there is no schema change or migration (DB-001), and that the health query reads only `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_expires_at` (DB-002, DB-003) (Principle IX).
+- [X] T012 Confirm in `plan.md` that there is no schema change or migration (DB-001), and that the health query reads only `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_expires_at` (DB-002, DB-003) (Principle IX).
 
 ### Phase 2e: Frontend/Design System Review
 
-- [ ] T013 Record "N/A, no UI change" in `plan.md` (Principle XI).
+- [X] T013 Record "N/A, no UI change" in `plan.md` (Principle XI).
 
 ### Phase 2f: E2E Acceptance Test Design
 
-- [ ] T013a Add `tests/e2e/fixtures/session_sweep.go` with the shared test data for T014 to T016: `SweepAdminPublicURL()` (`https://broker-admin.example.test`), `SweepOperatorHeader()` (`X-Operator`), `SweepOperatorPrincipal()` (`session-sweep`), `SweepChartValues(overrides map[string]any)` with the identity configured, and session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's seven sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
+- [X] T013a Add `tests/e2e/fixtures/session_sweep.go` with the shared test data for T014 to T016: `SweepAdminPublicURL()` (`https://broker-admin.example.test`), `SweepOperatorHeader()` (`X-Operator`), `SweepOperatorPrincipal()` (`session-sweep`), `SweepChartValues(overrides map[string]any)` with the identity configured, and session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's seven sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
 
-- [ ] T014 [P] [US1] Write `tests/e2e/session_sweep_schedule_test.go` with one `It()` per scenario US1-S1 to US1-S11, using the descriptions in the plan's mapping table. Give each a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment and use `Describe → Context → It`.
+- [X] T014 [P] [US1] Write `tests/e2e/session_sweep_schedule_test.go` with one `It()` per scenario US1-S1 to US1-S11, using the descriptions in the plan's mapping table. Give each a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment and use `Describe → Context → It`.
   - **Setup**: Use T002 and T003. Bootstrap the admin server with `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer`:
     - Set `server.admin.public_url` to `fixtures.SweepAdminPublicURL()`.
     - Set `server.admin.authentication.preauth.principal_header_name` to `fixtures.SweepOperatorHeader()`.
@@ -124,7 +124,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - **US1-S11**: Three renders with an identity configured, each failing: `timeoutSeconds: 60, activeDeadlineSeconds: 60` errors with the exact timeout message from `contracts/chart-values.md`; `tls.certFile` without `tls.keyFile` errors with the exact TLS message; `lookaheadDuration: 2h` errors with a schema error naming `sessionSweep.lookaheadDuration`.
 
   (FR-001 to FR-016, SR-002 to SR-005)
-- [ ] T015 [P] [US2] Write `tests/e2e/session_metrics_test.go` with US2-S1 to US2-S9 as separate `It()` blocks with spec comments.
+- [X] T015 [P] [US2] Write `tests/e2e/session_metrics_test.go` with US2-S1 to US2-S9 as separate `It()` blocks with spec comments.
   - **Setup**: Install `sdkmetric.NewManualReader()` as the global MeterProvider in `BeforeEach` with `DeferCleanup` before `BuildApp`, as in `tests/e2e/approval_api_test.go:136-143`. Set `config.TokenRefresh.LookaheadDuration = 5*time.Minute`, `config.TokenRefresh.HealthMetrics = {Enabled: true, QueryTimeout: 2*time.Second}`. Seed sessions with `fixtures.HealthJourneySessions(now)` and the per-state builders from T013a. Collect and filter `oauth2_sessions`.
   - **US2-S1**: one point per `(service_id, state)`, and the per-service sum equals the seeded count.
   - **US2-S2**: zero-valued points are present.
@@ -134,14 +134,14 @@ description: "Task list for feature 052: automatic third-party session refresh"
   - **US2-S9**: every point's attribute set has exactly the keys `service_id` and `state`.
 
   (FR-017 to FR-022, SR-007)
-- [ ] T016 [P] [US3] Add US3-S1 to US3-S3 to `tests/e2e/session_metrics_test.go`, with the same reader.
+- [X] T016 [P] [US3] Add US3-S1 to US3-S3 to `tests/e2e/session_metrics_test.go`, with the same reader.
   - **US3-S1**: A real sweep plus a dry run via `POST /api/sessions/sweep` with `fixtures.AdminPrincipal()`. `session_sweep_duration_seconds` has a histogram data point with count 1 for `{outcome=completed, dry_run=false}` and 1 for `{outcome=completed, dry_run=true}`.
   - **US3-S2**: an unknown-field body gives `rejected`. A canceled client context gives `canceled`. A storage failure gives `aborted`: use the Postgres fixture with the table lock and `storage.timeouts.read: 1s`. None adds a `completed` count. A request without a principal adds nothing.
   - **US3-S3**: One candidate is refreshed by token exchange before the sweep evaluates it, and one is deleted. `session_sweep_skipped_total{triggered_by=sweep}` increases by 2.
 
   (FR-023, FR-024)
-- [ ] T017 Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` and `ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/`. Record one concrete semantic failure per scenario under "Red phase results" in `plan.md`, for example "US1-S2: no CronJob document" or "US2-S1: no oauth2_sessions metric". Confirm both files compile and contain no `Skip`, `XIt`, `PIt`, placeholder assertions, or red-phase comments (Principle XIII).
-- [ ] T018 Review spec Journeys 1 to 4 against US1-S3, S5, S7, S8, S9 and US2-S1 to S7, and against `contracts/sweep-job.md`. Check the values, rendered CronJob excerpt, HTTP exchanges, log lines, and metric names. Fix mismatches in `spec.md`. No Wireloom or JWT claims apply (Principle XIV).
+- [X] T017 Run `ginkgo -v --focus-file session_sweep_schedule_test.go ./tests/e2e/` and `ginkgo -v --focus-file session_metrics_test.go ./tests/e2e/`. Record one concrete semantic failure per scenario under "Red phase results" in `plan.md`, for example "US1-S2: no CronJob document" or "US2-S1: no oauth2_sessions metric". Confirm both files compile and contain no `Skip`, `XIt`, `PIt`, placeholder assertions, or red-phase comments (Principle XIII).
+- [X] T018 Review spec Journeys 1 to 4 against US1-S3, S5, S7, S8, S9 and US2-S1 to S7, and against `contracts/sweep-job.md`. Check the values, rendered CronJob excerpt, HTTP exchanges, log lines, and metric names. Fix mismatches in `spec.md`. No Wireloom or JWT claims apply (Principle XIV).
 
 **Checkpoint**: Glossary, config contract, chart values and schema, and 23 compiling red E2E tests.
 

@@ -1671,6 +1671,12 @@ The next five entries describe feature 051's implemented, unreleased model under
 
 **SessionTokensRefreshed**: The structured `session.oauth2.token_refreshed` log event after a `UserSession` refresh commits. It records the session owner's `principal`, session ID, service ID, and `RefreshTrigger` without token material. The broker has no event bus.
 
+**Session Health State**: The classification of a stored `UserSession` as `valid`, `expiring_refreshable`, `expired_unrefreshable`, or `unknown_expiry`. It is derived from the access-token expiry, refresh-token usability, and the Refresh Lookahead Window, in that precedence: no recorded expiry, expiry after the window, then refresh-token usability. It is never stored.
+
+**Session Health Snapshot**: Per-service counts of `UserSession` records in each Session Health State, computed by one grouped query in each metric export cycle and published as the `oauth2_sessions` gauge. Every state of a service with sessions is reported, with zero when empty. It is not retained between cycles.
+
+**Session Sweep Schedule**: The optional chart-managed CronJob that calls the Session Sweep endpoint on a schedule with request credentials the operator supplies. The chart adds no identity model and the broker still runs no scheduler.
+
 **OAuth2StateToken**: A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. It contains principal, PKCE verifier, service ID, and redirect URI claims. For resource discovery, it also seals the issuer and effective RFC 8707 audience from the initiating service snapshot. A mismatch with the current service rejects the callback before token exchange. The state lasts 10 minutes (15 minutes at most). Authenticated encryption (A256GCMKW + A256GCM) detects changes.
 
 **AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 016). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).

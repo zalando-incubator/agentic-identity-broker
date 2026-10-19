@@ -231,6 +231,8 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
 | `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
 | `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
+| `broker.tokenRefresh.healthMetrics.enabled` | Boolean: publish the `oauth2_sessions{service_id,state}` gauge when telemetry metrics are enabled. Each replica runs one grouped count query per metric export cycle. | `true` |
+| `broker.tokenRefresh.healthMetrics.queryTimeout` | String (Go duration): timeout of the per-export health count query; a slower query reports no data for that cycle. | `"5s"` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |

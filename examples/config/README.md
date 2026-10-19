@@ -87,6 +87,7 @@ Production environment configuration. Demonstrates:
 - TLS mandatory with environment-driven paths
 - High connection pool limits
 - Monitoring and metrics configuration
+- Session-health gauge settings (`token_refresh.health_metrics`)
 - Security-first approach
 - Detailed comments on production best practices
 
@@ -332,6 +333,7 @@ OpenTelemetry observability configuration for the **Identity Broker** service. D
 - Service name and resource attribute configuration
 - Trace sampling rate and propagator selection
 - Metrics export interval configuration
+- Session-health gauge (`token_refresh.health_metrics.enabled`, `query_timeout`), which publishes `oauth2_sessions` per service and health state
 - OTLP exporter protocol (gRPC or HTTP), endpoint, headers with `${ENV_VAR}` substitution
 - TLS configuration (enabled by default; `insecure: false` is the secure default)
 

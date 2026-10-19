@@ -51,13 +51,20 @@ type Config struct {
 
 // TokenRefreshConfig declares the proactive refresh settings for production configuration.
 type TokenRefreshConfig struct {
-	LookaheadDuration time.Duration           `mapstructure:"lookahead_duration"`
-	BackgroundWorkers int                     `mapstructure:"background_workers"`
-	Sweep             TokenRefreshSweepConfig `mapstructure:"sweep"`
+	LookaheadDuration time.Duration                   `mapstructure:"lookahead_duration"`
+	BackgroundWorkers int                             `mapstructure:"background_workers"`
+	Sweep             TokenRefreshSweepConfig         `mapstructure:"sweep"`
+	HealthMetrics     TokenRefreshHealthMetricsConfig `mapstructure:"health_metrics"`
 }
 
 type TokenRefreshSweepConfig struct {
 	DefaultPageSize int `mapstructure:"default_page_size"`
+}
+
+// TokenRefreshHealthMetricsConfig controls the oauth2_sessions gauge.
+type TokenRefreshHealthMetricsConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	QueryTimeout time.Duration `mapstructure:"query_timeout"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.

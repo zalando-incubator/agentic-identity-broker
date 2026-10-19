@@ -672,6 +672,12 @@ broker:
     sweep:
       # -- Default page size for the external POST /api/sessions/sweep (1-1000).
       defaultPageSize: 100
+    healthMetrics:
+      # -- Publish the oauth2_sessions{service_id,state} gauge when telemetry metrics are enabled.
+      # Each replica runs one grouped count query per metric export cycle.
+      enabled: true
+      # -- Timeout of the per-export health count query (Go duration).
+      queryTimeout: "5s"
 
   # Security configuration
   security:
@@ -794,3 +800,66 @@ extraObjects: []
   #     namespace: '{{ include "agentic-identity-broker.namespace" . }}'
   #   data:
   #     build: '{{ "{{{BUILD_VERSION}}}" }}'
+
+# Scheduled session sweep: a CronJob that calls POST /api/sessions/sweep on the admin API.
+# The chart only transports the request. Supply the caller's identity with headers,
+# headersFromFile, or a TLS client certificate; rendering fails without one.
+sessionSweep:
+  # -- Render the CronJob and its ServiceAccount
+  enabled: false
+  # -- Cron schedule. Keep lookaheadDuration longer than one interval plus a missed run.
+  schedule: "0 * * * *"
+  # -- Optional IANA time zone for the schedule
+  timeZone: ""
+  # -- Seconds after the scheduled time within which a late run may still start
+  startingDeadlineSeconds: 3600
+  # -- Hard cap on one Job, in seconds. Must exceed timeoutSeconds.
+  activeDeadlineSeconds: 2100
+  # -- Request timeout in seconds, passed to curl --max-time
+  timeoutSeconds: 1800
+  # -- ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only).
+  # Keep it shorter than the shortest provider access-token lifetime, or every run refreshes every session.
+  lookaheadDuration: PT2H
+  # -- Send dry_run=true: classify candidates without refreshing
+  dryRun: false
+  # -- Optional page_size (1-1000); null uses broker.tokenRefresh.sweep.defaultPageSize
+  pageSize: null
+  # -- Target URL. Empty targets this release's admin Service: http://<fullname>.<namespace>.svc:<service.ports.admin>
+  url: ""
+  # -- Host header override. Empty derives it from broker.server.admin.publicUrl, only for the default target.
+  host: ""
+  # -- Literal request headers. They are rendered into the manifest; never put secrets here.
+  headers: {}
+  # -- Headers read from mounted files at run time, for example
+  # Authorization: {path: /var/run/secrets/session-sweep/token, prefix: "Bearer "}
+  headersFromFile: {}
+  tls:
+    # -- Path of a PEM client certificate presented to the target
+    certFile: ""
+    # -- Path of the PEM private key for certFile
+    keyFile: ""
+    # -- Path of a PEM CA bundle used to verify the target
+    caFile: ""
+  # -- Volumes that provide header and TLS files
+  volumes: []
+  # -- Mounts for those volumes in the sweep container
+  volumeMounts: []
+  image:
+    # -- Image with a POSIX shell and curl
+    repository: curlimages/curl
+    # -- Image tag
+    tag: "8.16.0"
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Resource requests and limits for the sweep container
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+  # -- Extra pod labels; override commonLabels for shared keys
+  podLabels: {}
+  # -- Extra pod annotations
+  podAnnotations: {}

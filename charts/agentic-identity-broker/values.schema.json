@@ -1244,6 +1244,22 @@
                   "description": "Default sessions per admin sweep page"
                 }
               }
+            },
+            "healthMetrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Session-health gauge (oauth2_sessions) configuration",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Publish the oauth2_sessions gauge when telemetry metrics are enabled"
+                },
+                "queryTimeout": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+                  "description": "Timeout of the per-export health count query as a Go duration"
+                }
+              }
             }
           }
         },
@@ -1483,6 +1499,195 @@
       "description": "Additional Kubernetes manifests rendered with tpl, as maps or multi-line strings",
       "items": {
         "type": ["object", "string"]
+      }
+    },
+    "sessionSweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Scheduled session sweep: a CronJob calling POST /api/sessions/sweep with operator-supplied request credentials",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the CronJob and its ServiceAccount"
+        },
+        "schedule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cron schedule; keep lookaheadDuration longer than one interval plus a missed run"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "Optional IANA time zone for the schedule"
+        },
+        "startingDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds after the scheduled time within which a late run may still start"
+        },
+        "activeDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard cap on one Job in seconds; must exceed timeoutSeconds"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Request timeout in seconds"
+        },
+        "lookaheadDuration": {
+          "type": "string",
+          "allOf": [
+            {
+              "pattern": "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$"
+            },
+            {
+              "not": {
+                "pattern": "T$"
+              }
+            },
+            {
+              "not": {
+                "enum": [
+                  "P"
+                ]
+              }
+            }
+          ],
+          "description": "ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only)"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Send dry_run=true: classify candidates without refreshing"
+        },
+        "pageSize": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Optional page_size; null uses token_refresh.sweep.default_page_size"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^(https?://.+)?$",
+          "description": "Target URL; empty targets this release's admin Service"
+        },
+        "host": {
+          "type": "string",
+          "description": "Host header override; empty derives it from broker.server.admin.publicUrl for the default target only"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Literal request headers; rendered into the manifest, so never secrets"
+        },
+        "headersFromFile": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Mounted file whose contents are the header value"
+              },
+              "prefix": {
+                "type": "string",
+                "description": "Text sent before the file value, e.g. 'Bearer '"
+              }
+            }
+          },
+          "description": "Headers read from mounted files at run time"
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "TLS files presented to or trusted for the target",
+          "properties": {
+            "certFile": {
+              "type": "string",
+              "description": "PEM client certificate path"
+            },
+            "keyFile": {
+              "type": "string",
+              "description": "PEM private key path for certFile"
+            },
+            "caFile": {
+              "type": "string",
+              "description": "PEM CA bundle path used to verify the target"
+            }
+          }
+        },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Volumes that provide header and TLS files"
+        },
+        "volumeMounts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Mounts for those volumes in the sweep container"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Image with a POSIX shell and curl",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image repository"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image tag"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Image pull policy"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resourceRequirements"
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels; override commonLabels for shared keys"
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod annotations"
+        }
       }
     }
   },
