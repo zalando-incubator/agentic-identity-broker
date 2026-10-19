@@ -281,3 +281,19 @@ Both files compile and contain no `Skip`, `XIt`, `PIt`, or placeholder assertion
 | US3-S1 | No `session_sweep_duration_seconds` data points |
 | US3-S2 | Timed out waiting for a `canceled` histogram data point |
 | US3-S3 | `session_sweep_skipped_total` was `0`, want `2` (the response already reported `skipped: 2`) |
+
+### Verification results (T060, 2026-10-19)
+
+| Command | Result |
+|---|---|
+| `just check` (with `golangci-lint` v2.14.0) | Passed, 0 lint issues |
+| `just test` | Passed |
+| `just test-integration-all` | Passed (8 packages, including PostgreSQL parity H1 to H9) |
+| `just helm-lint`, plus `helm lint` with the sweep enabled | Passed |
+| Backend E2E, `!performance` (710 specs) | 700 passed on the first run. The 10 failures were SPA and CIMD redirect suites returning 404 because `web/dist` was not built locally. After `just web-build`, those 15 specs passed. The 23 feature scenarios passed. |
+| Rendered script in `curlimages/curl:8.16.0` | Passed (research R7 verification) |
+| `just security` | Not run successfully: the scan script resolved a Go 1.26.8 toolchain with `GOTOOLCHAIN=local` while `go.mod` requires 1.27.1, so gosec loaded no files. This is environmental. |
+| ExtProc and frontend E2E, `web-test`, `cdk-test`, mock suites | Not run. This feature does not change them. |
+
+TDD notes (T059): the config, memory adapter, health metrics, skipped counter, and histogram tests compiled and failed on their assertions before implementation. The PostgreSQL parity tests share the memory tests' expectations and ran only after implementation. `TestSessionSweepDryRunSkippedCandidateIsNotCounted` guards an existing behavior and passed before and after. No E2E test changed after T017.
+

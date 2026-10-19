@@ -358,19 +358,19 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 #### Design Phase Verification
 
-- [ ] T048 Verify every task traces to a requirement, scenario, or binding constraint, and that no unrelated remediation was added (Feature Scope).
-- [ ] T049 Verify the glossary entries in `ARCHITECTURE.md` (Principle V).
-- [ ] T050 Verify `examples/config/` YAML and the `examples/config/README.md` references (Principle VII).
-- [ ] T051 Verify `api/admin/openapi.yaml` changed only in descriptive text and examples (API-001, API-002, Principles IV, X).
-- [ ] T052 Verify there is no file in `migrations/` from this branch (DB-001, Principle IX).
-- [ ] T053 Verify spec Journeys 1 to 4 match the implemented values, rendered manifests, HTTP exchanges, logs, and metric names (Principle XIV).
-- [ ] T054 Verify all 23 E2E scenarios exist, one `It()` each, with spec comments and red results recorded in `plan.md` (Principle XIII).
+- [X] T048 Verify every task traces to a requirement, scenario, or binding constraint, and that no unrelated remediation was added (Feature Scope).
+- [X] T049 Verify the glossary entries in `ARCHITECTURE.md` (Principle V).
+- [X] T050 Verify `examples/config/` YAML and the `examples/config/README.md` references (Principle VII).
+- [X] T051 Verify `api/admin/openapi.yaml` changed only in descriptive text and examples (API-001, API-002, Principles IV, X).
+- [X] T052 Verify there is no file in `migrations/` from this branch (DB-001, Principle IX).
+- [X] T053 Verify spec Journeys 1 to 4 match the implemented values, rendered manifests, HTTP exchanges, logs, and metric names (Principle XIV).
+- [X] T054 Verify all 23 E2E scenarios exist, one `It()` each, with spec comments and red results recorded in `plan.md` (Principle XIII).
 
 #### Implementation Phase Verification
 
-- [ ] T055 Verify the deferred findings in research R16 appear in no task or diff (Feature Scope).
-- [ ] T056 Verify the Helm values, schema, templates, configmap, and README cover every changed setting (Principle VII).
-- [ ] T057 Verify security defaults:
+- [X] T055 Verify the deferred findings in research R16 appear in no task or diff (Feature Scope).
+- [X] T056 Verify the Helm values, schema, templates, configmap, and README cover every changed setting (Principle VII).
+- [X] T057 Verify security defaults:
   - sweep disabled by default
   - render fails without an identity
   - no credential in the manifest, argv, environment, or log (US1-S5)
@@ -378,7 +378,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - no principal or session attribute on any metric
 
   (Principles I, III; SR-001 to SR-007)
-- [ ] T058 Verify the hexagonal boundaries:
+- [X] T058 Verify the hexagonal boundaries:
   - the domain uses `ports.UserSessionHealthRepository`
   - state precedence is in the domain, not SQL
   - the handler only records the histogram
@@ -386,9 +386,9 @@ T014 (E2E) is the test for this story. It must be red before T028.
   - no adapter imports another
 
   (Principles VI, XII)
-- [ ] T059 Verify that unit tests T019, T023, T024, T035, T039, and T040 were red before T020, T025, T026, T036, T041, and T042, and that the E2E tests changed only in fixtures after T017 (Principle VIII, XIII).
-- [ ] T060 Run `just check`, `just test`, `just test-integration-infra`, `just helm-lint`, and `just verify` from the repository root, and record the results (Principle XIII).
-- [ ] T061 Review the final diff for debug output and comments that restate code. Run `grep -rniE` over the diff for company-internal names, hosts, and tool names, with zero matches (spec Input).
+- [X] T059 Verify that unit tests T019, T023, T024, T035, T039, and T040 were red before T020, T025, T026, T036, T041, and T042, and that the E2E tests changed only in fixtures after T017 (Principle VIII, XIII).
+- [X] T060 Run `just check`, `just test`, `just test-integration-infra`, `just helm-lint`, and `just verify` from the repository root, and record the results (Principle XIII).
+- [X] T061 Review the final diff for debug output and comments that restate code. Run `grep -rniE` over the diff for company-internal names, hosts, and tool names, with zero matches (spec Input).
 
 ---
 

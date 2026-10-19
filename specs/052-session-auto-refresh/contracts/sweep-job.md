@@ -71,11 +71,11 @@ The script is rendered per release. It contains no secret: only the target, the 
    - `header = "Host: <host>"`, only when a `Host` override applies (research R3)
    - one `header = "<Name>: <value>"` per literal header, escaped at render time (research R2)
    - one `header = "<Name>: <prefix><file value>"` per file header
-3. It runs `curl --config - --silent --show-error --connect-timeout 10 --max-time <timeoutSeconds> --request POST --data '<body>' --write-out '\n%{http_code}' [--cert <certFile> --key <keyFile>] [--cacert <caFile>] '<url>/api/sessions/sweep'`.
+3. It runs `curl --disable --config - --silent --show-error --connect-timeout 10 --max-time <timeoutSeconds> --request POST --data '<body>' --write-out '\n%{http_code}' [--cert <certFile> --key <keyFile>] [--cacert <caFile>] '<url>/api/sessions/sweep'`.
 4. It prints the response body.
 5. For a `2xx` status, it exits `0`. For any other status, it prints `session sweep failed: HTTP <status>` to stderr and exits `1`. If curl fails without a status (transport error or timeout), the script exits with curl's code after curl prints its error.
 
-The script never uses heredocs, `set -x`, `--verbose`, or `--trace`, and never echoes configuration lines.
+The script never uses heredocs, `set -x`, `--verbose`, or `--trace`, and never echoes configuration lines. `--disable` comes first so curl ignores any `.curlrc` in the image.
 
 ### Request body
 
