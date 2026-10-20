@@ -18,7 +18,7 @@ PR #196 added `POST /api/sessions/sweep`, but nothing schedules it. This feature
    - The domain classifies each group into an `(expiry, refreshable)` pair and zero-fills all eight per service.
 3. **Sweep run metrics (US3)**: a `session_sweep_duration_seconds{outcome,dry_run}` histogram recorded beside the existing audit event, and a `session_sweep_skipped_total` counter.
 
-There is no migration, OpenAPI field change, or new module dependency. The chart change is self-contained. The broker change is one port with two adapters, one domain component, and two instruments.
+There is no migration, OpenAPI field change, or new module dependency. The chart change is self-contained. The broker change is one port with two adapters, one domain component, and three instruments.
 
 ## Technical Context
 
@@ -284,7 +284,7 @@ The script-run scenarios (US1-S3, S4, S6, S8, S9) were first covered by a backen
 | `just test` | Passed |
 | `just test-integration-all` | Passed (8 packages, including PostgreSQL parity H1 to H9) |
 | `just helm-lint`, plus `helm lint` with the sweep enabled | Passed |
-| Backend E2E, `!performance` (710 specs) | 700 passed on the first run. The 10 failures were SPA and CIMD redirect suites returning 404 because `web/dist` was not built locally. After `just web-build`, those 15 specs passed. The 23 feature scenarios passed. |
+| Backend E2E, `!performance` (710 specs) | The 710 include the 23 feature scenarios, which all passed. The first run had 700 passed and 10 failed: SPA and CIMD redirect specs returned 404 because `web/dist` was not built locally. After `just web-build`, a re-run of the SPA and CIMD redirect suites (15 specs, including the 10 failures) passed, so all 710 passed. |
 | Rendered script in `curlimages/curl:8.16.0` | Passed (research R7 verification) |
 | `just security` | Not run successfully: the scan script resolved a Go 1.26.8 toolchain with `GOTOOLCHAIN=local` while `go.mod` requires 1.27.1, so gosec loaded no files. This is environmental. |
 | ExtProc and frontend E2E, `web-test`, `cdk-test`, mock suites | Not run. This feature does not change them. |
