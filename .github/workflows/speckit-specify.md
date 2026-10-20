@@ -64,5 +64,8 @@ of the feature to be built, not a summary of the automation. Include:
 - The exact feature marker `<!-- speckit-feature: specs/NNN-feature-name -->`,
   using the new feature's actual relative directory.
 
-Do not create another PR if the branch already has one. Leave clarification,
+If an earlier draft PR for this issue was closed without merging and its
+branch deleted, create a fresh draft PR on `context.branch` from the current
+default branch. Do not reuse the old PR or its artifacts. Do not create a
+second PR while one is open or the branch still exists. Leave clarification,
 planning, and implementation to subsequent sessions.

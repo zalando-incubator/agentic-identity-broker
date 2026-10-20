@@ -83,12 +83,12 @@ async function maintainer(github, repo, login) {
   return ["admin", "maintain", "write"].includes(data.permission);
 }
 
-function managedPR(pr, repo) {
+function managedPR(pr, repo, state = "open") {
   const relatedPrefix = `Related issue: https://github.com/${repo.owner}/${repo.repo}/issues/`;
   const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
   const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/) ||
     related?.slice(relatedPrefix.length).match(/^(\d+)$/);
-  return pr.state === "open" && pr.draft && issue && actionsBot(pr.user) &&
+  return pr.state === state && pr.draft && issue && actionsBot(pr.user) &&
     pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.base.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
@@ -160,15 +160,24 @@ async function route({ github, context }) {
       !await maintainer(github, repo, context.actor)) return { action: "noop" };
   if (isIssue) {
     if (payload.issue.state !== "open") return { action: "noop" };
+    const branch = `speckit/issue-${payload.issue.number}`;
     const existing = await github.paginate(github.rest.pulls.list, {
-      ...repo, state: "all", head: `${repo.owner}:speckit/issue-${payload.issue.number}`, per_page: 100,
+      ...repo, state: "all", head: `${repo.owner}:${branch}`, per_page: 100,
     });
     if (existing.length) {
       const managed = existing.find((pr) => managedPR(pr, repo) === payload.issue.number);
-      if (!managed || latest(await reports(github, repo, managed.number), ["clarify"])) {
-        return { action: "noop" };
+      if (managed) {
+        if (latest(await reports(github, repo, managed.number), ["clarify"])) return { action: "noop" };
+        return { action: "clarify", issue: payload.issue.number, pr: managed.number, comment: 0 };
       }
-      return { action: "clarify", issue: payload.issue.number, pr: managed.number, comment: 0 };
+      if (existing.some((pr) => pr.merged_at ||
+          managedPR(pr, repo, "closed") !== payload.issue.number)) return { action: "noop" };
+    }
+    try {
+      await github.rest.repos.getBranch({ ...repo, branch });
+      return { action: "noop" };
+    } catch (error) {
+      if (error.status !== 404) throw error;
     }
     return { action: "specify", issue: payload.issue.number, pr: 0, comment: 0 };
   }

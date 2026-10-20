@@ -57,6 +57,16 @@ function fixture(eventName, payload, options = {}) {
           calls.push(args);
           return { data: { permission: options.permission || "write" } };
         },
+        getBranch: async ({ owner, repo: name, branch }) => {
+          assert.equal(`${owner}/${name}`, `${repo.owner}/${repo.repo}`);
+          assert.equal(branch, "speckit/issue-7");
+          if (options.branchMissing || options.branchError) {
+            const error = new Error("Branch lookup failed");
+            error.status = options.branchError || 404;
+            throw error;
+          }
+          return { data: { name: "speckit/issue-7" } };
+        },
         getContent: async ({ path }) => {
           contentReads.push(path);
           if (path === ".specify/feature.json" && options.missingPointer) {
@@ -92,9 +102,16 @@ function fixture(eventName, payload, options = {}) {
 }
 
 test("specify accepts the exact issue label and does not fetch comments", async () => {
-  const f = fixture("issues", { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } });
+  const f = fixture("issues", { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } }, { branchMissing: true });
   assert.deepEqual(await route(f), { action: "specify", issue: 7, pr: 0, comment: 0 });
   assert.equal(f.calls.length, 1);
+});
+
+test("specify requires an absent branch even without a previous PR", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } };
+  assert.equal((await route(fixture("issues", payload))).action, "noop");
+  const denied = fixture("issues", payload, { branchError: 403 });
+  await assert.rejects(route(denied), (error) => error.status === 403);
 });
 
 test("unrelated labels, read-only users, bots, and issue comments do not execute", async () => {
@@ -140,6 +157,35 @@ test("relabeling resumes clarification for an existing managed PR without a clar
     existing: [{ ...existing, body: "Related issue: https://github.com/example/broker/issues/7" }],
   });
   assert.deepEqual(await route(visibleLink), { action: "clarify", issue: 7, pr: 42, comment: 0 });
+});
+
+test("relabeling regenerates a closed Spec Kit PR only after its branch is deleted", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } };
+  const previous = {
+    number: 42, state: "closed", merged_at: null, draft: true,
+    user: { login: "github-actions[bot]", type: "Bot" },
+    body: "Related issue: https://github.com/example/broker/issues/7",
+    head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } },
+    base: { repo: { full_name: "example/broker" } },
+  };
+  const deleted = fixture("issues", payload, { existing: [previous], branchMissing: true });
+  assert.deepEqual(await route(deleted), { action: "specify", issue: 7, pr: 0, comment: 0 });
+
+  for (const options of [
+    { existing: [previous] },
+    { existing: [{ ...previous, merged_at: "2026-10-20T14:23:11Z" }], branchMissing: true },
+    { existing: [{ ...previous, user: { login: "contributor", type: "User" } }], branchMissing: true },
+    { existing: [{ ...previous, draft: false }], branchMissing: true },
+    { existing: [{ ...previous, body: "Unrelated bot PR" }], branchMissing: true },
+    { existing: [{ ...previous, head: { ...previous.head, repo: { full_name: "outsider/broker" } } }], branchMissing: true },
+    { existing: [{ ...previous, head: { ...previous.head, ref: "other" } }], branchMissing: true },
+    { existing: [previous, { ...previous, state: "open", body: "Unrelated bot PR" }], branchMissing: true },
+  ]) {
+    assert.equal((await route(fixture("issues", payload, options))).action, "noop");
+  }
+
+  const denied = fixture("issues", payload, { existing: [previous], branchError: 403 });
+  await assert.rejects(route(denied), (error) => error.status === 403);
 });
 
 test("only Specify-created PRs are managed, whatever their body claims", async (t) => {
