@@ -1257,6 +1257,22 @@ func TestLocalGrantStrategy_MintingFailureLogCarriesRequestContext(t *testing.T)
 	assert.Equal(t, want.Actor, record.attrs["actor"])
 }
 
+func TestLocalGrantStrategy_CIMDAuthorizationCodeFailureDoesNotLogClientURI(t *testing.T) {
+	const clientURI = "https://agent.example.com/client?marker=untrusted"
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil,
+		oauth2server.NewRFC6749Error("invalid_client", "client authentication failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient),
+	), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"authorization_code", url.Values{
+			"client_id": {"https://agent.example.com/client?marker=untrusted"},
+			"code":      {"authorization-code"},
+		}, &ports.TokenGrantResolution{ClientType: storage.CIMDClient})
+
+	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
+}
+
 func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
 	want := security.SecurityContext{
 		TraceID:     "0123456789abcdef0123456789abcdef",
