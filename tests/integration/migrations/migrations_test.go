@@ -815,7 +815,7 @@ func TestMigration039ProtectedResourceDiscovery(t *testing.T) {
 	}
 	legacyRows := manualSnapshot()
 
-	require.NoError(t, f.UpAll(t))
+	require.NoError(t, f.Up(t, 39))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
 	require.Equal(t, uint(39), version, "protected-resource discovery migration must be applied")
