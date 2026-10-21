@@ -42,7 +42,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 		})
 
 		// Scenario US3-S1 from specs/051-private-key-jwt-auth/spec.md
-		It("rejects a second use of the same assertion", func() {
+		It("should reject a second use of the same assertion", func() {
 			code, verifier, err := fixture.AuthorizeCode("read offline_access")
 			Expect(err).To(Succeed())
 			assertion, assertionType, err := fixture.SignAssertion(helpers.ClientAssertionOptions{JTI: "single-use-assertion"})
@@ -69,7 +69,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 		})
 
 		// Scenario US3-S3 from specs/051-private-key-jwt-auth/spec.md
-		It("spends an assertion when the authenticated grant later fails PKCE", func() {
+		It("should spend an assertion when its grant later fails PKCE", func() {
 			code, verifier, err := fixture.AuthorizeCode("read")
 			Expect(err).To(Succeed())
 			assertion, assertionType, err := fixture.SignAssertion(helpers.ClientAssertionOptions{JTI: "spent-before-pkce"})
@@ -92,7 +92,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 		})
 
 		// Scenario US3-S4 from specs/051-private-key-jwt-auth/spec.md
-		It("scopes the same jti independently for two clients", func() {
+		It("should scope the same jti independently for two clients", func() {
 			clientB := "https://" + cimdPrivateKeyJWTFakeHost + "/client-b"
 			redirectB := "https://" + cimdPrivateKeyJWTFakeHost + "/callback-b"
 			agentB, err := fixture.AddClient(clientB, redirectB)
@@ -126,7 +126,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 	})
 
 	// Scenario US3-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("accepts at most one concurrent assertion across two brokers sharing PostgreSQL", Label("docker"), func() {
+	It("should accept one concurrent assertion across two PostgreSQL brokers", Label("docker"), func() {
 		Expect(bootstrap.CanAccessContainerRuntime()).To(Succeed())
 		ctx := context.Background()
 		postgres, err := bootstrap.NewPostgresFixture(ctx)

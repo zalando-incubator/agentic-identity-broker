@@ -72,6 +72,54 @@ func TestProvider_NoneClientAssertionRejectedWithoutChangingGrantState(t *testin
 	assert.NotEmpty(t, refreshed.RefreshToken)
 }
 
+func TestProvider_RejectsMalformedCIMDCredentialsBeforeVerification(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{}
+	provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+	for _, test := range []struct {
+		name        string
+		credentials ports.ClientCredentials
+	}{
+		{
+			name:        "assertion type without assertion",
+			credentials: ports.ClientCredentials{HasAssertionType: true},
+		},
+		{
+			name:        "assertion without type",
+			credentials: ports.ClientCredentials{HasAssertion: true},
+		},
+		{
+			name: "assertion combined with secret",
+			credentials: ports.ClientCredentials{
+				Secret:        "unexpected-secret",
+				AssertionType: ClientAssertionTypeJWTBearer,
+				Assertion:     "signed-assertion",
+			},
+		},
+		{
+			name: "assertion combined with authorization header",
+			credentials: ports.ClientCredentials{
+				AssertionType:          ClientAssertionTypeJWTBearer,
+				Assertion:              "signed-assertion",
+				HasAuthorizationHeader: true,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, test.credentials, code, redirectURI, codeVerifier)
+			assert.ErrorIs(t, err, ErrInvalidRequest)
+			assert.Zero(t, verifier.calls, "ambiguous credentials must be rejected before assertion verification")
+		})
+	}
+
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, ports.ClientCredentials{
+		AssertionType: ClientAssertionTypeJWTBearer,
+		Assertion:     "valid-assertion",
+	}, code, redirectURI, codeVerifier)
+	require.NoError(t, err, "rejecting ambiguous credentials must leave the authorization code usable")
+	assert.NotEmpty(t, response.AccessToken)
+}
+
 func TestProvider_RefreshRequiresStricterStoredOrCurrentAuthMethod(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -127,6 +175,88 @@ func TestProvider_RefreshRequiresStricterStoredOrCurrentAuthMethod(t *testing.T)
 			assert.Equal(t, expectedCalls, verifier.calls)
 		})
 	}
+}
+
+type failOnceRefreshTokenSessionRepository struct {
+	ports.RefreshTokenSessionRepository
+	err error
+}
+
+func (r *failOnceRefreshTokenSessionRepository) FindBySignature(ctx context.Context, signature string) (*dstorage.RefreshTokenSession, error) {
+	if r.err != nil {
+		err := r.err
+		r.err = nil
+		return nil, err
+	}
+	return r.RefreshTokenSessionRepository.FindBySignature(ctx, signature)
+}
+
+func TestProvider_RefreshSessionLookupFailureDoesNotWeakenAuthentication(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{}
+	provider, agent, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+	credentials := ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "code-assertion"}
+	issued, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, credentials, code, redirectURI, codeVerifier)
+	require.NoError(t, err)
+
+	provider.fositeStorage.clientResolver = &mockClientResolver{resolveFunc: func(_ context.Context, resolvedID id.ClientID) (*ports.ClientResolution, error) {
+		if string(resolvedID) != clientID {
+			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "not found"}
+		}
+		return ports.NewClientResolution(agent, &ports.CIMDMetadataDTO{
+			ClientID:     clientID,
+			AuthMethod:   "none",
+			RedirectURIs: []string{"https://client.example/callback"},
+			GrantTypes:   []string{"authorization_code", "refresh_token"},
+			SigningAlg:   "RS256",
+			JWKSURI:      "https://client.example/jwks.json",
+		}), nil
+	}}
+	provider.fositeStorage.refreshRepo = &failOnceRefreshTokenSessionRepository{
+		RefreshTokenSessionRepository: provider.fositeStorage.refreshRepo,
+		err:                           errors.New("temporary storage failure"),
+	}
+
+	_, err = provider.HandleRefreshToken(context.Background(), clientID, ports.ClientCredentials{}, issued.RefreshToken, "")
+	assert.ErrorIs(t, err, ErrServerError)
+	assert.Equal(t, 1, verifier.calls, "the code exchange assertion must be the only verified assertion")
+
+	refreshed, err := provider.HandleRefreshToken(context.Background(), clientID, credentials, issued.RefreshToken, "")
+	require.NoError(t, err, "a preflight storage failure must not consume the refresh token")
+	assert.NotEmpty(t, refreshed.RefreshToken)
+}
+
+func TestProvider_DowngradedRefreshRejectsInsecureJWKSURI(t *testing.T) {
+	verifier := &providerAssertionVerifierFake{}
+	provider, agent, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
+	credentials := ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "code-assertion"}
+	issued, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, credentials, code, redirectURI, codeVerifier)
+	require.NoError(t, err)
+
+	jwksURI := "http://client.example/jwks.json"
+	provider.fositeStorage.clientResolver = &mockClientResolver{resolveFunc: func(_ context.Context, resolvedID id.ClientID) (*ports.ClientResolution, error) {
+		if string(resolvedID) != clientID {
+			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "not found"}
+		}
+		return ports.NewClientResolution(agent, &ports.CIMDMetadataDTO{
+			ClientID:     clientID,
+			AuthMethod:   "none",
+			RedirectURIs: []string{"https://client.example/callback"},
+			GrantTypes:   []string{"authorization_code", "refresh_token"},
+			SigningAlg:   "RS256",
+			JWKSURI:      jwksURI,
+		}), nil
+	}}
+
+	_, err = provider.HandleRefreshToken(context.Background(), clientID, credentials, issued.RefreshToken, "")
+	assert.ErrorIs(t, err, ErrInvalidClient)
+	assert.Equal(t, 1, verifier.calls, "insecure key sources must be rejected before assertion verification")
+
+	jwksURI = "https://client.example/jwks.json"
+	refreshed, err := provider.HandleRefreshToken(context.Background(), clientID, credentials, issued.RefreshToken, "")
+	require.NoError(t, err, "rejecting an insecure key source must not consume the refresh token")
+	assert.NotEmpty(t, refreshed.RefreshToken)
 }
 
 func TestProvider_UnknownRefreshSignatureDoesNotRevealSessionExistence(t *testing.T) {

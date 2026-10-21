@@ -154,15 +154,6 @@ func NewLocalGrantStrategy(minting ports.TokenMintingStrategy, logger *slog.Logg
 // HandleTokenGrant dispatches client_credentials, authorization_code, and refresh_token grants to the local minting strategy.
 func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, grantType string, formData url.Values, resolution *ports.TokenGrantResolution) {
 	isCIMDClient := resolution != nil && resolution.ClientType == storage.CIMDClient
-	if isCIMDClient && (grantType == "authorization_code" || grantType == "refresh_token") {
-		hasAssertionType := formData.Has("client_assertion_type")
-		hasAssertion := formData.Has("client_assertion")
-		if hasAssertionType != hasAssertion || (hasAssertion && formData.Has("client_secret")) ||
-			(hasAssertion && r.Header.Get("Authorization") != "") {
-			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "client authentication parameters are invalid")
-			return
-		}
-	}
 
 	switch grantType {
 	case "client_credentials":
@@ -197,9 +188,6 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 
 	case "authorization_code":
 		rawClientID := formData.Get("client_id")
-		clientSecret := formData.Get("client_secret")
-		clientAssertionType := formData.Get("client_assertion_type")
-		clientAssertion := formData.Get("client_assertion")
 		code := formData.Get("code")
 		redirectURI := formData.Get("redirect_uri")
 		codeVerifier := formData.Get("code_verifier")
@@ -213,7 +201,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		resp, err := s.minting.HandleAuthorizationCodeExchange(r.Context(), id.ClientID(rawClientID), ports.ClientCredentials{Secret: clientSecret, AssertionType: clientAssertionType, Assertion: clientAssertion}, code, redirectURI, codeVerifier)
+		resp, err := s.minting.HandleAuthorizationCodeExchange(r.Context(), id.ClientID(rawClientID), clientCredentialsFromRequest(r, formData), code, redirectURI, codeVerifier)
 		if err != nil {
 			if s.logger != nil {
 				if isCIMDClient {
@@ -238,9 +226,6 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 
 	case "refresh_token":
 		rawClientID := formData.Get("client_id")
-		clientSecret := formData.Get("client_secret")
-		clientAssertionType := formData.Get("client_assertion_type")
-		clientAssertion := formData.Get("client_assertion")
 		refreshToken := formData.Get("refresh_token")
 		scope := formData.Get("scope")
 
@@ -253,7 +238,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		resp, err := s.minting.HandleRefreshToken(r.Context(), id.ClientID(rawClientID), ports.ClientCredentials{Secret: clientSecret, AssertionType: clientAssertionType, Assertion: clientAssertion}, refreshToken, scope)
+		resp, err := s.minting.HandleRefreshToken(r.Context(), id.ClientID(rawClientID), clientCredentialsFromRequest(r, formData), refreshToken, scope)
 		if err != nil {
 			if s.logger != nil {
 				if isCIMDClient {
@@ -280,6 +265,18 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 	default:
 		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "unsupported_grant_type",
 			"grant_type must be 'client_credentials', 'authorization_code', or 'refresh_token'")
+	}
+}
+
+func clientCredentialsFromRequest(r *http.Request, formData url.Values) ports.ClientCredentials {
+	return ports.ClientCredentials{
+		Secret:                 formData.Get("client_secret"),
+		AssertionType:          formData.Get("client_assertion_type"),
+		Assertion:              formData.Get("client_assertion"),
+		HasClientSecret:        formData.Has("client_secret"),
+		HasAssertionType:       formData.Has("client_assertion_type"),
+		HasAssertion:           formData.Has("client_assertion"),
+		HasAuthorizationHeader: r.Header.Get("Authorization") != "",
 	}
 }
 

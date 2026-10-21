@@ -41,26 +41,26 @@ type signingKeyAdapter interface {
 // Adapters implement repository interfaces (UserRepository, etc.)
 // This struct is returned by NewAdapter factory function.
 type Adapter struct {
-	lifecycle             lifecycleAdapter
-	users                 ports.UserRepository
-	agents                ports.AgentRepository
-	providers             ports.ThirdpartyOAuth2ProviderRepository
-	discoveryStatusWriter ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter
-	userGrants            ports.UserGrantRepository
-	userSessions          ports.UserSessionRepository
-	sessionRefresh        ports.UserSessionRefreshRepository
-	sessionExpiry         ports.UserSessionExpiryRepository
-	toolApprovals         ports.ToolApprovalRepository
-	toolApprovalQueries   ports.ToolApprovalQueryRepository
-	toolApprovalMetrics   ports.ToolApprovalMetricsRepository
-	approvalSyncState     ports.ApprovalSyncStateRepository
-	permissionSets        ports.PermissionSetRepository
-	brokerCredentials     ports.ClientCredentialRepository
-	signingKeys           signingKeyAdapter
-	refreshTokenSessions  ports.RefreshTokenSessionRepository
-	transactions          ports.StorageTransactionManager
-	authorizationCodes    ports.AuthorizationCodeRepository
-	pkceSessions          ports.PKCESessionRepository
+	lifecycle              lifecycleAdapter
+	users                  ports.UserRepository
+	agents                 ports.AgentRepository
+	providers              ports.ThirdpartyOAuth2ProviderRepository
+	discoveryStatusWriter  ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter
+	userGrants             ports.UserGrantRepository
+	userSessions           ports.UserSessionRepository
+	sessionRefresh         ports.UserSessionRefreshRepository
+	sessionExpiry          ports.UserSessionExpiryRepository
+	toolApprovals          ports.ToolApprovalRepository
+	toolApprovalQueries    ports.ToolApprovalQueryRepository
+	toolApprovalMetrics    ports.ToolApprovalMetricsRepository
+	approvalSyncState      ports.ApprovalSyncStateRepository
+	permissionSets         ports.PermissionSetRepository
+	brokerCredentials      ports.ClientCredentialRepository
+	signingKeys            signingKeyAdapter
+	refreshTokenSessions   ports.RefreshTokenSessionRepository
+	transactions           ports.StorageTransactionManager
+	authorizationCodes     ports.AuthorizationCodeRepository
+	pkceSessions           ports.PKCESessionRepository
 	clientAssertionReplays ports.ClientAssertionReplayRepository
 }
 
@@ -100,26 +100,26 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	sessions := memory.NewInMemoryUserSessionRepository()
 	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
 	return &Adapter{
-		lifecycle:             memAdapter,
-		users:                 memAdapter,
-		agents:                agentRepo,
-		providers:             providerRepo,
-		discoveryStatusWriter: providerRepo,
-		userGrants:            userGrants,
-		userSessions:          sessions,
-		sessionRefresh:        sessions,
-		sessionExpiry:         sessions,
-		toolApprovals:         toolApprovalRepo,
-		toolApprovalQueries:   toolApprovalRepo,
-		toolApprovalMetrics:   toolApprovalRepo,
-		approvalSyncState:     memory.NewApprovalSyncStateRepository(),
-		permissionSets:        permissionSets,
-		brokerCredentials:     memory.NewClientCredentialStore(),
-		signingKeys:           signingKeys,
-		authorizationCodes:    memory.NewAuthorizationCodeStore(),
-		refreshTokenSessions:  memory.NewRefreshTokenSessionStore(),
-		transactions:          noOpStorageTransactionManager{},
-		pkceSessions:          memory.NewPKCESessionStore(),
+		lifecycle:              memAdapter,
+		users:                  memAdapter,
+		agents:                 agentRepo,
+		providers:              providerRepo,
+		discoveryStatusWriter:  providerRepo,
+		userGrants:             userGrants,
+		userSessions:           sessions,
+		sessionRefresh:         sessions,
+		sessionExpiry:          sessions,
+		toolApprovals:          toolApprovalRepo,
+		toolApprovalQueries:    toolApprovalRepo,
+		toolApprovalMetrics:    toolApprovalRepo,
+		approvalSyncState:      memory.NewApprovalSyncStateRepository(),
+		permissionSets:         permissionSets,
+		brokerCredentials:      memory.NewClientCredentialStore(),
+		signingKeys:            signingKeys,
+		authorizationCodes:     memory.NewAuthorizationCodeStore(),
+		refreshTokenSessions:   memory.NewRefreshTokenSessionStore(),
+		transactions:           noOpStorageTransactionManager{},
+		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
 	}, nil
 }
@@ -140,26 +140,26 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	providerRepo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter)
 
 	return &Adapter{
-		lifecycle:             pgAdapter,
-		users:                 pgAdapter,
-		agents:                postgres.NewAgentRepository(pgAdapter),
-		providers:             providerRepo,
-		discoveryStatusWriter: providerRepo,
-		userGrants:            postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:          sessions,
-		sessionRefresh:        sessions,
-		sessionExpiry:         sessions,
-		toolApprovals:         toolApprovalRepo,
-		toolApprovalQueries:   toolApprovalRepo,
-		toolApprovalMetrics:   toolApprovalRepo,
-		approvalSyncState:     postgres.NewApprovalSyncStateRepository(pgAdapter),
-		permissionSets:        postgres.NewPermissionSetRepository(pgAdapter),
-		brokerCredentials:     postgres.NewClientCredentialRepo(pgAdapter),
-		signingKeys:           signingKeys,
-		authorizationCodes:    postgres.NewAuthorizationCodeRepo(pgAdapter),
-		refreshTokenSessions:  postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		transactions:          pgAdapter,
-		pkceSessions:          postgres.NewPKCESessionRepo(pgAdapter),
+		lifecycle:              pgAdapter,
+		users:                  pgAdapter,
+		agents:                 postgres.NewAgentRepository(pgAdapter),
+		providers:              providerRepo,
+		discoveryStatusWriter:  providerRepo,
+		userGrants:             postgres.NewUserGrantRepository(pgAdapter),
+		userSessions:           sessions,
+		sessionRefresh:         sessions,
+		sessionExpiry:          sessions,
+		toolApprovals:          toolApprovalRepo,
+		toolApprovalQueries:    toolApprovalRepo,
+		toolApprovalMetrics:    toolApprovalRepo,
+		approvalSyncState:      postgres.NewApprovalSyncStateRepository(pgAdapter),
+		permissionSets:         postgres.NewPermissionSetRepository(pgAdapter),
+		brokerCredentials:      postgres.NewClientCredentialRepo(pgAdapter),
+		signingKeys:            signingKeys,
+		authorizationCodes:     postgres.NewAuthorizationCodeRepo(pgAdapter),
+		refreshTokenSessions:   postgres.NewRefreshTokenSessionRepo(pgAdapter),
+		transactions:           pgAdapter,
+		pkceSessions:           postgres.NewPKCESessionRepo(pgAdapter),
 		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
 	}, nil
 }

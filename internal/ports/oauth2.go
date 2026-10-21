@@ -175,9 +175,13 @@ type MetadataResponse struct {
 // Grants are processed locally by the oauth2server.Provider.
 // In proxy mode, grants are handled at the HTTP layer by proxyTokenGrantStrategy.
 type ClientCredentials struct {
-	Secret        string
-	AssertionType string
-	Assertion     string
+	Secret                 string
+	AssertionType          string
+	Assertion              string
+	HasClientSecret        bool
+	HasAssertionType       bool
+	HasAssertion           bool
+	HasAuthorizationHeader bool
 }
 
 type TokenMintingStrategy interface {

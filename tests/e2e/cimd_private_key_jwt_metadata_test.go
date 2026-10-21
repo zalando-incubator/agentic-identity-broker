@@ -51,7 +51,7 @@ func fetchCIMDPrivateKeyJWTMetadata(config *ports.Config) (map[string]any, error
 
 var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 	// Scenario US5-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("advertises private_key_jwt and supported algorithms in local and hybrid modes with CIMD", func() {
+	It("should advertise private_key_jwt and algorithms in local and hybrid modes", func() {
 		upstream := helpers.NewMockUpstreamOAuth2Server()
 		defer upstream.Close()
 		for _, config := range []*ports.Config{
@@ -70,7 +70,7 @@ var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 	})
 
 	// Scenario US5-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("does not advertise private_key_jwt when CIMD is disabled or in proxy mode", func() {
+	It("should not advertise private_key_jwt when CIMD is disabled or proxied", func() {
 		upstream := helpers.NewMockUpstreamOAuth2Server()
 		defer upstream.Close()
 		for _, config := range []*ports.Config{
@@ -86,7 +86,7 @@ var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 	})
 
 	// Scenario US5-S3 from specs/051-private-key-jwt-auth/spec.md
-	It("advertises only client authentication methods and algorithms the broker accepts", func() {
+	It("should advertise only authentication methods and algorithms it accepts", func() {
 		metadata, err := fetchCIMDPrivateKeyJWTMetadata(fixtures.OAuth2ConfigWithCIMD(""))
 		Expect(err).To(Succeed())
 		methods, ok := metadata["token_endpoint_auth_methods_supported"].([]any)

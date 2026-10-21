@@ -409,7 +409,10 @@ func (p *Provider) HandleRefreshToken(
 		return nil, fosite.ErrServerError.WithDebugf("client lookup failed: %v", err)
 	}
 	if public, ok := fositeClient.(*publicClient); ok {
-		requirePrivateKeyJWT := p.refreshRequiresPrivateKeyJWT(ctx, public, refreshToken)
+		requirePrivateKeyJWT, err := p.refreshRequiresPrivateKeyJWT(ctx, public, refreshToken)
+		if err != nil {
+			return nil, err
+		}
 		if err := p.authenticatePublicClientWithRequirement(ctx, public, creds, requirePrivateKeyJWT); err != nil {
 			return nil, err
 		}
@@ -476,12 +479,20 @@ func (p *Provider) authenticatePublicClient(ctx context.Context, client *publicC
 }
 
 func (p *Provider) authenticatePublicClientWithRequirement(ctx context.Context, client *publicClient, credentials ports.ClientCredentials, requirePrivateKeyJWT bool) error {
+	if client.metadata != nil && invalidCIMDClientCredentials(credentials) {
+		return fosite.ErrInvalidRequest.WithHint("client authentication parameters are invalid")
+	}
 	if requirePrivateKeyJWT {
 		if p.clientAssertions == nil {
 			return fosite.ErrServerError
 		}
 		metadata := client.metadata
 		if metadata != nil && metadata.AuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT) {
+			if metadata.JWKSURI != "" {
+				if err := urivalidation.ValidateCIMDClientURL(metadata.JWKSURI); err != nil {
+					return fosite.ErrInvalidClient
+				}
+			}
 			copy := *metadata
 			copy.AuthMethod = string(model.TokenEndpointAuthMethodPrivateKeyJWT)
 			metadata = &copy
@@ -501,14 +512,29 @@ func (p *Provider) authenticatePublicClientWithRequirement(ctx context.Context, 
 	return nil
 }
 
-func (p *Provider) refreshRequiresPrivateKeyJWT(ctx context.Context, client *publicClient, refreshToken string) bool {
+func invalidCIMDClientCredentials(credentials ports.ClientCredentials) bool {
+	hasAssertionType := credentials.HasAssertionType || credentials.AssertionType != ""
+	hasAssertion := credentials.HasAssertion || credentials.Assertion != ""
+	hasClientSecret := credentials.HasClientSecret || credentials.Secret != ""
+	return hasAssertionType != hasAssertion ||
+		(hasAssertion && hasClientSecret) ||
+		(hasAssertion && credentials.HasAuthorizationHeader)
+}
+
+func (p *Provider) refreshRequiresPrivateKeyJWT(ctx context.Context, client *publicClient, refreshToken string) (bool, error) {
 	required := client.requiresPrivateKeyJWT()
 	signature := p.refreshStrategy.RefreshTokenSignature(ctx, refreshToken)
 	session, err := p.fositeStorage.refreshRepo.FindBySignature(ctx, signature)
-	if err != nil || session.ClientID != id.NewClientID(client.GetID()) {
-		return required
+	if err != nil {
+		if ports.IsNotFoundErr(err) {
+			return required, nil
+		}
+		return false, fosite.ErrServerError.WithDebugf("refresh session lookup failed: %v", err)
 	}
-	return required || session.ClientAuthMethod != nil && *session.ClientAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT)
+	if session.ClientID != id.NewClientID(client.GetID()) {
+		return required, nil
+	}
+	return required || session.ClientAuthMethod != nil && *session.ClientAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT), nil
 }
 
 func containsRedirectURI(list []string, item string) bool {

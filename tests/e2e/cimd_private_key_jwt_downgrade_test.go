@@ -43,7 +43,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("rejects code exchange and refresh without assertions", func() {
+	It("should reject code exchange and refresh without assertions", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -178,7 +178,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	)
 
 	// Scenario US2-S3 from specs/051-private-key-jwt-auth/spec.md
-	It("does not spend a code or refresh token after failed authentication", func() {
+	It("should preserve grants after failed authentication", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -228,7 +228,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S4 from specs/051-private-key-jwt-auth/spec.md
-	It("uses the singular private_key_jwt method despite plural none support", func() {
+	It("should use the singular private_key_jwt method over plural none", func() {
 		Expect(fixture.SetDocument("private_key_jwt", map[string]any{
 			"token_endpoint_auth_methods_supported": []string{"none", "private_key_jwt"},
 		})).To(Succeed())
@@ -241,7 +241,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S5 from specs/051-private-key-jwt-auth/spec.md
-	It("keeps requiring authentication after the client document downgrades", func() {
+	It("should require authentication after the client document downgrades", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -267,7 +267,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S6 from specs/051-private-key-jwt-auth/spec.md
-	It("ignores assertion-supplied key URLs and embedded keys", func() {
+	It("should ignore assertion-supplied key URLs and embedded keys", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read")
 		Expect(err).To(Succeed())
@@ -288,7 +288,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S7 from specs/051-private-key-jwt-auth/spec.md
-	It("rejects assertions from none clients on code exchange and refresh", func() {
+	It("should reject assertions from none clients on both grants", func() {
 		Expect(fixture.SetDocument("none", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -321,7 +321,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S8 from specs/051-private-key-jwt-auth/spec.md
-	It("rejects ambiguous assertion and secret or authorization-header credentials", func() {
+	It("should reject assertions combined with secret or authorization", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -368,7 +368,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S9 from specs/051-private-key-jwt-auth/spec.md
-	It("does not let another client use the owner's authorization code or refresh token", func() {
+	It("should reject another client using the owner's grants", func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		clientB := "https://" + cimdPrivateKeyJWTFakeHost + "/client-b"
 		redirectB := "https://" + cimdPrivateKeyJWTFakeHost + "/callback-b"

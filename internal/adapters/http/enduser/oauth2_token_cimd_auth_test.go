@@ -63,24 +63,28 @@ func runCIMDAuthHandler(form url.Values, authorization string, minting *mockToke
 	return response
 }
 
-func TestCIMDTokenRequestRejectsMalformedAndAmbiguousClientAuthentication(t *testing.T) {
+func TestCIMDTokenRequestPassesCredentialPresenceToProvider(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		assertionType bool
-		assertion     bool
-		clientSecret  bool
-		authorization string
+		name               string
+		assertionType      bool
+		emptyAssertionType bool
+		assertion          bool
+		clientSecret       bool
+		authorization      string
 	}{
 		{name: "assertion type without assertion", assertionType: true},
 		{name: "assertion without type", assertion: true},
 		{name: "assertion combined with secret", assertionType: true, assertion: true, clientSecret: true},
 		{name: "assertion combined with authorization header", assertionType: true, assertion: true, authorization: "Basic dGVzdA=="},
+		{name: "empty assertion type is still present", emptyAssertionType: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			called := false
+			var received ports.ClientCredentials
 			minting := &mockTokenMintingStrategy{
-				authorizationCodeExchangeFn: func(context.Context, id.ClientID, ports.ClientCredentials, string, string, string) (*ports.TokenResponse, error) {
+				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, credentials ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
 					called = true
+					received = credentials
 					return &ports.TokenResponse{AccessToken: "unexpected"}, nil
 				},
 				refreshTokenFn: func(context.Context, id.ClientID, ports.ClientCredentials, string, string) (*ports.TokenResponse, error) {
@@ -89,7 +93,9 @@ func TestCIMDTokenRequestRejectsMalformedAndAmbiguousClientAuthentication(t *tes
 				},
 			}
 			form := cimdAuthTestForm("authorization_code")
-			if test.assertionType {
+			if test.emptyAssertionType {
+				form["client_assertion_type"] = []string{""}
+			} else if test.assertionType {
 				form.Set("client_assertion_type", oauth2server.ClientAssertionTypeJWTBearer)
 			}
 			if test.assertion {
@@ -99,11 +105,12 @@ func TestCIMDTokenRequestRejectsMalformedAndAmbiguousClientAuthentication(t *tes
 				form.Set("client_secret", "unexpected-secret")
 			}
 			response := runCIMDAuthHandler(form, test.authorization, minting)
-			assert.Equal(t, http.StatusBadRequest, response.Code)
-			var body map[string]any
-			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
-			assert.Equal(t, "invalid_request", body["error"])
-			assert.False(t, called, "malformed credentials must be rejected before minting")
+			assert.Equal(t, http.StatusOK, response.Code)
+			assert.True(t, called, "the adapter must pass credential facts to the provider")
+			assert.Equal(t, test.assertionType || test.emptyAssertionType, received.HasAssertionType)
+			assert.Equal(t, test.assertion, received.HasAssertion)
+			assert.Equal(t, test.clientSecret, received.HasClientSecret)
+			assert.Equal(t, test.authorization != "", received.HasAuthorizationHeader)
 		})
 	}
 }
