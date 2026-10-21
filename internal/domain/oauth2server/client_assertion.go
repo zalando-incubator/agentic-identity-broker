@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
-	"math/big"
 	"time"
 
+	clientkeys "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -111,7 +111,7 @@ func (v *ClientAssertionVerifier) Verify(ctx context.Context, document *ports.CI
 			key, found = keySet.LookupKeyID(kid)
 		}
 	}
-	if !found || !clientAssertionKeyMatches(key, algorithm) {
+	if !found || !clientkeys.ClientKeyEligible(key, algorithm.String()) {
 		return nil, v.reject(ctx, document, "signature", "")
 	}
 	if keyAlgorithm, found := key.Algorithm(); found && keyAlgorithm.String() != algorithm.String() {
@@ -211,45 +211,6 @@ func assertionSigningAlgorithm(name string) (jwa.SignatureAlgorithm, bool) {
 		return jwa.ES256(), true
 	default:
 		return jwa.SignatureAlgorithm{}, false
-	}
-}
-
-func clientAssertionKeyMatches(key jwk.Key, algorithm jwa.SignatureAlgorithm) bool {
-	if key == nil {
-		return false
-	}
-	if use, ok := key.KeyUsage(); ok && use != "sig" {
-		return false
-	}
-	if operations, ok := key.KeyOps(); ok {
-		canVerify := false
-		for _, operation := range operations {
-			if operation == jwk.KeyOpVerify {
-				canVerify = true
-				break
-			}
-		}
-		if !canVerify {
-			return false
-		}
-	}
-	switch algorithm.String() {
-	case "RS256":
-		rsaKey, ok := key.(jwk.RSAPublicKey)
-		if !ok {
-			return false
-		}
-		modulus, ok := rsaKey.N()
-		return ok && new(big.Int).SetBytes(modulus).BitLen() >= 2048
-	case "ES256":
-		ecKey, ok := key.(jwk.ECDSAPublicKey)
-		if !ok {
-			return false
-		}
-		curve, ok := ecKey.Crv()
-		return ok && curve == jwa.P256()
-	default:
-		return false
 	}
 }
 

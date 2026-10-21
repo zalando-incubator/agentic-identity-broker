@@ -34,7 +34,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	})
 
 	// Scenario US4-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("refetches an unknown kid and accepts the rotated key", func() {
+	It("should refetch an unknown kid and accept the rotated key", func() {
 		fixture.Close()
 		var err error
 		fixture, err = newCIMDPrivateKeyJWTFixtureWithKeySetSettings(false, time.Nanosecond, 0, 0)
@@ -71,7 +71,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	})
 
 	// Scenario US4-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("rejects a removed key after refreshing the key set", func() {
+	It("should reject a removed key after refreshing the set", func() {
 		fixture.Close()
 		var err error
 		fixture, err = newCIMDPrivateKeyJWTFixtureWithKeySetSettings(false, time.Nanosecond, 0, 0)
@@ -122,7 +122,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	})
 
 	// Scenario US4-S3 from specs/051-private-key-jwt-auth/spec.md
-	It("refuses a jwks_uri that resolves to a blocked address", func() {
+	It("should refuse a jwks_uri that resolves to a blocked address", func() {
 		fixture.Close()
 		fixture = nil
 		var err error
@@ -184,7 +184,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	)
 
 	// Scenario US4-S5 from specs/051-private-key-jwt-auth/spec.md
-	It("never selects weak, non-signature, or unsupported keys", func() {
+	It("should never select weak or unsupported verification keys", func() {
 		weakRSA, err := rsa.GenerateKey(rand.Reader, 1024)
 		Expect(err).To(Succeed())
 		weakJWK, err := json.Marshal(map[string]string{
@@ -227,7 +227,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	})
 
 	// Scenario US4-S6 from specs/051-private-key-jwt-auth/spec.md
-	It("limits repeated unknown-kid fetches", func() {
+	It("should limit repeated unknown-kid fetches", func() {
 		code, verifier, err := fixture.AuthorizeCode("read")
 		Expect(err).To(Succeed())
 		unknownKey, err := helpers.GenerateClientAssertionKey(jwa.RS256(), "unknown-kid")

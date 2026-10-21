@@ -216,7 +216,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S5 from specs/051-private-key-jwt-auth/spec.md
-	It("keeps code exchange and refresh working for CIMD clients declaring none", func() {
+	It("should keep code exchange and refresh working for none clients", func() {
 		code, verifier := authorizeCode("read offline_access")
 
 		tokenResp, err := exchangeCode(code, verifier, "", "")
@@ -241,7 +241,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("exchanges an authorization code with a valid RS256 assertion", func() {
+	It("should exchange an authorization code with RS256", func() {
 		setDocument("private_key_jwt", nil)
 		code, verifier := authorizeCode("read offline_access")
 		assertion, assertionType, err := signAssertion(helpers.ClientAssertionOptions{})
@@ -256,8 +256,30 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 		Expect(body).To(HaveKey("refresh_token"))
 	})
 
+	// Scenario US5-S1 from specs/051-private-key-jwt-auth/spec.md
+	It("should exchange an authorization code with ES256", func() {
+		var err error
+		assertionKey, err = helpers.GenerateClientAssertionKey(jwa.ES256(), "client-key-es256")
+		Expect(err).To(Succeed())
+		jwksDocument, err = assertionKey.JWKSJSON()
+		Expect(err).To(Succeed())
+		setDocument("private_key_jwt", map[string]any{"token_endpoint_auth_signing_alg": "ES256"})
+
+		code, verifier := authorizeCode("read offline_access")
+		assertion, assertionType, err := signAssertion(helpers.ClientAssertionOptions{})
+		Expect(err).To(Succeed())
+		response, err := exchangeCode(code, verifier, assertionType, assertion)
+		Expect(err).To(Succeed())
+		defer func() { _ = response.Body.Close() }()
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
+		var body map[string]any
+		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+		Expect(body).To(HaveKey("access_token"))
+		Expect(body).To(HaveKey("refresh_token"))
+	})
+
 	// Scenario US1-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("refreshes tokens with a fresh assertion and rotates the refresh token", func() {
+	It("should refresh tokens with a fresh assertion and rotate the token", func() {
 		setDocument("private_key_jwt", nil)
 		code, verifier := authorizeCode("read offline_access")
 		assertion, assertionType, err := signAssertion(helpers.ClientAssertionOptions{})
@@ -284,7 +306,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S3 from specs/051-private-key-jwt-auth/spec.md
-	It("accepts a private_key_jwt document during authorization", func() {
+	It("should accept a private_key_jwt document during authorization", func() {
 		setDocument("private_key_jwt", nil)
 		code, verifier := authorizeCode("read")
 		Expect(code).ToNot(BeEmpty())
@@ -292,7 +314,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S4 from specs/051-private-key-jwt-auth/spec.md
-	It("uses the singular authentication method when the plural field lists none", func() {
+	It("should use the singular method when the plural field lists none", func() {
 		setDocument("private_key_jwt", map[string]any{
 			"token_endpoint_auth_methods_supported": []string{"none", "private_key_jwt"},
 		})

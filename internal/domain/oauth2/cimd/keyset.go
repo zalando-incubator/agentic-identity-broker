@@ -19,6 +19,8 @@ import (
 
 var ErrKeySetUnavailable = errors.New("client key set unavailable")
 
+const maxClientKeySetCacheEntries = 1000
+
 type clientKeySetCacheKey struct {
 	clientID string
 	source   string
@@ -80,7 +82,7 @@ func (s *ClientKeySetService) KeysFor(ctx context.Context, document *ports.CIMDM
 	s.mu.Lock()
 	entry := s.cache[key]
 	if entry != nil && now.Sub(entry.fetchedAt) < s.config.KeySetCacheTTL {
-		keys, err := cloneJWKSet(entry.keys)
+		keys, err := eligibleClientKeys(entry.keys, algorithm)
 		s.mu.Unlock()
 		if err != nil {
 			return nil, fmt.Errorf("%w: clone cached key set: %v", ErrKeySetUnavailable, err)
@@ -118,23 +120,20 @@ func (s *ClientKeySetService) KeysFor(ctx context.Context, document *ports.CIMDM
 			s.auditRefresh(document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
 		}
-		eligible, filterErr := eligibleClientKeys(parsed, algorithm)
+		eligible, filterErr := eligibleClientKeys(parsed, "")
 		if filterErr != nil {
 			s.auditRefresh(document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
 		}
 
 		fetchedAt := s.clock()
-		s.mu.Lock()
-		previous := s.cache[key]
-		lastRefetchAt := fetchedAt
-		if previous != nil {
-			lastRefetchAt = previous.lastRefetchAt
+		s.storeCacheEntry(key, eligible, fetchedAt, fetchedAt)
+		currentKeys, filterErr := eligibleClientKeys(eligible, algorithm)
+		if filterErr != nil {
+			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
 		}
-		s.cache[key] = &clientKeySetCacheEntry{keys: eligible, fetchedAt: fetchedAt, lastRefetchAt: lastRefetchAt}
-		s.mu.Unlock()
-		s.auditRefresh(document, eligible.Len(), "success")
-		return cloneJWKSet(eligible)
+		s.auditRefresh(document, currentKeys.Len(), "success")
+		return cloneJWKSet(currentKeys)
 	})
 	if err != nil {
 		return nil, err
@@ -159,6 +158,10 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 
 	cacheKey := clientKeySetCacheKey{clientID: document.ClientID, source: document.JWKSURI}
 	flightKey := cacheKey.clientID + "\x00" + cacheKey.source
+	algorithm := document.SigningAlg
+	if algorithm == "" {
+		algorithm = "RS256"
+	}
 	result, err, _ := s.refresh.Do(flightKey, func() (any, error) {
 		now := s.clock()
 		s.mu.Lock()
@@ -168,7 +171,7 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 			return keys, nil
 		}
 		if now.Sub(entry.lastRefetchAt) < s.config.KeySetMinRefetchInterval {
-			cached, cloneErr := cloneJWKSet(entry.keys)
+			cached, cloneErr := eligibleClientKeys(entry.keys, algorithm)
 			s.mu.Unlock()
 			if cloneErr != nil {
 				return nil, fmt.Errorf("%w: clone cached key set: %v", ErrKeySetUnavailable, cloneErr)
@@ -178,10 +181,6 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 		entry.lastRefetchAt = now
 		s.mu.Unlock()
 
-		algorithm := document.SigningAlg
-		if algorithm == "" {
-			algorithm = "RS256"
-		}
 		fetched, fetchErr := s.fetcher.Fetch(ctx, document.JWKSURI)
 		if fetchErr != nil {
 			s.auditRefresh(document, 0, "unavailable")
@@ -196,18 +195,20 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 			s.auditRefresh(document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
 		}
-		eligible, filterErr := eligibleClientKeys(parsed, algorithm)
+		eligible, filterErr := eligibleClientKeys(parsed, "")
 		if filterErr != nil {
 			s.auditRefresh(document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
 		}
 
 		fetchedAt := s.clock()
-		s.mu.Lock()
-		s.cache[cacheKey] = &clientKeySetCacheEntry{keys: eligible, fetchedAt: fetchedAt, lastRefetchAt: now}
-		s.mu.Unlock()
-		s.auditRefresh(document, eligible.Len(), "success")
-		return cloneJWKSet(eligible)
+		s.storeCacheEntry(cacheKey, eligible, fetchedAt, now)
+		currentKeys, filterErr := eligibleClientKeys(eligible, algorithm)
+		if filterErr != nil {
+			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
+		}
+		s.auditRefresh(document, currentKeys.Len(), "success")
+		return cloneJWKSet(currentKeys)
 	})
 	if err != nil {
 		return nil, err
@@ -240,6 +241,11 @@ func eligibleClientKeys(source jwk.Set, signingAlgorithm string) (jwk.Set, error
 	return filtered, nil
 }
 
+// ClientKeyEligible reports whether a public key meets the verifier's supported key profile.
+func ClientKeyEligible(key jwk.Key, signingAlgorithm string) bool {
+	return clientKeyEligible(key, signingAlgorithm)
+}
+
 func clientKeyEligible(key jwk.Key, signingAlgorithm string) bool {
 	if key == nil || hasPrivateKeyMaterial(key) {
 		return false
@@ -260,21 +266,15 @@ func clientKeyEligible(key jwk.Key, signingAlgorithm string) bool {
 		}
 	}
 
-	switch signingAlgorithm {
-	case "RS256":
-		if key.KeyType() != jwa.RSA() {
-			return false
-		}
+	switch {
+	case (signingAlgorithm == "RS256" || signingAlgorithm == "") && key.KeyType() == jwa.RSA():
 		rsaKey, ok := key.(jwk.RSAPublicKey)
 		if !ok {
 			return false
 		}
 		modulus, ok := rsaKey.N()
 		return ok && new(big.Int).SetBytes(modulus).BitLen() >= 2048
-	case "ES256":
-		if key.KeyType() != jwa.EC() {
-			return false
-		}
+	case (signingAlgorithm == "ES256" || signingAlgorithm == "") && key.KeyType() == jwa.EC():
 		ecKey, ok := key.(jwk.ECDSAPublicKey)
 		if !ok {
 			return false
@@ -284,6 +284,25 @@ func clientKeyEligible(key jwk.Key, signingAlgorithm string) bool {
 	default:
 		return false
 	}
+}
+
+func (s *ClientKeySetService) storeCacheEntry(key clientKeySetCacheKey, keys jwk.Set, fetchedAt, lastRefetchAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if previous := s.cache[key]; previous != nil {
+		lastRefetchAt = previous.lastRefetchAt
+	} else if len(s.cache) >= maxClientKeySetCacheEntries {
+		var oldestKey clientKeySetCacheKey
+		var oldestTime time.Time
+		for candidate, entry := range s.cache {
+			if oldestKey == (clientKeySetCacheKey{}) || entry.fetchedAt.Before(oldestTime) {
+				oldestKey = candidate
+				oldestTime = entry.fetchedAt
+			}
+		}
+		delete(s.cache, oldestKey)
+	}
+	s.cache[key] = &clientKeySetCacheEntry{keys: keys, fetchedAt: fetchedAt, lastRefetchAt: lastRefetchAt}
 }
 
 func hasPrivateKeyMaterial(key jwk.Key) bool {

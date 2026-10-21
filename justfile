@@ -431,13 +431,17 @@ verify-e2e-backend-junit:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p test-results
-    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log,e2e-backend-web-build.log}
+    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log,e2e-backend-web-build.log,e2e-backend-docker-junit.xml,e2e-backend-docker.json,e2e-backend-docker.log}
     just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
     ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" \
         --timeout=20m --poll-progress-after=30s --show-node-events \
         --junit-report=test-results/e2e-backend-junit.xml --json-report=test-results/e2e-backend.json \
         ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log
-    for report in test-results/e2e-backend-junit.xml test-results/e2e-backend.json; do
+    ginkgo run --procs=1 --label-filter="docker" \
+        --timeout=20m --poll-progress-after=30s --show-node-events \
+        --junit-report=test-results/e2e-backend-docker-junit.xml --json-report=test-results/e2e-backend-docker.json \
+        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend-docker.log
+    for report in test-results/e2e-backend-junit.xml test-results/e2e-backend.json test-results/e2e-backend-docker-junit.xml test-results/e2e-backend-docker.json; do
         if [ ! -s "$report" ]; then
             echo "Missing E2E report: $report" >&2
             exit 1

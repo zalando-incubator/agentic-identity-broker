@@ -9,7 +9,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -103,6 +105,54 @@ func TestClientKeySetServiceFetchesAndCachesJWKS(t *testing.T) {
 	_, err = service.KeysFor(context.Background(), doc)
 	require.NoError(t, err)
 	assert.Equal(t, 2, fetcher.calls, "expired key sets must be fetched again")
+}
+
+func TestClientKeySetServiceAppliesCurrentSigningAlgorithmToCachedKeys(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	rsaKey := testPublicRSAKey(t, 2048, "rsa-key")
+	ecKey := testPublicECKey(t, elliptic.P256(), "ec-key")
+	fetcher := &keySetTestFetcher{result: &ports.CIMDFetchResult{Body: testKeySet(t, rsaKey, ecKey)}}
+	service := NewClientKeySetService(fetcher, keySetConfig(), func() time.Time { return now }, slog.Default())
+	doc := &ports.CIMDMetadataDTO{ClientID: "https://client.example/metadata", AuthMethod: "private_key_jwt", SigningAlg: "RS256", JWKSURI: "https://client.example/jwks.json"}
+
+	rsaKeys, err := service.KeysFor(context.Background(), doc)
+	require.NoError(t, err)
+	if _, found := rsaKeys.LookupKeyID("rsa-key"); !found {
+		t.Fatal("RS256 key was not returned")
+	}
+	if _, found := rsaKeys.LookupKeyID("ec-key"); found {
+		t.Fatal("ES256 key was returned for an RS256 document")
+	}
+
+	doc.SigningAlg = "ES256"
+	ecKeys, err := service.KeysFor(context.Background(), doc)
+	require.NoError(t, err)
+	if _, found := ecKeys.LookupKeyID("ec-key"); !found {
+		t.Fatal("cached ES256 key was not selected after the document algorithm changed")
+	}
+	if _, found := ecKeys.LookupKeyID("rsa-key"); found {
+		t.Fatal("cached RSA key was returned for an ES256 document")
+	}
+	assert.Equal(t, 1, fetcher.calls, "algorithm changes must not require another fetch")
+}
+
+func TestClientKeySetServiceBoundsCacheEntries(t *testing.T) {
+	fetcher := &keySetTestFetcher{result: &ports.CIMDFetchResult{Body: testKeySet(t, testPublicRSAKey(t, 2048, "shared-key"))}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	service := NewClientKeySetService(fetcher, keySetConfig(), time.Now, logger)
+
+	for index := range 1001 {
+		doc := &ports.CIMDMetadataDTO{
+			ClientID:   "https://client.example/" + strconv.Itoa(index),
+			AuthMethod: "private_key_jwt",
+			SigningAlg: "RS256",
+			JWKSURI:    "https://keys.example/" + strconv.Itoa(index) + ".json",
+		}
+		_, err := service.KeysFor(context.Background(), doc)
+		require.NoError(t, err)
+	}
+
+	assert.LessOrEqual(t, len(service.cache), 1000)
 }
 
 func TestClientKeySetServiceFiltersIneligibleKeys(t *testing.T) {

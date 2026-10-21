@@ -1,6 +1,6 @@
 # Quickstart: Validating `private_key_jwt` for CIMD Clients
 
-Validation guide for the finished feature. Contracts: [token endpoint](./contracts/token-endpoint.md), [metadata](./contracts/authorization-server-metadata.md). Data shapes: [data-model.md](./data-model.md).
+Validation guide for feature 051. Contracts: [token endpoint](./contracts/token-endpoint.md), [metadata](./contracts/authorization-server-metadata.md). Data shapes: [data-model.md](./data-model.md).
 
 ## Prerequisites
 
@@ -46,6 +46,8 @@ Expected:
 Expected: `200` with access and refresh tokens. Repeat the same request with the same assertion: `401 invalid_client`. Send the exchange without an assertion: `401 invalid_client`, and the original code still works with a valid assertion. Make the test host unreachable and authorise again: `500 server_error` (not `invalid_client`).
 
 6. Confirm the real content type served by ChatGPT's `jwks.json` is `application/json` or `application/jwk-set+json` (Risk R4).
+
+Observed 2026-10-21: `https://chatgpt.com/oauth/jwks.json` returned `Content-Type: application/json; charset=utf-8`.
 
 ## 5. Observability
 

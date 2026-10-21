@@ -304,6 +304,16 @@ func (f *cimdPrivateKeyJWTFixture) AuthorizeCodeFor(clientID, redirectURI string
 		return "", "", fmt.Errorf("consent redirect has no session token")
 	}
 
+	consentDetailPath := fmt.Sprintf("/api/consent/agents/%s?session_token=%s", agentID, url.QueryEscape(sessionToken))
+	consentDetail, err := f.server.AuthenticatedGET(consentDetailPath, principal)
+	if err != nil {
+		return "", "", fmt.Errorf("load CIMD consent context: %w", err)
+	}
+	defer func() { _ = consentDetail.Body.Close() }()
+	if consentDetail.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("load CIMD consent context returned HTTP %d", consentDetail.StatusCode)
+	}
+
 	grantBody, err := json.Marshal(map[string]any{
 		"granted_permission_sets": map[string][]string{
 			fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
