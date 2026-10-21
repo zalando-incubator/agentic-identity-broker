@@ -100,5 +100,8 @@ The implementation label authorizes the reviewed plan, not API changes that
 still require stakeholder confirmation.
 
 Use safe outputs for every GitHub mutation. If work is inapplicable, call `noop`
-with the reason. If it is blocked or cannot finish, publish the actual blocker
-and call `report_incomplete`; never report success for partial work.
+with the reason. If work is blocked or cannot finish an assigned phase, publish
+the actual blocker and call `report_incomplete`; never report success for
+partial work. A `clarify` result with published questions and `status: waiting`
+completes the question-asking phase; do not call `report_incomplete` for that
+handoff.

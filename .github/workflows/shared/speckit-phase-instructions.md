@@ -95,5 +95,7 @@ identity, and current artifact hashes, then writes
 `/tmp/gh-aw/speckit/comment.md`. Publish that file's complete, unchanged content
 with `add_comment` on `context.pr`. Do not create a replacement result or
 compute the machine-readable hashes yourself. Publish this comment even when a
-remediation phase needs no edits. For incomplete work, also call
-`report_incomplete` after reporting the blocker and saving permitted progress.
+remediation phase needs no edits. For `status: waiting`, the published questions
+are the successful clarification handoff; do not call `report_incomplete`.
+For `status: blocked`, also call `report_incomplete` after reporting the blocker
+and saving permitted progress.

@@ -4,7 +4,7 @@ const path = require("node:path");
 
 const phases = ["clarify", "plan", "tasks", "analyze", "remediate", "reanalyze", "implement"];
 const documents = ["spec.md", "plan.md", "tasks.md"];
-const marker = "<!-- speckit-result -->";
+const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
 
 function artifactHashes(files) {
@@ -57,12 +57,19 @@ function actionsBot(user) {
 }
 
 function parseResult(comment) {
-  if (!actionsBot(comment.user) ||
-      !/gh-aw-workflow-id: speckit-(phase|plan|analyze|implement)\b/.test(comment.body || "")) return null;
-  if (comment.body.split(marker).length !== 2) return null;
-  const match = comment.body.match(/<!-- speckit-result -->\s*```json\s*\n([\s\S]*?)\n```/);
-  if (!match) return null;
-  return validateResult(JSON.parse(match[1]));
+  const body = comment.body || "";
+  const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/\d+$/);
+  const sections = body.split(marker);
+  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
+      sections.length > 2) return null;
+  const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement)) -->$/m);
+  if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
+  const blocks = [...sections[sections.length - 1].matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
+  if (blocks.length !== 1) return null;
+  const result = validateResult(JSON.parse(blocks[0][1]));
+  const workflow = ["clarify", "tasks", "remediate"].includes(result.phase) ? "speckit-phase" :
+    result.phase === "reanalyze" ? "speckit-analyze" : `speckit-${result.phase}`;
+  return footer[3] === workflow ? result : null;
 }
 
 function requireResult(result, required, hashes, { clean = false, run } = {}) {
