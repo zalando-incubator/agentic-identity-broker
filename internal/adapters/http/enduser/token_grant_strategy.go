@@ -171,7 +171,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			if s.logger != nil {
 				s.logger.ErrorContext(r.Context(), "client_credentials grant failed", "error", err, "client_id", rawClientID)
 			}
-			s.handleMintingError(w, r.Context(), err, "client_credentials", rawClientID, false)
+			s.handleMintingError(w, r.Context(), err, "client_credentials", false)
 			return
 		}
 
@@ -207,10 +207,10 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 				if isCIMDClient {
 					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed")
 				} else {
-					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed", "error", err, "client_id", rawClientID)
+					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed")
 				}
 			}
-			s.handleMintingError(w, r.Context(), err, "authorization_code", rawClientID, isCIMDClient)
+			s.handleMintingError(w, r.Context(), err, "authorization_code", isCIMDClient)
 			return
 		}
 
@@ -247,7 +247,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 					s.logger.ErrorContext(r.Context(), "refresh_token grant failed", "error", err, "client_id", rawClientID)
 				}
 			}
-			s.handleMintingError(w, r.Context(), err, "refresh_token", rawClientID, isCIMDClient)
+			s.handleMintingError(w, r.Context(), err, "refresh_token", isCIMDClient)
 			return
 		}
 
@@ -280,7 +280,7 @@ func clientCredentialsFromRequest(r *http.Request, formData url.Values) ports.Cl
 	}
 }
 
-func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx context.Context, err error, grantType, clientID string, cimdClient bool) {
+func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx context.Context, err error, grantType string, cimdClient bool) {
 	var errorCode, errorDesc string
 	var statusCode int
 
@@ -306,9 +306,6 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 			"grant_type", grantType,
 			"error_code", errorCode,
 			"error_description", errorDesc,
-		}
-		if !cimdClient {
-			attrs = append(attrs, "client_id", clientID)
 		}
 		if statusCode >= http.StatusInternalServerError {
 			s.logger.ErrorContext(ctx, "TokenRequestFailed", attrs...)

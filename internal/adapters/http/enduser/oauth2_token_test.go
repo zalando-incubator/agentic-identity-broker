@@ -1173,7 +1173,7 @@ func TestHandleMintingError_RFC6749StatusCodes(t *testing.T) {
 			s := &localGrantStrategy{}
 			w := httptest.NewRecorder()
 
-			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", "broker_test", false)
+			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", false)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
@@ -1191,7 +1191,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", "broker_test", false)
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1204,7 +1204,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", "broker_test", false)
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1224,7 +1224,7 @@ func TestHandleMintingError_LogDoesNotLeakErrorChain(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	wrapped := fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_client", "client auth failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient))
-	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", "broker_test", false)
+	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", false)
 
 	logLine := buf.String()
 	assert.NotContains(t, logLine, internalDetail)
@@ -1266,11 +1266,30 @@ func TestLocalGrantStrategy_CIMDAuthorizationCodeFailureDoesNotLogClientURI(t *t
 
 	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
 		"authorization_code", url.Values{
-			"client_id": {"https://agent.example.com/client?marker=untrusted"},
+			"client_id": {clientURI},
 			"code":      {"authorization-code"},
 		}, &ports.TokenGrantResolution{ClientType: storage.CIMDClient})
 
 	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
+}
+
+func TestLocalGrantStrategy_AuthorizationCodeFailureDoesNotLogUserInput(t *testing.T) {
+	const (
+		clientID     = "client-id-user-input-marker"
+		errorMessage = "user-input-error-marker"
+	)
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil, errors.New(errorMessage)), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"authorization_code", url.Values{
+			"client_id": {clientID},
+			"code":      {"authorization-code"},
+		}, &ports.TokenGrantResolution{ClientType: storage.LocalClient})
+
+	logs := fmt.Sprint(*base.records)
+	assert.NotContains(t, logs, clientID)
+	assert.NotContains(t, logs, errorMessage)
 }
 
 func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
