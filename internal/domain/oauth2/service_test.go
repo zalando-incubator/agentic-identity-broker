@@ -926,12 +926,12 @@ func TestService_GenerateMetadata(t *testing.T) {
 		{
 			name: "valid metadata generation",
 			want: &ports.MetadataResponse{
-				Issuer:                                     "https://broker.example.com",
-				AuthorizationEndpoint:                      "https://broker.example.com/oauth2/authorize",
-				TokenEndpoint:                              "https://broker.example.com/oauth2/token",
-				ResponseTypesSupported:                     []string{"code"},
-				GrantTypesSupported:                        []string{"authorization_code", "refresh_token"},
-				TokenEndpointAuthMethodsSupported:          []string{"client_secret_post", "client_secret_basic"},
+				Issuer:                            "https://broker.example.com",
+				AuthorizationEndpoint:             "https://broker.example.com/oauth2/authorize",
+				TokenEndpoint:                     "https://broker.example.com/oauth2/token",
+				ResponseTypesSupported:            []string{"code"},
+				GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
+				TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
 				TokenEndpointAuthSigningAlgValuesSupported: nil,
 			},
 		},
