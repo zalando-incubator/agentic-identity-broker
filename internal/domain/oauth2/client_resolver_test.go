@@ -1,6 +1,7 @@
 package oauth2
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -133,6 +134,24 @@ func TestAgentClientResolver_CIMDFetchFails(t *testing.T) {
 	var clientErr *ports.ClientIDError
 	require.True(t, errors.As(err, &clientErr))
 	assert.Equal(t, "server_error", clientErr.Code)
+}
+
+func TestAgentClientResolver_CIMDUnavailableDoesNotLogClientURI(t *testing.T) {
+	const clientURI = "https://agent.example.com/client?marker=untrusted"
+	agent := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Test Agent"}
+	repo := NewMockAgentRepository()
+	require.NoError(t, repo.Create(context.Background(), agent))
+	repo.RegisterURI(clientURI, agent)
+	var logs bytes.Buffer
+	resolver := NewAgentClientResolverWithCIMD(
+		repo,
+		cimdServiceForTest(t, nil, &ports.CIMDUnavailableError{Cause: errors.New("connection refused")}),
+		slog.New(slog.NewTextHandler(&logs, nil)),
+	)
+
+	_, err := resolver.ResolveClient(context.Background(), id.ClientID(clientURI))
+	require.Error(t, err)
+	assert.NotContains(t, logs.String(), clientURI)
 }
 
 func TestAgentClientResolver_CIMDAvailabilityFailuresReturnServerError(t *testing.T) {

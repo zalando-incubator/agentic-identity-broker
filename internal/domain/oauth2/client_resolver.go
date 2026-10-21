@@ -77,7 +77,7 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 	if err != nil {
 		var unavailable *ports.CIMDUnavailableError
 		if errors.As(err, &unavailable) {
-			r.logger.ErrorContext(ctx, "CIMD document temporarily unavailable", "client_uri", rawURL)
+			r.logger.ErrorContext(ctx, "CIMD document temporarily unavailable")
 			return nil, &ports.ClientIDError{Code: "server_error", Desc: "CIMD document unavailable"}
 		}
 		r.logger.WarnContext(ctx, "CIMD document validation failed", "error", err, "client_uri", rawURL)
