@@ -38,7 +38,7 @@ The source is resolved once at startup, before any discovery or adapter creation
 
 A local key set is used only by the trust anchor that declares it. It is never published at `/oauth2/jwks.json`, never validates subject tokens, and is never shared with another trust anchor. Impersonation entries share an adapter only when every source attribute matches.
 
-ADR 029's self-trust protection applies to every source. In proxy and hybrid modes, a client-assertion anchor with a local source and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only.
+ADR 029's self-trust protection applies to every source. In proxy and hybrid modes, a client-assertion anchor with a local source and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only. In local mode, which has no upstream issuer, any explicit client-assertion key source without `issuer_uri` fails startup.
 
 ### New domain bounded context
 
@@ -87,7 +87,7 @@ These checks run at startup and on every re-read. Retargeting a link after start
 - Every re-read passes the full Local Key Set validation. A valid re-read replaces the whole set atomically. A partially valid document is never applied.
 - A failed re-read keeps the last valid set and marks the adapter degraded.
 - The last valid set is served until `jwks_max_refresh` has elapsed since the last successful read. After that, verification for that trust anchor fails closed until a valid re-read succeeds. This applies the same upper bound as a remote key set, which is never served past its next scheduled refresh.
-- Defaults match ADR 029: 15 minutes and `max(jwks_min_refresh, 1 hour)`. JWT pre-authentication uses its fixed 5 and 15 minutes.
+- For file sources, the default minimum is 15 minutes. If `jwks_max_refresh` is unset or below the minimum, the maximum is `max(3 × jwks_min_refresh, 1 hour)`. An explicit maximum at least as large as the minimum is used as configured. Remote and implicit sources retain ADR 029's `max(jwks_min_refresh, 1 hour)` default. JWT pre-authentication uses fixed 5- and 15-minute bounds.
 - Inline key sets never reload. Changing one requires a restart.
 
 A background read keeps health accurate when no traffic arrives. Filesystem notifications are not used: they add a dependency and are unreliable across Kubernetes link swaps.
@@ -119,6 +119,7 @@ The Helm chart gains a trust directory value and a read-only projected volume th
 - **Resolve links to accept absolute in-directory links**: reintroduces the swap race and adds a second code path for a layout that no supported deployment package produces.
 - **Re-read lazily on `GetKeySet`**: health goes stale without traffic.
 - **Re-read every `jwks_max_refresh`**: the first failed re-read would fail closed immediately, with no degraded window.
+- **ADR 029's remote default for files**: with a minimum of one hour or more, `max(jwks_min_refresh, 1 hour)` equals the minimum. The first failed file re-read then fails closed before a retry.
 - **Change the HTTP status when a file is degraded**: restarts pods during a temporary file problem and turns a degraded state into an outage.
 - **One health component per trust anchor**: more contract surface for little gain. Logs identify the failing trust anchor and path.
 - **Reject local key sets on the admin server**: keeps the original end-user-only scope, but leaves an operator with a locally signing proxy in front of the admin API needing a key-publishing service. The stakeholder chose to support both servers.

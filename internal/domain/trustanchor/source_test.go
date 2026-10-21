@@ -2,6 +2,7 @@ package trustanchor
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -197,9 +198,15 @@ func TestResolveKeySetSourceRefreshBounds(t *testing.T) {
 		{name: "explicit bounds", anchor: AnchorClientAssertion, min: 200 * time.Millisecond, max: 2 * time.Second,
 			want: RefreshBounds{Min: 200 * time.Millisecond, Max: 2 * time.Second, Explicit: true}},
 		{name: "minimum above one hour lifts the default maximum", anchor: AnchorClientAssertion, min: 2 * time.Hour,
-			want: RefreshBounds{Min: 2 * time.Hour, Max: 2 * time.Hour, Explicit: true}},
-		{name: "maximum below minimum is raised as before", anchor: AnchorClientAssertion, min: 30 * time.Minute, max: time.Minute,
-			want: RefreshBounds{Min: 30 * time.Minute, Max: time.Hour, Explicit: true}},
+			want: RefreshBounds{Min: 2 * time.Hour, Max: 6 * time.Hour, Explicit: true}},
+		{name: "a file maximum below the minimum uses the file default", anchor: AnchorClientAssertion, min: 30 * time.Minute, max: time.Minute,
+			want: RefreshBounds{Min: 30 * time.Minute, Max: 90 * time.Minute, Explicit: true}},
+		{name: "minimum of one hour leaves a retry interval", anchor: AnchorClientAssertion, min: time.Hour,
+			want: RefreshBounds{Min: time.Hour, Max: 3 * time.Hour, Explicit: true}},
+		{name: "explicit maximum equal to minimum is honored", anchor: AnchorClientAssertion, min: 30 * time.Second, max: 30 * time.Second,
+			want: RefreshBounds{Min: 30 * time.Second, Max: 30 * time.Second, Explicit: true}},
+		{name: "file default does not overflow", anchor: AnchorClientAssertion, min: time.Duration(math.MaxInt64/3) + 1,
+			want: RefreshBounds{Min: time.Duration(math.MaxInt64/3) + 1, Max: time.Duration(math.MaxInt64), Explicit: true}},
 		{name: "JWT pre-authentication is fixed", anchor: AnchorJWTPreauth,
 			want: RefreshBounds{Min: 5 * time.Minute, Max: 15 * time.Minute}},
 	}
@@ -212,6 +219,20 @@ func TestResolveKeySetSourceRefreshBounds(t *testing.T) {
 			assert.Equal(t, tc.want, source.Refresh)
 			assert.Positive(t, source.Refresh.Min)
 			assert.LessOrEqual(t, source.Refresh.Min, source.Refresh.Max)
+		})
+	}
+
+	for _, tc := range []struct {
+		name  string
+		input SourceInput
+	}{
+		{name: "remote source keeps the ADR 029 default", input: SourceInput{JWKSURI: "https://idp.example.com/keys", MinRefresh: 2 * time.Hour}},
+		{name: "implicit source keeps the ADR 029 default", input: SourceInput{MinRefresh: 2 * time.Hour}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, err := ResolveKeySetSource(clientAssertionAnchor, tc.input)
+			require.NoError(t, err)
+			assert.Equal(t, RefreshBounds{Min: 2 * time.Hour, Max: 2 * time.Hour, Explicit: true}, source.Refresh)
 		})
 	}
 }

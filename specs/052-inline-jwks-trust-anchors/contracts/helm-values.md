@@ -42,7 +42,7 @@ broker:
 | `trustMaterial.directory` non-empty | `security.trust_material_dir: <directory>` in `config.yaml` |
 | `trustMaterial.sources` non-empty | A `trust-material` volume of type `projected` with one `secret` or `configMap` source per entry, mounted read-only at `directory` **without `subPath`** |
 | `sources` non-empty and `directory` empty | Template failure: `broker.security.trustMaterial.directory is required when sources are set` |
-| `clientAssertion.jwks` | `token_exchange.client_assertion.jwks` as a YAML block scalar |
+| `clientAssertion.jwks` | `token_exchange.client_assertion.jwks` as a YAML block scalar with strip chomping (`|-`) |
 | `clientAssertion.jwksFile` | `token_exchange.client_assertion.jwks_file` |
 
 Kubernetes does not update `subPath` mounts. The projected volume keeps the `..data` relative-link
@@ -65,7 +65,4 @@ with the Secret example, the no-`subPath` rule, and the rotation behaviour.
 ## Verification
 
 - `helm lint charts/agentic-identity-broker`
-- `tests/integration/helm_trust_material_test.go`: render with a Secret and a ConfigMap source and assert the
-  projected volume, the read-only mount without `subPath`, and `security.trust_material_dir`.
-- `tests/e2e/`: User Story 2 scenario 5 renders the chart and boots the broker from the rendered
-  configuration ([../quickstart.md](../quickstart.md) Scenario 5).
+- Manual render from quickstart section 5: projected Secret/ConfigMap volume, read-only mount without `subPath`, `security.trust_material_dir`, and `jwks_file`.

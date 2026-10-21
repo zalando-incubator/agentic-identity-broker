@@ -72,14 +72,13 @@ Rules 1–6 are structural. The config validator and the builder both run them.
 
 ## Value object: Refresh Bounds
 
-| Field | Type | Default (client assertion, impersonation) | Default (JWT pre-authentication) |
-|---|---|---|---|
-| `Min` | duration | 15m | 5m, not configurable |
-| `Max` | duration | `max(Min, 1h)` | 15m, not configurable |
-| `Explicit` | bool | True when either bound was set in configuration | Always false |
+| Field | Type | Default (remote or implicit) | Default (file) | Default (JWT pre-authentication) |
+|---|---|---|---|---|
+| `Min` | duration | 15m | 15m | 5m, not configurable |
+| `Max` | duration | `max(Min, 1h)` | `max(3 × Min, 1h)` | 15m, not configurable |
+| `Explicit` | bool | True when either bound was set in configuration | True when either bound was set in configuration | Always false |
 
-Invariant: `0 < Min <= Max`. A `Max` below `Min` is raised to `Min`, as today. Negative values are
-rejected, as today.
+Invariant: `0 < Min <= Max`. An unset `Max` or a `Max` below `Min` uses the source's default. For files, the multiplication saturates at the maximum duration. An explicit `Max` at least as large as `Min` is honored. Negative values are rejected, as today.
 
 For a `file` source, `Min` is the re-read interval, and `Max` is the staleness window since the last
 successful read (research R3).

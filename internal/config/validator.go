@@ -70,6 +70,19 @@ func Validate(cfg *ports.Config) error {
 	if err := validateTokenExchangeConfig(&cfg.TokenExchange, &cfg.Security); err != nil {
 		return err
 	}
+	clientAssertion := &cfg.TokenExchange.ClientAssertion
+	issuerURI := clientAssertion.IssuerURI
+	if issuerURI == "" {
+		issuerURI = cfg.OAuth2AuthServer.Proxy.UpstreamIssuerURI
+	}
+	if err := trustanchor.RequireClientAssertionIssuer(issuerURI,
+		clientAssertion.JWKSURI != "" || clientAssertion.JWKS != "" || clientAssertion.JWKSFile != ""); err != nil {
+		var anchorErr *trustanchor.Error
+		if errors.As(err, &anchorErr) {
+			return formatValidationError(anchorErr.Path, "", anchorErr.Message(), nil)
+		}
+		return err
+	}
 	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
 		return err
 	}

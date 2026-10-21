@@ -31,8 +31,8 @@ The two JWT pre-authentication trust anchors are independent: each has its own s
 
 | Source | `jwks_min_refresh` / `jwks_max_refresh` |
 |---|---|
-| `jwks_uri` or discovery | Unchanged |
-| `jwks_file` | Minimum: re-read interval. Maximum: how long after the last successful read the last valid set may still be served. Defaults: 15m and `max(min, 1h)`. JWT pre-authentication uses fixed 5m and 15m. |
+| `jwks_uri` or discovery | Minimum defaults to 15m. Maximum defaults to `max(jwks_min_refresh, 1h)`. |
+| `jwks_file` | Minimum: re-read interval, default 15m. Maximum: staleness since the last successful read. If unset or below the minimum, the maximum defaults to `max(3 × jwks_min_refresh, 1h)` (saturating at the maximum duration). An explicit maximum at least as large as the minimum is honored. JWT pre-authentication uses fixed 5m and 15m. |
 | `jwks` | Rejected when either bound is set |
 
 ### 1.4 Inline value format
@@ -94,6 +94,7 @@ Builder errors use this format:
 | `conflicting_key_sources` | `only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)` |
 | `refresh_bounds_with_inline` | `jwks_min_refresh and jwks_max_refresh are not allowed with jwks; an inline key set never refreshes` |
 | `verification_disabled_with_key_source` | `verification 'none' and jwks are mutually exclusive` (or `jwks_file`, or the existing `jwks_uri` message) |
+| `missing_issuer` | `a configured client-assertion key source requires an issuer when no proxy upstream issuer is available` |
 | `relative_path` | `jwks_file "<path>" must be an absolute path` |
 | `missing_trust_directory` | `jwks_file requires security.trust_material_dir to be set` |
 | `invalid_trust_directory` | `security.trust_material_dir "<dir>" must be an absolute path to an existing directory other than /` |

@@ -93,22 +93,22 @@ so it never reports degraded health (FR-019). The adapter performs no network I/
 
 Effective bounds per trust anchor:
 
-| Trust anchor | Re-read interval | Staleness window | Source |
+| Trust anchor | Re-read interval | File staleness window | Remote/implicit maximum |
 |---|---|---|---|
-| Client assertion | `jwks_min_refresh`, default 15m | `jwks_max_refresh`, default `max(min, 1h)` | ADR 029 defaults, `builder.go:707-718` |
-| Impersonation trusted issuer | `jwks_min_refresh`, default 15m | `jwks_max_refresh`, default `max(min, 1h)` | `builder.go:1316-1327` |
-| End-user JWT pre-authentication | 5m | 15m | `jwx_authenticator.go:27-31` |
+| Client assertion | `jwks_min_refresh`, default 15m | `jwks_max_refresh`, default `max(3 × min, 1h)` | `max(min, 1h)` by default (ADR 029) |
+| Impersonation trusted issuer | `jwks_min_refresh`, default 15m | `jwks_max_refresh`, default `max(3 × min, 1h)` | `max(min, 1h)` by default (ADR 029) |
+| JWT pre-authentication (both servers) | 5m | 15m | 15m |
 
-The existing rule that raises a maximum below the effective minimum to the minimum still applies.
+For files, an unset maximum or one below the minimum uses the file default. The multiplication saturates at the maximum duration. An explicit maximum at least as large as the minimum is honored. Remote and implicit sources retain their default.
 
 **Rationale**:
 
 - The remote adapter never serves a key set later than its next scheduled refresh after the last
   success. That refresh is at most `jwks_max_refresh` later. Using `jwks_max_refresh` since the last
   successful read as the file staleness window applies the same upper bound (FR-011).
-- Re-reading at the minimum interval gives a degraded-but-serving window of `max - min`, which is
-  45 minutes by default. This matches the spec's state diagram: Current, Degraded, FailedClosed.
-  When an operator sets the minimum equal to the maximum, the window is zero by their choice.
+- At the 15-minute default minimum, the one-hour file maximum gives a 45-minute degraded-but-serving window. This matches the spec's Current, Degraded, FailedClosed states.
+  With a larger minimum, the three-interval file maximum leaves one full interval for a retry after the first failed re-read. A two-interval maximum can expire just before that retry.
+  An operator can set an explicit maximum equal to the minimum. In that case, the first failed re-read fails closed.
 - A background read keeps health accurate when no traffic arrives. A lazy read would report a
   broken file as healthy until the next request.
 - A replacement takes effect within `jwks_min_refresh`, which is inside SC-007's bound of one
@@ -160,7 +160,7 @@ Probe result in this environment (Go 1.27.1, Linux):
 
 **Consequence**: An *absolute* symbolic link is rejected even when its target is inside the trust
 directory. Relative links, which Kubernetes Secret, ConfigMap, and projected volumes use, work
-(User Story 2, scenario 9). This is stricter than a literal reading of the "Symlinked file" edge
+(User Story 2, scenario 8). This is stricter than a literal reading of the "Symlinked file" edge
 case. It fails closed, and it is recorded in ADR 040 and the configuration reference.
 
 **Rationale**:
@@ -257,7 +257,7 @@ depend on an optional, local-mode-only feature.
   `server.enduser.authentication.jwt.jwks`.
 - When a `ConfigError` concerns an inline key set, its `Value` is the fixed placeholder
   `[inline JWK Set redacted]`. A `jwks_file` path, the trust directory, and key identifiers are not
-  secret and may appear (FR-018, User Story 2 scenarios 2, 6–8).
+  secret and may appear (FR-018, User Story 2 scenarios 2, 5–7).
 - Error categories: `conflicting_key_sources`, `not_a_jwk_set`, `empty_key_set`, `too_large`,
   `private_key`, `symmetric_key`, `unapproved_algorithm`, `duplicate_kid`,
   `refresh_bounds_with_inline`, `verification_disabled_with_key_source`,
@@ -410,7 +410,7 @@ render a duplicate top-level `security:` key.
 **Decision**:
 
 - E2E tests generate keys in memory with the existing helpers. File scenarios write files into a
-  per-test `GinkgoT().TempDir()` trust directory. Scenario 9 reproduces the Kubernetes
+  per-test `GinkgoT().TempDir()` trust directory. Scenario 8 reproduces the Kubernetes
   `..data` layout there. No key file is committed.
 - Zero outbound requests (User Story 1 scenario 1, SC-002): point the issuer at an `httptest` server
   that counts every request, and assert the count stays zero after startup and after verification.
@@ -421,11 +421,7 @@ render a duplicate top-level `security:` key.
 - Health: poll `/health` for `components.trust_anchor_key_files` with `Eventually`.
 - Rotation and failure: configure `jwks_min_refresh: 200ms` and `jwks_max_refresh: 2s` so that
   `Eventually` observes re-reads.
-- User Story 2 scenario 5: render the chart with `helm template`, project the referenced Secret key
-  into a temp trust directory with the Kubernetes layout, load the rendered `config.yaml` through
-  the production config loader, and boot the broker. The `e2e-backend` CI job gets
-  `azure/setup-helm`, and `just install-tools` documents Helm as an E2E prerequisite. `Skip()` is
-  forbidden.
+- FR-020 deployment package: CI runs `helm lint`; the quickstart section 5 `helm template` render is checked manually. No automated test renders the chart.
 
 ## R15. Architecture decision record
 

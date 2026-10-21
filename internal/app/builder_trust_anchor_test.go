@@ -258,6 +258,13 @@ func TestBuilderKeySourceErrors(t *testing.T) {
 				IssuerURI: issuer.URL, JWKSFile: filepath.Join(trustDir, "absent", "gw.json"),
 			}),
 			error: `security.trust_material_dir "` + filepath.Join(trustDir, "absent") + `" must be an absolute path to an existing directory other than /`},
+		{name: "a local key source without an issuer fails before the trust directory opens",
+			cfg: func() *ports.Config {
+				cfg := trustAnchorTestConfig(filepath.Join(trustDir, "absent"))
+				cfg.TokenExchange.ClientAssertion.JWKSFile = filepath.Join(trustDir, "absent", "gw.json")
+				return cfg
+			}(),
+			error: "token_exchange.client_assertion.issuer_uri: a configured client-assertion key source requires an issuer when no proxy upstream issuer is available"},
 		{name: "JWT pre-authentication document errors name the server",
 			cfg: func() *ports.Config {
 				cfg := trustAnchorTestConfig("")
@@ -359,6 +366,24 @@ func TestBuilderKeySetFileHealth(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return app.EnduserHealthComponents()["trust_anchor_key_files"] == "healthy"
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestBuilderFailureStopsOpenedFileAdapters(t *testing.T) {
+	issuer, _ := countingIssuer(t)
+	trustDir := newTrustDir(t)
+	path := writeTrustFile(t, trustDir, "gw.json", newTrustAnchorKey(t, "gw-1").set)
+	cfg := withClientAssertion(trustAnchorTestConfig(trustDir), ports.ClientAssertionTrustConfig{
+		IssuerURI: issuer.URL, JWKSFile: path, JWKSMinRefresh: 20 * time.Millisecond, JWKSMaxRefresh: time.Minute,
+	})
+	cfg.OAuth2AuthServer.Impersonation = &ports.ImpersonationConfig{AudiencePrefix: "https://broker.example.com/impersonation"}
+
+	_, logs, err := buildTrustAnchorApp(t, cfg)
+	require.ErrorContains(t, err, "failed to build impersonation service")
+	require.Len(t, logs.records(t, "trust anchor key set loaded"), 1)
+	require.NoError(t, os.WriteFile(path, []byte(`{"keys":[`), 0o644))
+	require.Never(t, func() bool {
+		return len(logs.records(t, "trust anchor key set re-read failed")) > 0
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestBuilderNoTrustDirectoryAccessWithoutKeySetFiles(t *testing.T) {

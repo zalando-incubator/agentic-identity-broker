@@ -615,14 +615,16 @@ broker:
     # Defaults to "token-exchange-broker" if empty.
     expectedAudience: ""
     clientAssertion:
-      # -- External IdP issuer for privileged-gateway client assertions. Required for configured
-      # token exchange in local mode; empty defaults to the proxy upstream issuer in proxy/hybrid mode.
+      # -- External IdP issuer for privileged-gateway client assertions. Required in local mode
+      # with token exchange, approval authentication, or any key source. Empty defaults to the
+      # proxy upstream issuer in proxy/hybrid mode.
       issuerUri: ""
       # -- Explicit client-assertion JWKS endpoint. Empty discovers it from issuerUri.
       jwksUri: ""
       # -- Minimum client-assertion JWKS refresh interval. Empty defaults to 15m.
       jwksMinRefresh: ""
-      # -- Maximum client-assertion JWKS refresh interval. Empty defaults to max(jwksMinRefresh, 1h).
+      # -- Maximum client-assertion JWKS refresh interval. For jwksFile, empty or below-minimum
+      # values default to max(3 × jwksMinRefresh, 1h); remote sources default to max(jwksMinRefresh, 1h).
       jwksMaxRefresh: ""
       # -- Inline JWK Set JSON (public keys only). Mutually exclusive with jwksUri and jwksFile,
       # and with jwksMinRefresh and jwksMaxRefresh. Rendered without discovery or key fetch.

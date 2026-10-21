@@ -345,7 +345,7 @@ var newSigningKeyStartupContext = func(timeout time.Duration) (context.Context, 
 // 2. Create domain services (ConsentService, OAuth2Service, OAuth2SessionService)
 // 3. Create handler instances (AdminHandlers, EnduserHandlers)
 // 4. Return fully-wired App
-func (b *Builder) Build() (*App, error) {
+func (b *Builder) Build() (_ *App, buildErr error) {
 	// Validate required dependencies
 	if b.config == nil {
 		return nil, fmt.Errorf("configuration is required")
@@ -368,6 +368,11 @@ func (b *Builder) Build() (*App, error) {
 		Storage: b.storage,
 		Logger:  b.logger,
 	}
+	defer func() {
+		if buildErr != nil {
+			buildErr = abortBuild(app, buildErr)
+		}
+	}()
 
 	// T029: Initialize telemetry provider
 	// Per ADR-011: OTel provider wired at app layer, no port interface needed.
@@ -565,13 +570,17 @@ func (b *Builder) Build() (*App, error) {
 	// so a misconfigured trust anchor causes no I/O (ADR 040).
 	trustAnchors, err := b.resolveTrustAnchorSources()
 	if err != nil {
-		return nil, abortBuild(app, err)
+		return nil, err
+	}
+	if err := trustanchor.RequireClientAssertionIssuer(clientAssertionIssuerURI,
+		trustAnchors.clientAssertion.source.Kind != trustanchor.SourceImplicit); err != nil {
+		return nil, err
 	}
 	var trustDir *jwks.TrustDirectory
 	if trustAnchors.usesFile {
 		trustDir, err = jwks.OpenTrustDirectory(b.config.Security.TrustMaterialDir)
 		if err != nil {
-			return nil, abortBuild(app, err)
+			return nil, err
 		}
 		app.chainShutdown(func(context.Context) error { return trustDir.Close() })
 	}
@@ -802,7 +811,7 @@ func (b *Builder) Build() (*App, error) {
 		// upstream issuer stays the expected issuer while only the local keys verify assertions.
 		adapter, err := b.localKeySetAdapter(app, trustDir, trustAnchors.clientAssertion)
 		if err != nil {
-			return nil, abortBuild(app, err)
+			return nil, err
 		}
 		clientAssertionJWKS = adapter
 	case clientAssertionConfigUnset:
@@ -880,14 +889,14 @@ func (b *Builder) Build() (*App, error) {
 			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
 		}, b.logger)
 		if err != nil {
-			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
+			return nil, fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err)
 		}
 
 		var keySet ports.JWKSPort
 		if source := trustAnchors.jwt[server.name]; source.local() {
 			keySet, err = b.localKeySetAdapter(app, trustDir, source)
 			if err != nil {
-				return nil, abortBuild(app, err)
+				return nil, err
 			}
 		}
 
@@ -899,7 +908,7 @@ func (b *Builder) Build() (*App, error) {
 			KeySet:       keySet,
 		})
 		if err != nil {
-			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
+			return nil, fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err)
 		}
 
 		*server.authenticator = jwtAuthenticator
@@ -1185,7 +1194,7 @@ func (b *Builder) Build() (*App, error) {
 				}
 				adapter, err := b.localKeySetAdapter(app, trustDir, source)
 				if err != nil {
-					return nil, abortBuild(app, err)
+					return nil, err
 				}
 				localProviders[key] = adapter
 			}

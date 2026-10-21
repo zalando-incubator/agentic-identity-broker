@@ -81,6 +81,39 @@ func TestValidateTokenExchangeKeySources(t *testing.T) {
 	})
 }
 
+func TestValidateClientAssertionIssuerInLocalMode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		local bool
+		trust ports.ClientAssertionTrustConfig
+		fails bool
+	}{
+		{name: "local JWKS URI without issuer", local: true, trust: ports.ClientAssertionTrustConfig{JWKSURI: "https://gateway.example.com/keys"}, fails: true},
+		{name: "local inline keys without issuer", local: true, trust: ports.ClientAssertionTrustConfig{JWKS: trustAnchorTestKeySet}, fails: true},
+		{name: "local file keys without issuer", local: true, trust: ports.ClientAssertionTrustConfig{JWKSFile: testTrustDir + "/gw.json"}, fails: true},
+		{name: "local without an anchor", local: true},
+		{name: "local keys with explicit issuer", local: true, trust: ports.ClientAssertionTrustConfig{IssuerURI: "https://gateway.example.com", JWKS: trustAnchorTestKeySet}},
+		{name: "proxy keys use upstream issuer", trust: ports.ClientAssertionTrustConfig{JWKS: trustAnchorTestKeySet}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			if tc.local {
+				cfg.OAuth2AuthServer.Mode = servermode.Local
+				cfg.OAuth2AuthServer.Proxy = ports.ProxyModeConfig{}
+			}
+			cfg.Security.TrustMaterialDir = testTrustDir
+			cfg.TokenExchange.ClientAssertion = tc.trust
+			err := Validate(cfg)
+			if tc.fails {
+				requireConfigError(t, err, "token_exchange.client_assertion.issuer_uri", "",
+					"a configured client-assertion key source requires an issuer when no proxy upstream issuer is available")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateImpersonationKeySources(t *testing.T) {
 	cfg := validImpersonationConfig()
 	cfg.Rules[0].TrustedIssuers = append(cfg.Rules[0].TrustedIssuers, ports.TrustedTokenIssuerConfig{

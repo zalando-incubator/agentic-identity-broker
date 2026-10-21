@@ -75,11 +75,10 @@ An operator does not embed the JWK Set in the broker configuration. The operator
 2. **Given** a trust anchor that references a file path that does not exist, is not readable, or is not a regular file, **When** the broker starts, **Then** startup fails with an error that names the configuration setting and the path.
 3. **Given** a running broker with a file-based key set, **When** an operator replaces the file's contents with a different valid key set, **Then** the broker verifies with the new key set within the trust anchor's refresh bounds without a restart, and rejects credentials signed only by keys that the replacement removed.
 4. **Given** a running broker with a file-based key set, **When** the file becomes unreadable or its new contents fail validation, **Then** the broker keeps verifying with the last valid key set until the trust anchor's maximum refresh interval has passed since the last successful read (FR-011), reports degraded key-set health, and logs the failure without file contents. **When** a valid file returns, **Then** the broker applies it and reports healthy again.
-5. **Given** the supported deployment package, **When** an operator references an existing cluster secret or configuration object that contains a JWK Set, **Then** the broker receives the key set as a file at the configured path without a custom image.
-6. **Given** a configured trust directory, **When** a trust anchor references a key-set file outside it, **Then** startup fails with an error that names the setting, the path, and the trust directory, and the broker does not read the file. Examples of such files are the broker's configuration file and a platform-provided credential file.
-7. **Given** a configured trust directory, **When** a key-set path inside it leads, through a symbolic link or `..` segments, to a file outside the directory, **Then** startup fails as in scenario 6.
-8. **Given** no configured trust directory, **When** a trust anchor declares a key-set file, **Then** startup fails with an error that names the setting and the missing trust directory.
-9. **Given** a trust directory where a cluster platform has mounted a secret or configuration object through its usual chain of symbolic links inside that directory, **When** a trust anchor references a file in the mount, **Then** startup succeeds.
+5. **Given** a configured trust directory, **When** a trust anchor references a key-set file outside it, **Then** startup fails with an error that names the setting, the path, and the trust directory, and the broker does not read the file. Examples of such files are the broker's configuration file and a platform-provided credential file.
+6. **Given** a configured trust directory, **When** a key-set path inside it leads, through a symbolic link or `..` segments, to a file outside the directory, **Then** startup fails as in scenario 5.
+7. **Given** no configured trust directory, **When** a trust anchor declares a key-set file, **Then** startup fails with an error that names the setting and the missing trust directory.
+8. **Given** a trust directory where a cluster platform has mounted a secret or configuration object through its usual chain of symbolic links inside that directory, **When** a trust anchor references a file in the mount, **Then** startup succeeds.
 
 ---
 
@@ -281,7 +280,7 @@ This is the same response an unknown remote key produces. No token is issued.
 
 **Observable result**: the gateway exchanges tokens with no key-set endpoint in the deployment. `GET https://broker.example.com/oauth2/jwks.json` does not list `agentgateway-2026-10`.
 
-### Journey 2 — An operator rotates a key-set file mounted from a cluster Secret (User Story 2, Scenarios 1, 3, 4, 5, 9)
+### Journey 2 — An operator rotates a key-set file mounted from a cluster Secret (User Story 2, Scenarios 1, 3, 4, 8; FR-020)
 
 **Step 1 — 08:50:00: the operator stores the public key set in a Secret and installs the chart**
 
@@ -365,7 +364,7 @@ At the first re-read after the kubelet projects the restored Secret, 09:25:00 in
 
 **Observable result**: key rotation needs no restart, a bad update is visible as degraded health without interrupting traffic, and the broker never serves keys from a read older than one hour.
 
-### Journey 3 — An operator's mistakes stop startup without leaking keys (User Story 3, Scenarios 1 and 3; User Story 2, Scenarios 6 and 8)
+### Journey 3 — An operator's mistakes stop startup without leaking keys (User Story 3, Scenarios 1 and 3; User Story 2, Scenarios 5 and 7)
 
 **Step 1 — two key sources on one trust anchor**
 
@@ -571,14 +570,14 @@ The same configuration under `server.admin.authentication.jwt` works identically
 - **FR-008**: Errors, logs, audit records, and health output MUST NOT include inline key-set content, file contents, or any part of the key material.
 - **FR-009**: When one trust anchor declares more than one explicit key source, startup MUST fail with an error that names the trust anchor and the conflicting settings.
 - **FR-010**: A key-set file path MUST be absolute. If the path does not exist, cannot be read, or does not resolve to a regular file after the broker follows symbolic links, startup MUST fail with an error that names the setting and the path.
-- **FR-011**: After startup, the broker MUST re-read a key-set file at least once per maximum refresh interval of the trust anchor, and no more often than its minimum refresh interval. The bounds are the trust anchor's configured `jwks_min_refresh`/`jwks_max_refresh` or their existing defaults. JWT pre-authentication uses the default refresh cadence that it applies to its remote key set. Every re-read MUST pass the full validation in FR-007.
+- **FR-011**: After startup, the broker MUST re-read a key-set file at least once per maximum refresh interval of the trust anchor, and no more often than its minimum refresh interval. The file minimum defaults to 15 minutes. If `jwks_max_refresh` is unset or below the minimum, its file default MUST be `max(3 × jwks_min_refresh, 1 hour)`. An explicit maximum at least as large as the minimum MUST be honored. Remote and implicit sources keep their `max(jwks_min_refresh, 1 hour)` default. JWT pre-authentication uses fixed 5- and 15-minute bounds. Every re-read MUST pass the full validation in FR-007.
   - A valid re-read MUST replace the key set completely.
   - A failed re-read MUST keep the last valid key set. A failed re-read is one where the file is unreadable or its contents are invalid. The staleness window is the trust anchor's maximum refresh interval, measured from the last successful read: the broker MUST NOT verify with a key set read longer ago than that. This is the same upper bound that applies to a remotely fetched key set, which is never served past its next scheduled refresh. After the window expires, verification for that trust anchor fails closed until a valid re-read succeeds.
   - The broker MUST NOT apply a partially valid key set.
 - **FR-012**: When a trust anchor declares an inline key set and explicit refresh bounds, startup MUST fail. Refresh bounds remain valid with `jwks_uri`, discovery, and `jwks_file`.
 - **FR-013**: For JWT pre-authentication, disabling signature verification MUST be mutually exclusive with every explicit key source: URI, inline, and file.
 - **FR-014**: ADR 029's self-trust protection MUST apply for every key source. In local and hybrid modes, a client-assertion trust anchor or impersonation client-assertion issuer equal to the broker's own issuer MUST fail startup. The broker MUST never accept broker-minted tokens as client assertions.
-- **FR-015**: In proxy and hybrid modes, a client-assertion trust anchor can declare an inline or file key set and no issuer. In that case, the expected issuer MUST stay the upstream issuer. The trust anchor MUST verify client assertions against its declared keys only. Subject-token validation MUST keep using the upstream issuer's keys.
+- **FR-015**: In proxy and hybrid modes, a client-assertion trust anchor can declare an inline or file key set and no issuer. In that case, the expected issuer MUST stay the upstream issuer. The trust anchor MUST verify client assertions against its declared keys only. Subject-token validation MUST keep using the upstream issuer's keys. In local mode, a client-assertion trust anchor that declares any key source without `issuer_uri` MUST fail startup, naming `token_exchange.client_assertion.issuer_uri`.
 - **FR-016**: The broker MUST use keys from an inline or file source only for the trust anchor that declares them. It MUST NOT publish those keys through its public key-set endpoint. It MUST NOT use them for other trust anchors or for subject-token validation.
 - **FR-017**: When trusted issuers share an issuer identifier but declare different key sources, each trusted issuer MUST verify credentials against only its own declared keys.
 - **FR-018**: At startup, the broker MUST log one entry for each trust anchor that uses an inline or file key set. The entry MUST include the key source kind, the file path when there is one, the number of keys, and their key identifiers. When a re-read changes a file-based key set, the broker MUST log the added and removed key identifiers. When a re-read fails, the broker MUST log the failure. These logs MUST NOT include file contents.
@@ -655,7 +654,7 @@ stateDiagram-v2
 - **`jwks`** (string, optional, no default): An inline JWK Set as JSON text. It is available on the client-assertion trust anchor (`token_exchange.client_assertion`), on each impersonation trusted issuer (`oauth2_authorization_server.impersonation.rules[].trusted_issuers[]`), and on JWT pre-authentication (`server.enduser.authentication.jwt` and `server.admin.authentication.jwt`). It is mutually exclusive with `jwks_uri` and `jwks_file`. The name matches the established OAuth2 convention that pairs an inline `jwks` value with a `jwks_uri` reference. Example environment-variable override: `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`.
 - **`jwks_file`** (string, optional, no default): The absolute path of a file that contains a JWK Set. The file must be inside `security.trust_material_dir`. It is available in the same locations as `jwks`. It is mutually exclusive with `jwks_uri` and `jwks`.
 - **`security.trust_material_dir`** (string, optional, no default): The absolute path of the only directory from which the broker reads key-set files. While it is unset, `jwks_file` is unavailable. It must not be the filesystem root. Environment-variable override: `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR`.
-- **`jwks_min_refresh` / `jwks_max_refresh`** (existing): These remain valid with `jwks_uri` and discovery. With `jwks_file`, they bound how often the broker re-reads the file. Their defaults stay the same: 15 minutes and `max(jwks_min_refresh, 1 hour)`. They are rejected with `jwks`. JWT pre-authentication still has no configurable refresh bounds.
+- **`jwks_min_refresh` / `jwks_max_refresh`** (existing): These remain valid with `jwks_uri` and discovery, which retain a 15-minute minimum and `max(jwks_min_refresh, 1 hour)` maximum by default. With `jwks_file`, they bound file re-reads and staleness. The minimum defaults to 15 minutes. An unset maximum or one below the minimum defaults to `max(3 × jwks_min_refresh, 1 hour)`; an explicit maximum at least as large as the minimum is honored. Both bounds are rejected with `jwks`. JWT pre-authentication still has fixed 5- and 15-minute bounds.
 
 **Example YAML Configuration**:
 

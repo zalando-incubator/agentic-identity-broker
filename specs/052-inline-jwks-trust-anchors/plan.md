@@ -51,7 +51,7 @@ operator-mounted key-set files read-only.
   adapter, and builder.
 - Production-bootstrap Ginkgo E2E tests with in-memory keys and per-test temporary trust
   directories.
-- Self-contained integration tests for Helm rendering and example configuration loading.
+- Self-contained integration tests for example configuration loading. CI `helm lint` and the manual quickstart render cover FR-020.
 
 **Target Platform**: Linux broker container in production. Darwin is a supported development
 platform. `os.Root` behaves the same on both for this use.
@@ -83,7 +83,7 @@ contract.
 - 3 trust-anchor kinds and 7 new configuration keys
 - 1 new domain package and 2 new adapters
 - 1 new `/health` component and 1 new ADR
-- 30 acceptance scenarios plus one SC-003 parity table
+- 29 acceptance scenarios plus one SC-003 parity table
 
 **NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves every design question. Four
 stakeholder decisions are listed under [Stakeholder decisions](#stakeholder-decisions-before-implementation).
@@ -106,7 +106,7 @@ stakeholder decisions are listed under [Stakeholder decisions](#stakeholder-deci
 | OpenAPI documentation | Pass | Update `/health` in `api/enduser/openapi.yaml`. The admin API does not change. |
 | API changes confirmed | **Pending** | The stakeholder must confirm the `trust_anchor_key_files` component before implementation (Principles IV and X). |
 | Database design | Not applicable | No schema change. |
-| E2E acceptance tests | Pass | 30 production-bootstrap Ginkgo `It()` blocks, written before implementation. |
+| E2E acceptance tests | Pass | 29 production-bootstrap Ginkgo `It()` blocks, written before implementation. |
 | E2E mapping | Pass | The Testing Strategy maps every scenario to one `It()`. |
 | E2E red phase | Pass | Every `It()` asserts a concrete status, response body, error substring, log field, or `/health` value. |
 | Frontend Playwright E2E | Not applicable | No React change. |
@@ -222,20 +222,17 @@ examples/config/
 
 ARCHITECTURE.md, AGENTS.md, internal/AGENTS.md, internal/domain/AGENTS.md, internal/adapters/AGENTS.md
 
-.github/workflows/ci.yml                            # setup-helm in e2e-backend (US2-S5)
-
 tests/
 ├── e2e/
 │   ├── helpers/local_jwks.go                       # ES256/RS256 key sets with chosen kids, signing, trust-dir layouts
 │   ├── helpers/counting_server.go                  # httptest server that counts every request
-│   ├── helpers/helm_render.go                      # helm template wrapper for US2-S5
 │   ├── trust_anchor_inline_jwks_test.go            # US1, US3
 │   ├── trust_anchor_key_files_test.go              # US2
 │   ├── impersonation_local_jwks_test.go            # US4
 │   ├── jwt_preauth_local_jwks_test.go              # US5
 │   └── trust_anchor_key_source_parity_test.go      # SC-003 table
 └── integration/
-    ├── helm_chart_test.go                          # Trust-material rendering
+    ├── helm_chart_test.go                          # Pre-existing chart tests; not FR-020 feature coverage
     └── config_test.go                              # New example loads through the broker loader
 ```
 
@@ -333,9 +330,7 @@ read-only projected volume without `subPath`, and extend the schema for the pass
 ### Phase 1: Setup
 
 - Add E2E helpers: local key sets with chosen `kid`, `alg`, and key type; signing; trust-directory
-  writers, including the Kubernetes `..data` layout and atomic swap; a counting `httptest` server;
-  a `helm template` wrapper.
-- Add `azure/setup-helm` to the `e2e-backend` CI job and document Helm as an E2E prerequisite.
+  writers, including the Kubernetes `..data` layout and atomic swap; a counting `httptest` server.
 
 ### Phase 2: Design preconditions
 
@@ -350,7 +345,7 @@ read-only projected volume without `subPath`, and extend the schema for the pass
   component contract and examples, and rebuild the Redoc site.
 - **2d Database design**: none. Record "no schema change".
 - **2e Frontend review**: none. Record "no UI change".
-- **2f E2E acceptance test design**: review the spec journeys. Write the 30 `It()` blocks and the
+- **2f E2E acceptance test design**: review the spec journeys. Write the 29 `It()` blocks and the
   SC-003 parity table. Compile them and confirm a semantic red run.
 
 ### Phase 2.5: Foundational infrastructure
@@ -378,8 +373,8 @@ read-only projected volume without `subPath`, and extend the schema for the pass
 
 Verify against the principles: ADR 040 Accepted and matching the code; OpenAPI and docs updated;
 Helm contract complete; glossary updated; no key material in any error, log, or health output;
-`just check`, `just test`, `just test-integration`, and `just verify` green; all 30 scenarios and
-SC-003 passing.
+`just check`, `just test`, `just test-integration`, and `just verify` green; all 29 scenarios and
+SC-003 passing. CI `helm lint` and the manual quickstart render cover FR-020.
 
 ## Testing Strategy
 
@@ -392,7 +387,7 @@ fresh storage, servers, keys, and trust directory.
 
 - Every scenario `It()` uses `Label("inline-jwks-trust-anchors")`.
 - The SC-003 table uses `Label("inline-jwks-trust-anchors-parity")`.
-- `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly the 30
+- `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly the 29
   scenarios.
 
 **Observation techniques** ([research.md](./research.md) R14):
@@ -419,11 +414,10 @@ fresh storage, servers, keys, and trust directory.
 | US2-S2 | `trust_anchor_key_files_test.go` | Fails startup for a missing path and a directory path, naming the setting and the path. |
 | US2-S3 | `trust_anchor_key_files_test.go` | Applies a replaced file within the refresh bounds and rejects credentials signed only by a removed key. |
 | US2-S4 | `trust_anchor_key_files_test.go` | Keeps verifying after a corrupt re-read, reports `trust_anchor_key_files: degraded`, logs without contents, and recovers. |
-| US2-S5 | `trust_anchor_key_files_test.go` | Renders the chart with a Secret source, projects it, boots from the rendered config, and verifies. |
-| US2-S6 | `trust_anchor_key_files_test.go` | Fails startup for a path outside the trust directory, naming the setting, path, and directory, without opening it. |
-| US2-S7 | `trust_anchor_key_files_test.go` | Fails startup for `..` and symbolic-link escapes from inside the trust directory. |
-| US2-S8 | `trust_anchor_key_files_test.go` | Fails startup for `jwks_file` without `security.trust_material_dir`. |
-| US2-S9 | `trust_anchor_key_files_test.go` | Starts with the Kubernetes `..data` relative-link layout. |
+| US2-S5 | `trust_anchor_key_files_test.go` | Fails startup for a path outside the trust directory, naming the setting, path, and directory, without opening it. |
+| US2-S6 | `trust_anchor_key_files_test.go` | Fails startup for `..` and symbolic-link escapes from inside the trust directory. |
+| US2-S7 | `trust_anchor_key_files_test.go` | Fails startup for `jwks_file` without `security.trust_material_dir`. |
+| US2-S8 | `trust_anchor_key_files_test.go` | Starts with the Kubernetes `..data` relative-link layout. |
 | US3-S1 | `trust_anchor_inline_jwks_test.go` | Fails startup for two sources, naming the trust anchor and both settings. |
 | US3-S2 | `trust_anchor_inline_jwks_test.go` | Fails startup for a non-set document, an empty set, and an oversized set. |
 | US3-S3 | `trust_anchor_inline_jwks_test.go` | Fails startup for private key material, with no key material in the error or logs. |

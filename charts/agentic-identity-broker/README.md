@@ -172,10 +172,10 @@ and unknown environments reject that development-only bypass.
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
 | `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
-| `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required for configured token exchange in local mode; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
+| `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required in local mode when token exchange, approval authentication, or any client-assertion key source is configured; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
-| `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration). For `jwksFile`, empty or below-minimum values default to `max(3 × jwksMinRefresh, 1h)`; remote sources default to `max(jwksMinRefresh, 1h)`. | `""` |
 | `broker.tokenExchange.clientAssertion.jwks` | Inline JWK Set JSON (public keys only) for client assertions. Mutually exclusive with `jwksUri`, `jwksFile`, `jwksMinRefresh`, and `jwksMaxRefresh`. Skips discovery and key fetch. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksFile` | Absolute key-set file path inside `broker.security.trustMaterial.directory`. Mutually exclusive with `jwksUri` and `jwks`. | `""` |
 | `broker.security.trustMaterial.directory` | Absolute path of the trust directory (`security.trust_material_dir`), the only place `jwks_file` key sets are read. Required when `sources` is set. | `""` |
@@ -505,7 +505,7 @@ The chart enforces Kubernetes Pod Security Standards (restricted):
 
 A trust anchor can take its public verification keys from an inline JWK Set (`jwks`) or a key-set file (`jwks_file`) instead of a remote `jwks_uri`. The broker reads key-set files only from `broker.security.trustMaterial.directory`. The chart mounts existing Secrets or ConfigMaps there, so no custom image is needed.
 
-The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and JWT pre-authentication on either server (`broker.server.enduser.authentication.jwt`, `broker.server.admin.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names. The admin server rejects both.
+The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and JWT pre-authentication on either server (`broker.server.enduser.authentication.jwt`, `broker.server.admin.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names.
 
 ```bash
 kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./agentgateway-jwks.json
@@ -537,8 +537,25 @@ broker:
 
 - **Projected volume**: each entry becomes one source of a read-only `projected` volume named `trust-material`, mounted at `directory`. Setting `sources` without `directory` fails `helm template` with `broker.security.trustMaterial.directory is required when sources are set`.
 - **No `subPath`**: the chart never mounts the volume with `subPath`. Kubernetes does not update `subPath` mounts, so a `subPath` mount would never deliver a rotated key set. The projected volume keeps the `..data` relative-link layout that the broker accepts. Absolute symbolic links inside the trust directory are rejected.
-- **Rotation**: when the Secret or ConfigMap changes, the kubelet updates the volume without restarting the pod. The broker re-reads each file every `jwksMinRefresh` (default `15m`; end-user JWT pre-authentication uses a fixed `5m`) and applies a valid set without a restart. A failed re-read keeps the last valid set and reports `components.trust_anchor_key_files` as `degraded` on `GET /health`. After `jwksMaxRefresh` (default `max(jwksMinRefresh, 1h)`; JWT pre-authentication `15m`) without a successful read, the trust anchor fails closed.
+- **Rotation**: when the Secret or ConfigMap changes, the kubelet updates the volume without restarting the pod. The broker re-reads each file every `jwksMinRefresh` (default `15m`; JWT pre-authentication uses a fixed `5m`) and applies a valid set without a restart. A failed re-read keeps the last valid set and reports `components.trust_anchor_key_files` as `degraded` on `GET /health`. If `jwksMaxRefresh` is unset or below `jwksMinRefresh`, a file uses `max(3 × jwksMinRefresh, 1h)`; remote sources use `max(jwksMinRefresh, 1h)`. An explicit maximum at least as large as the minimum applies as configured. JWT pre-authentication uses a fixed `15m` maximum. After the applicable maximum without a successful read, the trust anchor fails closed.
 - **Inline alternative**: `jwks` is rendered as a YAML block scalar and is never refreshed, so `jwksMinRefresh` and `jwksMaxRefresh` are rejected next to it.
+
+A whole-value environment reference keeps the key set in a Secret:
+
+```yaml
+broker:
+  extraEnv:
+    - name: GATEWAY_JWKS
+      valueFrom:
+        secretKeyRef:
+          name: agentgateway-jwks
+          key: jwks.json
+  tokenExchange:
+    clientAssertion:
+      issuerUri: "https://agentgateway.internal.example.com"
+      jwks: "${GATEWAY_JWKS}"
+```
+
 - **One source per trust anchor**: set at most one of `jwksUri`, `jwks`, and `jwksFile`.
 
 See `examples/config/trust-anchor-local-jwks.yaml` for the rendered configuration.

@@ -1202,12 +1202,12 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
-| `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
 | `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
 | `token_exchange.client_assertion.jwks_min_refresh` | duration | `15m` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH` | Minimum interval between client-assertion JWKS refresh attempts. Must be a non-negative Go duration. |
-| `token_exchange.client_assertion.jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH` | Maximum client-assertion JWKS refresh interval. Must be a non-negative Go duration; values below the effective minimum are raised to it. |
+| `token_exchange.client_assertion.jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH` | Maximum client-assertion JWKS refresh interval. Must be a non-negative Go duration. For `jwks_file`, the default is `max(3 × jwks_min_refresh, 1h)` when unset or below the minimum; remote sources use `max(jwks_min_refresh, 1h)`. |
 
 **Example**:
 
@@ -1221,7 +1221,7 @@ token_exchange:
     # jwks_max_refresh: "1h"
 ```
 
-In `local` mode, set `issuer_uri` whenever token exchange or approval authentication is configured. In `proxy` and `hybrid` modes it defaults to the configured proxy upstream issuer when omitted. The configured issuer must be an external IdP; a broker-self issuer is rejected at startup to prevent broker-minted tokens from becoming privileged client assertions.
+In `local` mode, set `issuer_uri` whenever token exchange or approval authentication is configured or whenever `jwks_uri`, `jwks`, or `jwks_file` is set. In `proxy` and `hybrid` modes it defaults to the configured proxy upstream issuer when omitted. The configured issuer must be an external IdP; a broker-self issuer is rejected at startup to prevent broker-minted tokens from becoming privileged client assertions.
 
 ### Trust-Anchor Key Sets
 
@@ -1253,7 +1253,7 @@ The end-user and admin servers' JWT pre-authentication are separate trust anchor
 
 For JWT pre-authentication, `verification: none` is mutually exclusive with every key source (`jwks_uri`, `jwks`, and `jwks_file`).
 
-A local key set is used only by the trust anchor that declares it. The broker never publishes it at `/oauth2/jwks.json` and never uses it to validate subject tokens. Two impersonation trusted issuers that share an `issuer_uri` but declare different key sets each verify against only their own keys. The ADR 029 self-trust check applies to every source. In `proxy` and `hybrid` modes, a client assertion trust anchor with a local key set and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only.
+A local key set is used only by the trust anchor that declares it. The broker never publishes it at `/oauth2/jwks.json` and never uses it to validate subject tokens. Two impersonation trusted issuers that share an `issuer_uri` but declare different key sets each verify against only their own keys. The ADR 029 self-trust check applies to every source. In `proxy` and `hybrid` modes, a client assertion trust anchor with a local key set and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only. In `local` mode, any explicit client-assertion key source requires `issuer_uri`.
 
 ##### Environment overrides
 
@@ -1269,13 +1269,13 @@ A local key set is used only by the trust anchor that declares it. The broker ne
 | Key set source | Behavior |
 |---|---|
 | `jwks_uri` or discovery | Unchanged. |
-| `jwks_file` | `jwks_min_refresh` is how often the broker re-reads the file. `jwks_max_refresh` is how long after the last successful read the broker still serves the last valid key set. Defaults: `15m` and `max(jwks_min_refresh, 1h)`. A maximum below the minimum is raised to the minimum. |
+| `jwks_file` | `jwks_min_refresh` is how often the broker re-reads the file. `jwks_max_refresh` is how long after the last successful read the broker still serves the last valid key set. The minimum defaults to `15m`. When the maximum is unset or below the minimum, it defaults to `max(3 × jwks_min_refresh, 1h)`. An explicit maximum at least as large as the minimum is used as configured. |
 | `jwks` | Rejected when either bound is set (`refresh_bounds_with_inline`). An inline key set never refreshes. Change it by editing the configuration and restarting. |
 
 | Trust anchor | Re-read interval | Staleness window |
 |---|---|---|
-| `token_exchange.client_assertion` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`, default `max(min, 1h)` |
-| Impersonation `trusted_issuers[]` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`, default `max(min, 1h)` |
+| `token_exchange.client_assertion` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`: file default `max(3 × min, 1h)`; remote default `max(min, 1h)` |
+| Impersonation `trusted_issuers[]` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`: file default `max(3 × min, 1h)`; remote default `max(min, 1h)` |
 | `server.enduser.authentication.jwt`, `server.admin.authentication.jwt` | `5m`, fixed | `15m`, fixed |
 
 JWT pre-authentication does not accept refresh settings.
@@ -1525,7 +1525,7 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 | `impersonation.rules[].trusted_issuers[].jwks` | string | — | Inline JWK Set JSON | No | Alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. Rejected with `jwks_min_refresh` or `jwks_max_refresh`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `impersonation.rules[].trusted_issuers[].jwks_file` | string | — | Absolute path inside `security.trust_material_dir` | No | Alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks`. Re-read every `jwks_min_refresh`. |
 | `impersonation.rules[].trusted_issuers[].jwks_min_refresh` | duration | `15m` | Non-negative Go duration | No | Minimum interval between JWKS refresh attempts. |
-| `impersonation.rules[].trusted_issuers[].jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | Non-negative Go duration | No | Maximum JWKS refresh interval; values below the effective minimum are raised to it. |
+| `impersonation.rules[].trusted_issuers[].jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | Non-negative Go duration | No | Maximum JWKS refresh interval. For `jwks_file`, the default is `max(3 × jwks_min_refresh, 1h)` when unset or below the minimum; remote sources use `max(jwks_min_refresh, 1h)`. |
 | `impersonation.rules[].trusted_issuers[].allowed_algorithms` | list | — | Subset of `RS256,RS384,RS512,PS256,PS384,PS512,ES256,ES384,ES512,EdDSA` | Yes (CR-007) | Accepted signing algorithms; `none` and `HS*` are rejected. |
 | `impersonation.rules[].trusted_issuers[].signs_roles` | list | — | Subset of defined signed roles | Yes (CR-008) | Which signed roles this issuer may sign. |
 | `impersonation.rules[].authorization.type` | enum | — | `cel` | Yes (CR-005) | Authorization predicate type; reuses the token-exchange schema. |

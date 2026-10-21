@@ -780,7 +780,9 @@ type TrustedTokenIssuerConfig struct {
 	JWKSFile string `mapstructure:"jwks_file"`
 	// JWKSMinRefresh bounds the minimum JWKS refresh cadence (default 15m).
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
-	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence (default max(min, 1h)).
+	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence. For JWKSFile, unset or
+	// below-minimum values default to max(3 × JWKSMinRefresh, 1h); remote sources
+	// default to max(JWKSMinRefresh, 1h).
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 	// AllowedAlgorithms is a non-empty subset of the broker-approved asymmetric set (CR-007).
 	AllowedAlgorithms []string `mapstructure:"allowed_algorithms"`

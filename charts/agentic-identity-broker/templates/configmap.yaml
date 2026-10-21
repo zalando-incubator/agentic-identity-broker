@@ -209,7 +209,7 @@ data:
         jwks_uri: {{ .clientAssertion.jwksUri | quote }}
         {{- end }}
         {{- if .clientAssertion.jwks }}
-        jwks: |
+        jwks: |-
           {{- .clientAssertion.jwks | trim | nindent 10 }}
         {{- end }}
         {{- if .clientAssertion.jwksFile }}

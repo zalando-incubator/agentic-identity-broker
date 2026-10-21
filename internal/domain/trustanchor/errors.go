@@ -17,6 +17,7 @@ const (
 	CategoryVerificationDisabled    Category = "verification_disabled_with_key_source"
 	CategoryRelativePath            Category = "relative_path"
 	CategoryMissingTrustDirectory   Category = "missing_trust_directory"
+	CategoryMissingIssuer           Category = "missing_issuer"
 	CategoryInvalidTrustDirectory   Category = "invalid_trust_directory"
 	CategoryOutsideTrustDirectory   Category = "outside_trust_directory"
 	CategoryNotFound                Category = "not_found"
@@ -78,6 +79,8 @@ func (e *Error) message() string {
 		return fmt.Sprintf("jwks_file %q must be an absolute path", d[DetailPath])
 	case CategoryMissingTrustDirectory:
 		return "jwks_file requires security.trust_material_dir to be set"
+	case CategoryMissingIssuer:
+		return "a configured client-assertion key source requires an issuer when no proxy upstream issuer is available"
 	case CategoryInvalidTrustDirectory:
 		return fmt.Sprintf("security.trust_material_dir %q must be an absolute path to an existing directory other than /", d[DetailDir])
 	case CategoryOutsideTrustDirectory:

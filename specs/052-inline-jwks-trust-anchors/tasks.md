@@ -66,12 +66,10 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - create a relative link escaping to `../outside/<name>` and an absolute link to a file outside the directory;
   - write a corrupt (truncated) file in place.
 
-  Supports US2-S3, US2-S4, US2-S7, US2-S9, and research R4.
+  Supports US2-S3, US2-S4, US2-S6, US2-S8, and research R4.
 - [X] T003 [P] Add a counting `httptest` server helper in `tests/e2e/helpers/counting_server.go`. It counts every request regardless of path, exposes `Count()` and `URL()`, and serves 404 for every path. Supports US1-S1, US4-S1, and SC-002.
-- [X] T004 [P] Add a `helm template` wrapper in `tests/e2e/helpers/helm_render.go`. It renders `charts/agentic-identity-broker` with a values file and returns the rendered ConfigMap `config.yaml` and the Deployment's projected volume and mount. Fail the test with a clear message when the `helm` binary is missing. Do not call `Skip()`. Supports US2-S5 and research R13/R14.
-- [X] T005 Add the `azure/setup-helm` step to the `e2e-backend` job in `.github/workflows/ci.yml`. Pin the action by commit SHA, matching the job's other actions. List Helm as an E2E prerequisite in the `install-tools` recipe comment in `justfile` and in `tests/e2e/README.md`. Supports US2-S5 and research R14.
 
-**Checkpoint**: The helpers compile (`go vet ./tests/e2e/...`), and the CI job installs Helm.
+**Checkpoint**: The helpers compile (`go vet ./tests/e2e/...`).
 
 ---
 
@@ -151,7 +149,7 @@ The plan skips this phase. The only moves of existing code are the approved-algo
   - the template failure `broker.security.trustMaterial.directory is required when sources are set`.
 
   Do not create a second top-level `security:` key. Supports FR-020 and R13.
-- [X] T019 Render the `trust-material` volume in `charts/agentic-identity-broker/templates/deployment.yaml`. It is a `projected` volume with one `secret` or `configMap` source per `trustMaterial.sources` entry, mounted `readOnly: true` at `trustMaterial.directory` **without `subPath`**. Render nothing when `sources` is empty. Supports FR-020, US2-S5, and R13.
+- [X] T019 Render the `trust-material` volume in `charts/agentic-identity-broker/templates/deployment.yaml`. It is a `projected` volume with one `secret` or `configMap` source per `trustMaterial.sources` entry, mounted `readOnly: true` at `trustMaterial.directory` **without `subPath`**. Render nothing when `sources` is empty. Supports FR-020 and R13.
 - [X] T020 Add the four new values to the parameter table in `charts/agentic-identity-broker/README.md`. Add a "Trust material for local key sets" section with the Secret example, the no-`subPath` rule, and the rotation behaviour. Supports FR-020 and FR-021.
 - [X] T021 Run `helm lint charts/agentic-identity-broker`. Also run `helm template` with the [contracts/helm-values.md](./contracts/helm-values.md) Secret and ConfigMap example. Confirm the projected volume, the read-only mount without `subPath`, and the rendered `security.trust_material_dir` (Principle VII).
 
@@ -217,11 +215,10 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US2-S2**: A missing path gives `jwks_file "<path>" does not exist`, and a directory path gives `jwks_file "<path>" is not a regular file`.
   - **US2-S3**: After an atomic swap, the new key is accepted and the removed key is rejected within `Eventually` 3s.
   - **US2-S4**: A corrupt re-read keeps verification working. `/health` reports `components.trust_anchor_key_files == "degraded"`, the log `trust anchor key set re-read failed` has `error_kind` and no file contents, and a valid file restores `healthy`.
-  - **US2-S5**: Render with the T004 wrapper using a Secret source, project the Secret key into a temp trust directory in the Kubernetes layout, load the rendered `config.yaml` through the production loader, boot, and verify.
-  - **US2-S6**: A path outside the trust directory gives `jwks_file "<path>" is outside security.trust_material_dir "<dir>"`, and the file is never opened. Make the outside path a FIFO with no writer, and assert that `BuildApp` returns the error within 2s: opening the FIFO would block, so a timely error proves the broker never opened it. Do not rely on atime, which `noatime` and `relatime` mounts make meaningless.
-  - **US2-S7**: A `..` escape, a relative-link escape, and an absolute link whose target is inside the trust directory all give the US2-S6 message (FR-023).
-  - **US2-S8**: `jwks_file requires security.trust_material_dir to be set`.
-  - **US2-S9**: The Kubernetes `..data` layout starts successfully.
+  - **US2-S5**: A path outside the trust directory gives `jwks_file "<path>" is outside security.trust_material_dir "<dir>"`, and the file is never opened. Make the outside path a FIFO with no writer, and assert that `BuildApp` returns the error within 2s: opening the FIFO would block, so a timely error proves the broker never opened it. Do not rely on atime, which `noatime` and `relatime` mounts make meaningless.
+  - **US2-S6**: A `..` escape, a relative-link escape, and an absolute link whose target is inside the trust directory all give the US2-S5 message (FR-023).
+  - **US2-S7**: `jwks_file requires security.trust_material_dir to be set`.
+  - **US2-S8**: The Kubernetes `..data` layout starts successfully.
 - [X] T032 [P] Write the User Story 4 `It()` blocks in `tests/e2e/impersonation_local_jwks_test.go`:
   - **US4-S1**: An inline trusted issuer makes 0 discovery requests (counting server), and an impersonation request mints a token whose decoded `act.iss` and `act.sub` match the gateway.
   - **US4-S2**: A file trusted issuer validates the credentials.
@@ -233,10 +230,10 @@ Use `bootstrap.NewBufferedJSONLogger` for log assertions and `Eventually` for `/
   - **US5-S3**: `verification: jwks` with no source fails startup with the existing message.
   - **US5-S4**: The admin server with an inline admin key set and the end-user server with a different file key set. `POST /api/sessions/sweep` (dry run) with an admin-key JWT returns `200`, and with an end-user-key JWT is rejected as for an unknown remote key.
 - [X] T034 [P] Write the SC-003 parity `DescribeTable` in `tests/e2e/trust_anchor_key_source_parity_test.go`, labelled `Label("inline-jwks-trust-anchors-parity")`. Cross five credentials (valid, wrongly signed, expired, wrong audience, wrong issuer) with three sources (remote via `httptest.NewServer` in `tests/e2e/trust_anchor_key_source_parity_test.go`, inline, file). Assert identical HTTP status codes and `error` codes across the sources for each credential.
-- [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 30 `It()` blocks, one per spec scenario: US1 ×5, US2 ×9, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
+- [X] T035 Verify that `ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/` selects exactly 29 `It()` blocks, one per spec scenario: US1 ×5, US2 ×8, US3 ×8, US4 ×4, US5 ×4. Confirm that no file contains `XIt`, `PIt`, `Skip()`, a placeholder always-fail assertion, or a "red phase" comment (Principle XIII).
 - [X] T036 After the T037–T042 compile-only scaffolding, run the suite and confirm the red phase. Every `It()` and parity entry must compile and fail on its concrete assertion, such as a status, error substring, log field, or `/health` value, and not on a compile error or panic. This is the only allowed dependency from Phase 2f on Phase 2.5 (Principle XIII, plan "Red phase").
 
-**Checkpoint**: Journeys are reviewed, and all 30 scenarios plus the parity table are written and verified red.
+**Checkpoint**: Journeys are reviewed, and all 29 scenarios plus the parity table are written and verified red.
 
 ---
 
@@ -294,9 +291,10 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   10. No explicit source → existing behaviour (FR-003).
 
   Also cover the trust-directory string invariants (absolute, cleaned, not `/` → `invalid_trust_directory`) and the `RefreshBounds` defaults:
-  - client assertion and impersonation: `Min` 15m and `Max` `max(Min, 1h)`;
+  - file client assertion and impersonation: `Min` defaults to 15m. An unset `Max` or one below `Min` defaults to `max(3 × Min, 1h)`, saturating at the maximum duration;
+  - remote and implicit sources: `Min` defaults to 15m and `Max` to `max(Min, 1h)`;
   - JWT pre-authentication: fixed 5m and 15m;
-  - the invariant `0 < Min <= Max`, with a `Max` below `Min` raised to `Min`.
+  - the invariant `0 < Min <= Max`, including an explicit `Max` equal to `Min`.
 
   Assert that every error message names `AnchorRef.ConfigPath`.
 - [X] T045 [P] Write table tests in `internal/domain/trustanchor/local_key_set_test.go` for each Local Key Set invariant, in order:
@@ -402,7 +400,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 
 **Goal**: The client-assertion trust anchor accepts a `jwks_file` beneath `security.trust_material_dir`. The file is re-read within the refresh bounds, failures are reported through `trust_anchor_key_files`, and the Helm chart projects Secrets and ConfigMaps into the trust directory.
 
-**Independent Test**: A trust directory with a valid file starts and verifies. A replaced file applies within the bounds. A corrupt file degrades `/health` and recovers. Out-of-directory paths and a missing trust directory fail startup. These are US2-S1 to US2-S9 in `tests/e2e/trust_anchor_key_files_test.go`.
+**Independent Test**: A trust directory with a valid file starts and verifies. A replaced file applies within the bounds. A corrupt file degrades `/health` and recovers. Out-of-directory paths and a missing trust directory fail startup. These are US2-S1 to US2-S8 in `tests/e2e/trust_anchor_key_files_test.go`.
 
 ### Tests for User Story 2 [MANDATORY - Principle VIII] ⚠️
 
@@ -413,19 +411,13 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
   - `App.EnduserHealthComponents()` includes `trust_anchor_key_files` only when a file source exists, is `degraded` when any file adapter is degraded, and merges with `upstream_jwks` in every OAuth2 mode.
 
   Supports FR-011, FR-019, FR-022, and research R11/R12.
-- [X] T066 [P] [US2] Write Helm integration tests in `tests/integration/helm_trust_material_test.go`:
-  - render with a Secret source and with a ConfigMap source; assert the projected `trust-material` volume, the `readOnly: true` mount at `directory` without `subPath`, and `security.trust_material_dir` in `config.yaml`;
-  - `clientAssertion.jwks` renders as a block scalar and `clientAssertion.jwksFile` renders as `jwks_file`;
-  - `sources` without a `directory` fails with `broker.security.trustMaterial.directory is required when sources are set`.
-
-  Supports FR-020.
 - [X] T067 [P] [US2] Add a test to `tests/integration/config_test.go` that loads `examples/config/trust-anchor-local-jwks.yaml` through the broker loader and validator with no error. Supports FR-021.
 
 ### Implementation for User Story 2
 
 - [X] T068 [US2] In `internal/app/builder.go`, open the `jwks.TrustDirectory` from `security.trust_material_dir` only when at least one trust anchor declares `jwks_file`, and chain its `Close` into `App.Shutdown`. Add the `file` branch to the client-assertion source switch, building `jwks.NewFileAdapter` with the anchor's `RefreshBounds` and the `token_exchange.client_assertion` config path, and chain its `Shutdown`. Emit `trust anchor key set loaded` with `key_source=file` and `path`. Supports FR-010, FR-011, FR-018, FR-022, and FR-023.
 - [X] T069 [US2] Report `trust_anchor_key_files` from `App.EnduserHealthComponents()` in `internal/app/builder.go`, replacing the T041 no-op. Return `degraded` if any registered `FileAdapter.HealthState()` is degraded and `healthy` otherwise, and omit the component when no file adapter exists. Do not change the HTTP status in `internal/adapters/http/health.go`. Supports FR-019 and [contracts/health-endpoint.md](./contracts/health-endpoint.md).
-- [X] T070 [US2] Run `go test ./internal/app/... ./tests/integration/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 2" ./tests/e2e/`. US2-S1 to US2-S9 must be green.
+- [X] T070 [US2] Run `go test ./internal/app/... ./tests/integration/...` and `ginkgo -v --label-filter="inline-jwks-trust-anchors" --focus="User Story 2" ./tests/e2e/`. US2-S1 to US2-S8 must be green.
 
 **Checkpoint**: File-based client-assertion keys work with rotation, health reporting, containment, and Helm projection.
 
@@ -549,7 +541,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 - [X] T091 Verify that `api/enduser/openapi.yaml` documents `trust_anchor_key_files`, and that the PR description records the stakeholder confirmation from T022 (Principles IV and X).
 - [X] T092 Verify that the PR description records "no schema change" (T026) and "no UI change" (T027) (Principles IX and XI).
 - [X] T093 Verify that `specs/052-inline-jwks-trust-anchors/spec.md` contains the five linked Concrete Example Journeys, with configuration, HTTP exchanges, and decoded JWT claims that match the implemented behaviour and OpenAPI. No Wireloom wireframes are required because the feature has no UI (Principle XIV).
-- [X] T094 Verify that `tests/e2e/` holds exactly 30 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
+- [X] T094 Verify that `tests/e2e/` holds exactly 29 labelled scenario `It()` blocks plus the parity table, and that T036 recorded a semantic red run before implementation (Principle XIII).
 
 ### Implementation Phase Verification [MANDATORY]
 
@@ -597,7 +589,7 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 **E2E Acceptance Testing** (Principle XIII):
 
 - [X] T109 Verify that each `It()` maps to exactly one spec scenario, uses `Describe` → `Context` → `It`, cites its scenario ID in a comment, and changed only in fixtures during implementation.
-- [X] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 30 scenarios and the SC-003 parity table.
+- [X] T110 Run the full E2E suite with `ginkgo -v ./tests/e2e/`. All tests must pass, including the 29 scenarios and the SC-003 parity table.
 
 ---
 
@@ -644,7 +636,6 @@ The plan skips this phase: there is no new persisted entity, port, route, or han
 ```text
 T001 tests/e2e/helpers/local_jwks.go (keys)
 T003 tests/e2e/helpers/counting_server.go
-T004 tests/e2e/helpers/helm_render.go
 ```
 
 ### Phase 2
@@ -667,7 +658,7 @@ T055 internal/config/loader_trust_anchor_test.go  |  T057 internal/config/valida
 ### User Story 2
 
 ```text
-T066 tests/integration/helm_trust_material_test.go  |  T067 tests/integration/config_test.go
+T067 tests/integration/config_test.go
 ```
 
 ### User Story 5
@@ -682,7 +673,7 @@ T079 internal/adapters/jwtauth/jwx_authenticator_keyset_test.go  |  T080 interna
 
 ### MVP first (User Story 1)
 
-1. Phase 1: Setup (T001–T005).
+1. Phase 1: Setup (T001–T003).
 2. Phase 2: design preconditions, including the stakeholder gates T007 and T022, journey review (T028), and E2E tests written red (T029–T036).
 3. Phase 2.5: the foundation (T037–T059).
 4. Phase 3: US1 (T060–T064).

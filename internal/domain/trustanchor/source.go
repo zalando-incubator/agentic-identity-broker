@@ -1,6 +1,7 @@
 package trustanchor
 
 import (
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,11 +35,12 @@ const (
 	SourceFile     SourceKind = "file"
 )
 
-// Refresh defaults. Client-assertion and impersonation anchors follow ADR 029; JWT
-// pre-authentication keeps the fixed cadence of its remote key-set cache.
+// Remote and implicit sources follow ADR 029. File sources default to
+// max(3 × minimum, 1h); JWT pre-authentication keeps its fixed cadence.
 const (
 	DefaultMinRefresh      = 15 * time.Minute
 	DefaultMaxRefreshFloor = time.Hour
+	fileMaxRefreshMultiple = 3
 	JWTPreauthMinRefresh   = 5 * time.Minute
 	JWTPreauthMaxRefresh   = 15 * time.Minute
 )
@@ -95,7 +97,6 @@ func ResolveKeySetSource(anchor AnchorRef, in SourceInput) (KeySetSource, error)
 		return KeySetSource{}, at(anchor, newError(CategoryVerificationDisabled, DetailSetting, found[0]))
 	}
 
-	refresh := refreshBounds(anchor.Kind, in.MinRefresh, in.MaxRefresh)
 	switch {
 	case in.JWKS != "":
 		return KeySetSource{Kind: SourceInline, Document: []byte(in.JWKS)}, nil
@@ -107,12 +108,20 @@ func ResolveKeySetSource(anchor AnchorRef, in SourceInput) (KeySetSource, error)
 		if err != nil {
 			return KeySetSource{}, at(anchor, err)
 		}
-		return KeySetSource{Kind: SourceFile, Path: path, Refresh: refresh}, nil
+		return KeySetSource{Kind: SourceFile, Path: path, Refresh: refreshBounds(anchor.Kind, SourceFile, in.MinRefresh, in.MaxRefresh)}, nil
 	case in.JWKSURI != "":
-		return KeySetSource{Kind: SourceRemote, URI: in.JWKSURI, Refresh: refresh}, nil
+		return KeySetSource{Kind: SourceRemote, URI: in.JWKSURI, Refresh: refreshBounds(anchor.Kind, SourceRemote, in.MinRefresh, in.MaxRefresh)}, nil
 	default:
-		return KeySetSource{Kind: SourceImplicit, Refresh: refresh}, nil
+		return KeySetSource{Kind: SourceImplicit, Refresh: refreshBounds(anchor.Kind, SourceImplicit, in.MinRefresh, in.MaxRefresh)}, nil
 	}
+}
+
+// RequireClientAssertionIssuer prevents configured keys from being ignored without an upstream issuer.
+func RequireClientAssertionIssuer(effectiveIssuerURI string, hasExplicitKeySource bool) error {
+	if effectiveIssuerURI == "" && hasExplicitKeySource {
+		return At("token_exchange.client_assertion.issuer_uri", newError(CategoryMissingIssuer))
+	}
+	return nil
 }
 
 func resolveFilePath(file, trustDir string) (string, error) {
@@ -147,8 +156,8 @@ func ValidateTrustDirectory(dir string) error {
 	return nil
 }
 
-func refreshBounds(kind AnchorKind, minRefresh, maxRefresh time.Duration) RefreshBounds {
-	if kind == AnchorJWTPreauth {
+func refreshBounds(anchor AnchorKind, source SourceKind, minRefresh, maxRefresh time.Duration) RefreshBounds {
+	if anchor == AnchorJWTPreauth {
 		return RefreshBounds{Min: JWTPreauthMinRefresh, Max: JWTPreauthMaxRefresh}
 	}
 	bounds := RefreshBounds{Min: minRefresh, Max: maxRefresh, Explicit: minRefresh != 0 || maxRefresh != 0}
@@ -156,9 +165,19 @@ func refreshBounds(kind AnchorKind, minRefresh, maxRefresh time.Duration) Refres
 		bounds.Min = DefaultMinRefresh
 	}
 	if bounds.Max == 0 || bounds.Max < bounds.Min {
-		bounds.Max = max(bounds.Min, DefaultMaxRefreshFloor)
+		bounds.Max = defaultMaxRefresh(source, bounds.Min)
 	}
 	return bounds
+}
+
+func defaultMaxRefresh(source SourceKind, minRefresh time.Duration) time.Duration {
+	if source != SourceFile {
+		return max(minRefresh, DefaultMaxRefreshFloor)
+	}
+	if minRefresh > math.MaxInt64/fileMaxRefreshMultiple {
+		return time.Duration(math.MaxInt64)
+	}
+	return max(fileMaxRefreshMultiple*minRefresh, DefaultMaxRefreshFloor)
 }
 
 func at(anchor AnchorRef, err error) error {

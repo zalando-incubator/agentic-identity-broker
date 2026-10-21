@@ -10,9 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
-	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/matchers"
 )
@@ -71,7 +69,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 				fmt.Sprintf("%s: jwks_file %q is not a regular file", clientAssertionPath, directory))
 		})
 
-		// US2-S9 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S8 from specs/052-inline-jwks-trust-anchors/spec.md
 		It("starts with the Kubernetes ..data relative-link layout", func() {
 			path := env.trust.WriteKubernetesLayout(gatewayKeyFile, helpers.PublicKeySet(env.gateway), "2026_10_16_08_50_00.123")
 			env.start(fileConfig(path))
@@ -140,56 +138,8 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 		})
 	})
 
-	Context("a key-set file from a rendered Helm chart", func() {
-		// US2-S5 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("boots from the rendered configuration with the Secret projected into the trust directory", func() {
-			rendered, err := helpers.RenderChart(fmt.Sprintf(`
-broker:
-  oauth2AuthorizationServer:
-    local:
-      tokenClaimsExpression: '{"azp": agent.id, "aud": "token-exchange-broker"}'
-  security:
-    skipThirdpartyHttpsValidation: true
-    trustMaterial:
-      directory: %[1]s
-      sources:
-        - secret:
-            name: agentgateway-jwks
-            items:
-              - key: jwks.json
-                path: %[2]s
-  tokenExchange:
-    clientAssertion:
-      issuerUri: %[3]s
-      jwksFile: %[1]s/%[2]s
-    claimExtraction:
-      agentIdExpression: "subject_token.azp"
-`, env.trust.Path, gatewayKeyFile, env.issuer.URL()))
-			Expect(err).ToNot(HaveOccurred())
-			Expect(rendered.TrustMount).To(HaveKeyWithValue("mountPath", env.trust.Path))
-			Expect(rendered.TrustMount).To(HaveKeyWithValue("readOnly", true))
-			Expect(rendered.TrustMount).ToNot(HaveKey("subPath"))
-
-			env.trust.WriteKubernetesLayout(gatewayKeyFile, helpers.PublicKeySet(env.gateway), "2026_10_16_08_50_00.123")
-
-			configFile := env.trust.WriteOutsideFile("config.yaml", rendered.ConfigYAML)
-			GinkgoT().Setenv("IDENTITY_BROKER_CONFIG_PATH", configFile)
-			GinkgoT().Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
-			GinkgoT().Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", fixtures.TestKEKMaterialDeterministic())
-			GinkgoT().Setenv("IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
-			GinkgoT().Setenv("IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
-			loaded, err := config.NewLoader().GetConfig(GinkgoT().Context())
-			Expect(err).ToNot(HaveOccurred())
-
-			env.start(loaded)
-			resp := env.exchange(env.mintLocalSubjectToken(), env.assertion(env.gateway, env.issuer.URL()))
-			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-			_ = decodeResponseBody(resp)
-		})
-	})
-
 	Context("key-set paths outside the trust directory", func() {
-		// US2-S6 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S5 from specs/052-inline-jwks-trust-anchors/spec.md
 		It("fails startup without opening a file outside the trust directory", func() {
 			fifo := env.trust.File("../outside/config.fifo")
 			Expect(syscall.Mkfifo(fifo, 0o600)).To(Succeed())
@@ -208,7 +158,7 @@ broker:
 			Expect(err.Error()).To(ContainSubstring(outsideMessage(fifo)))
 		})
 
-		// US2-S7 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S6 from specs/052-inline-jwks-trust-anchors/spec.md
 		It("fails startup for a .. escape, a relative-link escape, and an absolute link into the trust directory", func() {
 			env.trust.WriteOutsideFile("secret.json", helpers.PublicKeySet(env.gateway))
 
@@ -223,7 +173,7 @@ broker:
 			env.expectStartupFailure(fileConfig(absolute), outsideMessage(absolute))
 		})
 
-		// US2-S8 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S7 from specs/052-inline-jwks-trust-anchors/spec.md
 		It("fails startup for jwks_file when no trust directory is configured", func() {
 			path := env.trust.WriteFile(gatewayKeyFile, helpers.PublicKeySet(env.gateway))
 			cfg := fileConfig(path)

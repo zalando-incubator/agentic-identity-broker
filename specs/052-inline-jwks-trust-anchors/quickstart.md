@@ -9,8 +9,7 @@ contain implementation code.
 ## Prerequisites
 
 - Go 1.27.1, `just`, and the tools from `just install-tools` (Ginkgo v2.33.0).
-- Helm 3 on `PATH`. User Story 2 scenario 5 renders the chart. The `e2e-backend` CI job installs it
-  with `azure/setup-helm`.
+- Helm 3 on `PATH` only for the manual chart checks in sections 3 and 5.
 - No Docker is needed. E2E tests use in-memory storage, in-memory keys, and per-test temporary
   trust directories.
 
@@ -37,7 +36,7 @@ Expected:
 ginkgo -v --label-filter="inline-jwks-trust-anchors" ./tests/e2e/
 ```
 
-Expected: one passing `It()` per acceptance scenario, 30 in total. The mapping table is in
+Expected: one passing `It()` per acceptance scenario, 29 in total. The mapping table is in
 [plan.md](./plan.md). Each failure message names the scenario through its
 `// USn-Sm from specs/052-inline-jwks-trust-anchors/spec.md` comment.
 
@@ -58,8 +57,8 @@ ginkgo -v --label-filter="!performance" \
 
 ```bash
 just helm-lint
-go test -v -run 'TestHelmTemplate_TrustMaterial' ./tests/integration/
 ```
+Then run the section 5 `helm template` command.
 
 Expected: the rendered Deployment has a read-only `projected` volume at the trust directory without
 `subPath`. The rendered `config.yaml` has `security.trust_material_dir`, and `jwks` or `jwks_file`
@@ -110,7 +109,7 @@ Each configuration must stop startup with the message in
 | `jwks_file` with no `trust_material_dir` | `missing_trust_directory` |
 | `trust_material_dir: /` | `invalid_trust_directory` |
 
-### Scenario D: Kubernetes mount layout (User Story 2, scenario 9)
+### Scenario D: Kubernetes mount layout (User Story 2, scenario 8)
 
 1. In `/tmp/trust`, create `..2026_10_16/jwks.json`, a relative link `..data -> ..2026_10_16`, and a
    relative link `jwks.json -> ..data/jwks.json`.
@@ -118,7 +117,7 @@ Each configuration must stop startup with the message in
 3. Replace the link with `jwks.json -> /tmp/trust/..data/jwks.json` (absolute). Expected: startup
    fails with `outside_trust_directory`. This is the intended `os.Root` behaviour (research R4).
 
-## 5. Deployment package (User Story 2, scenario 5)
+## 5. Deployment package (FR-020, manual)
 
 ```bash
 kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./public-jwks.json
@@ -127,6 +126,7 @@ helm template broker charts/agentic-identity-broker \
   --set 'broker.security.trustMaterial.sources[0].secret.name=agentgateway-jwks' \
   --set 'broker.security.trustMaterial.sources[0].secret.items[0].key=jwks.json' \
   --set 'broker.security.trustMaterial.sources[0].secret.items[0].path=agentgateway-jwks.json' \
+  --set broker.tokenExchange.clientAssertion.issuerUri=https://agentgateway.internal.example.com \
   --set broker.tokenExchange.clientAssertion.jwksFile=/etc/agentic-identity-broker/trust/agentgateway-jwks.json
 ```
 
