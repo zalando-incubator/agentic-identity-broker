@@ -205,7 +205,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			if s.logger != nil {
 				if isCIMDClient {
-					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed", "client_id", rawClientID)
+					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed")
 				} else {
 					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed", "error", err, "client_id", rawClientID)
 				}
@@ -306,7 +306,9 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 			"grant_type", grantType,
 			"error_code", errorCode,
 			"error_description", errorDesc,
-			"client_id", clientID,
+		}
+		if !cimdClient {
+			attrs = append(attrs, "client_id", clientID)
 		}
 		if statusCode >= http.StatusInternalServerError {
 			s.logger.ErrorContext(ctx, "TokenRequestFailed", attrs...)
