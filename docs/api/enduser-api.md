@@ -27,4 +27,4 @@ For refresh, use `grant_type=refresh_token`, `refresh_token`, `client_id`, `clie
 
 Malformed parameter combinations return `400 invalid_request`. Authentication failures return `401 invalid_client` with a stable description. A document or key-set dependency failure returns `server_error`. A failed request does not consume an authorization code or rotate a refresh token.
 
-See the [token endpoint contract](../../specs/051-private-key-jwt-auth/contracts/token-endpoint.md) for the complete assertion profile and response rules.
+See the [token endpoint contract](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/051-private-key-jwt-auth/contracts/token-endpoint.md) for the complete assertion profile and response rules.
