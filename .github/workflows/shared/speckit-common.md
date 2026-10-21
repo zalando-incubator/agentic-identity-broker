@@ -75,7 +75,14 @@ unchanged. Never push with git, call GitHub write APIs, or change workflows,
 skills, hooks, the constitution, or automation scripts.
 
 Read `AGENTS.md`, the constitution, relevant ADRs, and area-specific instructions.
-For PR phases, use `context.feature` from `.specify/feature.json`.
+The agent sandbox does not include ripgrep (`rg`). Use `git grep`, `grep`, or
+`find` for searches; do not invoke `rg`.
+For PR phases, use `context.feature` resolved from PR metadata.
+After checking out `context.head` inside the sandbox, run
+`node /tmp/gh-aw/speckit/automation.cjs select-feature` before invoking a skill.
+This writes the ignored local `.specify/feature.json` required by Spec Kit.
+Never force-add or commit that file. For legacy PRs that already track it,
+restore the tracked file after the skill finishes, before requesting a push.
 Do not select another feature during a PR phase.
 For `specify`, create one new feature for the issue.
 Update `.specify/feature.json` to select that new feature.

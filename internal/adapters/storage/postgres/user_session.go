@@ -124,14 +124,21 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.ID = id.NewSessionID()
 	}
 
+	// The share lock serializes issuer and audience checks with provider updates,
+	// which take the service row's exclusive lock before counting sessions.
 	const insertQuery = `
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
 			encryption_context, initiated_at, created_at, updated_at, callback_id
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+		FROM thirdparty_oauth2_services AS service
+		WHERE service.id = $3
+			AND ((service.resource_url IS NULL AND $15::text = '' AND $16::text = '')
+				OR (service.resource_url IS NOT NULL AND $15::text <> '' AND $16::text <> ''
+					AND service.issuer_uri = $15::text AND service.authorization_params ->> 'resource' = $16::text))
+		FOR SHARE OF service
 		ON CONFLICT (principal, service_id)
 	`
 	query := insertQuery + `DO NOTHING`
@@ -157,20 +164,53 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-		session.CallbackID,
+		session.CallbackID, session.ExpectedIssuerURI, session.ExpectedResource,
 	)
-
 	if err != nil {
 		return nil, r.wrapError(err, "Create")
 	}
-	if !replace {
-		rows, err := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, r.wrapError(err, "Create")
+	}
+	if rows == 0 {
+		operation := "CreateIfAbsent"
+		if replace {
+			operation = "Create"
+		}
+		// INSERT ... SELECT inserts nothing for a missing service, a stale provider
+		// expectation, or (without replace) an existing session.
+		var probe struct {
+			ServiceExists   bool `db:"service_exists"`
+			ProviderMatches bool `db:"provider_matches"`
+		}
+		readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+		err = r.adapter.db.GetContext(readCtx, &probe, `SELECT
+			EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE id = $1) AS service_exists,
+			EXISTS (
+				SELECT 1 FROM thirdparty_oauth2_services
+				WHERE id = $1 AND ((resource_url IS NULL AND $2::text = '' AND $3::text = '')
+					OR (resource_url IS NOT NULL AND $2::text <> '' AND $3::text <> ''
+						AND issuer_uri = $2::text AND authorization_params ->> 'resource' = $3::text))
+			) AS provider_matches`, session.ServiceID, session.ExpectedIssuerURI, session.ExpectedResource)
+		cancel()
 		if err != nil {
-			return nil, r.wrapError(err, "CreateIfAbsent")
+			return nil, r.wrapError(err, operation)
 		}
-		if rows == 0 {
-			return r.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
+		if !probe.ServiceExists {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindNotFound, nil, "service not found")
 		}
+		if replace || !probe.ProviderMatches {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
+		}
+		winner, err := r.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
+		if err != nil {
+			return nil, err
+		}
+		if winner == nil {
+			return nil, storage.NewStorageError("CreateIfAbsent", storage.ErrorKindConflict, nil, "session no longer exists")
+		}
+		return winner, nil
 	}
 	return session, nil
 }

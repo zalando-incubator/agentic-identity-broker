@@ -256,27 +256,10 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Code:      query.Get("code"),
 		State:     query.Get("state"),
 		Error:     query.Get("error"),
-		ErrorDesc: query.Get("error_description"),
-	}
-
-	// T060: Handle OAuth2 error responses
-	if callbackReq.Error != "" {
-		h.logger.Warn("OAuth2 error in callback",
-			"service_id", serviceIDStr,
-			"error", callbackReq.Error,
-			"error_description", callbackReq.ErrorDesc)
-
-		// Redirect to sessions page with error in query
-		redirectURL := "/sessions?error=" + url.QueryEscape(callbackReq.Error)
-		if callbackReq.ErrorDesc != "" {
-			redirectURL += "&error_description=" + url.QueryEscape(callbackReq.ErrorDesc)
-		}
-		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
 	}
 
 	// Validate that code and state are present
-	if callbackReq.Code == "" || callbackReq.State == "" {
+	if callbackReq.Error == "" && (callbackReq.Code == "" || callbackReq.State == "") {
 		h.logger.Warn("missing code or state in callback",
 			"service_id", serviceIDStr,
 			"has_code", callbackReq.Code != "",
@@ -291,6 +274,13 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Process the callback via service
 	result, err := h.service.HandleCallback(ctx, id.Principal(principalValue), callbackReq)
 	if err != nil {
+		var authorizationError *oauth2session.AuthorizationCallbackError
+		if errors.As(err, &authorizationError) {
+			redirectURL := "/sessions?error=" + url.QueryEscape(authorizationError.Code()) +
+				"&error_description=" + url.QueryEscape("Authorization failed - please try again")
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
 		// Check for specific error types
 		if errors.Is(err, oauth2session.ErrPrincipalMismatch) {
 			h.logger.Error("principal mismatch in OAuth2 callback",

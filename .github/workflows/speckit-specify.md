@@ -29,7 +29,6 @@ safe-outputs:
     base-branch: ${{ github.event.repository.default_branch }}
     allowed-files:
       - "specs/**"
-      - ".specify/feature.json"
     protected-files: request-review
     fallback-as-issue: false
     if-no-changes: error
@@ -43,10 +42,17 @@ the issue title, a blank line, and the issue body as its feature-description
 parameter. Do not fetch, read, include, or infer requirements from issue
 comments. Do not follow the command's handoff to clarify in this session.
 
+Unanswered product questions are an expected handoff, not a failed specify run.
+Record them as NEEDS CLARIFICATION, keep the affected checklist items incomplete,
+and publish the draft PR so the separate clarification session can ask them.
+Do not call `report_incomplete` solely because those questions remain.
+Technical failures that prevent producing the specification still block the run.
+
 Set `GIT_BRANCH_NAME` to `context.branch` for the mandatory feature-branch hook.
 Create exactly one new feature for this issue.
-Update `.specify/feature.json` to select the new feature.
-Include the updated pointer, generated specification, and checklists in the PR.
+Use `.specify/feature.json` only as ignored local session state.
+Never force-add or commit that file. Include only the generated specification
+and checklists in the PR.
 Do not modify the previously selected feature's files.
 
 Create a draft PR on `context.branch`. Its body must start with a short summary
@@ -55,6 +61,8 @@ of the feature to be built, not a summary of the automation. Include:
 - `Related issue: https://github.com/<context.repository>/issues/<context.issue>`
 - `Specification: https://github.com/<context.repository>/blob/<context.branch>/<feature_directory>/spec.md`
 - The exact tracking marker `<!-- speckit-issue: N -->`, where N is the issue number.
+- The exact feature marker `<!-- speckit-feature: specs/NNN-feature-name -->`,
+  using the new feature's actual relative directory.
 
 Do not create another PR if the branch already has one. Leave clarification,
 planning, and implementation to subsequent sessions.

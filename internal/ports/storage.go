@@ -43,6 +43,14 @@ type StorageTransactionManager interface {
 	Rollback(ctx context.Context) error
 }
 
+// ThirdpartyOAuth2ProviderDiscoveryStatusWriter records a failed discovery
+// attempt without changing the service's active configuration or version.
+type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
+	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
+	// the stored attempt or success. failureCode contains no remote response data.
+	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
+}
+
 // User represents a user entity in the storage layer.
 // Domain entity - does not expose storage implementation details.
 type User struct {
@@ -220,13 +228,15 @@ type UserSessionRepository interface {
 	// Create creates a new user session.
 	// Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
 	// Returns error if:
-	// - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
+	// - Service ID doesn't exist (StorageError with Kind=NotFound)
+	// - The service's issuer, audience, or discovery source no longer matches the session's expected values (StorageError with Kind=Conflict)
 	// - Storage connection fails (StorageError with Kind=Connection)
 	// - Operation timeout (StorageError with Kind=Timeout)
 	Create(ctx context.Context, session *storage.UserSession) error
 
 	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
 	// Returns the inserted session or the existing winner.
+	// It returns the same NotFound and Conflict errors as Create.
 	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
 
 	// Get retrieves a session by ID.
@@ -263,8 +273,8 @@ type UserSessionRepository interface {
 	// Idempotent: safe to delete non-existent session.
 	DeleteByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) error
 
-	// CountByService counts sessions referencing a service.
-	// Used to enforce deletion protection (cannot delete service with active sessions).
+	// CountByService counts every session referencing a service, including expired ones.
+	// Used to block deletion, issuer changes, and effective-audience changes.
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 

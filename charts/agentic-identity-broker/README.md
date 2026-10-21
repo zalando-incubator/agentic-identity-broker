@@ -200,6 +200,16 @@ and unknown environments reject that development-only bypass.
 | `broker.requestContext.trustedProxy.enabled` | Trust forwarded headers from an upstream proxy for caller-IP derivation | `false` |
 | `broker.requestContext.trustedProxy.forwardedHeader` | Forwarded header to inspect when trusted proxy mode is enabled | `X-Forwarded-For` |
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
+| `extraObjects` | Additional manifests deployed with the release, rendered with `tpl` (see [Extra Objects](#extra-objects)) | `[]` |
+
+### Protected-resource discovery
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `broker.thirdPartyOauth2.clientName` | `string` | `""` | Optional broker or platform name. The chart maps it to `third_party_oauth2.client_name`. DCR requires a non-blank value. Startup, manual services, and hosted CIMD do not. |
+| `broker.server.enduser.publicUrl` | `string` | `""` | The chart maps it to `server.enduser.public_url`. Hosted CIMD and DCR require a stable, public HTTPS URL. DCR uses it for the OAuth2 callback. |
+
+The chart does not configure a service's `discovery.resource_url`. Send that public HTTPS URL in the service's Admin API create or update request.
 
 ### Custom Values File
 
@@ -303,6 +313,56 @@ ingress:
           - path: /
             pathType: ImplementationSpecific
 ```
+
+## Extra Objects
+
+`extraObjects` deploys additional manifests with the release, such as routing resources for an
+ingress controller the chart does not template. Each entry is a map or a multi-line string, and
+the chart renders it with Helm's `tpl`, so entries can reference values and chart helpers.
+
+Use the string form when a templated field must keep its YAML type. In the map form, a quoted
+template such as `'{{ .Values.service.ports.enduser }}'` renders as a string, while the string
+form below keeps `port` an integer:
+
+```yaml
+extraObjects:
+  - |
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: {{ include "agentic-identity-broker.fullname" . }}-enduser
+      namespace: {{ include "agentic-identity-broker.namespace" . }}
+      labels:
+        {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+    spec:
+      parentRefs:
+        - name: public-gateway
+      hostnames:
+        - broker.example.com
+      rules:
+        - backendRefs:
+            - name: {{ include "agentic-identity-broker.fullname" . }}
+              port: {{ .Values.service.ports.enduser }}
+```
+
+Text in the form `{{ ... }}` is a Helm template expression. When a later tool templates the
+rendered manifests, such as a deployment pipeline that substitutes `{{{BUILD_VERSION}}}`, write the
+placeholder as a string constant so that Helm emits it literally:
+
+```yaml
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: broker-build-info
+    data:
+      build: '{{ "{{{BUILD_VERSION}}}" }}'   # renders as '{{{BUILD_VERSION}}}'
+```
+
+Mustache-based pipelines HTML-escape a `{{VAR}}` value and insert a `{{{VAR}}}` value unchanged.
+Use the triple-brace form for values that can contain characters such as `&`, `/`, or `=`.
+
+Quote a value that starts with `{{` in single quotes. Unquoted, YAML parses it as a flow mapping.
 
 ## Database Migration
 

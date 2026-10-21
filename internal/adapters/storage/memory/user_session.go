@@ -15,10 +15,12 @@ import (
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
 type InMemoryUserSessionRepository struct {
-	mu       sync.RWMutex
-	sessions map[id.SessionID]*storage.UserSession // Key: session ID
-	index    map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
-	locks    map[string]*sessionLock
+	mu                sync.RWMutex
+	issuerSessionGate *sync.RWMutex
+	provider          *InMemoryThirdpartyOAuth2ProviderRepository
+	sessions          map[id.SessionID]*storage.UserSession // Key: session ID
+	index             map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
+	locks             map[string]*sessionLock
 }
 
 type sessionLock struct {
@@ -52,6 +54,17 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 	if err := session.Validate(); err != nil {
 		return nil, err
 	}
+	if r.issuerSessionGate != nil {
+		r.issuerSessionGate.RLock()
+		defer r.issuerSessionGate.RUnlock()
+	}
+	operation := "CreateIfAbsent"
+	if replace {
+		operation = "Create"
+	}
+	if err := r.currentDiscoveryStateError(session, operation); err != nil {
+		return nil, err
+	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
 	gate, err := r.lockSession(ctx, key)
@@ -72,9 +85,36 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		delete(r.sessions, existing.ID)
 	}
 
-	r.sessions[session.ID] = session
-	r.index[key] = session
+	stored := *session
+	stored.ExpectedIssuerURI = ""
+	stored.ExpectedResource = ""
+	r.sessions[stored.ID] = &stored
+	r.index[key] = &stored
 	return session, nil
+}
+
+// currentDiscoveryStateError mirrors the PostgreSQL insert guard: a missing service is
+// NotFound and stale issuer or audience expectations conflict. Without a bound provider
+// repository (standalone tests) it cannot see services and checks only the expectations.
+func (r *InMemoryUserSessionRepository) currentDiscoveryStateError(session *storage.UserSession, operation string) error {
+	matches := session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
+	if r.provider != nil {
+		r.provider.mu.RLock()
+		current := r.provider.providers[session.ServiceID]
+		if current != nil && current.entity.Discovery.ResourceURL != nil {
+			matches = session.ExpectedIssuerURI != "" && session.ExpectedResource != "" &&
+				session.ExpectedIssuerURI == current.entity.IssuerURI &&
+				session.ExpectedResource == current.entity.AuthorizationParams["resource"]
+		}
+		r.provider.mu.RUnlock()
+		if current == nil {
+			return storage.NewStorageError(operation, storage.ErrorKindNotFound, nil, "service not found")
+		}
+	}
+	if !matches {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "provider issuer or audience is no longer current")
+	}
+	return nil
 }
 
 // Get retrieves a session by ID.

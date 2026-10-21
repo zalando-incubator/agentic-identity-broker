@@ -60,6 +60,7 @@ The chart main options follow:
 | **Admin Ingress** | `ingress.admin.*` | Expose port 14000 on a restricted path. |
 | **Service account / IRSA** | `serviceAccount.*` | Bind an AWS IAM role for KMS and DynamoDB access. |
 | **Encryption** | `broker.encryption.*`, `broker.extraConfig.encryption.*` | Select the required encryption backend. |
+| **Extra objects** | `extraObjects` | Deploy additional manifests with the release, such as routes for an ingress controller that the chart does not template. |
 
 The chart uses restricted Pod Security defaults. It runs as a non-root user. Its root file
 system is read-only. It has no privilege escalation or Linux capabilities.

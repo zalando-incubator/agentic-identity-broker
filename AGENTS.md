@@ -124,6 +124,8 @@ See Principle II in `.specify/memory/constitution.md`.
 
 For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs. On 2026-10-12, the stakeholder approved renumbering ADR 039's migration from `036` to `037` after `main` took version 36.
 
+For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
+
 | ADR | File | Decision |
 |---|---|---|
 | 002 | `adrs/002-configuration-libraries.md` | Viper + Cobra + godotenv config |
@@ -161,6 +163,7 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
 | 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
+| 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
 
 ## Domain Glossary
 
