@@ -1308,6 +1308,28 @@ func TestLocalGrantStrategy_AuthorizationCodeFailureDoesNotLogUserInput(t *testi
 	assert.NotContains(t, logs, errorMessage)
 }
 
+func TestLocalGrantStrategy_RefreshFailureDoesNotLogUserInput(t *testing.T) {
+	const (
+		clientID     = "client-id-user-input-marker"
+		errorMessage = "user-input-error-marker"
+	)
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil, errors.New(errorMessage)), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"refresh_token", url.Values{
+			"client_id":     {clientID},
+			"refresh_token": {"refresh-token"},
+		}, &ports.TokenGrantResolution{ClientType: storage.LocalClient})
+
+	logs := fmt.Sprint(*base.records)
+	assert.NotContains(t, logs, clientID)
+	assert.NotContains(t, logs, errorMessage)
+	record, ok := findTokenEndpointLogRecord(*base.records, "refresh_token grant failed")
+	require.True(t, ok)
+	assert.NotContains(t, record.attrs, "error")
+}
+
 func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
 	want := security.SecurityContext{
 		TraceID:     "0123456789abcdef0123456789abcdef",

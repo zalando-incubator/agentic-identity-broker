@@ -241,11 +241,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		resp, err := s.minting.HandleRefreshToken(r.Context(), id.ClientID(rawClientID), clientCredentialsFromRequest(r, formData), refreshToken, scope)
 		if err != nil {
 			if s.logger != nil {
-				if isCIMDClient {
-					s.logger.ErrorContext(r.Context(), "refresh_token grant failed")
-				} else {
-					s.logger.ErrorContext(r.Context(), "refresh_token grant failed", "error", err, "client_id", rawClientID)
-				}
+				s.logger.ErrorContext(r.Context(), "refresh_token grant failed")
 			}
 			s.handleMintingError(w, r.Context(), err, "refresh_token", isCIMDClient)
 			return
