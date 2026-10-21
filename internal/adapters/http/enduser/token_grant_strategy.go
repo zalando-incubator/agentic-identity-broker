@@ -242,7 +242,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			if s.logger != nil {
 				if isCIMDClient {
-					s.logger.ErrorContext(r.Context(), "refresh_token grant failed", "client_id", rawClientID)
+					s.logger.ErrorContext(r.Context(), "refresh_token grant failed")
 				} else {
 					s.logger.ErrorContext(r.Context(), "refresh_token grant failed", "error", err, "client_id", rawClientID)
 				}

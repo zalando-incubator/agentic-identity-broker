@@ -1273,6 +1273,22 @@ func TestLocalGrantStrategy_CIMDAuthorizationCodeFailureDoesNotLogClientURI(t *t
 	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
 }
 
+func TestLocalGrantStrategy_CIMDRefreshFailureDoesNotLogClientURI(t *testing.T) {
+	const clientURI = "https://agent.example.com/client?marker=untrusted"
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil,
+		oauth2server.NewRFC6749Error("invalid_client", "client authentication failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient),
+	), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"refresh_token", url.Values{
+			"client_id":     {clientURI},
+			"refresh_token": {"refresh-token"},
+		}, &ports.TokenGrantResolution{ClientType: storage.CIMDClient})
+
+	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
+}
+
 func TestLocalGrantStrategy_AuthorizationCodeFailureDoesNotLogUserInput(t *testing.T) {
 	const (
 		clientID     = "client-id-user-input-marker"
