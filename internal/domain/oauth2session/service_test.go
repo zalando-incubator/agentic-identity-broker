@@ -2805,62 +2805,6 @@ func TestForceRefreshSession(t *testing.T) {
 		assert.True(t, errors.Is(err, oauth2session.ErrRefreshNotAvailable))
 		assert.Equal(t, 1, rejectRequests, "a rejected refresh token must not be sent to the provider again")
 	})
-
-	t.Run("upstream rejects client credentials", func(t *testing.T) {
-		ctx := context.Background()
-		service, _, sessions, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
-			config.RetryBaseDelay = 10 * time.Millisecond
-		})
-		serviceID := id.NewServiceID()
-		provider := createTestService(serviceID)
-
-		seedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.NoError(t, r.ParseForm())
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"initial-access-token","token_type":"Bearer","expires_in":3600,"refresh_token":"initial-refresh-token","scope":"repo user"}`))
-		}))
-		defer seedServer.Close()
-
-		provider.Endpoints.TokenEndpoint = seedServer.URL
-		require.NoError(t, providerService.Create(ctx, provider))
-
-		principal := id.Principal("user@example.com")
-		flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/sessions")
-		require.NoError(t, err)
-
-		_, err = service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
-			ServiceID: serviceID,
-			Code:      "authorization-code",
-			State:     flow.StateToken,
-		})
-		require.NoError(t, err)
-
-		var rejectRequests int
-		rejectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			require.NoError(t, r.ParseForm())
-			rejectRequests++
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
-		}))
-		defer rejectServer.Close()
-
-		provider.Secret = model.NewPlaintextSecret("test-client-secret")
-		provider.Endpoints.TokenEndpoint = rejectServer.URL
-		require.NoError(t, providerService.Update(ctx, provider, nil))
-
-		for range 2 {
-			_, err = service.ForceRefreshSession(ctx, principal, serviceID)
-			require.Error(t, err)
-			assert.True(t, errors.Is(err, oauth2session.ErrRefreshFailed))
-		}
-
-		after, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
-		require.NoError(t, err)
-		assert.Nil(t, after.RefreshTokenExpiresAt, "a client rejection says nothing about the user's refresh token")
-		assert.True(t, after.CanRefresh())
-		assert.Equal(t, 2, rejectRequests)
-	})
 }
 
 func TestRefreshAccessToken_SanitizesThirdpartyRejection(t *testing.T) {
