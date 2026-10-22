@@ -46,7 +46,7 @@ func (f *fakeHealthRepo) callCount() int {
 	return len(f.calls)
 }
 
-func installHealthReader(t *testing.T) *sdkmetric.ManualReader {
+func installMeterReader(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -145,7 +145,7 @@ func TestClassifySessionHealth(t *testing.T) {
 }
 
 func TestSessionHealthMetricsObservesZeroFilledSeriesPerService(t *testing.T) {
-	reader := installHealthReader(t)
+	reader := installMeterReader(t)
 	calendar, tickets := id.NewServiceID(), id.NewServiceID()
 	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) {
 		return []storage.SessionExpiryGroup{
@@ -214,7 +214,7 @@ func TestSessionHealthMetricsReportsNoPointsWhenQueryFails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader := installHealthReader(t)
+			reader := installMeterReader(t)
 			logger, logs := healthLogger()
 			metrics, err := oauth2session.NewSessionHealthMetrics(&fakeHealthRepo{count: tt.count}, 5*time.Minute, 20*time.Millisecond, logger)
 			require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestSessionHealthMetricsReportsNoPointsWhenQueryFails(t *testing.T) {
 }
 
 func TestSessionHealthMetricsCloseStopsQueries(t *testing.T) {
-	reader := installHealthReader(t)
+	reader := installMeterReader(t)
 	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) { return nil, nil }}
 	logger, _ := healthLogger()
 	metrics, err := oauth2session.NewSessionHealthMetrics(repo, 5*time.Minute, time.Second, logger)

@@ -455,11 +455,7 @@ func TestSessionSweepDryRunSkipsMovedCandidateID(t *testing.T) {
 }
 
 func TestSessionSweepDryRunSkippedCandidateIsNotCounted(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	previous := otel.GetMeterProvider()
-	otel.SetMeterProvider(meterProvider)
-	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
+	reader := installMeterReader(t)
 
 	f := newSweepFixture(t)
 	later := time.Now().Add(time.Hour)
