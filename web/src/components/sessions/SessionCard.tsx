@@ -234,7 +234,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         />
 
         {/* Refresh token expiry */}
-        {session.has_refresh_token && (
+        {session.has_refresh_token && !session.is_expired && (
           <StatusIndicator
             icon={
               <svg

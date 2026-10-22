@@ -457,5 +457,20 @@ describe('SessionCard', () => {
         screen.queryByText(/Session might expire after/i),
       ).not.toBeInTheDocument();
     });
+
+    it('does not display refresh token expiry info for an expired session', () => {
+      const session = createMockSession({
+        is_expired: true,
+        has_refresh_token: true,
+        refresh_token_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      });
+      const onTerminate = vi.fn();
+
+      render(<SessionCard session={session} onTerminate={onTerminate} />);
+
+      expect(
+        screen.queryByText(/Session might expire after/i),
+      ).not.toBeInTheDocument();
+    });
   });
 });
