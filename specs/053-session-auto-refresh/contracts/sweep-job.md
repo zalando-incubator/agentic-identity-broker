@@ -11,6 +11,8 @@ With `sessionSweep.enabled: true`, the chart renders two resources. With it fals
 | `templates/serviceaccount-session-sweep.yaml` | `ServiceAccount` | `<fullname>-session-sweep` |
 | `templates/cronjob-session-sweep.yaml` | `CronJob` (`batch/v1`) | `<fullname>-session-sweep` |
 
+`<fullname>` is truncated to 38 characters, so the name fits the 52-character CronJob limit and always keeps its suffix.
+
 Neither resource is a Helm hook.
 
 ### ServiceAccount

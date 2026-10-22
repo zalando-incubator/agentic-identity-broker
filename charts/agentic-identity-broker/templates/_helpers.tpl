@@ -163,10 +163,11 @@ PostgreSQL connection URL for broker
 {{- end }}
 
 {{/*
-Session sweep CronJob and ServiceAccount name. CronJob names are capped at 52 characters.
+Session sweep CronJob and ServiceAccount name. CronJob names are capped at 52 characters, so the
+fullname is truncated to 38 to keep the 14-character "-session-sweep" suffix.
 */}}
 {{- define "agentic-identity-broker.sessionSweep.name" -}}
-{{- printf "%s-session-sweep" (include "agentic-identity-broker.fullname" .) | trunc 52 | trimSuffix "-" }}
+{{- printf "%s-session-sweep" (include "agentic-identity-broker.fullname" . | trunc 38 | trimSuffix "-") }}
 {{- end }}
 
 {{/*

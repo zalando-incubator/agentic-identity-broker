@@ -366,6 +366,15 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps the session-sweep suffix when the fullname is long", func(t *testing.T) {
+		fullname := strings.Repeat("a", 52)
+		output := renderHelmTemplate(t, sessionSweepArgs(
+			"--show-only", "templates/serviceaccount-session-sweep.yaml",
+			"--set", "fullnameOverride="+fullname,
+		)...)
+		require.Contains(t, output, "name: "+fullname[:38]+"-session-sweep\n")
+	})
+
 	// US1-S10 from specs/053-session-auto-refresh/spec.md
 	t.Run("keeps the job pod out of the broker Service and PDB selectors", func(t *testing.T) {
 		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
