@@ -288,6 +288,58 @@ describe('SessionCard', () => {
 
       expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
     });
+
+    it('does not render Refresh button for an expired session', () => {
+      const session = createMockSession({
+        is_expired: true,
+        has_refresh_token: true,
+      });
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onRefresh={vi.fn()}
+          onLogin={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+    });
+  });
+
+  describe('Login button', () => {
+    it('calls onLogin with service id for an expired session', async () => {
+      const user = userEvent.setup();
+      const session = createMockSession({ is_expired: true });
+      const onLogin = vi.fn();
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onLogin={onLogin}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /login/i }));
+
+      expect(onLogin).toHaveBeenCalledWith(session.service_id);
+    });
+
+    it('does not render Login button for an active session', () => {
+      const session = createMockSession();
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onLogin={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /login/i })).toBeNull();
+    });
   });
   describe('Loading State', () => {
     it('disables buttons and shows loading spinner when loading', () => {

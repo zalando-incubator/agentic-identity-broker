@@ -2090,8 +2090,9 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		wantCode          string
 		wantReauthURI     bool
 		wantRefreshErr    bool
+		wantRefreshMarked bool
 	}{
-		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true, wantRefreshMarked: true},
 		{name: "provider 401 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 400 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 500 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
@@ -2143,8 +2144,14 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 				var retrieveErr *oauth2.RetrieveError
 				assert.ErrorAs(t, err, &retrieveErr)
 			}
-			if tt.session != nil {
-				assert.Same(t, tt.session, sessionRepo.session, "a rejected refresh must not persist session changes")
+			switch {
+			case tt.wantRefreshMarked:
+				after := *sessionRepo.session
+				require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
+				after.RefreshTokenExpiresAt = before.RefreshTokenExpiresAt
+				assert.Equal(t, before, after, "a rejected refresh must not change stored tokens")
+			case tt.session != nil:
+				assert.Same(t, tt.session, sessionRepo.session, "a failed refresh must not persist session changes")
 				assert.Equal(t, before, *sessionRepo.session)
 			}
 		})

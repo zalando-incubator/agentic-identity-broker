@@ -223,7 +223,7 @@ When a user has not established a session with a third-party service (no tokens 
 1. **Given** user has no stored session for the target service, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri addressing the sessions landing page (`<public URL>/sessions`).
 2. **Given** user's stored tokens have all expired (both access and refresh), **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_description="User session has expired, re-authentication required"
 3. **Given** a recoverable provider-session error response is returned, **When** the privileged client receives it, **Then** error_uri points to the sessions landing page rather than the authorization API that requires redirect parameters.
-4. **Given** user's stored access_token has expired and the third-party service rejects the stored refresh_token with HTTP 400 and error=invalid_grant, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri set to the sessions landing page (`<public URL>/sessions`), never returns the provider's error_description, and leaves the stored session unchanged so that a later accepted refresh succeeds
+4. **Given** user's stored access_token has expired and the third-party service rejects the stored refresh_token with HTTP 400 and error=invalid_grant, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri set to the sessions landing page (`<public URL>/sessions`), never returns the provider's error_description, leaves the stored tokens unchanged, and records the refresh token as expired so that later exchanges return the same re-authentication error without contacting the provider until the user reconnects the service (see Journey 1)
 5. **Given** user's stored access_token has expired and the third-party service rejects the refresh request with error=invalid_client (or any non-invalid_grant code, provider 5xx, or unparseable response), **When** privileged client requests token exchange, **Then** system returns 500 Internal Server Error with error=server_error and no error_uri, and records the safe third-party HTTP status and OAuth error code in telemetry
 6. **Given** user's stored access_token has expired and the third-party service answers the refresh with a transient failure (5xx, 429, or a network error) followed by success, **When** privileged client requests token exchange, **Then** system retries the refresh with exponential backoff (at most 3 attempts, honouring a `Retry-After` of up to 10 seconds) and returns the refreshed token without signalling re-authentication
 
@@ -275,6 +275,122 @@ The broker can issue local subject tokens while still requiring privileged-clien
 - **CEL expression timeout**: CEL evaluation has 100ms timeout; if exceeded, system returns error=server_error with description "Authorization evaluation timeout"
 - **Grant exists but session missing**: When user has granted agent access but has no session with the service, system returns error=invalid_grant (not access_denied) to indicate missing session rather than missing permission
 - **Non-token-exchange grant_type**: When `/oauth2/token` receives a grant_type other than token-exchange, system passes through to existing proxy behavior
+
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — The provider rejects Alice's refresh token until she reconnects (User Story 5, Scenario 4)
+
+**Cast**: Alice (`alice@example.com`); agent *Data Analysis Assistant*
+(`550e8400-e29b-41d4-a716-446655440000`), whose requests reach the broker through a privileged
+client; service *GitHub* (`880e8400-e29b-41d4-a716-446655440010`) with protected resource
+`https://api.github.com` and token endpoint `https://github.com/login/oauth/access_token`. Alice
+has an active grant covering GitHub for the agent. All times are 2026-10-21 UTC. All IDs, codes,
+assertions, and tokens are synthetic.
+
+**Step 1 — Initial state: Alice's GitHub session needs a refresh**
+
+Her access token expired at 09:00:00. The session still holds the refresh token `ghr_old`, and no
+refresh-token expiry is recorded, so the broker treats it as usable. GitHub has revoked `ghr_old`.
+
+**Step 2 — 09:30:00: the privileged client exchanges a token; GitHub rejects the refresh token**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJ...&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+&client_assertion=eyJ...&resource=https%3A%2F%2Fapi.github.com
+```
+
+Line breaks in the body are for display only. `subject_token` names Alice and the agent; its
+validation is unchanged and not shown. The broker refreshes the expired access token; its client
+authentication is configured per service and omitted here:
+
+```http
+POST /login/oauth/access_token HTTP/1.1
+Host: github.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=ghr_old
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_grant", "error_description": "The refresh token has been revoked."}
+```
+
+The broker answers the privileged client without GitHub's description:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "invalid_grant",
+  "error_description": "provider session is missing or unusable; re-authentication required",
+  "error_uri": "https://broker.example.com/sessions"
+}
+```
+
+The stored access token, refresh token, and access-token expiry are unchanged. The session now
+records a refresh-token expiry of `2026-10-21T09:30:00Z`.
+
+**Step 3 — 09:35:00: a later exchange fails the same way without reaching GitHub**
+
+The privileged client repeats the request from Step 2. The broker sends no request to GitHub and
+returns the same `400 invalid_grant` response with `error_uri` `https://broker.example.com/sessions`.
+
+**Step 4 — 09:40:00: Alice reconnects GitHub from the sessions page**
+
+The sessions page shows the GitHub session as expired with a Login action
+(`specs/008-thirdparty-oauth2-sessions/spec.md`, User Story 1, Scenario 6). Alice uses it:
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://github.com/login/oauth/authorize?client_id=...&state=eyJ...&code_challenge=...
+```
+
+Alice approves at GitHub, and the callback stores the new tokens
+(`specs/008-thirdparty-oauth2-sessions/spec.md`, User Story 2, Scenarios 3–6):
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/callback?code=gh_code_7f3a&state=eyJ... HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/sessions?service_id=880e8400-e29b-41d4-a716-446655440010&success=true
+```
+
+The session now holds the new tokens, and the recorded refresh-token expiry is cleared.
+
+**Step 5 — 09:45:00: the next exchange succeeds**
+
+The privileged client repeats the request from Step 2:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+
+{
+  "access_token": "ghu_new",
+  "token_type": "Bearer",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "expires_in": 3600
+}
+```
+
+**Observable result**: After one rejected refresh, the agent receives `400 invalid_grant` with the
+sessions-page `error_uri` until Alice reconnects GitHub, and GitHub receives no further refresh
+requests with `ghr_old`. After she reconnects, the exchange returns a GitHub access token again.
 
 ## Requirements *(mandatory)*
 

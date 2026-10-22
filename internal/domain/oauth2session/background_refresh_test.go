@@ -659,7 +659,7 @@ func TestBackgroundRefresh_OpenPoolAdmitsWorkAfterEachCompletion(t *testing.T) {
 					principal := strings.TrimPrefix(r.Form.Get("refresh_token"), "refresh-")
 					call := calls.Add(1)
 					if tc.providerError && call == 1 {
-						return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+						return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_client"}`), nil
 					}
 					return operationTokenResponse(http.StatusOK, fmt.Sprintf(`{"access_token":"new-%s-%d","refresh_token":"refresh-%s","expires_in":3600}`, principal, call, principal)), nil
 				})

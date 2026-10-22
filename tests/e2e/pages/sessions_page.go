@@ -62,6 +62,31 @@ func (sp *SessionsPage) WaitForSuccessMessage(ctx context.Context, message strin
 	return nil
 }
 
+func (sp *SessionsPage) WaitForLoginButton(ctx context.Context) error {
+	if err := sp.loginButtonLocator().First().WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("login button did not become visible: %w", err)
+	}
+	return nil
+}
+
+func (sp *SessionsPage) ClickLoginButton(ctx context.Context) error {
+	if err := sp.loginButtonLocator().First().Click(); err != nil {
+		return fmt.Errorf("failed to click login button: %w", err)
+	}
+	return nil
+}
+
+func (sp *SessionsPage) IsReauthenticationRequiredVisible(ctx context.Context) (bool, error) {
+	visible, err := sp.page().GetByText("Re-authenticate required", playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}).IsVisible()
+	if err != nil {
+		return false, fmt.Errorf("failed to check re-authentication notice: %w", err)
+	}
+	return visible, nil
+}
+
 func (sp *SessionsPage) page() playwright.Page {
 	return sp.GetPlaywrightPage()
 }
@@ -78,6 +103,13 @@ func (sp *SessionsPage) waitForPageLoad(ctx context.Context) error {
 		return fmt.Errorf("third-party sessions heading did not appear: %w", err)
 	}
 	return nil
+}
+
+func (sp *SessionsPage) loginButtonLocator() playwright.Locator {
+	return sp.page().GetByRole("button", playwright.PageGetByRoleOptions{
+		Name:  "Login",
+		Exact: playwright.Bool(true),
+	})
 }
 
 func (sp *SessionsPage) refreshButtonLocator() playwright.Locator {

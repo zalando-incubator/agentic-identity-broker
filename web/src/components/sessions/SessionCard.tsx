@@ -10,7 +10,7 @@
  * - Dependent agent count
  * - Session initiation timestamp
  * - OAuth2 scopes display
- * - Refresh and Terminate actions
+ * - Refresh and Terminate actions, or Login for an expired session
  * - WCAG 2.1 AA compliant
  */
 
@@ -31,6 +31,8 @@ interface SessionCardProps {
   onViewDetails?: (serviceId: string) => void;
   /** Callback when user clicks the refresh button (force token refresh) */
   onRefresh?: (serviceId: string) => void;
+  /** Callback when user clicks the login button of an expired session */
+  onLogin?: (serviceId: string) => void;
   /** Whether the refresh action is currently loading for this card */
   refreshing?: boolean;
   /** Whether card actions are currently loading */
@@ -55,6 +57,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onTerminate,
   onViewDetails,
   onRefresh,
+  onLogin,
   refreshing = false,
   loading = false,
 }) => {
@@ -124,7 +127,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               View Details
             </Button>
           )}
-          {onRefresh && session.has_refresh_token && (
+          {onRefresh && session.has_refresh_token && !session.is_expired && (
             <Button
               variant="secondary"
               size="sm"
@@ -134,6 +137,17 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               className="flex-shrink-0"
             >
               Refresh
+            </Button>
+          )}
+          {onLogin && session.is_expired && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onLogin(session.service_id)}
+              disabled={loading}
+              className="flex-shrink-0"
+            >
+              Login
             </Button>
           )}
           {!session.is_expired && (

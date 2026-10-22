@@ -170,14 +170,15 @@ export class SessionsApiService {
    * @throws {ApiError} if request fails or refresh token is invalid
    */
   async refreshSession(serviceId: string): Promise<SessionSummary> {
-    const response = await apiClient.post<{ data: SessionSummary }>(
-      `/third-party/${serviceId}/session/refresh`,
-    );
-
-    // Invalidate caches since data changed
-    apiCache.invalidatePattern('/third-party/*');
-
-    return response.data.data;
+    try {
+      const response = await apiClient.post<{ data: SessionSummary }>(
+        `/third-party/${serviceId}/session/refresh`,
+      );
+      return response.data.data;
+    } finally {
+      // A rejected refresh also changes the session: its refresh token is recorded as expired
+      apiCache.invalidatePattern('/third-party/*');
+    }
   }
 }
 
