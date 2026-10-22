@@ -66,7 +66,12 @@ function parseResult(comment) {
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
   const blocks = [...sections[sections.length - 1].matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
   if (blocks.length !== 1) return null;
-  const result = validateResult(JSON.parse(blocks[0][1]));
+  let result;
+  try {
+    result = validateResult(JSON.parse(blocks[0][1]));
+  } catch {
+    return null;
+  }
   const workflow = ["clarify", "tasks", "remediate"].includes(result.phase) ? "speckit-phase" :
     result.phase === "reanalyze" ? "speckit-analyze" : `speckit-${result.phase}`;
   return footer[3] === workflow ? result : null;

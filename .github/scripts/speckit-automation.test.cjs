@@ -227,6 +227,19 @@ test("only maintainer comments posted after pending questions become answers", a
   assert.equal((await route(complete)).action, "noop");
 });
 
+test("invalid historical results do not hide later clarification questions", async () => {
+  const invalid = comment(result("clarify"), { id: 10 });
+  invalid.body = invalid.body.replace(JSON.stringify(result("clarify")), '{"example":true}');
+  const pending = comment(result("clarify", {
+    status: "waiting", questions: ["Which command is supported?"],
+  }));
+  const answer = { id: 20, body: "Q1: A", user: { login: "maintainer", type: "User" } };
+  const f = fixture("issue_comment", {
+    action: "created", issue: { number: 42, pull_request: {} }, comment: answer,
+  }, { comments: [invalid, pending] });
+  assert.deepEqual(await route(f), { action: "clarify", issue: 7, pr: 42, comment: 20 });
+});
+
 test("a published waiting clarification can receive a maintainer answer without permitting planning", async (t) => {
   preparationIO(t);
   const pending = comment(result("clarify", { status: "waiting", questions: ["Which command is supported?"] }));
@@ -391,8 +404,10 @@ test("result parsing requires a trusted workflow footer and valid result", () =>
   assert.equal(parseResult({ ...trusted, issue_url: "https://api.github.com/repos/other/broker/issues/42" }), null);
   assert.equal(parseResult({ ...trusted, body: trusted.body.replace("speckit-analyze -->", "speckit-phase -->") }), null);
   assert.equal(parseResult({ ...trusted, body: trusted.body.replace("<!-- gh-aw-workflow-call-id:", "<!-- other-workflow:") }), null);
-  assert.throws(() => parseResult(comment(result("analyze", { findings: [{ severity: "high" }] }))), /finding/i);
-  assert.throws(() => parseResult(comment(result("analyze", { findings: null }))), /findings/i);
+  assert.equal(parseResult(comment(result("analyze", { findings: [{ severity: "high" }] }))), null);
+  assert.equal(parseResult(comment(result("analyze", { findings: null }))), null);
+  assert.equal(parseResult(comment(result("analyze", { feature: undefined }))), null);
+  assert.equal(parseResult({ ...trusted, body: trusted.body.replace(JSON.stringify(result("analyze")), "{not-json}") }), null);
   assert.deepEqual(parseResult(trusted), result("analyze"));
 });
 
@@ -460,6 +475,10 @@ test("result command rejects reserved markers in reports before publishing", () 
     assert.throws(run, /report must not contain a result marker/);
     assert.equal(saved.length, 0);
   }
+  draft.report = "Analysis report";
+  draft.findings = null;
+  assert.throws(run, /Invalid findings/);
+  assert.equal(saved.length, 0);
 });
 
 test("task completion markers do not invalidate the approved task definitions", () => {
@@ -572,6 +591,12 @@ test("final verification rejects missing output and incomplete implementation ta
   const f = fixture("pull_request_target", {}, { comments: [comment(result("implement"))] });
   await assert.rejects(verify({ ...f, comment: "", phase: "implement" }), /did not publish/);
   await assert.rejects(verify({ ...f, comment: 11, phase: "implement" }), /unfinished tasks/);
+});
+
+test("verification rejects an invalid current-worker result", async () => {
+  const posted = comment(result("clarify", { findings: null }));
+  const f = fixture("issues", {}, { comments: [posted] });
+  await assert.rejects(verify({ ...f, comment: 11, phase: "clarify" }), /provenance/);
 });
 
 test("final verification accepts unanswered clarification without falsely completing it", async (t) => {
