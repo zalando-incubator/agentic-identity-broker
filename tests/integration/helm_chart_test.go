@@ -377,11 +377,17 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 
 	// US1-S10 from specs/053-session-auto-refresh/spec.md
 	t.Run("keeps the job pod out of the broker Service and PDB selectors", func(t *testing.T) {
-		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
+		output := renderHelmTemplate(t, sessionSweepArgs(
+			"--show-only", "templates/cronjob-session-sweep.yaml",
+			"--set-string", `commonLabels.app\.kubernetes\.io/name=agentic-identity-broker`,
+			"--set-string", `sessionSweep.podLabels.app\.kubernetes\.io/name=agentic-identity-broker`,
+			"--set-string", `sessionSweep.podLabels.app\.kubernetes\.io/component=api`,
+		)...)
 		_, podTemplate, found := strings.Cut(output, "jobTemplate:")
 		require.True(t, found, "rendered CronJob has no jobTemplate")
 		require.NotContains(t, podTemplate, "app.kubernetes.io/name:")
 		require.Contains(t, podTemplate, "app.kubernetes.io/component: session-sweep")
+		require.NotContains(t, podTemplate, "app.kubernetes.io/component: api")
 	})
 
 	// US1-S5 from specs/053-session-auto-refresh/spec.md (render-time part)
