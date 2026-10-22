@@ -1,6 +1,6 @@
 # Contract: Helm values for the session sweep
 
-**Feature**: `052-session-auto-refresh` | FR-001 to FR-016 | Research R3 to R7
+**Feature**: `053-session-auto-refresh` | FR-001 to FR-016 | Research R3 to R7
 
 Operators write these values, so after release they become a compatibility surface. `values.schema.json` gains a strict `sessionSweep` object (`additionalProperties: false` at every level), and `values.yaml` documents each key with a `# --` comment.
 

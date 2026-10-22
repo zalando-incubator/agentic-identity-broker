@@ -1,6 +1,6 @@
 # Contract: Ports, domain services, and handler changes
 
-**Feature**: `052-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024 | Research R9, R11 to R13
+**Feature**: `053-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024 | Research R9, R11 to R13
 
 ## 1. New port: `UserSessionHealthRepository` (`internal/ports/storage.go`)
 

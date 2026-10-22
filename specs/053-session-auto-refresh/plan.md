@@ -1,8 +1,8 @@
 # Implementation Plan: Automatic Third-Party Session Refresh
 
-**Branch**: `052-session-auto-refresh` | **Date**: 2026-10-19 | **Spec**: [spec.md](spec.md)
+**Branch**: `053-session-auto-refresh` | **Date**: 2026-10-19 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/052-session-auto-refresh/spec.md`
+**Input**: Feature specification from `/specs/053-session-auto-refresh/spec.md`
 
 ## Summary
 
@@ -123,7 +123,7 @@ There is no migration, OpenAPI field change, or new module dependency. The chart
 ### Documentation (this feature)
 
 ```text
-specs/052-session-auto-refresh/
+specs/053-session-auto-refresh/
 ├── spec.md
 ├── plan.md                         # This file
 ├── research.md                     # Phase 0 (R1–R16)
@@ -195,7 +195,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 ### End-to-End (E2E) Acceptance Tests
 
-**Framework**: Ginkgo/Gomega following [tests/e2e/README.md](../../tests/e2e/README.md) and `tests/e2e/AGENTS.md`. Each `It` carries a `// US<n>-S<m> from specs/052-session-auto-refresh/spec.md` comment.
+**Framework**: Ginkgo/Gomega following [tests/e2e/README.md](../../tests/e2e/README.md) and `tests/e2e/AGENTS.md`. Each `It` carries a `// US<n>-S<m> from specs/053-session-auto-refresh/spec.md` comment.
 
 **Scenario Mapping**:
 

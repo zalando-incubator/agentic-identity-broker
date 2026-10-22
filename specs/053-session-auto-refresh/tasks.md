@@ -1,11 +1,11 @@
 ---
 
-description: "Task list for feature 052: automatic third-party session refresh"
+description: "Task list for feature 053: automatic third-party session refresh"
 ---
 
 # Tasks: Automatic Third-Party Session Refresh
 
-**Input**: Design documents from `/specs/052-session-auto-refresh/`
+**Input**: Design documents from `/specs/053-session-auto-refresh/`
 
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/), [quickstart.md](quickstart.md)
 
@@ -48,7 +48,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 ### Phase 2a: Domain Model & Glossary
 
-- [X] T004 [P] Add Session Health State, Session Health Snapshot, and Session Sweep Schedule to the "Third-Party OAuth2 Session Management" glossary in `ARCHITECTURE.md` (starts at line 1502). Use the definitions in `specs/052-session-auto-refresh/data-model.md` (Principle V).
+- [X] T004 [P] Add Session Health State, Session Health Snapshot, and Session Sweep Schedule to the "Third-Party OAuth2 Session Management" glossary in `ARCHITECTURE.md` (starts at line 1502). Use the definitions in `specs/053-session-auto-refresh/data-model.md` (Principle V).
 - [X] T005 Verify that these agree before code changes:
   - spec FR-018
   - `data-model.md`: the classification flowchart and the `AccessExpiryClass` table, where "at or before `threshold`" is inclusive
@@ -89,7 +89,7 @@ description: "Task list for feature 052: automatic third-party session refresh"
 
 - [X] T013a Add `tests/e2e/fixtures/session_health.go` with the shared test data for T014 to T016: session builders for each health state (`ValidSession`, `ExpiringRefreshableSession`, `ExpiredUnrefreshableSession`, `UnknownExpirySession`, each taking a service ID and `now`) plus `HealthJourneySessions(now)` reproducing spec Journey 2's eight sessions (Principle XIII: test data from `tests/e2e/fixtures/`).
 
-- [X] T014 [P] [US1] Add `TestHelmTemplate_SessionSweep` to `tests/integration/helm_chart_test.go`, one subtest per render-time scenario with a `// US1-S<n> from specs/052-session-auto-refresh/spec.md` comment:
+- [X] T014 [P] [US1] Add `TestHelmTemplate_SessionSweep` to `tests/integration/helm_chart_test.go`, one subtest per render-time scenario with a `// US1-S<n> from specs/053-session-auto-refresh/spec.md` comment:
   - **US1-S1**: a render with `enabled: false` plus a non-default `schedule` and `headers` contains no `CronJob` and nothing named `session-sweep`.
   - **US1-S2**: `schedule: "0 * * * *"`, `concurrencyPolicy: Forbid`, `backoffLimit: 0`, `activeDeadlineSeconds: 2100`; the curl configuration contains `url = "http://broker-agentic-identity-broker.identity.svc:14000/api/sessions/sweep"`, `header = "Host: broker-admin.example.test"`, the literal operator header, the PT2H body, and `max-time = 1800`.
   - **US1-S5** (render-time part): a `headersFromFile` entry renders `variable = "header_0@<path>"` and `expand-header = "<Name>: <prefix>{{header_0:trim:json}}"`, and the script never reads the file itself.

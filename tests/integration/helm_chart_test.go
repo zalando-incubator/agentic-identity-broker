@@ -333,7 +333,7 @@ func sessionSweepArgs(extra ...string) []string {
 }
 
 func TestHelmTemplate_SessionSweep(t *testing.T) {
-	// US1-S1 from specs/052-session-auto-refresh/spec.md
+	// US1-S1 from specs/053-session-auto-refresh/spec.md
 	t.Run("renders no sweep resources when disabled", func(t *testing.T) {
 		output := renderHelmTemplate(t,
 			"--set-string", "sessionSweep.headers.X-Operator=session-sweep",
@@ -343,7 +343,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		require.NotContains(t, output, "session-sweep")
 	})
 
-	// US1-S2 from specs/052-session-auto-refresh/spec.md
+	// US1-S2 from specs/053-session-auto-refresh/spec.md
 	t.Run("renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H", func(t *testing.T) {
 		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
 		for _, want := range []string{
@@ -366,7 +366,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		}
 	})
 
-	// US1-S10 from specs/052-session-auto-refresh/spec.md
+	// US1-S10 from specs/053-session-auto-refresh/spec.md
 	t.Run("keeps the job pod out of the broker Service and PDB selectors", func(t *testing.T) {
 		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
 		_, podTemplate, found := strings.Cut(output, "jobTemplate:")
@@ -375,7 +375,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		require.Contains(t, podTemplate, "app.kubernetes.io/component: session-sweep")
 	})
 
-	// US1-S5 from specs/052-session-auto-refresh/spec.md (render-time part)
+	// US1-S5 from specs/053-session-auto-refresh/spec.md (render-time part)
 	t.Run("reads file headers through curl config variables and never renders their value", func(t *testing.T) {
 		output := renderHelmTemplate(t, sessionSweepArgs(
 			"--show-only", "templates/cronjob-session-sweep.yaml",
@@ -387,7 +387,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		require.NotContains(t, output, "cat ")
 	})
 
-	// US1-S7 and US1-S11 from specs/052-session-auto-refresh/spec.md
+	// US1-S7 and US1-S11 from specs/053-session-auto-refresh/spec.md
 	t.Run("fails to render with an invalid sweep configuration", func(t *testing.T) {
 		tests := []struct {
 			name    string

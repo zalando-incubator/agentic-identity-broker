@@ -1,6 +1,6 @@
 # Research: Automatic Third-Party Session Refresh
 
-**Feature**: `052-session-auto-refresh` | **Date**: 2026-10-19 | **Spec**: [spec.md](spec.md)
+**Feature**: `053-session-auto-refresh` | **Date**: 2026-10-19 | **Spec**: [spec.md](spec.md)
 
 Each entry records a decision, why it was chosen, and the alternatives considered. File references are to the repository at the start of planning.
 

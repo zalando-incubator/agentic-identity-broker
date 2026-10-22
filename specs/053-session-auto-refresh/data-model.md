@@ -1,6 +1,6 @@
 # Data Model: Automatic Third-Party Session Refresh
 
-**Feature**: `052-session-auto-refresh` | **Spec**: [spec.md](spec.md) | **Research**: [research.md](research.md)
+**Feature**: `053-session-auto-refresh` | **Spec**: [spec.md](spec.md) | **Research**: [research.md](research.md)
 
 No entity, table, column, or migration is added. The feature reads the existing `UserSession` aggregate and adds value objects for health classification.
 

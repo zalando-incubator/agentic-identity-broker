@@ -1,6 +1,6 @@
 # Feature Specification: Automatic Third-Party Session Refresh
 
-**Feature Branch**: `052-session-auto-refresh`
+**Feature Branch**: `053-session-auto-refresh`
 
 **Created**: 2026-10-15
 

@@ -225,7 +225,7 @@ var _ = Describe("Session Metrics", func() {
 		})
 
 		Describe("User Story 2: session health per service", func() {
-			// US2-S1 from specs/052-session-auto-refresh/spec.md
+			// US2-S1 from specs/053-session-auto-refresh/spec.md
 			It("reports one value per service and series that sums to the stored sessions", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
@@ -244,7 +244,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(sum(counts[tickets.String()])).To(Equal(int64(2)))
 			})
 
-			// US2-S2 from specs/052-session-auto-refresh/spec.md
+			// US2-S2 from specs/053-session-auto-refresh/spec.md
 			It("reports zero for series without sessions", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
@@ -252,7 +252,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(counts[tickets.String()]).To(Equal(healthSeries(map[string]int64{"valid/true": 1, "expired/false": 1})))
 			})
 
-			// US2-S3 from specs/052-session-auto-refresh/spec.md
+			// US2-S3 from specs/053-session-auto-refresh/spec.md
 			It("counts a session expiring after the lookahead as valid", func() {
 				now := time.Now()
 				seed(fixtures.ValidSession("valid-a@example.com", calendar, now), fixtures.ValidSession("valid-b@example.com", calendar, now))
@@ -261,7 +261,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"valid/true": 2})))
 			})
 
-			// US2-S4 from specs/052-session-auto-refresh/spec.md
+			// US2-S4 from specs/053-session-auto-refresh/spec.md
 			It("counts a due session as expiring and an already expired one as expired, both refreshable", func() {
 				now := time.Now()
 				seed(fixtures.ExpiringRefreshableSession("due@example.com", calendar, now), fixtures.ExpiredRefreshableSession("expired@example.com", calendar, now))
@@ -270,7 +270,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"expiring/true": 1, "expired/true": 1})))
 			})
 
-			// US2-S5 from specs/052-session-auto-refresh/spec.md
+			// US2-S5 from specs/053-session-auto-refresh/spec.md
 			It("counts expired sessions without a usable refresh token as expired and unrefreshable", func() {
 				now := time.Now()
 				seed(fixtures.ExpiredUnrefreshableSession("lapsed@example.com", calendar, now), fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", calendar, now))
@@ -279,7 +279,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"expired/false": 2})))
 			})
 
-			// US2-S6 from specs/052-session-auto-refresh/spec.md
+			// US2-S6 from specs/053-session-auto-refresh/spec.md
 			It("counts a session without recorded expiry under unknown", func() {
 				seed(fixtures.UnknownExpirySession("timeless@example.com", tickets, time.Now()))
 				boot()
@@ -287,7 +287,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(counts[tickets.String()]).To(Equal(healthSeries(map[string]int64{"unknown/true": 1})))
 			})
 
-			// US2-S9 from specs/052-session-auto-refresh/spec.md
+			// US2-S9 from specs/053-session-auto-refresh/spec.md
 			It("exports only service_id, expiry, and refreshable attributes", func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
@@ -304,7 +304,7 @@ var _ = Describe("Session Metrics", func() {
 		})
 
 		Describe("User Story 3: sweep runs in metrics", func() {
-			// US3-S1 from specs/052-session-auto-refresh/spec.md
+			// US3-S1 from specs/053-session-auto-refresh/spec.md
 			It("records a completed run with its dry_run value in the duration histogram", func() {
 				due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
 				soon := time.Now().Add(2 * time.Minute)
@@ -316,7 +316,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(sweepDurationCounts(reader)).To(Equal(map[string]uint64{"completed/false": 1, "completed/true": 1}))
 			})
 
-			// US3-S3 from specs/052-session-auto-refresh/spec.md
+			// US3-S3 from specs/053-session-auto-refresh/spec.md
 			It("increments the skipped counter for already-refreshed or deleted candidates", func() {
 				now := time.Now()
 				principals := []string{fixtures.DefaultPrincipal().String(), fixtures.AnotherPrincipal().String(), fixtures.AdminPrincipal().String()}
@@ -416,7 +416,7 @@ var _ = Describe("Session Metrics", func() {
 			}
 		})
 
-		// US2-S7 from specs/052-session-auto-refresh/spec.md
+		// US2-S7 from specs/053-session-auto-refresh/spec.md
 		It("reports no points and logs a warning when the query fails, then recovers", func() {
 			seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 			boot()
@@ -431,7 +431,7 @@ var _ = Describe("Session Metrics", func() {
 			Expect(counts).To(HaveLen(2))
 		})
 
-		// US2-S8 from specs/052-session-auto-refresh/spec.md
+		// US2-S8 from specs/053-session-auto-refresh/spec.md
 		It("issues no health query when health metrics are disabled", func() {
 			config.TokenRefresh.HealthMetrics.Enabled = false
 			seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
@@ -455,7 +455,7 @@ var _ = Describe("Session Metrics", func() {
 			Expect(warnRecords(logs, "session health query failed")).To(HaveLen(1))
 		})
 
-		// US3-S2 from specs/052-session-auto-refresh/spec.md
+		// US3-S2 from specs/053-session-auto-refresh/spec.md
 		It("records rejected, aborted, and canceled runs under their outcome and no completed run", func() {
 			due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
 			soon := time.Now().Add(2 * time.Minute)

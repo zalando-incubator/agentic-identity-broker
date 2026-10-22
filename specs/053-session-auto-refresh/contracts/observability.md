@@ -1,6 +1,6 @@
 # Contract: Observability
 
-**Feature**: `052-session-auto-refresh` | FR-017 to FR-024, SR-007 | Research R10 to R13
+**Feature**: `053-session-auto-refresh` | FR-017 to FR-024, SR-007 | Research R10 to R13
 
 These names become a compatibility surface once released. All instruments use the global MeterProvider (ADR 011) on meter `oauth2session`. Nothing is exposed on `/metrics` or `/health`.
 

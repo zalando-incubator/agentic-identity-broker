@@ -1,6 +1,6 @@
 # Quickstart: Validate Automatic Third-Party Session Refresh
 
-**Feature**: `052-session-auto-refresh` | **Spec**: [spec.md](spec.md) | **Contracts**: [contracts/](contracts/)
+**Feature**: `053-session-auto-refresh` | **Spec**: [spec.md](spec.md) | **Contracts**: [contracts/](contracts/)
 
 Run from the repository root.
 

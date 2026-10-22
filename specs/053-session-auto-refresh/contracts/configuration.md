@@ -1,6 +1,6 @@
 # Contract: Broker configuration
 
-**Feature**: `052-session-auto-refresh` | Spec: Configuration Requirements | Research R15
+**Feature**: `053-session-auto-refresh` | Spec: Configuration Requirements | Research R15
 
 ## Keys
 

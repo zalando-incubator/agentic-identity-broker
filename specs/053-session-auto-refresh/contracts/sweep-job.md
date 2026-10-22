@@ -1,6 +1,6 @@
 # Contract: Rendered sweep resources and job behavior
 
-**Feature**: `052-session-auto-refresh` | FR-002 to FR-016, SR-002 to SR-005 | Research R1 to R8
+**Feature**: `053-session-auto-refresh` | FR-002 to FR-016, SR-002 to SR-005 | Research R1 to R8
 
 ## Resources
 
