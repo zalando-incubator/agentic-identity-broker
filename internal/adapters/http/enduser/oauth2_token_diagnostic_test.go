@@ -231,10 +231,11 @@ func TestTokenExchangeTelemetryUsesSessionMetadataOnly(t *testing.T) {
 }
 
 type diagnosticImpersonationService struct {
-	target      *impersonation.Target
-	resolveErr  error
-	exchangeErr error
-	response    *tokenexchange.TokenExchangeResponse
+	target           *impersonation.Target
+	resolveErr       error
+	exchangeErr      error
+	impersonateCalls int
+	response         *tokenexchange.TokenExchangeResponse
 }
 
 func (s *diagnosticImpersonationService) ResolveTarget(context.Context, []string) (*impersonation.Target, bool, error) {
@@ -242,6 +243,7 @@ func (s *diagnosticImpersonationService) ResolveTarget(context.Context, []string
 }
 
 func (s *diagnosticImpersonationService) Impersonate(context.Context, *impersonation.Request, *impersonation.Target) (*impersonation.Outcome, error) {
+	s.impersonateCalls++
 	return &impersonation.Outcome{Response: s.response, Audit: impersonation.AuditRecord{Outcome: "success"}}, s.exchangeErr
 }
 
@@ -255,6 +257,42 @@ func diagnosticImpersonationForm() url.Values {
 		"actor_token":           {"ACTOR_TOKEN_SENTINEL"},
 		"subject_token_type":    {impersonation.JWTTokenType},
 		"subject_token":         {"SUBJECT_TOKEN_SENTINEL"},
+	}
+}
+
+func TestOAuth2TokenHandler_RepeatedImpersonationParametersAreAudited(t *testing.T) {
+	for _, parameter := range []string{"actor_token", "client_secret", "scope"} {
+		t.Run(parameter, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			service := &diagnosticImpersonationService{
+				target: &impersonation.Target{Agent: &storage.Agent{ID: id.NewAgentID()}},
+			}
+			form := diagnosticImpersonationForm()
+			form[parameter] = []string{"DUPLICATE_FIRST_SENTINEL", "DUPLICATE_SECOND_SENTINEL"}
+			form["audience"] = append([]string{""}, form["audience"]...)
+			handler := &OAuth2TokenHandler{Impersonation: service, Logger: slog.New(logs)}
+			request := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, "invalid_request", body["error"])
+			assert.Zero(t, service.impersonateCalls, "ambiguous credentials must not reach authentication")
+			require.Len(t, *logs.records, 2)
+			audit := (*logs.records)[0]
+			assert.Equal(t, "impersonation_decision", audit.message)
+			assert.Equal(t, "invalid_request", audit.attrs["outcome"])
+			assert.Equal(t, "invalid_request", audit.attrs["oauth_error_code"])
+			assert.Equal(t, service.target.Agent.ID.String(), audit.attrs["target_agent_id"])
+			require.Len(t, spans.Ended(), 1)
+			assertTokenExchangeDiagnostic(t, (*logs.records)[1], spans.Ended()[0], tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed).WithExchangeKind(tokenexchange.ExchangeImpersonation))
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DUPLICATE_FIRST_SENTINEL", "DUPLICATE_SECOND_SENTINEL", "ASSERTION_SENTINEL", "ACTOR_TOKEN_SENTINEL", "SUBJECT_TOKEN_SENTINEL", "AUDIENCE_HOST_SENTINEL", "AUDIENCE_PATH_SENTINEL")
+		})
 	}
 }
 

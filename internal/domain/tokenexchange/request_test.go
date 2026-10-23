@@ -3,6 +3,9 @@ package tokenexchange
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestTokenExchangeRequest_Valid tests valid token exchange requests.
@@ -32,24 +35,11 @@ func TestTokenExchangeRequest_Valid(t *testing.T) {
 			request: NewTokenExchangeRequest(
 				TokenExchangeGrantType,
 				"eyJhbGc...",
-				"", // empty, should default to AccessTokenType
-				"eyJpc3M...",
-				"", // empty, should default to JWTBearerType
-				"https://api.example.com",
-				"", // scope is optional
-			),
-			wantErr: false,
-		},
-		{
-			name: "valid request with JWT token type",
-			request: NewTokenExchangeRequest(
-				TokenExchangeGrantType,
-				"eyJhbGc...",
-				JWTTokenType,
+				AccessTokenType,
 				"eyJpc3M...",
 				JWTBearerType,
-				"https://github.com",
-				"",
+				"https://api.example.com",
+				"", // scope is optional
 			),
 			wantErr: false,
 		},
@@ -120,9 +110,9 @@ func TestTokenExchangeRequest_InvalidGrantType(t *testing.T) {
 			req := NewTokenExchangeRequest(
 				tt.grantType,
 				"eyJhbGc...",
-				"",
+				AccessTokenType,
 				"eyJpc3M...",
-				"",
+				JWTBearerType,
 				"https://api.example.com",
 				"",
 			)
@@ -163,9 +153,9 @@ func TestTokenExchangeRequest_InvalidSubjectToken(t *testing.T) {
 			req := NewTokenExchangeRequest(
 				TokenExchangeGrantType,
 				tt.subjectToken,
-				"",
+				AccessTokenType,
 				"eyJpc3M...",
-				"",
+				JWTBearerType,
 				"https://api.example.com",
 				"",
 			)
@@ -206,9 +196,9 @@ func TestTokenExchangeRequest_InvalidClientAssertion(t *testing.T) {
 			req := NewTokenExchangeRequest(
 				TokenExchangeGrantType,
 				"eyJhbGc...",
-				"",
+				AccessTokenType,
 				tt.clientAssertion,
-				"",
+				JWTBearerType,
 				"https://api.example.com",
 				"",
 			)
@@ -261,9 +251,9 @@ func TestTokenExchangeRequest_InvalidResource(t *testing.T) {
 			req := NewTokenExchangeRequest(
 				TokenExchangeGrantType,
 				"eyJhbGc...",
-				"",
+				AccessTokenType,
 				"eyJpc3M...",
-				"",
+				JWTBearerType,
 				tt.resource,
 				"",
 			)
@@ -284,25 +274,68 @@ func TestTokenExchangeRequest_InvalidResource(t *testing.T) {
 	}
 }
 
-// TestTokenExchangeRequest_Defaults tests that optional fields get proper defaults.
-func TestTokenExchangeRequest_Defaults(t *testing.T) {
+func TestTokenExchangeRequest_RequiresExactTokenTypes(t *testing.T) {
 	t.Parallel()
-	req := NewTokenExchangeRequest(
-		TokenExchangeGrantType,
-		"eyJhbGc...",
-		"", // empty, should default
-		"eyJpc3M...",
-		"", // empty, should default
-		"https://api.example.com",
-		"",
-	)
-
-	if req.GetSubjectTokenType() != AccessTokenType {
-		t.Errorf("SubjectTokenType default = %q, want %q", req.GetSubjectTokenType(), AccessTokenType)
+	tests := []struct {
+		name                string
+		subjectTokenType    string
+		clientAssertionType string
+		parameter           string
+	}{
+		{"missing subject type", "", JWTBearerType, SubjectTokenTypeParam},
+		{"JWT subject type", JWTTokenType, JWTBearerType, SubjectTokenTypeParam},
+		{"ID token subject type", IDTokenType, JWTBearerType, SubjectTokenTypeParam},
+		{"refresh token subject type", RefreshTokenType, JWTBearerType, SubjectTokenTypeParam},
+		{"unknown subject type", "unsupported-sensitive-type", JWTBearerType, SubjectTokenTypeParam},
+		{"uppercase subject type", strings.ToUpper(AccessTokenType), JWTBearerType, SubjectTokenTypeParam},
+		{"leading subject whitespace", " " + AccessTokenType, JWTBearerType, SubjectTokenTypeParam},
+		{"trailing subject whitespace", AccessTokenType + " ", JWTBearerType, SubjectTokenTypeParam},
+		{"blank subject type", " \t", JWTBearerType, SubjectTokenTypeParam},
+		{"missing assertion type", AccessTokenType, "", ClientAssertionTypeParam},
+		{"JWT assertion type", AccessTokenType, JWTTokenType, ClientAssertionTypeParam},
+		{"ID token assertion type", AccessTokenType, IDTokenType, ClientAssertionTypeParam},
+		{"access token assertion type", AccessTokenType, AccessTokenType, ClientAssertionTypeParam},
+		{"unknown assertion type", AccessTokenType, "unsupported-sensitive-type", ClientAssertionTypeParam},
+		{"uppercase assertion type", AccessTokenType, strings.ToUpper(JWTBearerType), ClientAssertionTypeParam},
+		{"leading assertion whitespace", AccessTokenType, " " + JWTBearerType, ClientAssertionTypeParam},
+		{"trailing assertion whitespace", AccessTokenType, JWTBearerType + " ", ClientAssertionTypeParam},
+		{"blank assertion type", AccessTokenType, " \t", ClientAssertionTypeParam},
 	}
-
-	if req.GetClientAssertionType() != JWTBearerType {
-		t.Errorf("ClientAssertionType default = %q, want %q", req.GetClientAssertionType(), JWTBearerType)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			requests := map[string]*TokenExchangeRequest{
+				"constructor": NewTokenExchangeRequest(
+					TokenExchangeGrantType, "subject-secret", tt.subjectTokenType,
+					"assertion-secret", tt.clientAssertionType, "https://api.example.com", "",
+				),
+				"literal": {
+					GrantType:           TokenExchangeGrantType,
+					SubjectToken:        "subject-secret",
+					SubjectTokenType:    tt.subjectTokenType,
+					ClientAssertion:     "assertion-secret",
+					ClientAssertionType: tt.clientAssertionType,
+					Resource:            "https://api.example.com",
+				},
+			}
+			for name, req := range requests {
+				t.Run(name, func(t *testing.T) {
+					err := req.Validate()
+					require.Error(t, err)
+					var tokenErr *TokenExchangeError
+					require.ErrorAs(t, err, &tokenErr)
+					assert.Equal(t, InvalidRequestError, tokenErr.Code())
+					assert.Equal(t, 400, tokenErr.HTTPStatus())
+					assert.Contains(t, tokenErr.Description(), tt.parameter)
+					assert.Equal(t, StageRequestValidation, tokenErr.Diagnostic().Stage())
+					assert.Equal(t, DetailRequestMalformed, tokenErr.Diagnostic().Detail())
+					assert.Equal(t, OutcomeInvalidRequest, tokenErr.Diagnostic().Outcome())
+					assert.NotContains(t, err.Error(), "subject-secret")
+					assert.NotContains(t, err.Error(), "assertion-secret")
+					assert.NotContains(t, err.Error(), "unsupported-sensitive-type")
+				})
+			}
+		})
 	}
 }
 
@@ -369,9 +402,9 @@ func TestTokenExchangeRequest_IsTokenExchangeRequest(t *testing.T) {
 			req := NewTokenExchangeRequest(
 				tt.grantType,
 				"eyJhbGc...",
-				"",
+				AccessTokenType,
 				"eyJpc3M...",
-				"",
+				JWTBearerType,
 				"https://api.example.com",
 				"",
 			)

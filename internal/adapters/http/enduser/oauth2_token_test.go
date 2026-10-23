@@ -258,6 +258,304 @@ func TestOAuth2TokenHandler_ServeHTTP_ContentTypeValidation(t *testing.T) {
 	}
 }
 
+func TestOAuth2TokenHandler_ServeHTTP_RejectsMultipleContentTypes(t *testing.T) {
+	for _, contentTypes := range [][]string{
+		{"application/x-www-form-urlencoded", "application/x-www-form-urlencoded"},
+		{"application/x-www-form-urlencoded", "application/json"},
+		{"application/json", "application/x-www-form-urlencoded"},
+		{"application/x-www-form-urlencoded", ""},
+		{"application/x-www-form-urlencoded, application/x-www-form-urlencoded"},
+	} {
+		t.Run(strings.Join(contentTypes, "|"), func(t *testing.T) {
+			strategy := &mockTokenGrantStrategy{}
+			resolveCalls := 0
+			handler := &OAuth2TokenHandler{
+				GrantHandler: strategy,
+				OAuth2Service: &mockOAuth2ServiceForToken{
+					resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+						resolveCalls++
+						return &ports.TokenGrantResolution{}, nil
+					},
+				},
+			}
+			body := strings.NewReader("grant_type=authorization_code&client_id=client&code=code")
+			bodyLength := body.Len()
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", body)
+			for _, contentType := range contentTypes {
+				req.Header.Add("Content-Type", contentType)
+			}
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			var response map[string]string
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			assert.Equal(t, "invalid_request", response["error"])
+			assert.NotEmpty(t, response["error_description"])
+			assert.Equal(t, bodyLength, body.Len(), "reject ambiguous headers before reading the body")
+			assert.Zero(t, resolveCalls)
+			assert.Nil(t, strategy.capturedFormData)
+		})
+	}
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_RejectsRepeatedSingletonParameters(t *testing.T) {
+	parameters := []struct {
+		name      string
+		grantType string
+	}{
+		{"grant_type", "authorization_code"},
+		{"grant_type", "client_credentials"},
+		{"grant_type", "refresh_token"},
+		{"grant_type", tokenexchange.TokenExchangeGrantType},
+		{"client_id", "authorization_code"},
+		{"client_secret", "client_credentials"},
+		{"code", "authorization_code"},
+		{"redirect_uri", "authorization_code"},
+		{"refresh_token", "refresh_token"},
+		{"code_verifier", "authorization_code"},
+		{"scope", "client_credentials"},
+		{"subject_token", tokenexchange.TokenExchangeGrantType},
+		{"subject_token_type", tokenexchange.TokenExchangeGrantType},
+		{"client_assertion", tokenexchange.TokenExchangeGrantType},
+		{"client_assertion_type", tokenexchange.TokenExchangeGrantType},
+		{"actor_token", tokenexchange.TokenExchangeGrantType},
+		{"actor_token_type", tokenexchange.TokenExchangeGrantType},
+		{"requested_token_type", tokenexchange.TokenExchangeGrantType},
+	}
+	for _, parameter := range parameters {
+		for _, duplicate := range []string{"identical", "different"} {
+			t.Run(parameter.grantType+"/"+parameter.name+"/"+duplicate, func(t *testing.T) {
+				form := url.Values{
+					"grant_type": {parameter.grantType},
+					"client_id":  {"client"},
+				}
+				value := form.Get(parameter.name)
+				if value == "" {
+					value = "CREDENTIAL_SENTINEL"
+				}
+				switch duplicate {
+				case "identical":
+					form[parameter.name] = []string{value, value}
+				case "different":
+					form[parameter.name] = []string{value, "OTHER_CREDENTIAL_SENTINEL"}
+				}
+				assertTokenFormRejectedBeforeDispatch(t, form.Encode(), parameter.name)
+			})
+		}
+	}
+	t.Run("percent encoded parameter name", func(t *testing.T) {
+		assertTokenFormRejectedBeforeDispatch(t, "grant_type=authorization_code&client_id=client&code=CREDENTIAL_SENTINEL&%63ode=OTHER_CREDENTIAL_SENTINEL", "code")
+	})
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_TreatsEmptyParametersAsOmitted(t *testing.T) {
+	tests := []struct {
+		name string
+		form string
+		want url.Values
+	}{
+		{
+			name: "empty duplicate grant_type",
+			form: "grant_type=&grant_type=authorization_code&client_id=client&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "empty duplicate client_id",
+			form: "grant_type=authorization_code&client_id=&client_id=client&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "empty duplicate code",
+			form: "grant_type=authorization_code&client_id=client&code=&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "all empty scope",
+			form: "grant_type=client_credentials&client_id=client&scope=&scope=",
+			want: url.Values{"grant_type": {"client_credentials"}, "client_id": {"client"}},
+		},
+		{
+			name: "bare repeated scope",
+			form: "grant_type=client_credentials&client_id=client&scope&scope",
+			want: url.Values{"grant_type": {"client_credentials"}, "client_id": {"client"}},
+		},
+		{
+			name: "empty duplicate resource",
+			form: "grant_type=authorization_code&client_id=client&code=code&resource=&resource=https://api.example.com",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}, "resource": {"https://api.example.com"}},
+		},
+		{
+			name: "empty duplicate audience",
+			form: "grant_type=authorization_code&client_id=client&code=code&audience=&audience=https://api.example.com",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}, "audience": {"https://api.example.com"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy := &mockTokenGrantStrategy{}
+			handler := &OAuth2TokenHandler{
+				GrantHandler: strategy,
+				OAuth2Service: &mockOAuth2ServiceForToken{
+					resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+						return &ports.TokenGrantResolution{}, nil
+					},
+				},
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, strategy.capturedFormData)
+		})
+	}
+
+	t.Run("all empty required parameter is missing", func(t *testing.T) {
+		assertTokenFormRejectedBeforeDispatch(t, "grant_type=&grant_type=&client_id=client&code=code", "grant_type")
+	})
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_RejectsInvalidExchangeResources(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []string
+		wantError string
+	}{
+		{"different", []string{"https://api.example.com", "https://other.example.com"}, "invalid_target"},
+		{"invalid URI", []string{"https://api.example.com", "not a uri"}, "invalid_request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			impersonationService := &recordingTokenImpersonationService{}
+			handler := &OAuth2TokenHandler{Impersonation: impersonationService}
+			form := url.Values{
+				"grant_type": {tokenexchange.TokenExchangeGrantType},
+				"resource":   tt.resources,
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			var response map[string]string
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			assert.Equal(t, tt.wantError, response["error"])
+			assert.NotEmpty(t, response["error_description"])
+			assert.Equal(t, 1, impersonationService.resolveCalls)
+			assert.Zero(t, impersonationService.impersonateCalls)
+		})
+	}
+}
+
+func assertTokenFormRejectedBeforeDispatch(t *testing.T, form, parameter string) {
+	t.Helper()
+	resolveCalls := 0
+	strategy := &mockTokenGrantStrategy{}
+	impersonationService := &recordingTokenImpersonationService{}
+	handler := &OAuth2TokenHandler{
+		GrantHandler:  strategy,
+		Impersonation: impersonationService,
+		OAuth2Service: &mockOAuth2ServiceForToken{
+			resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+				resolveCalls++
+				return &ports.TokenGrantResolution{}, nil
+			},
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	var response map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "invalid_request", response["error"], "repeated %s must be rejected", parameter)
+	assert.NotEmpty(t, response["error_description"])
+	assert.NotContains(t, response["error_description"], "CREDENTIAL_SENTINEL")
+	assert.Zero(t, resolveCalls, "ambiguous input must not reach client resolution")
+	assert.Nil(t, strategy.capturedFormData, "ambiguous input must not reach a grant strategy")
+	assert.Zero(t, impersonationService.resolveCalls, "ambiguous input must not reach exchange routing")
+	assert.Zero(t, impersonationService.impersonateCalls)
+}
+
+type recordingTokenImpersonationService struct {
+	resolveCalls     int
+	impersonateCalls int
+	audiences        []string
+}
+
+func (s *recordingTokenImpersonationService) ResolveTarget(_ context.Context, audiences []string) (*impersonation.Target, bool, error) {
+	s.resolveCalls++
+	s.audiences = audiences
+	return nil, false, nil
+}
+
+func (s *recordingTokenImpersonationService) Impersonate(context.Context, *impersonation.Request, *impersonation.Target) (*impersonation.Outcome, error) {
+	s.impersonateCalls++
+	return nil, errors.New("unexpected impersonation dispatch")
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_PreservesRepeatableParametersAndIgnoresQuery(t *testing.T) {
+	strategy := &mockTokenGrantStrategy{}
+	handler := &OAuth2TokenHandler{
+		GrantHandler: strategy,
+		OAuth2Service: &mockOAuth2ServiceForToken{
+			resolveFn: func(_ context.Context, clientID id.ClientID) (*ports.TokenGrantResolution, error) {
+				assert.Equal(t, id.ClientID("body-client"), clientID)
+				return &ports.TokenGrantResolution{}, nil
+			},
+		},
+	}
+	form := url.Values{
+		"grant_type": {"authorization_code"},
+		"client_id":  {"body-client"},
+		"code":       {"body-code"},
+		"extension":  {"one", "", "one"},
+		"audience":   {"https://one.example.com", "https://two.example.com"},
+		"resource":   {"https://one.example.com", "https://two.example.com"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token?grant_type=refresh_token&grant_type=client_credentials&client_id=query-client&code=query-code&scope=query-scope", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, form, strategy.capturedFormData)
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_PreservesExchangeAudienceRouting(t *testing.T) {
+	service := &recordingTokenImpersonationService{}
+	handler := &OAuth2TokenHandler{Impersonation: service}
+	form := url.Values{
+		"grant_type": {tokenexchange.TokenExchangeGrantType},
+		"audience":   {"https://one.example.com", "https://two.example.com"},
+		"extension":  {"one", "two"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 1, service.resolveCalls)
+	assert.Equal(t, form["audience"], service.audiences)
+	assert.Zero(t, service.impersonateCalls)
+	var response map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "unsupported_grant_type", response["error"])
+}
+
 // TestOAuth2TokenHandler_PreFlightErrorsReturnJSON verifies that all pre-flight error
 // paths return application/json with a valid RFC 6749 error body, not text/plain.
 func TestOAuth2TokenHandler_PreFlightErrorsReturnJSON(t *testing.T) {
