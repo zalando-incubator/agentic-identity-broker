@@ -145,6 +145,32 @@ broker:
       readOnly: true
 ```
 
+### Managed Secret representation
+
+The chart-managed JWE signing-key and memory-encryption Secrets use `stringData` by default. For infrastructure that requires `data`, set:
+
+```yaml
+secrets:
+  useStringData: false
+```
+
+The chart writes `broker.thirdPartyOauth2.jweSigningKeyBase64` and `broker.encryption.memory.rawKey` unchanged in either mode. In `stringData` mode, supply base64-encoded 32-byte keys. In `data` mode, supply Kubernetes-ready base64 values or placeholders that your deployment tooling replaces before applying the manifest. The chart does not encode these values. After Kubernetes decodes `data`, the broker must still receive a base64-encoded 32-byte key.
+
+For deployment-time substitution:
+
+```yaml
+secrets:
+  useStringData: false
+broker:
+  thirdPartyOauth2:
+    jweSigningKeyBase64: "${JWE_SIGNING_KEY}"
+  encryption:
+    memory:
+      rawKey: "${MEMORY_RAW_KEY}"
+```
+
+The placeholders remain literal in the rendered `data` fields. Your deployment tooling supplies the final Kubernetes-ready values. The raw `broker.thirdPartyOauth2.jweSigningKey` alternative retains its existing single base64 conversion; use `jweSigningKeyBase64` for unchanged JWE placeholders. Key precedence is unchanged. This setting does not modify externally managed Secrets or `extraObjects`.
+
 ### Filesystem OAuth2 credentials
 
 `broker.thirdPartyOauth2.credentialFiles` maps exact service canonical IDs to two paths. The default `{}` renders no broker binding. Keys preserve case and dots. Both `client_id_file` and `client_secret_file` are required strings. Broker startup validates absolute, non-empty paths and the full canonical-ID grammar without opening files.
@@ -181,6 +207,7 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `replicaCount` | Number of broker pods | `1` |
 | `image.repository` | Broker container image repository | `agentic-identity-broker` |
 | `image.tag` | Broker image tag | Chart appVersion |
+| `secrets.useStringData` | Boolean: use `stringData` for chart-managed keys; `false` renders `data` without encoding supplied values | `true` |
 | `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
 | `broker.extraVolumes` | Additional Kubernetes volumes for the broker pod | `[]` |
 | `broker.extraVolumeMounts` | Additional Kubernetes volume mounts for the broker container | `[]` |

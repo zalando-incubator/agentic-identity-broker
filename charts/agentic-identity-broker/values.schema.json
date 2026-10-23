@@ -41,6 +41,16 @@
         "required": ["name"]
       }
     },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "useStringData": {
+          "type": "boolean",
+          "description": "Render chart-managed keys with stringData; false uses data without encoding supplied values"
+        }
+      }
+    },
     "nameOverride": {
       "type": "string",
       "description": "Override the chart name"
@@ -614,7 +624,7 @@
             },
             "jweSigningKeyBase64": {
               "type": "string",
-              "description": "Base64-encoded 32-byte JWE signing key written to Secret stringData without additional encoding (highest precedence)"
+              "description": "JWE signing key written unchanged (highest precedence): base64-encoded 32-byte key for stringData; Kubernetes-ready base64 or deployment substitution placeholder for data"
             },
             "jweSigningKeySecret": {
               "type": "object",
@@ -671,7 +681,7 @@
               "properties": {
                 "rawKey": {
                   "type": "string",
-                  "description": "Base64-encoded 32-byte key written to Secret stringData without additional encoding for the in-memory encryption backend"
+                  "description": "Memory encryption key written unchanged: base64-encoded 32-byte key for stringData; Kubernetes-ready base64 or deployment substitution placeholder for data"
                 }
               }
             },

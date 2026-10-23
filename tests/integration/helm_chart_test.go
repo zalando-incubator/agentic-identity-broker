@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -192,6 +193,72 @@ func requireCredentialHelmMounts(t *testing.T, pod credentialHelmPod, credential
 	require.NotNil(t, volumes["config"].ConfigMap)
 	require.NotNil(t, volumes["tmp"].EmptyDir)
 	return volumes[credentialMount.Name]
+}
+
+func TestHelmTemplateManagedSecretEncoding(t *testing.T) {
+	rawKey := "0123456789abcdef0123456789abcdef"
+	encodedKey := base64.StdEncoding.EncodeToString([]byte(rawKey))
+	for _, mode := range []struct {
+		name       string
+		args       []string
+		stringData bool
+	}{
+		{"default", nil, true},
+		{"stringData", []string{"--set", "secrets.useStringData=true"}, true},
+		{"data", []string{"--set", "secrets.useStringData=false"}, false},
+	} {
+		for _, input := range []struct {
+			name string
+			args []string
+		}{
+			{"raw", []string{"--set-string", "broker.thirdPartyOauth2.jweSigningKey=" + rawKey}},
+			{"base64", []string{"--set-string", "broker.thirdPartyOauth2.jweSigningKeyBase64=" + encodedKey}},
+			{"base64 takes precedence", []string{
+				"--set-string", "broker.thirdPartyOauth2.jweSigningKey=ignored",
+				"--set-string", "broker.thirdPartyOauth2.jweSigningKeyBase64=" + encodedKey,
+			}},
+		} {
+			t.Run(mode.name+"/"+input.name, func(t *testing.T) {
+				args := append([]string{"--set-string", "broker.encryption.memory.rawKey=" + encodedKey}, mode.args...)
+				args = append(args, input.args...)
+				_, _, secrets := credentialHelmConfiguration(t, renderHelmTemplate(t, args...))
+				for name, key := range map[string]string{
+					"broker-agentic-identity-broker-jwe-key":    "signing-key",
+					"broker-agentic-identity-broker-encryption": "memory-raw-key",
+				} {
+					secret, ok := secrets[name]
+					require.True(t, ok, "missing Secret %s", name)
+					var value string
+					if mode.stringData {
+						require.Empty(t, secret.Data)
+						value = secret.StringData[key]
+					} else {
+						require.Empty(t, secret.StringData)
+						value = secret.Data[key]
+					}
+					require.Equal(t, encodedKey, value, "%s must preserve the configured representation", name)
+					decoded, err := base64.StdEncoding.DecodeString(value)
+					require.NoError(t, err)
+					require.Equal(t, rawKey, string(decoded))
+				}
+			})
+		}
+	}
+}
+
+func TestHelmTemplateManagedSecretDataPlaceholders(t *testing.T) {
+	_, _, secrets := credentialHelmConfiguration(t, renderHelmTemplate(t,
+		"--set", "secrets.useStringData=false",
+		"--set-string", "broker.thirdPartyOauth2.jweSigningKeyBase64=${JWE_SIGNING_KEY}",
+		"--set-string", "broker.thirdPartyOauth2.jweSigningKey=ignored",
+		"--set-string", "broker.encryption.memory.rawKey=${MEMORY_RAW_KEY}",
+	))
+	jwe := secrets["broker-agentic-identity-broker-jwe-key"]
+	encryption := secrets["broker-agentic-identity-broker-encryption"]
+	require.Empty(t, jwe.StringData)
+	require.Empty(t, encryption.StringData)
+	require.Equal(t, "${JWE_SIGNING_KEY}", jwe.Data["signing-key"])
+	require.Equal(t, "${MEMORY_RAW_KEY}", encryption.Data["memory-raw-key"])
 }
 
 // US7-S1 rendering contract; the corresponding E2E journey applies paired configuration over HTTP.

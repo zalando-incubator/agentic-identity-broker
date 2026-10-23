@@ -17,6 +17,10 @@ image:
 # -- Image pull secrets for private registries
 imagePullSecrets: []
 
+secrets:
+  # -- Render chart-managed keys with stringData; false uses data without encoding supplied values
+  useStringData: true
+
 # -- Override the chart name
 nameOverride: ""
 # -- Override the full resource name
@@ -420,7 +424,7 @@ broker:
     # Set via environment variable or Kubernetes Secret
     jweSigningKey: ""
     # -- Base64-encoded 32-byte JWE signing key (used directly if set; do not provide raw bytes here)
-    # The chart writes this value to stringData without additional encoding.
+    # Written unchanged; data mode requires Kubernetes-ready base64 or a deployment substitution placeholder.
     # Precedence order (highest to lowest): jweSigningKeyBase64 > jweSigningKey > jweSigningKeySecret
     jweSigningKeyBase64: ""
     # -- Secret reference for JWE signing key (alternative to jweSigningKey)
@@ -435,7 +439,7 @@ broker:
     # -- In-memory encryption backend configuration
     memory:
       # -- Base64-encoded 32-byte key for the in-memory encryption backend
-      # The chart writes this value to stringData without additional encoding.
+      # Written unchanged; data mode requires Kubernetes-ready base64 or a deployment substitution placeholder.
       rawKey: ""
     # -- AWS KMS encryption backend configuration
     awsKms:
