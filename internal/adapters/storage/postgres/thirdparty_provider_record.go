@@ -30,6 +30,7 @@ type ThirdpartyOAuth2ProviderRecord struct {
 	ClientID                     *string                     `db:"client_id"`
 	SecretCiphertext             []byte                      `db:"client_secret_encrypted"`
 	TokenEndpointAuthMethod      *string                     `db:"token_endpoint_auth_method"`
+	ClientRegistration           string                      `db:"client_registration"`
 	CredentialSource             string                      `db:"credential_source"`
 	CredentialSourceTransitioned bool                        `db:"credential_source_transitioned"`
 	Flavor                       string                      `db:"oauth2_flavor"`
@@ -177,6 +178,7 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		ClientID:                     clientID,
 		SecretCiphertext:             ciphertext,
 		TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
+		ClientRegistration:           string(entity.ClientRegistration),
 		CredentialSource:             string(source),
 		CredentialSourceTransitioned: entity.CredentialSourceTransitioned,
 		Flavor:                       string(flavor),
@@ -261,6 +263,7 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		DisplayName:                  record.DisplayName,
 		Secret:                       secret,
 		TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
+		ClientRegistration:           model.ClientRegistration(record.ClientRegistration),
 		CredentialSource:             model.CredentialSource(record.CredentialSource),
 		CredentialSourceTransitioned: record.CredentialSourceTransitioned,
 		Flavor:                       model.OAuth2Flavor(record.Flavor),
@@ -315,6 +318,9 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		entity.ProtectedResources = make([]string, len(record.ProtectedResources))
 		copy(entity.ProtectedResources, record.ProtectedResources)
 	}
+	if err := entity.ValidateStoredClientAuthentication(); err != nil {
+		return nil, invalidProviderRecord("stored client registration or authentication is invalid")
+	}
 
 	return entity, nil
 }
@@ -324,6 +330,20 @@ func invalidProviderRecord(message string) error {
 }
 
 func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (model.TokenEndpointAuthMethod, error) {
+	registration := model.ClientRegistration(record.ClientRegistration)
+	if registration != model.ClientRegistrationStatic && registration != model.ClientRegistrationCIMD {
+		return "", invalidProviderRecord("stored client_registration is invalid")
+	}
+	if registration == model.ClientRegistrationCIMD {
+		if record.CredentialSource != string(model.CredentialSourceStored) || record.SecretCiphertext != nil || record.Flavor == string(model.OAuth2FlavorGoogle) ||
+			(record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapDCR)) ||
+			(record.TokenEndpointAuthMethod == nil || (*record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT) && *record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodNone))) {
+			return "", invalidProviderRecord("stored client_registration is incompatible with client authentication")
+		}
+	} else if (record.TokenEndpointAuthMethod != nil && *record.TokenEndpointAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT)) ||
+		(record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapCIMD)) {
+		return "", invalidProviderRecord("stored client_registration is incompatible with client authentication")
+	}
 	switch model.CredentialSource(record.CredentialSource) {
 	case model.CredentialSourceFilesystem:
 		if record.ClientID != nil || record.SecretCiphertext != nil || record.TokenEndpointAuthMethod != nil || record.ResourceURL != nil || record.ClientMethod != nil {

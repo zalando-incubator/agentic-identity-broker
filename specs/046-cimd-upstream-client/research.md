@@ -7,6 +7,8 @@ It does not change inbound CIMD client resolution.
 
 All research questions from the technical context are resolved.
 
+Increment 2 (issue #264) adds CIMD public services. Client registration now determines who supplies the client identifier, independently of token-endpoint authentication. The decisions that follow augment the original research. The stakeholder confirmed D-A through D-D under API-014 and accepted ADR 043, including D-E–D-J, on 2026-10-22.
+
 ## Decision: Model three explicit service authentication modes
 
 **Decision:** Add `private_key_jwt` to `TokenEndpointAuthMethod`.
@@ -161,3 +163,97 @@ Update `docs/reference/api.md`, `docs/guides/manage-agents-and-services.md`, `do
 - Create static generated API pages. Rejected. The site reads the current OpenAPI input at build time.
 
 **Evidence:** `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, `assets/docusaurus/docusaurus.config.js`, `docs/reference/api.md`, and `docs/guides/operate-oauth2-server-modes.md`.
+
+## Increment 2 (issue #264): CIMD public clients
+
+Issue #264 approves `client_registration` as an independent service setting. It approves four combinations: `static` with an absent method or `none`, and `cimd` with `private_key_jwt` or `none`. Omission resolves to `cimd` only for `private_key_jwt`. Read and list responses report the resolved setting. Stored `private_key_jwt` services become `cimd`, and all other stored services become `static`. The broker rejects the other two combinations with `400` before outbound traffic. CIMD draft-02 §4.1 forbids shared-secret methods for CIMD. Its §8.2 recommends authentication when available, so `private_key_jwt` remains the recommended CIMD method.
+
+### Decision: D-A — Reject explicit invalid registration (confirmed 2026-10-22)
+
+**Decision:** The optional `client_registration` field is not nullable. Explicit `null`, an empty string, and an unknown value return `400` with `{"error":"validation failed","message":...}`.
+
+**Rationale:** The `credential_source` precedent in ADR 041 distinguishes omission from an invalid explicit value. The Zalando rule equates null and absence only for nullable fields.
+
+**Alternatives considered:** Treat null as omission. Rejected because it hides an explicit, invalid choice.
+
+### Decision: D-B — Report discovery registration without selecting CIMD public (confirmed 2026-10-22)
+
+**Decision:** A request with `discovery.resource_url` must omit `client_registration`. A supplied field returns `400` before discovery traffic. Hosted-CIMD selection records `cimd` and always uses `private_key_jwt`. DCR selection records `static` for `client_secret_basic`, `client_secret_post`, or `none`. `discovery.client_method` remains the authoritative discovery axis. ADR 040 selection does not change and never selects CIMD public.
+
+**Rationale:** Discovery chooses the client method from issuer capabilities. A caller-supplied registration would conflict with that selection. The issue classifies every non-`private_key_jwt` stored service as `static`.
+
+**Alternatives considered:** Let an explicit registration override discovery. Rejected because it could select a method that ADR 040 excludes.
+
+### Decision: D-C — Publish keyless CIMD public metadata (confirmed 2026-10-22)
+
+**Decision:** A CIMD public document uses the existing client identifier URL and returns `200`, `application/json`, and `Cache-Control: public, max-age=300`. It contains exactly `client_id`, `redirect_uris`, `grant_types`, `response_types`, and `token_endpoint_auth_method: none`. The one redirect URI is `<public_url>/api/third-party/<service-id>/oauth2/callback`. The grant types are `authorization_code` and `refresh_token`, and the response type is `code`. It omits `jwks_uri` and `token_endpoint_auth_signing_alg`. The document needs no CIMD key. Its `jwks.json` returns the existing uniform JSON `404`.
+
+**Rationale:** A public client has no assertion verification key. The existing URL and cache contract still identify the broker-hosted client.
+
+**Alternatives considered:** Publish an empty JWK Set or require a CIMD key. Rejected because neither belongs to public-client authentication.
+
+### Decision: D-D — Version the additive API contracts (confirmed 2026-10-22)
+
+**Decision:** Increase Admin OpenAPI `info.version` from `2.0.0` to `2.1.0`. Increase end-user OpenAPI `info.version` from `1.0.0` to `1.1.0`.
+
+**Rationale:** Both contracts add representations without changing the existing paths. Principle X requires written stakeholder confirmation before implementation.
+
+**Alternatives considered:** Keep both versions unchanged. Rejected because consumers need a visible contract revision.
+
+### Decision: D-E — Exclude Google and filesystem from CIMD
+
+**Decision:** Reject `client_registration: cimd` for the Google flavor and `credential_source: filesystem` with `400`. Explicit `static` remains valid for those services.
+
+**Rationale:** Google and filesystem retain their existing identity and credential-source rules. A broker-assigned identifier cannot replace their configured identities.
+
+**Alternatives considered:** Permit CIMD public with filesystem credentials. Rejected because public clients have no client credential.
+
+### Decision: D-F — Verify every hosted identity at startup
+
+**Decision:** Startup requires every persisted `cimd` service to have `client_id == <server.enduser.public_url>/.well-known/oauth-client/<service-id>`. A mismatch stops startup. Bootstrap and usable-key checks run only if at least one CIMD confidential service exists. CIMD public neither creates nor requires a CIMD client-authentication key.
+
+**Rationale:** The identity check prevents a stored URL from naming a different document. Only confidential assertions require a key.
+
+**Alternatives considered:** Bootstrap keys for every CIMD service. Rejected because public services never use assertions.
+
+### Decision: D-G — Apply full-replacement transitions without authentication fallback
+
+**Decision:** CIMD confidential and CIMD public transitions keep the client identifier URL. Switching to CIMD confidential requires a usable CIMD key. `static` to `cimd` replaces the operator client ID with the broker URL. The broker removes a stored secret only after full-replacement validation. `cimd` to `static` requires an operator `client_id` and, for static confidential, a non-empty `client_secret`. The former hosted document then returns `404`. Method switches are explicit, with no runtime fallback. Provider caches can retain the prior document for 300 seconds.
+
+**Rationale:** The existing full-replacement semantics protect the prior state when validation fails. The established-identity check still applies only to shared-secret services. An old refresh token succeeds only if the provider accepts it with the new client ID. After a rejection, the user reconnects.
+
+**Alternatives considered:** Fall back to another authentication method when the provider rejects a request. Rejected because this changes the requested trust boundary.
+
+### Decision: D-H — Audit the public mode without duplicating session events
+
+**Decision:** Lifecycle create, update, and rejection records for CIMD public use `CIMD public service`. Keep `CIMD confidential service` for confidential records. Keep the existing mode-neutral `CIMD metadata access` record for document serving. Records contain `service_id`, `operation`, and `outcome`, without credentials, tokens, assertions, or codes. Token acquisition uses existing session records with `public_client: true`.
+
+**Rationale:** The metadata handler already records access for both modes. Another metadata event would duplicate one request.
+
+**Alternatives considered:** Emit a second metadata record with a mode-specific message. Rejected because it duplicates the existing access event.
+
+### Decision: D-I — Accept the fail-closed rolling-upgrade limitation
+
+**Decision:** After migration 042, old replicas cannot create `private_key_jwt` services or rewrite `cimd` services to operator client IDs. PostgreSQL rejects these writes. Retry after all replicas upgrade.
+
+**Rationale:** The column defaults to `static`, so old writers cannot supply `cimd`. The database constraint stops inconsistent state rather than silently changing identity.
+
+**Alternatives considered:** Derive registration through a database trigger. Rejected because hidden write behavior complicates the service contract.
+
+### Decision: D-J — Record the independent setting in Accepted ADR 043
+
+**Decision:** Record `adrs/043-client-registration-independent-of-authentication.md` as Accepted by the stakeholder on 2026-10-22. It supersedes no ADR.
+
+**Rationale:** ADR 036 public wire behavior, ADR 037 key separation, ADR 040 discovery selection, and ADR 041 filesystem limits remain intact.
+
+**Alternatives considered:** Amend an Accepted ADR. Rejected because those decisions remain binding and do not conflict.
+
+### Decision: Persist registration with two guarded migrations
+
+**Decision:** Add `thirdparty_oauth2_services.client_registration TEXT NOT NULL DEFAULT 'static'`. Keep `chk_thirdparty_oauth2_services_client_registration` separate from the existing client-authentication constraint. Accept only `static` and `cimd`. Static rows cannot use `private_key_jwt` or discovery method `cimd`. CIMD rows require `private_key_jwt` or `none`, no encrypted secret, stored credentials, and no DCR method. Their `client_id` must end with `/.well-known/oauth-client/` plus the row ID.
+
+Migration 042 uses a one-second statement timeout and `ACCESS EXCLUSIVE NOWAIT`. It adds the column and a `NOT VALID` constraint without scanning old rows. Its down migration refuses CIMD public rows before dropping the column and constraint. Convert or delete each such row, run `migrate force 42` to clear the dirty state, and retry. Migration 043 uses `SHARE UPDATE EXCLUSIVE NOWAIT`, backfills `cimd` for `private_key_jwt`, and validates the constraint. Its down migration restores `NOT VALID` without changing values.
+
+**Rationale:** The suffix check is only a database guard. SQL cannot see `server.enduser.public_url`, so the domain and startup enforce the exact URL. Separate migrations limit exclusive-lock duration and preserve legacy classification. A malformed legacy CIMD URL stops validation and startup.
+
+**Alternatives considered:** Use one migration with an exclusive-lock table scan. Rejected because it increases disruption. Derive registration with a trigger. Rejected because it hides writes and the rolling-upgrade failure.

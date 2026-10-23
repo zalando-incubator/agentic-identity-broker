@@ -39,6 +39,7 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 		return nil, errors.New("filesystem credential_source requires standard or github shared-secret authentication")
 	}
 	copy.CredentialSource = source
+	copy.ClientRegistrationProvided = false
 	copy.ClearCanonicalID = false
 	copy.CredentialSourceProvided = false
 	copy.ClientIDProvided = false

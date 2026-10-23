@@ -78,6 +78,16 @@ func CIMDPublicService() *model.ThirdpartyOAuth2ProviderEntity {
 	return service
 }
 
+// CIMDPublicRegisteredService returns a keyless public service with a hosted
+// client identifier. It does not alter the existing static public fixture.
+func CIMDPublicRegisteredService() *model.ThirdpartyOAuth2ProviderEntity {
+	service := CIMDPublicService()
+	service.DisplayName = "CIMD Public Fixture Service"
+	service.ClientRegistration = model.ClientRegistrationCIMD
+	service.ClientID = id.ClientID(CIMDClientIDURL(service.ID))
+	return service
+}
+
 // CIMDConfidentialService returns a private_key_jwt service with a stable
 // broker-hosted HTTPS client identity and no shared credential.
 func CIMDConfidentialService() *model.ThirdpartyOAuth2ProviderEntity {

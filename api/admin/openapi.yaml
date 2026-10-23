@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -67,8 +67,8 @@ info:
     ### Client Secret Protection (SR-003)
 
     - Client secrets are **NEVER** transmitted in plaintext to the frontend
-    - Stored confidential-service responses redact `client_secret` as `"REDACTED"`
-    - Public (`none`) and CIMD (`private_key_jwt`) service responses omit `client_secret` because they store no shared secret
+    - Stored static confidential-service responses redact `client_secret` as `"REDACTED"`
+    - Static public (`none`) and both CIMD service modes omit `client_secret` because they store no shared secret
     - Static confidential-service secrets are encrypted at rest using AES-256-GCM
     - Update operations support static confidential-service secret rotation
     - Discovery-backed DCR client secrets stay encrypted and never appear in responses
@@ -79,11 +79,30 @@ info:
     - Every service response reports `credential_source: stored | filesystem`
     - Creation omission selects stored. Update omission preserves the existing source. Explicit null and unknown values are invalid
     - Filesystem mode requires a valid canonical ID and rejects either inline credential field, including null or empty input
-    - Public, CIMD confidential, Google-flavor, and protected-resource-discovery services reject filesystem mode
+    - Static public, all CIMD, Google-flavor, and protected-resource-discovery services reject filesystem mode
     - Administrative requests and responses contain no credential-file paths, file values, or internal source-transition marker
     - Administrative metadata operations never read credential files or require their availability
     - This approved breaking contract replaces released Admin API 1.0.0 on the existing `/api/services` routes
     - ADR 041 and the major contract bump were explicitly approved on 2026-10-08. Schema approval does not establish runtime implementation
+
+    ### Client Registration Contract (Increment 2, issue #264, Admin API 2.1.0)
+
+    `client_registration` selects the source of the client identifier. It is independent of
+    `token_endpoint_auth_method`, which selects token-endpoint authentication. Every service
+    response reports `static` or `cimd`.
+
+    - `static` with absent or null authentication is static confidential. `static` with `none` is static public.
+    - `cimd` with `private_key_jwt` is CIMD confidential. `cimd` with `none` is CIMD public.
+    - Discovery-selected hosted CIMD reports `cimd`. Discovery-selected DCR reports `static`.
+      `discovery.client_method` remains the authoritative discovery method. Discovery never selects CIMD public.
+    - Omission on create or full-replacement PUT resolves to `cimd` for `private_key_jwt`, and `static` otherwise.
+      Omission never infers CIMD public. Explicit null, empty, and unknown registrations return `400`.
+    - `static` with `private_key_jwt`, `cimd` with absent or null authentication, and `cimd` with
+      Google flavor or filesystem credentials return `400` before discovery or provider traffic.
+    - A request with `discovery.resource_url` must omit `client_registration`. Presence returns `400` before discovery traffic.
+    - Both CIMD modes use the broker-hosted client identifier URL and reject a non-empty caller
+      `client_id` or `client_secret`. CIMD public needs no CIMD client-authentication key.
+    - Stored services from before this change report `cimd` for `private_key_jwt`, and `static` otherwise.
 
     ### URL Validation
 
@@ -535,9 +554,10 @@ paths:
 
         Returns a direct array of service objects (no envelope).
 
-        Every object reports `credential_source`. Stored static confidential services return their client ID
-        and `"REDACTED"` secret. Public, CIMD, and discovery-backed DCR services omit the secret.
-        Filesystem services omit both inline credential fields. Listing never reads files or returns paths or file values.
+        Every object reports `credential_source` and `client_registration`.
+        Static confidential services return their client ID and `"REDACTED"` secret.
+        Static public, CIMD, and DCR services omit the secret. Filesystem services omit inline credentials.
+        Listing never reads files or returns paths or file values.
       operationId: listServices
       tags:
         - Services
@@ -564,6 +584,7 @@ paths:
                     - id: 770e8400-e29b-41d4-a716-446655440002
                       display_name: GitHub Production
                       credential_source: stored
+                      client_registration: static
                       oauth2_flavor: github
                       client_id: Iv1.1234567890abcdef
                       client_secret: REDACTED
@@ -585,6 +606,7 @@ paths:
                     - id: 880e8400-e29b-41d4-a716-446655440003
                       display_name: Google Cloud
                       credential_source: stored
+                      client_registration: static
                       oauth2_flavor: google
                       client_id: 123456789-abcdef.apps.googleusercontent.com
                       client_secret: REDACTED
@@ -605,6 +627,7 @@ paths:
                       canonical_id: zalando-platform
                       display_name: Zalando Platform
                       credential_source: filesystem
+                      client_registration: static
                       oauth2_flavor: standard
                       token_endpoint_auth_method: null
                       issuer_uri: https://oauth.example.com
@@ -629,8 +652,9 @@ paths:
         **Validation Rules**:
         - `display_name`: Required, max 255 characters
         - `credential_source`: `stored` or `filesystem`; omission selects `stored`; explicit null and unknown values are invalid
+        - `client_registration`: Optional `static` or `cimd`. Omission selects `cimd` for `private_key_jwt` and `static` otherwise. Explicit null, empty, or unknown values return `400`
         - Stored manual `client_id`: Required and unique under existing validation, except Google derives it and CIMD generates it; discovery selects the client identity
-        - Stored `client_secret`: Required for static confidential services. Public/CIMD retain omitted, null, or empty secret input
+        - Stored `client_secret`: Required for static confidential services. Static public and both CIMD modes accept omitted, null, or empty secret input
         - Filesystem: Requires a valid canonical ID, shared-secret authentication, and standard/GitHub flavor
         - Filesystem: Rejects either inline field whenever present, including null or empty input
         - Manual `issuer_uri`: Required and HTTPS, subject to existing Google service-account rules; optional for protected-resource discovery with one issuer
@@ -640,19 +664,20 @@ paths:
         Paths belong only to operator configuration and cannot be supplied through this API.
         Every successful response reports the selected source. Filesystem responses omit both inline fields.
 
-        **CIMD confidential mode**: `token_endpoint_auth_method: private_key_jwt` requires
-        `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty.
-        A non-empty value for either field, or `oauth2_flavor: google`, returns the existing
-        `400` error representation before endpoint discovery or provider traffic. The broker
-        creates the service ID first, then assigns the immutable HTTPS Client ID Metadata
-        Document URL for the service lifetime.
+        **CIMD modes**: `client_registration: cimd` with `private_key_jwt` is confidential.
+        With `none`, it is public and needs no CIMD client-authentication key.
+        Both require omitted or null `client_id` and omitted, null, or empty `client_secret`.
+        The broker rejects a non-empty caller value, Google flavor, or filesystem source with
+        `400` before provider traffic. It assigns the HTTPS client identifier URL after it creates the service ID.
+        `static` with `private_key_jwt`, or `cimd` with absent or null authentication, returns `400`.
 
         **Direct metadata discovery**: Without `resource_url`, `metadata_url` can select an
         authorization-server document. The existing manual-endpoint fallback remains unchanged.
 
         **Protected-resource discovery**: Set `discovery.resource_url` with
-        `enable_discovery: true`. Omit manual endpoints, client credentials, `metadata_url`,
-        and `token_endpoint_auth_method`. An issuer selection is optional for one issuer.
+        `enable_discovery: true`. Omit `client_registration`, manual endpoints, client credentials,
+        `metadata_url`, and `token_endpoint_auth_method`. A supplied registration returns `400`
+        before discovery traffic. An issuer selection is optional for one issuer.
         The broker derives `authorization_params.resource` unless the request supplies an
         explicit value. A selected DCR client needs a non-blank broker client name from
         deployment configuration, not the service display name. Failures do not create a service.
@@ -702,6 +727,20 @@ paths:
                       description: Access user profile information
                     - scope_value: corporate_data
                       description: Access corporate data systems
+              cimd_public:
+                summary: Create a CIMD public ServiceNow client without credentials
+                value:
+                  display_name: ServiceNow
+                  credential_source: stored
+                  client_registration: cimd
+                  token_endpoint_auth_method: none
+                  oauth2_flavor: standard
+                  issuer_uri: https://auth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://auth.example.com/oauth/token
+                    authorize_endpoint: https://auth.example.com/oauth/authorize
               protected_resource:
                 summary: Discover a protected resource without supplying a client
                 value:
@@ -737,6 +776,7 @@ paths:
                     id: 770e8400-e29b-41d4-a716-446655440002
                     display_name: GitHub Production
                     credential_source: stored
+                    client_registration: static
                     oauth2_flavor: github
                     client_id: Iv1.1234567890abcdef
                     client_secret: REDACTED
@@ -755,11 +795,32 @@ paths:
                         description: Read organization membership
                     created_at: '2025-12-19T10:30:00Z'
                     updated_at: '2025-12-19T10:30:00Z'
+                cimd_public:
+                  summary: Broker-hosted public client without a secret
+                  value:
+                    id: 770e8400-e29b-41d4-a716-446655440002
+                    display_name: ServiceNow
+                    credential_source: stored
+                    client_registration: cimd
+                    client_id: https://broker.example.com/.well-known/oauth-client/770e8400-e29b-41d4-a716-446655440002
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com
+                    discovery:
+                      enable_discovery: false
+                      client_method: null
+                      authorization_param_resource_strategy: null
+                    endpoints:
+                      token_endpoint: https://auth.example.com/oauth/token
+                      authorize_endpoint: https://auth.example.com/oauth/authorize
+                    created_at: '2026-10-22T10:00:00Z'
+                    updated_at: '2026-10-22T10:00:00Z'
                 protected_resource_dcr:
                   value:
                     id: 880e8400-e29b-41d4-a716-446655440003
                     display_name: Example MCP
                     credential_source: stored
+                    client_registration: static
                     client_id: dcr-client-123
                     token_endpoint_auth_method: client_secret_basic
                     oauth2_flavor: standard
@@ -782,6 +843,7 @@ paths:
                     id: 880e8400-e29b-41d4-a716-446655440004
                     display_name: Files MCP
                     credential_source: stored
+                    client_registration: static
                     client_id: dcr-files-client
                     token_endpoint_auth_method: none
                     oauth2_flavor: standard
@@ -804,6 +866,7 @@ paths:
                     id: 880e8400-e29b-41d4-a716-446655440005
                     display_name: Files MCP
                     credential_source: stored
+                    client_registration: static
                     client_id: dcr-files-client-2
                     token_endpoint_auth_method: none
                     oauth2_flavor: standard
@@ -838,6 +901,16 @@ paths:
                   value:
                     error: client registration failed
                     message: client_name_unconfigured
+                invalid_client_registration:
+                  summary: Explicit null, empty, unknown, or discovery-supplied registration
+                  value:
+                    error: validation failed
+                    message: invalid client_registration
+                incompatible_client_registration:
+                  summary: Registration and authentication method do not match
+                  value:
+                    error: validation failed
+                    message: incompatible client registration and authentication method
         '409':
           description: Manual client-ID conflict, duplicate issuer-scoped DCR identity, or protected-resource ownership conflict
           content:
@@ -875,8 +948,9 @@ paths:
       description: |
         Retrieve detailed configuration for a specific OAuth2 service.
 
-        Every response reports `credential_source` without reading files. Stored responses always include
-        `client_id`. Stored static confidential secrets return only `"REDACTED"`; public, CIMD, and DCR omit the secret.
+        Every response reports `credential_source` and `client_registration` without reading files.
+        Stored responses always include `client_id`. Static confidential secrets return only
+        `"REDACTED"`; static public, CIMD, and DCR responses omit the secret.
         Filesystem responses omit both inline credential fields, file paths, and file values.
       operationId: getService
       tags:
@@ -904,6 +978,7 @@ paths:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
                 credential_source: stored
+                client_registration: static
                 oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
@@ -941,9 +1016,13 @@ paths:
         **Update Semantics**:
         - PUT remains a full replacement, not PATCH. Existing documented omission exceptions remain unchanged
         - `credential_source` omission preserves the current source. Explicit null and unknown selectors are invalid
+        - Omitted `client_registration` resolves to `cimd` for `private_key_jwt` and `static` otherwise, not to the old value. Explicit null, empty, or unknown values return `400`
+        - CIMD public must repeat `client_registration: cimd`. Without it, PUT resolves to `static` and fails without an operator `client_id`
         - For manual replacements, `token_endpoint_auth_method` is evaluated from the complete request. Omitted or null means shared-secret authentication: stored requires an explicit non-empty secret, while filesystem forbids inline credentials. Protected-resource refresh retains the broker-selected method and credentials
         - `token_endpoint_auth_method: private_key_jwt` requires `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty. A valid replacement removes any prior static secret and assigns the stable broker-generated HTTPS Client ID Metadata Document URL.
-        - A private-to-static replacement requires a new non-empty `client_secret`. A private-to-public replacement removes any secret state and stops client assertion use.
+        - CIMD confidential to CIMD public or back keeps the client identifier URL. Switching to CIMD confidential requires a usable CIMD client-authentication key
+        - Switching `static` to `cimd` replaces the operator client ID and removes a stored secret only after validation. Switching back requires an operator `client_id`. Static confidential also requires a new secret
+        - A switch to `static` makes the hosted document return `404`. Providers can cache the previous document for up to 300 seconds. The broker never falls back to another token authentication method
         - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
@@ -955,7 +1034,7 @@ paths:
         - Returning to stored encrypts the supplied secret before the atomic update. Files never supply reverse-transition credentials
         - No-op source selections preserve transition evidence. A source round trip never resets it or rewrites established identities
         - Omitted canonical ID preserves the existing ID. Null cannot clear a filesystem canonical ID
-        - Filesystem rejects public, CIMD confidential, and Google-flavor replacements and either inline field, including null or empty input
+        - Filesystem rejects static public, both CIMD methods, and Google-flavor replacements and either inline field, including null or empty input
         - Validation failures and version conflicts leave the previous source, credentials, and transition evidence unchanged
         - Updates never read files or require available bindings. File paths and transition evidence are not administrative inputs
 
@@ -981,10 +1060,13 @@ paths:
         empty map clears all parameters. A discovery-backed rejection writes a safe
         failure-only status without changing the active service ETag. A manual conversion
         rejected for an audience change writes no discovery status.
+        A request with `discovery.resource_url` must omit `client_registration`. Presence
+        returns `400` before discovery traffic. Hosted CIMD reports `cimd`. DCR reports
+        `static`. The selected `discovery.client_method` remains authoritative.
 
-        **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
-        Filesystem responses omit both inline credentials, paths, and file values. Every response
-        reports `credential_source`. Discovery-backed DCR responses omit the secret entirely.
+        **Security**: Static confidential-service `client_secret` values are redacted in responses.
+        Static public, CIMD, and DCR responses omit the property. Filesystem responses omit inline
+        credentials, paths, and file values. Every response reports `credential_source` and `client_registration`.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
         - `protected_resources` present (including `[]`): replaces the entire set and requires `If-Match`
 
@@ -1032,6 +1114,19 @@ paths:
                       description: Read organization membership
                     - scope_value: workflow
                       description: Update GitHub Actions workflows
+              cimd_public:
+                summary: Replace a CIMD public service while keeping its hosted client identifier URL
+                value:
+                  display_name: ServiceNow
+                  client_registration: cimd
+                  token_endpoint_auth_method: none
+                  oauth2_flavor: standard
+                  issuer_uri: https://auth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://auth.example.com/oauth/token
+                    authorize_endpoint: https://auth.example.com/oauth/authorize
               refresh_protected_resource:
                 summary: Refresh discovery without changing the stored client
                 value:
@@ -1095,6 +1190,7 @@ paths:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
                 credential_source: stored
+                client_registration: static
                 oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
@@ -1121,9 +1217,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error: discovery failed
-                message: authorization_server_metadata_invalid
+              examples:
+                discovery_failure:
+                  value:
+                    error: discovery failed
+                    message: authorization_server_metadata_invalid
+                invalid_client_registration:
+                  summary: Explicit null, empty, unknown, or discovery-supplied registration
+                  value:
+                    error: validation failed
+                    message: invalid client_registration
+                incompatible_client_registration:
+                  summary: Registration and authentication method do not match
+                  value:
+                    error: validation failed
+                    message: incompatible client registration and authentication method
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
@@ -2957,6 +3065,16 @@ components:
             provide for this service; required_scopes must be empty. When false (default),
             required_scopes is the per-agent scope ceiling.
 
+    ClientRegistration:
+      type: string
+      nullable: false
+      enum: [static, cimd]
+      description: |
+        Client identifier source. `static` uses an operator-supplied identifier or an existing
+        Google, filesystem, or discovery-backed DCR identity. `cimd` uses the broker-hosted
+        client identifier URL. This field never selects token-endpoint authentication.
+      example: static
+
     ServiceCredentialMetadataBoundary:
       type: object
       description: File paths belong only to operator configuration. The source-transition marker is internal, not administrative input or output.
@@ -2992,6 +3110,9 @@ components:
               - pattern: '^[0-9A-Fa-f]{32}$'
               - pattern: '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
               - pattern: '^[A-Za-z0-9._-][0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}[A-Za-z0-9._-]$'
+        client_registration:
+          type: string
+          enum: [static]
         token_endpoint_auth_method:
           type: string
           nullable: true
@@ -3022,6 +3143,8 @@ components:
         - title: Protected-resource discovery
           type: object
           required: [discovery]
+          not:
+            required: [client_registration]
           properties:
             discovery:
               type: object
@@ -3063,12 +3186,15 @@ components:
 
     ManualStoredServiceCredentialsRequest:
       type: object
-      description: Existing stored confidential, public, and CIMD credential validation remains unchanged.
+      description: Manual stored credentials. Registration and authentication form four valid combinations.
       oneOf:
         - title: Stored shared-secret authentication
           type: object
           required: [client_secret]
           properties:
+            client_registration:
+              type: string
+              enum: [static]
             token_endpoint_auth_method:
               type: string
               nullable: true
@@ -3094,10 +3220,13 @@ components:
                 oauth2_flavor:
                   type: string
                   enum: [google]
-        - title: Stored public authentication
+        - title: Stored static public authentication
           type: object
           required: [token_endpoint_auth_method, client_id]
           properties:
+            client_registration:
+              type: string
+              enum: [static]
             token_endpoint_auth_method:
               type: string
               enum: [none]
@@ -3111,10 +3240,34 @@ components:
               type: string
               nullable: true
               enum: ['', null]
+        - title: Stored CIMD public authentication
+          type: object
+          required: [client_registration, token_endpoint_auth_method]
+          properties:
+            client_registration:
+              type: string
+              enum: [cimd]
+            token_endpoint_auth_method:
+              type: string
+              enum: [none]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
         - title: Stored CIMD confidential authentication
           type: object
           required: [token_endpoint_auth_method]
           properties:
+            client_registration:
+              type: string
+              enum: [cimd]
             token_endpoint_auth_method:
               type: string
               enum: [private_key_jwt]
@@ -3134,8 +3287,8 @@ components:
       type: object
       description: |
         Source-aware representation for list, get, create, and update responses.
-        Stored services always include client_id. Static shared-secret responses include only REDACTED,
-        while public/CIMD/DCR responses omit client_secret. Filesystem responses omit both inline fields.
+        Stored services always include client_id. Static confidential responses include only REDACTED,
+        while static public, CIMD, and DCR responses omit client_secret. Filesystem responses omit both inline fields.
         This representation never resolves files or returns file paths, values, or transition evidence.
       allOf:
         - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
@@ -3152,19 +3305,57 @@ components:
               type: object
               required: [client_secret]
               properties:
+                client_registration:
+                  type: string
+                  enum: [static]
                 token_endpoint_auth_method:
                   type: string
                   nullable: true
                   enum: [null]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [null]
                 client_secret:
                   type: string
                   enum: [REDACTED]
-            - title: Stored public, CIMD, or DCR service
+            - title: Stored static public or DCR service
               type: object
               properties:
+                client_registration:
+                  type: string
+                  enum: [static]
                 token_endpoint_auth_method:
                   type: string
-                  enum: [none, private_key_jwt, client_secret_basic, client_secret_post]
+                  enum: [none, client_secret_basic, client_secret_post]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [dcr, null]
+              not:
+                required: [client_secret]
+            - title: Stored CIMD public or confidential service
+              type: object
+              properties:
+                client_registration:
+                  type: string
+                  enum: [cimd]
+                token_endpoint_auth_method:
+                  type: string
+                  enum: [none, private_key_jwt]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [cimd, null]
               not:
                 required: [client_secret]
         - title: Filesystem service response
@@ -3180,6 +3371,7 @@ components:
         - id
         - display_name
         - credential_source
+        - client_registration
         - token_endpoint_auth_method
         - oauth2_flavor
         - issuer_uri
@@ -3192,6 +3384,14 @@ components:
           type: string
           enum: [stored, filesystem]
           description: Registered credential source. Reported without resolving files.
+          readOnly: true
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Resolved client identifier source. Present on every service response.
+            `cimd` uses the broker-hosted client identifier URL. Hosted CIMD discovery reports `cimd`.
+            DCR discovery reports `static`. `discovery.client_method` remains the discovery method.
           readOnly: true
         id:
           type: string
@@ -3216,12 +3416,11 @@ components:
           description: |
             Stored OAuth2 client_id for this service. Always present in stored mode and omitted in filesystem mode.
 
-            For stored `oauth2_flavor: standard`: an operator supplies the value for static confidential
-            and public services. For `oauth2_flavor: google`: it is extracted from the `client_id`
-            field in the service account JSON credential. For `private_key_jwt`: the broker generates
-            the immutable HTTPS Client ID Metadata Document URL
-            `<enduser-public-url>/.well-known/oauth-client/<service-id>` after allocating the service
-            ID; an operator cannot supply or replace it during the service lifetime.
+            For stored `oauth2_flavor: standard`, an operator supplies the value for static confidential
+            and static public services. For `oauth2_flavor: google`, the broker extracts it from the
+            service account JSON credential. For `client_registration: cimd`, the broker generates
+            `<enduser-public-url>/.well-known/oauth-client/<service-id>` after allocating the ID.
+            The URL stays the same while registration is `cimd`. A switch to `static` replaces the identity.
             For discovery-backed DCR, the authorization server issues this value. The broker
             scopes its identity to the selected `issuer_uri`; a client ID alone is not unique.
           example: Iv1.1234567890abcdef
@@ -3234,7 +3433,7 @@ components:
             - **google**: Serialized Google service account JSON key document
 
             **SECURITY**: Stored static confidential services return only `"REDACTED"`.
-            Public (`none`), CIMD (`private_key_jwt`), filesystem, and discovery-backed DCR
+            Static public, CIMD public, CIMD confidential, filesystem, and discovery-backed DCR
             services omit this property entirely, even when DCR stores an encrypted secret.
             Filesystem services also omit `client_id`. Stored encryption remains unchanged.
             The broker never sends a stored credential in an administrative response.
@@ -3248,9 +3447,9 @@ components:
           description: |
             Client authentication method for this service's upstream token endpoint.
 
-            - `none` — the service is a **public client**. It stores no credential and transmits
-              none upstream; it authenticates the authorization-code exchange with the PKCE code
-              verifier alone.
+            - `none` — the service is static public or CIMD public, as selected by
+              `client_registration`. It stores no credential and sends none upstream.
+              Authorization-code exchange uses the PKCE code verifier.
             - `private_key_jwt` — the service is a CIMD **confidential client**. The broker assigns
               its stable HTTPS Client ID Metadata Document URL, stores no shared secret, and
               authenticates upstream with an ES256 client assertion from the dedicated CIMD
@@ -3374,6 +3573,15 @@ components:
           enum: [stored, filesystem]
           default: stored
           description: Omission selects stored. Null is invalid. Filesystem rejects inline fields and excluded authentication modes.
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Optional on create. Omission resolves to `cimd` for `private_key_jwt`, or `static`
+            otherwise. An explicit null, empty, or unknown value returns `400`.
+            `cimd` requires `none` or `private_key_jwt` and stored, non-Google credentials.
+            `static` rejects `private_key_jwt`. Omit this field with `discovery.resource_url`.
+            The broker reports the registration selected by discovery.
         canonical_id:
           type: string
           nullable: true
@@ -3399,7 +3607,7 @@ components:
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
             - **standard**: Static confidential services require a non-empty plain `client_secret`;
-              public services require `client_id`
+              static public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
@@ -3414,14 +3622,11 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            In stored mode, required for manual `standard` or `github`, except `private_key_jwt`.
-            Optional for stored `google` because it is extracted from the service account JSON.
-            For protected-resource discovery, the broker selects the client identity.
-            In filesystem mode this property must be absent, including null or empty input.
-
-            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
-            null. After the broker allocates the service ID, it generates the immutable HTTPS Client
-            ID Metadata Document URL `<enduser-public-url>/.well-known/oauth-client/<service-id>`.
+            In stored mode, manual static `standard` or `github` clients require this field.
+            Stored `google` derives it from the service account JSON. Both CIMD methods require
+            omission or null. The broker assigns the HTTPS client identifier URL after it allocates
+            the service ID. Protected-resource discovery selects the identity.
+            Filesystem mode requires omission, including null or empty input.
 
             For protected-resource discovery, this property must be omitted, null, or empty.
           example: Iv1.1234567890abcdef
@@ -3456,15 +3661,14 @@ components:
             Client authentication method for the upstream token endpoint. Omit it or send `null` for
             shared-secret authentication for manual clients. Stored mode requires client_secret. Filesystem mode forbids inline credentials.
 
-            When `none`, the service is a public client: `client_secret` can be omitted, null, or
-            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected.
+            When `none`, the service is static public unless `client_registration: cimd` is explicit.
+            Static public requires `client_id`. CIMD public requires omission or null `client_id`.
+            Both reject a non-empty `client_secret` and `oauth2_flavor: google`.
 
-            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
-            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
-            either field returns the existing `400` error representation. `oauth2_flavor: google` is
-            rejected. The broker validates these contradictions before endpoint discovery or provider
-            traffic, allocates the service ID, and assigns its immutable HTTPS Client ID Metadata
-            Document URL.
+            When `private_key_jwt`, the service is CIMD confidential. The caller omits `client_id`
+            or sends null, and omits `client_secret` or sends null or `""`.
+            The broker rejects a non-empty value before discovery or provider traffic.
+            It assigns the HTTPS client identifier URL after it allocates the service ID.
 
             With `discovery.resource_url`, omit or set this method to null. The broker
             chooses one method; `client_secret_basic` and `client_secret_post` are response-only.
@@ -3572,6 +3776,17 @@ components:
           type: string
           enum: [stored, filesystem]
           description: Omission preserves the existing source. Explicit null is invalid. No creation default applies to PUT.
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Optional on full-replacement PUT. Omission resolves to `cimd` for `private_key_jwt`,
+            or `static` otherwise; it never preserves the existing registration.
+            An explicit null, empty, or unknown value returns `400`.
+            A CIMD public replacement must send `cimd` again. Without it, the request resolves
+            to `static` and fails unless the caller supplies a static `client_id`.
+            Omit this field with `discovery.resource_url`. The broker keeps or selects the
+            discovery-backed registration from the selected client method.
         canonical_id:
           type: string
           nullable: true
@@ -3598,7 +3813,7 @@ components:
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
             - **standard**: Static confidential services require a non-empty plain `client_secret`;
-              public services require `client_id`
+              static public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
@@ -3613,14 +3828,12 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            In stored mode, required for manual `standard` or `github`, except `private_key_jwt`.
-            Optional for stored `google` because it is extracted from the service account JSON.
-            For protected-resource discovery, the broker keeps or selects the client identity.
-            Filesystem mode requires omission. A filesystem-to-stored transition requires an explicit non-empty value.
-
-            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
-            null. The broker assigns the immutable HTTPS Client ID Metadata Document URL
-            `<enduser-public-url>/.well-known/oauth-client/<service-id>` for the service lifetime.
+            In stored mode, manual static `standard` or `github` clients require this field.
+            Stored `google` derives it from the service account JSON. Both CIMD methods require
+            omission or null. The broker assigns the same HTTPS client identifier URL while
+            registration stays `cimd`. Protected-resource discovery keeps or selects the identity.
+            Filesystem mode requires omission. A filesystem-to-stored transition requires an explicit
+            non-empty value.
 
             For protected-resource discovery, this property must be omitted, null, or empty.
           example: Iv1.1234567890abcdef
@@ -3654,19 +3867,23 @@ components:
             existing full-replacement semantics: the method is evaluated from the complete replacement
             request. Omit this property, or send `null`, for shared-secret authentication.
             Manual stored mode requires a non-empty client_secret. Filesystem mode forbids inline credentials.
+            When `none`, the service is static public unless `client_registration: cimd` is explicit.
+            Static public requires `client_id`. CIMD public requires omission or null `client_id`.
+            Both accept omitted, null, or empty `client_secret` and reject Google flavor.
+            A valid update removes any stored secret.
 
-            When `none`, the service is a public client: `client_secret` can be omitted, null, or
-            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected. The update
-            removes any stored secret.
+            When `private_key_jwt`, the service is CIMD confidential. Omit `client_id` or send null.
+            Omit `client_secret` or send null or `""`. The broker rejects a non-empty value before
+            provider traffic. A switch to this mode requires a usable CIMD client-authentication key.
 
-            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
-            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
-            either field returns the existing `400` error representation. `oauth2_flavor: google` is
-            rejected. The broker validates the complete replacement before removing a prior static
-            secret and assigning the stable HTTPS Client ID Metadata Document URL.
-
-            A private-to-static update requires a new non-empty `client_secret`. A private-to-public
-            update removes any secret state and stops client assertion use.
+            CIMD confidential and CIMD public keep the same client identifier URL when switching.
+            A switch from `static` to `cimd` replaces the operator ID with the broker URL.
+            The broker removes a stored secret only after the full replacement validates.
+            A switch from `cimd` to `static` requires an operator `client_id`.
+            Static confidential also requires a new non-empty `client_secret`.
+            The old hosted document returns `404` after a switch to `static`.
+            Providers can cache the previous document for up to 300 seconds.
+            The broker never retries token acquisition with another method after provider rejection.
 
             With `discovery.resource_url`, omit or set the method to null. The broker
             keeps the exact active method. Basic and POST DCR modes are response-only.

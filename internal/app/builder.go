@@ -519,11 +519,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}
 
 	if app.ProviderService != nil {
-		hasCIMDServices, err := app.ProviderService.HasCompatibleCIMDServices(context.Background())
+		requiresClientKey, err := app.ProviderService.VerifyCIMDServiceIdentities(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("validate persisted CIMD service identities: %w", err)
 		}
-		if hasCIMDServices {
+		if requiresClientKey {
 			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
 			}

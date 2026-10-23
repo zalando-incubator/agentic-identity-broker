@@ -72,8 +72,8 @@ type CIMDClientMetadata struct {
 	GrantTypes                   []string `json:"grant_types"`
 	ResponseTypes                []string `json:"response_types"`
 	TokenEndpointAuthMethod      string   `json:"token_endpoint_auth_method"`
-	TokenEndpointAuthSigningAlgo string   `json:"token_endpoint_auth_signing_alg"`
-	JWKSURI                      string   `json:"jwks_uri"`
+	TokenEndpointAuthSigningAlgo string   `json:"token_endpoint_auth_signing_alg,omitempty"`
+	JWKSURI                      string   `json:"jwks_uri,omitempty"`
 }
 
 // CIMDClientMetadataProvider builds public metadata and its corresponding public JWK Set.

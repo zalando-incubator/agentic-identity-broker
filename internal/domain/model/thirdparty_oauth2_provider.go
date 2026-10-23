@@ -135,6 +135,8 @@ type ThirdpartyOAuth2ProviderEntity struct {
 	CredentialSource             CredentialSource
 	CredentialSourceTransitioned bool
 	CredentialSourceProvided     bool
+	ClientRegistration           ClientRegistration
+	ClientRegistrationProvided   bool
 	ClientIDProvided             bool
 	ClientSecretProvided         bool
 	TokenEndpointAuthMethod      TokenEndpointAuthMethod
@@ -161,6 +163,16 @@ func (e *ThirdpartyOAuth2ProviderEntity) IsPublicClient() bool {
 // IsCIMDConfidentialClient reports whether the provider uses broker-managed private_key_jwt authentication.
 func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDConfidentialClient() bool {
 	return e.TokenEndpointAuthMethod.IsCIMDConfidential()
+}
+
+// IsCIMDClient reports whether the service uses a broker-hosted client identifier.
+func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDClient() bool {
+	return e.ClientRegistration == ClientRegistrationCIMD
+}
+
+// IsCIMDPublicClient reports whether the hosted client uses no token authentication.
+func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDPublicClient() bool {
+	return e.IsCIMDClient() && e.IsPublicClient()
 }
 
 // ValidateOutboundCredentials rejects alternate credentials for clients without a shared secret.
@@ -202,6 +214,39 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateCredentialSource() error {
 	}
 }
 
+// validateClientRegistration resolves omitted registrations and enforces the
+// registration, authentication, and discovery identity invariants.
+func (e *ThirdpartyOAuth2ProviderEntity) validateClientRegistration(flavor OAuth2Flavor) error {
+	if e.ClientRegistration == "" && !e.ClientRegistrationProvided {
+		e.ClientRegistration = ResolveClientRegistration(e.TokenEndpointAuthMethod)
+	}
+	if err := e.ClientRegistration.Validate(); err != nil {
+		return err
+	}
+	if e.IsCIMDClient() {
+		if flavor == OAuth2FlavorGoogle {
+			return errors.New("client_registration cimd is not supported for the google flavor")
+		}
+		if e.CredentialSource == CredentialSourceFilesystem {
+			return errors.New("client_registration cimd is not supported for filesystem credential_source")
+		}
+		if e.TokenEndpointAuthMethod != TokenEndpointAuthMethodPrivateKeyJWT && !e.IsPublicClient() {
+			return errors.New("client_registration cimd requires private_key_jwt or none")
+		}
+		if e.Discovery.ClientMethod == ClientBootstrapDCR {
+			return errors.New("discovery.client_method dcr requires static client_registration")
+		}
+	} else {
+		if e.TokenEndpointAuthMethod == TokenEndpointAuthMethodPrivateKeyJWT {
+			return errors.New("token_endpoint_auth_method private_key_jwt requires cimd client_registration")
+		}
+		if e.Discovery.ClientMethod == ClientBootstrapCIMD {
+			return errors.New("discovery.client_method cimd requires cimd client_registration")
+		}
+	}
+	return nil
+}
+
 // CIMDClientID derives the fixed broker-hosted identifier for a CIMD client.
 func CIMDClientID(publicURL string, serviceID id.ServiceID) (id.ClientID, error) {
 	if serviceID.IsZero() {
@@ -209,7 +254,7 @@ func CIMDClientID(publicURL string, serviceID id.ServiceID) (id.ClientID, error)
 	}
 	parsed, err := url.Parse(publicURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD confidential services")
+		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD services")
 	}
 	return id.ClientID(strings.TrimRight(parsed.String(), "/") + "/.well-known/oauth-client/" + serviceID.String()), nil
 }
@@ -276,6 +321,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 // ValidateStoredClientAuthentication checks the client method and secret state
 // before a repository stores an encrypted or secretless service.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateStoredClientAuthentication() error {
+	if err := e.validateClientRegistration(e.Flavor); err != nil {
+		return err
+	}
 	if err := e.validateCredentialSource(); err != nil {
 		return err
 	}
@@ -346,6 +394,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateEffectiveDiscoveryResource() er
 }
 
 func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAuth2Flavor) (bool, error) {
+	if err := e.validateClientRegistration(flavor); err != nil {
+		return false, err
+	}
 	if err := e.validateCredentialSource(); err != nil {
 		return false, err
 	}
@@ -361,19 +412,15 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 		}
 	}
 
-	if e.IsCIMDConfidentialClient() {
-		if flavor == OAuth2FlavorGoogle {
-			return false, errors.New(`token_endpoint_auth_method "private_key_jwt" is not supported for the google flavor: the client identifier is derived from the credential document`)
-		}
+	if e.IsCIMDClient() {
 		if !e.Secret.IsAbsent() {
-			return false, errors.New(`client_secret must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+			return false, errors.New("client_secret must be absent for a CIMD service")
 		}
 		if !e.ClientID.IsZero() {
-			return false, errors.New(`client_id must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+			return false, errors.New("client_id must be absent for a CIMD service")
 		}
-		return false, nil
+		return e.IsPublicClient(), nil
 	}
-
 	isPublicClient := e.IsPublicClient()
 	if isPublicClient {
 		if flavor == OAuth2FlavorGoogle {
@@ -397,6 +444,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 // ValidateDiscoveryRequest checks the administrator's protected-resource request
 // before the service contacts untrusted metadata or registers a client.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateDiscoveryRequest() error {
+	if e.ClientRegistrationProvided || e.ClientRegistration != "" {
+		return errors.New("client_registration must be absent for protected-resource discovery")
+	}
 	if err := e.validateCredentialSource(); err != nil {
 		return err
 	}
@@ -594,7 +644,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 		flavor = DefaultOAuth2Flavor
 	}
 	isPublicClient, err := e.validateClientAuthentication(flavor)
-	isCIMDClient := e.IsCIMDConfidentialClient()
+	isCIMDClient := e.IsCIMDClient()
 	if err != nil {
 		return err
 	}
@@ -704,7 +754,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		flavor = DefaultOAuth2Flavor
 	}
 	isPublicClient, err := e.validateClientAuthentication(flavor)
-	isCIMDClient := e.IsCIMDConfidentialClient()
+	isCIMDClient := e.IsCIMDClient()
 	if err != nil {
 		return err
 	}
@@ -939,6 +989,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 		CredentialSource:             e.CredentialSource,
 		CredentialSourceTransitioned: e.CredentialSourceTransitioned,
 		CredentialSourceProvided:     e.CredentialSourceProvided,
+		ClientRegistration:           e.ClientRegistration,
+		ClientRegistrationProvided:   e.ClientRegistrationProvided,
 		ClientIDProvided:             e.ClientIDProvided,
 		ClientSecretProvided:         e.ClientSecretProvided,
 		ClearCanonicalID:             e.ClearCanonicalID,
