@@ -163,7 +163,7 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 
 The authenticated Admin `POST /api/services` creates a service from protected-resource metadata.
 Set `discovery.enable_discovery` to `true` and supply a public HTTPS `discovery.resource_url`.
-Omit manual endpoints, client credentials, `discovery.metadata_url`, and `token_endpoint_auth_method`.
+Omit manual endpoints, client credentials, `discovery.metadata_url`, `token_endpoint_auth_method`, and `client_registration`.
 The broker validates the resource and issuer before it selects hosted CIMD or DCR.
 It does not create a service when discovery or registration fails.
 
@@ -211,7 +211,7 @@ The broker derives one effective `authorization_params.resource` from verified m
 The explicit value must be a non-empty absolute URI without a fragment.
 This effective resource is distinct from `discovery.resource_url` and the `protected_resources` ownership set.
 The authenticated Admin `GET /api/services/{service-id}` returns the active service and its effective resource without a DCR secret.
-The same service representation appears in create, read, list, and update responses.
+The same service representation appears in create, read, list, and update responses. It always reports `client_registration: cimd` for hosted CIMD or `static` for DCR; `discovery.client_method` remains the authoritative discovery selection.
 Its `discovery.authorization_param_resource_strategy` is required, read-only, and nullable:
 
 | Value | Source of `authorization_params.resource` |
@@ -245,6 +245,7 @@ For example, a DCR create response can contain this service without a client sec
   "id": "880e8400-e29b-41d4-a716-446655440003",
   "display_name": "Example MCP",
   "client_id": "dcr-client-123",
+  "client_registration": "static",
   "token_endpoint_auth_method": "client_secret_basic",
   "oauth2_flavor": "standard",
   "issuer_uri": "https://login-a.example.com",
@@ -274,7 +275,7 @@ For DCR, configure the deployment-wide `third_party_oauth2.client_name` before r
 The broker uses that name for the registered client, not the service `display_name`.
 If the name is blank, DCR returns `400` with `client_name_unconfigured`.
 Manual and CIMD services do not require this name.
-Hosted CIMD requires an HTTPS end-user public URL and a generated ES256 CIMD client key.
+Hosted CIMD requires an HTTPS end-user public URL. Only CIMD confidential services require a generated ES256 client-authentication key.
 DCR also requires a public HTTPS end-user URL for its registered callback.
 
 The authenticated Admin `PUT /api/services/{service-id}` refreshes protected-resource discovery.
@@ -366,25 +367,22 @@ Their codes are `no_compatible_client_method`, `cimd_unavailable`, `client_name_
 Conflict reasons include `duplicate_client_identity`, `issuer_change_requires_no_sessions`, and `resource_change_requires_no_sessions`.
 Local storage or encryption errors return `500` without a discovery failure code.
 
-### Outbound CIMD confidential services
+### Outbound CIMD client registration
 
-The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
+`client_registration` chooses the client ID source independently of `token_endpoint_auth_method`. This outbound client identity is separate from inbound agent CIMD resolution.
 
-A manual service can use one of three token-endpoint authentication methods:
+| `client_registration` | `token_endpoint_auth_method` | Client ID | `client_secret` on read |
+|---|---|---|---|
+| `static` | Omitted or `null` | Operator-provided (except existing Google/filesystem rules) | `REDACTED` for stored services |
+| `static` | `none` | Operator-provided | Omitted |
+| `cimd` | `private_key_jwt` | Broker-hosted HTTPS document URL | Omitted |
+| `cimd` | `none` | Broker-hosted HTTPS document URL | Omitted |
 
-| Method | Client ID | `client_secret` in read responses |
-|---|---|---|
-| `null` | Operator-provided | `REDACTED` |
-| `none` | Operator-provided | Omitted |
-| `private_key_jwt` | Broker-generated HTTPS metadata URL | Omitted |
+For create and full-replacement `PUT`, omitted registration resolves to `cimd` only for `private_key_jwt` and to `static` otherwise. A CIMD public replacement must repeat `client_registration: cimd`. Explicit null, empty, or unknown registration values return JSON `400`. The pairs `static` + `private_key_jwt` and `cimd` + absent/null method also return `400` before discovery or provider traffic. Google flavor and filesystem source reject `cimd`.
 
-For `private_key_jwt`, omit `client_id` and `client_secret` in the create or replacement request.
+For either CIMD mode, omit `client_id` and `client_secret` in the request. The broker assigns the client identifier URL after allocating the service ID. The anonymous end-user metadata route at that URL returns `200`, `application/json`, and `Cache-Control: public, max-age=300`. CIMD confidential publishes `private_key_jwt`, `ES256`, and a JWK URL after a usable key becomes available. CIMD public publishes `none` and neither key member, even if the CIMD key set is empty. Its `<client-id>/jwks.json` returns the uniform JSON `404`.
 
-The broker generates the client ID after it allocates the service ID. The broker signs each token request with a fresh ES256 client assertion.
-
-The end-user server serves the public Client ID Metadata Document at the generated client ID. It serves the matching CIMD public JWK Set at `<client-id>/jwks.json`.
-
-Both routes return `Cache-Control: public, max-age=300`. They return JSON `404` responses for unavailable services.
+Both public modes use PKCE S256 for authorization. They send `client_id` without client authentication in code exchange and refresh. CIMD confidential signs each token request with a fresh ES256 client assertion. The broker never changes authentication methods after a provider rejection. A CIMD-to-static switch ends document serving. Providers can retain the previous document for 300 seconds. Static replacement requires a caller `client_id`, and static confidential also requires a new secret.
 
 ### Permission sets
 

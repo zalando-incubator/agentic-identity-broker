@@ -126,6 +126,8 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 
 For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
 
+For feature 046 Increment 2 only, the stakeholder accepted ADR 043 (originally ADR 042 before `main` assigned 042 to private-use redirects) on 2026-10-22 and confirmed API-014 decisions D-A–D-D in writing before implementation. The ADR acceptance includes the D-I fail-closed rolling-upgrade limitation. This same-PR approval does not apply to other ADRs.
+
 | ADR | File | Decision |
 |---|---|---|
 | 002 | `adrs/002-configuration-libraries.md` | Viper + Cobra + godotenv config |
@@ -166,6 +168,7 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
 | 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
 | 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
+| 043 | `adrs/043-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
 
 ## Domain Glossary
 

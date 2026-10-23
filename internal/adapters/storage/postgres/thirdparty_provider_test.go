@@ -7,16 +7,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"strings"
-	"testing"
-	"time"
 )
 
 const (
@@ -451,6 +453,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *tes
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, id.ClientID(cimdClientIDPrefix+provider.ID.String()), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
 }
@@ -471,8 +474,121 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSe
 	stored, err := repo.Get(ctx, staticProvider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, id.ClientID(cimdClientIDPrefix+staticProvider.ID.String()), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_ClientRegistrationRoundTrip(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+
+	staticProvider := newTestEntity()
+	staticProvider.ID = id.NewServiceID()
+	require.NoError(t, repo.Create(ctx, staticProvider))
+	stored, err := repo.Get(ctx, staticProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationStatic, stored.ClientRegistration)
+	staticPublicProvider := newTestEntity()
+	staticPublicProvider.ID = id.NewServiceID()
+	staticPublicProvider.ClientID = "static-public-client"
+	staticPublicProvider.ProtectedResources = []string{"https://api-public.example.com"}
+	staticPublicProvider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	staticPublicProvider.Secret = model.NewAbsentSecret()
+	require.NoError(t, repo.Create(ctx, staticPublicProvider))
+	stored, err = repo.Get(ctx, staticPublicProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationStatic, stored.ClientRegistration)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, staticPublicProvider.ClientID, stored.ClientID)
+
+	publicProvider := testCIMDProvider(id.NewServiceID())
+	publicProvider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	publicProvider.ClientRegistration = model.ClientRegistrationCIMD
+	publicProvider.ClientRegistrationProvided = true
+	publicProvider.ProtectedResources = []string{"https://api.example.test/cimd-public"}
+	require.NoError(t, repo.Create(ctx, publicProvider))
+	stored, err = repo.Get(ctx, publicProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
+	assert.Equal(t, publicProvider.ClientID, stored.ClientID)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
+	byIDs, err := repo.GetByIDs(ctx, []id.ServiceID{publicProvider.ID, staticProvider.ID, staticPublicProvider.ID})
+	require.NoError(t, err)
+	require.Len(t, byIDs, 3)
+	assert.Equal(t, model.ClientRegistrationCIMD, byIDs[0].ClientRegistration)
+	assert.Equal(t, model.ClientRegistrationStatic, byIDs[1].ClientRegistration)
+	assert.Equal(t, model.ClientRegistrationStatic, byIDs[2].ClientRegistration)
+
+	byResource, err := repo.FindByProtectedResource(ctx, "https://api.example.test/cimd-public")
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationCIMD, byResource.ClientRegistration)
+
+	providers, err := repo.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, providers, 3)
+	for _, provider := range providers {
+		if provider.ID == publicProvider.ID {
+			assert.Equal(t, model.ClientRegistrationCIMD, provider.ClientRegistration)
+		} else {
+			assert.Contains(t, []id.ServiceID{staticProvider.ID, staticPublicProvider.ID}, provider.ID)
+			assert.Equal(t, model.ClientRegistrationStatic, provider.ClientRegistration)
+		}
+	}
+
+	publicProvider.DisplayName = "Updated CIMD public provider"
+	require.NoError(t, repo.Update(ctx, publicProvider, nil))
+	stored, err = repo.Get(ctx, publicProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
+	assert.Equal(t, publicProvider.DisplayName, stored.DisplayName)
+}
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_ClientRegistrationConstraint(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	provider := newTestEntity()
+	provider.ID = id.NewServiceID()
+	require.NoError(t, repo.Create(ctx, provider))
+	clientURL := cimdClientIDPrefix + provider.ID.String()
+
+	for _, tt := range []struct {
+		name, registration, method, clientID string
+		secret                               []byte
+		registrationConstraint               bool
+	}{
+		{"empty registration", "", "", "client-123", testCiphertext, true},
+		{"unknown registration", "other", "", "client-123", testCiphertext, true},
+		{"static with assertion authentication", "static", "private_key_jwt", clientURL, nil, true},
+		{"CIMD with shared-secret authentication", "cimd", "", clientURL, testCiphertext, true},
+		{"CIMD with a secret", "cimd", "none", clientURL, testCiphertext, false},
+		{"CIMD without a hosted client ID", "cimd", "none", "operator-client-id", nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var method any
+			if tt.method != "" {
+				method = tt.method
+			}
+			_, err := adapter.db.ExecContext(ctx, `UPDATE thirdparty_oauth2_services
+				SET client_registration = $1, token_endpoint_auth_method = $2,
+				client_secret_encrypted = $3, client_id = $4 WHERE id = $5`,
+				tt.registration, method, tt.secret, tt.clientID, provider.ID)
+			require.Error(t, err)
+			if tt.registrationConstraint {
+				var pgErr *pgconn.PgError
+				require.ErrorAs(t, err, &pgErr)
+				assert.Equal(t, "chk_thirdparty_oauth2_services_client_registration", pgErr.ConstraintName)
+			}
+			stored, getErr := repo.Get(ctx, provider.ID)
+			require.NoError(t, getErr)
+			assert.Equal(t, model.ClientRegistrationStatic, stored.ClientRegistration)
+		})
+	}
 }
 
 func discoveredCIMDProvider(providerID id.ServiceID, resourceURL string, completedAt time.Time) *model.ThirdpartyOAuth2ProviderEntity {

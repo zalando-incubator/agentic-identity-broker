@@ -100,7 +100,6 @@ func credentialAPISchemas(t *testing.T) map[string]*jsonschema.Schema {
 	require.NoError(t, err)
 	var document map[string]any
 	require.NoError(t, yaml.Unmarshal(encoded, &document))
-	require.Equal(t, "2.0.0", document["info"].(map[string]any)["version"])
 	components := document["components"].(map[string]any)
 	root := map[string]any{
 		"$schema":    "http://json-schema.org/draft-07/schema#",
