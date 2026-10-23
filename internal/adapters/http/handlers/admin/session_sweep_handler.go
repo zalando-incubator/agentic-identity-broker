@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -84,7 +85,7 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 	var err error
 	request, err = parseSessionSweepRequest(w, r)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
@@ -126,10 +127,8 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 
 func parseSessionSweepRequest(w http.ResponseWriter, r *http.Request) (oauth2session.SweepRequest, error) {
 	var request oauth2session.SweepRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
-	decoder.DisallowUnknownFields()
 	var body *sessionSweepRequestBody
-	if err := decoder.Decode(&body); err != nil {
+	if err := requestbody.Decode(w, r, 4<<10, &body); err != nil {
 		if !errors.Is(err, io.EOF) {
 			return request, err
 		}
@@ -137,13 +136,6 @@ func parseSessionSweepRequest(w http.ResponseWriter, r *http.Request) (oauth2ses
 	}
 	if body == nil {
 		return request, errors.New("request body must be a JSON object")
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return request, err
-		}
-		return request, errors.New("request body must contain only one JSON object")
 	}
 
 	if body.LookaheadDuration != nil {

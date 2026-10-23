@@ -138,17 +138,25 @@ func ValidateToolPattern(p string) error {
 	return nil
 }
 
+// Bounds enforced by ValidateParamsPattern. Callers that bound the encoded size of a
+// pattern must accept every pattern these bounds allow.
+const (
+	MaxParamsPatternEntries    = 64
+	MaxParamsPatternKeyBytes   = 255
+	MaxParamsPatternValueBytes = 1024
+)
+
 // ValidateParamsPattern reports whether every entry of m is a legal constraint.
 func ValidateParamsPattern(m map[string]string) error {
-	if len(m) > 64 {
-		return fmt.Errorf("%w: at most 64 entries", ErrInvalidParamsPattern)
+	if len(m) > MaxParamsPatternEntries {
+		return fmt.Errorf("%w: at most %d entries", ErrInvalidParamsPattern, MaxParamsPatternEntries)
 	}
 	for key, value := range m {
-		if key == "" || len(key) > 255 {
+		if key == "" || len(key) > MaxParamsPatternKeyBytes {
 			return fmt.Errorf("%w: invalid key %q", ErrInvalidParamsPattern, key)
 		}
-		if len(value) > 1024 {
-			return fmt.Errorf("%w: value for %q exceeds 1024 bytes", ErrInvalidParamsPattern, key)
+		if len(value) > MaxParamsPatternValueBytes {
+			return fmt.Errorf("%w: value for %q exceeds %d bytes", ErrInvalidParamsPattern, key, MaxParamsPatternValueBytes)
 		}
 		if strings.HasSuffix(value, "\\") && !hasEscapedTrailingBackslash(value) {
 			return fmt.Errorf("%w: value for %q has trailing escape", ErrInvalidParamsPattern, key)
