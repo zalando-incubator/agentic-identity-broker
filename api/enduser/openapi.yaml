@@ -143,7 +143,14 @@ paths:
         - `shutting_down`: Graceful shutdown in progress, completing in-flight requests
         - `unhealthy`: Server encountered an error and requires restart
 
-        In proxy and hybrid OAuth2 modes, the response may also include component-level health in `components`. The `upstream_jwks` component reports `healthy` or `degraded` without changing the top-level server lifecycle status.
+        The response may also include component-level health in `components`. Components report
+        `healthy` or `degraded` and never change the HTTP status or the top-level `status`.
+
+        - `upstream_jwks` (proxy and hybrid modes): freshness of the upstream key set that the broker
+          republishes.
+        - `trust_anchor_key_files` (any mode, when a trust anchor uses `jwks_file`): `degraded` when the
+          latest re-read of any key-set file failed. The broker keeps verifying with the last valid key set
+          until that trust anchor's maximum refresh interval expires.
       operationId: getHealth
       tags:
         - Health
@@ -170,6 +177,14 @@ paths:
                     uptime_seconds: 3600
                     components:
                       upstream_jwks: degraded
+                healthyWithDegradedKeySetFile:
+                  summary: Healthy server with a key-set file that failed its latest re-read
+                  value:
+                    status: healthy
+                    timestamp: "2026-10-16T10:15:00Z"
+                    uptime_seconds: 5400
+                    components:
+                      trust_anchor_key_files: degraded
         "503":
           description: Server is unavailable (starting, shutting down, or unhealthy)
           content:
@@ -1264,9 +1279,14 @@ paths:
         In local/hybrid mode the `client_id` may also be an HTTPS URL identifying a
         Client ID Metadata Document (CIMD) when CIMD is enabled.
 
+        **redirect_uri validation** (all modes):
+        - `redirect_uri` is matched against the agent's `redirect_uris`. For a CIMD `client_id`, it is matched against the fetched document's `redirect_uris`.
+        - Loopback `http` URIs match on any port.
+        - A private-use scheme URI such as `github-app://oauth/callback` matches only character for character. For a CIMD client, the agent's `redirect_uris` must also list it.
+        - The broker never redirects to an unregistered `redirect_uri`.
+
         **Local/Hybrid Mode**:
         When the broker acts as its own OAuth2 authorization server:
-        - Validates the agent's registered `redirect_uris`
         - If user has an active grant, redirects to `redirect_uri` with `code` and `state`
         - If no active grant exists, redirects to the consent UI for user approval
         - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`
@@ -1279,9 +1299,9 @@ paths:
         **Error Handling** (RFC 6749 §4.1.2.1):
 
         Direct JSON responses (no redirect — RFC 6749 §4.1.2.1):
-        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists
+        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; or the CIMD document fails validation, including a private-use redirect URI that the agent's `redirect_uris` does not list
         - `invalid_redirect_uri` (400): `redirect_uri` not registered on the agent
-        - `invalid_request` (400): Missing PKCE parameters
+        - `invalid_request` (400): Missing PKCE parameters, or `redirect_uri` not registered for a CIMD client
         - `unsupported_response_type` (400): `response_type` is not `code`
         - `server_error` (500): Internal infrastructure failure
 
@@ -1315,7 +1335,8 @@ paths:
         - name: redirect_uri
           in: query
           required: true
-          description: Callback URI to redirect to after authorization. Must be pre-registered.
+          description: >
+            Callback URI to redirect to after authorization. Must be pre-registered: an https URI, a loopback http URI, or an allowlisted native-app private-use scheme URI (see redirect_uri validation).
           schema:
             type: string
             format: uri
@@ -1356,7 +1377,7 @@ paths:
                 Destination URL:
                 - Upstream authorization URL with PKCE and agent ID parameters (proxy mode)
                 - Consent UI URL if user has no active grant (local/hybrid mode)
-                - redirect_uri with `code` and `state` query parameters (local/hybrid mode, active grant)
+                - redirect_uri with `code` and `state` query parameters (local/hybrid mode, active grant); a private-use scheme callback receives the same parameters
               schema:
                 type: string
                 format: uri
@@ -1453,6 +1474,9 @@ paths:
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
           `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
           landing-page `error_uri`. The stored session is left unchanged.
+        - A missing required client-identity association or a mismatch with the selected client ID
+          returns 400 `invalid_grant` with the same sessions landing-page `error_uri`.
+          The broker stops before provider authentication and leaves the established session unchanged.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never
@@ -2077,6 +2101,9 @@ paths:
       summary: Deny a pending tool call
       description: |
         Transitions a pending approval to denied state.
+        With persistence: permanent, blocks the exact tool for this principal and agent
+        until revocation, regardless of arguments or session. Clears parameter constraints.
+        ExtProc enforces the denial before matching approvals and does not create another approval request.
         Auth: acting user principal from the browser auth layer; principal must match.
       tags:
         - Approvals
@@ -2591,6 +2618,12 @@ components:
 
             - `healthy`: Upstream key material is reachable and fresh
             - `degraded`: Upstream refresh has failed or become stale
+
+            In any OAuth2 mode, when at least one trust anchor uses `jwks_file`,
+            `trust_anchor_key_files` reports the state of every key-set file:
+
+            - `healthy`: The latest re-read of every key-set file succeeded
+            - `degraded`: The latest re-read of at least one key-set file failed
           additionalProperties:
             type: string
           example:

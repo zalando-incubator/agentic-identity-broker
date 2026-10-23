@@ -8,10 +8,12 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	testbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
 func TestRefreshTokenSessionRepoConsent(t *testing.T) {
-	pg, dbName, connStr, cleanup := setupCIMDKeyDomainDatabase(t, 36)
+	pg := testbootstrap.RequireSharedPostgres(t)
+	dbName, connStr, cleanup := pg.SetupMigratedDatabase(t)
 	defer cleanup()
 	store, cleanupStore := newCIMDKeyDomainStorage(t, connStr)
 	defer cleanupStore()

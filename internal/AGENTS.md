@@ -45,6 +45,7 @@ domain/
   storage/         Domain data models and endpoint discovery
   thirdparty/      Third-party OAuth2 provider management
   tokenexchange/   RFC 8693 token exchange and CEL evaluation
+  trustanchor/     Trust-anchor key-source resolution and local key-set validation
   urivalidation/   Redirect and resource URI validation
 
 ports/             Port contracts; read the `.go` files before editing
@@ -74,7 +75,7 @@ adapters/
     oauth2_sessions/  OAuth2 session management handlers
     routing/       Route registration only
     upstream/      Upstream OAuth2 proxy integration
-  jwks/            JWKS fetcher and published-JWKS adapter
+  jwks/            JWKS fetcher, published-JWKS, static (inline), and file key-set adapters
   jwtauth/         JWT authenticator
   storage/
     factory.go     Backend selection from configuration

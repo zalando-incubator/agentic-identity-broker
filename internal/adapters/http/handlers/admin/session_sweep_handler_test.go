@@ -20,6 +20,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 type fakeSessionSweeper struct {
@@ -383,4 +386,63 @@ func TestSessionSweepHandlerLiftsRealServerWriteDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("sweep response did not complete after the write timeout was lifted")
 	}
+}
+
+func TestSessionSweepHandlerRecordsDurationByOutcome(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
+
+	var logs bytes.Buffer
+	var outcome error
+	fake := &fakeSessionSweeper{sweep: func(ctx context.Context, request oauth2session.SweepRequest) (oauth2session.SweepResult, error) {
+		if ctx.Err() != nil {
+			return oauth2session.SweepResult{}, ctx.Err()
+		}
+		return oauth2session.SweepResult{DryRun: request.DryRun}, outcome
+	}}
+	handler := NewSessionSweepHandler(fake, sweepTestLogger(&logs))
+	serve := func(req *http.Request) { handler.Sweep(httptest.NewRecorder(), req) }
+
+	serve(sweepRequest(`{}`, "operator@example.test"))
+	serve(sweepRequest(`{"dry_run":true}`, "operator@example.test"))
+	serve(sweepRequest(`{"unknown":1}`, "operator@example.test"))
+	outcome = oauth2session.ErrInvalidSweepRequest
+	serve(sweepRequest(`{}`, "operator@example.test"))
+	outcome = errors.New("storage unavailable")
+	serve(sweepRequest(`{"dry_run":true}`, "operator@example.test"))
+	outcome = nil
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	serve(sweepRequest(`{}`, "operator@example.test").WithContext(principal.WithPrincipal(canceled, "operator@example.test")))
+	serve(sweepRequest(`{}`, ""))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	var histogram *metricdata.Metrics
+	for _, scope := range collected.ScopeMetrics {
+		for i := range scope.Metrics {
+			if scope.Metrics[i].Name == "session_sweep_duration_seconds" {
+				histogram = &scope.Metrics[i]
+			}
+		}
+	}
+	require.NotNil(t, histogram, "session_sweep_duration_seconds must be recorded")
+	assert.Equal(t, "s", histogram.Unit)
+	assert.NotEmpty(t, histogram.Description)
+	data, ok := histogram.Data.(metricdata.Histogram[float64])
+	require.True(t, ok, "session_sweep_duration_seconds must be a float64 histogram, got %T", histogram.Data)
+	counts := map[string]uint64{}
+	for _, point := range data.DataPoints {
+		assert.Equal(t, []float64{1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600}, point.Bounds)
+		assert.Len(t, point.Attributes.ToSlice(), 2, "only outcome and dry_run are permitted")
+		o, _ := point.Attributes.Value("outcome")
+		d, _ := point.Attributes.Value("dry_run")
+		counts[o.AsString()+"/"+d.AsString()] += point.Count
+	}
+	assert.Equal(t, map[string]uint64{
+		"completed/false": 1, "completed/true": 1, "rejected/false": 2, "aborted/true": 1, "canceled/false": 1,
+	}, counts, "a request without an operator principal records no run")
 }

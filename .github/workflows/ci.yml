@@ -77,8 +77,8 @@ jobs:
 
           {
             echo "docs=$(match '^(docs/|api/|assets/docusaurus/)')"
-            echo "helm=$(match '^charts/')"
-            echo "workflows=$(match '^\.github/(workflows/|dependabot\.yml)')"
+            echo "helm=$(match '^(charts/|tests/integration/helm_chart_test\.go$|tests/e2e/fixtures/oauth2-secret-file-values\.yaml$|\.github/workflows/ci\.yml$|go\.(mod|sum)$)')"
+            echo "workflows=$(match '^(\.github/(workflows/|scripts/speckit-|actionlint\.yaml$|aw/actions-lock\.json$|dependabot\.yml)|\.agents/skills/speckit-)')"
             echo "deps=$(match '(^|/)(go\.mod|go\.sum|package(-lock)?\.json)$')"
             # "code" = anything that is not purely documentation.
             if grep -Evq "$DOCS_ONLY" changed.txt; then echo "code=true"; else echo "code=false"; fi
@@ -424,10 +424,10 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------------------
-  # Helm chart lints (the chart is only otherwise validated at release time).
+  # Helm chart lint and rendered deployment contracts.
   # ---------------------------------------------------------------------------
   helm:
-    name: Helm lint
+    name: Helm checks
     needs: changes
     if: needs.changes.outputs.helm == 'true'
     runs-on: ubuntu-latest
@@ -437,10 +437,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
       - name: Lint chart
         run: helm lint charts/agentic-identity-broker
+      - name: Verify rendered deployment contracts
+        env:
+          REQUIRE_HELM: "1"
+        run: go test -count=1 -v ./tests/integration -run '^TestHelmCredentialFiles'
 
   # ---------------------------------------------------------------------------
   # The pipeline lints itself: syntax (actionlint) and security posture
@@ -466,6 +475,15 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
+      - name: Spec Kit automation guards
+        run: node --test .github/scripts/speckit-automation.test.cjs
+      - name: Validate agentic workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-aw --pin v0.92.0
+          gh aw compile speckit-specify speckit-phase speckit-plan speckit-analyze speckit-implement --strict --no-emit --no-check-update
+          gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
       - name: zizmor
         uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:

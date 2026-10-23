@@ -59,6 +59,8 @@ func TestUserSessionRepository(t *testing.T) {
 
 	repo := NewUserSessionRepository(adapter)
 	ctx := context.Background()
+	_, err := adapter.db.ExecContext(ctx, `ALTER TABLE user_sessions ADD COLUMN future_session_metadata TEXT`)
+	require.NoError(t, err)
 
 	t.Run("FindByPrincipalAndService scopes scan", func(t *testing.T) {
 		serviceID := id.NewServiceID()
@@ -200,6 +202,41 @@ func TestUserSessionRepository(t *testing.T) {
 		assert.False(t, byService[activeServiceID].IsExpired)
 		assert.True(t, byService[expiredServiceID].IsExpired)
 	})
+}
+
+func TestPostgresUserSessionRepository_MissingServiceIsNotFound(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		create func(context.Context, *storage.UserSession) error
+	}{
+		{"Create", repo.Create},
+		{"CreateIfAbsent", func(ctx context.Context, session *storage.UserSession) error {
+			_, err := repo.CreateIfAbsent(ctx, session)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			serviceID := id.NewServiceID()
+			now := time.Now().UTC()
+			session := &storage.UserSession{
+				ID: id.NewSessionID(), Principal: id.Principal("missing-service@example.com"), ServiceID: serviceID,
+				EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"read"},
+				EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+				InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+			}
+			err := tc.create(ctx, session)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+			count, err := repo.CountByService(ctx, serviceID)
+			require.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
 func TestUserSessionRepository_Usability(t *testing.T) {
@@ -914,4 +951,91 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 			t.Logf("%s page: index rows=%.0f, shared hit blocks=%d, shared read blocks=%d, condition=%s", page.name, scan.ActualRows, scan.SharedHitBlocks, scan.SharedReadBlocks, scan.IndexCond)
 		})
 	}
+}
+
+func TestUserSessionCountSessionsByExpiry(t *testing.T) {
+	now := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
+	threshold := now.Add(5 * time.Minute)
+	after, due, past := threshold.Add(time.Second), threshold.Add(-time.Minute), now.Add(-time.Hour)
+	later := now.Add(24 * time.Hour)
+	refresh := []byte{128, 1, 0, 254}
+	type seed struct {
+		service       int
+		access        *time.Time
+		refreshToken  []byte
+		refreshExpiry *time.Time
+	}
+	type group struct {
+		service       int
+		accessExpiry  storage.AccessExpiryClass
+		refreshUsable bool
+		count         int
+	}
+
+	tests := []struct {
+		name  string
+		seeds []seed
+		want  []group
+	}{
+		{name: "H1 no sessions"},
+		{name: "H2 valid with usable refresh", seeds: []seed{{0, &after, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryAfterThreshold, true, 1}}},
+		{name: "H3 expiry at threshold is due", seeds: []seed{{0, &threshold, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryDue, true, 1}}},
+		{name: "H4 no access expiry", seeds: []seed{{0, nil, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryUnknown, true, 1}}},
+		{name: "H5 refresh token without expiry is usable", seeds: []seed{{0, &due, refresh, nil}},
+			want: []group{{0, storage.AccessExpiryDue, true, 1}}},
+		{name: "H6 refresh expiring at now is unusable", seeds: []seed{{0, &due, refresh, &now}},
+			want: []group{{0, storage.AccessExpiryDue, false, 1}}},
+		{name: "H7 absent refresh token is unusable", seeds: []seed{{0, &past, nil, nil}},
+			want: []group{{0, storage.AccessExpiryExpired, false, 1}}},
+		{name: "H8 groups per service and class", seeds: []seed{
+			{0, &due, refresh, &later}, {0, &past, refresh, nil}, {0, &after, refresh, &later}, {0, &due, refresh, &later}, {1, nil, refresh, &later},
+		}, want: []group{
+			{0, storage.AccessExpiryDue, true, 2}, {0, storage.AccessExpiryExpired, true, 1},
+			{0, storage.AccessExpiryAfterThreshold, true, 1}, {1, storage.AccessExpiryUnknown, true, 1},
+		}},
+		{name: "H10 expiry at now is expired", seeds: []seed{{0, &now, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryExpired, true, 1}}},
+		{name: "H11 expired access with usable refresh is expired and refreshable", seeds: []seed{{0, &past, refresh, &later}},
+			want: []group{{0, storage.AccessExpiryExpired, true, 1}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter, cleanup := setupUserSessionTestDB(t)
+			defer cleanup()
+			services := []id.ServiceID{id.NewServiceID(), id.NewServiceID()}
+			for _, serviceID := range services {
+				insertTestService(t, adapter, serviceID)
+			}
+			repo := NewUserSessionRepository(adapter)
+			for i, s := range tt.seeds {
+				session := seedExpiryTestSession(t, adapter, services[s.service], expiryTestID(i+1), s.access)
+				_, err := adapter.db.ExecContext(context.Background(),
+					`UPDATE user_sessions SET encrypted_refresh_token = $2, refresh_token_expires_at = $3 WHERE id = $1`,
+					session.ID, s.refreshToken, s.refreshExpiry)
+				require.NoError(t, err)
+			}
+			want := make([]storage.SessionExpiryGroup, 0, len(tt.want))
+			for _, g := range tt.want {
+				want = append(want, storage.SessionExpiryGroup{ServiceID: services[g.service], AccessExpiry: g.accessExpiry, RefreshUsable: g.refreshUsable, Count: g.count})
+			}
+			got, err := repo.CountSessionsByExpiry(context.Background(), threshold, now)
+			require.NoError(t, err)
+			assert.NotNil(t, got)
+			assert.ElementsMatch(t, want, got)
+		})
+	}
+
+	t.Run("H9 expired context", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+		_, err := NewUserSessionRepository(adapter).CountSessionsByExpiry(ctx, threshold, now)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindTimeout, storageErr.Kind)
+	})
 }

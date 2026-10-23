@@ -47,6 +47,7 @@ type Cache struct {
 	pairs        map[pairKey]*pairEntry
 	sessions     map[string]time.Time
 	etag         string
+	version      int64
 	lastSync     time.Time
 	createdAt    time.Time
 	idleTTL      time.Duration
@@ -103,8 +104,11 @@ func (c *Cache) ETag() string {
 
 func (c *Cache) MarkSynced() {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if version, valid := parseSyncVersion(c.etag); valid && version < c.version {
+		return
+	}
 	c.lastSync = time.Now()
-	c.mu.Unlock()
 }
 
 func (c *Cache) SyncAgeSeconds() int64 {
@@ -131,6 +135,10 @@ func (c *Cache) Replace(pairs []Pair, etag string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if !c.acceptVersionLocked(etag) {
+		return
+	}
+
 	replacement := make(map[pairKey]*pairEntry, len(pairs))
 	for _, pair := range pairs {
 		if !pair.Identity.Valid() {
@@ -152,13 +160,11 @@ func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair, etag string)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if responseVersion, responseValid := parseSyncVersion(etag); responseValid {
-		if cacheVersion, cacheValid := parseSyncVersion(c.etag); cacheValid && responseVersion < cacheVersion {
-			return false
-		}
-	}
 	if principal == "" {
 		return true
+	}
+	if !c.acceptVersionLocked(etag) {
+		return false
 	}
 
 	now := time.Now()
@@ -177,6 +183,16 @@ func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair, etag string)
 	}
 	for key, entry := range replacement {
 		c.pairs[key] = entry
+	}
+	return true
+}
+
+func (c *Cache) acceptVersionLocked(etag string) bool {
+	if version, valid := parseSyncVersion(etag); valid {
+		if version < c.version {
+			return false
+		}
+		c.version = version
 	}
 	return true
 }
@@ -277,6 +293,13 @@ func (c *Cache) Match(identity Identity, sessionID, tool string, arguments map[s
 		return Record{}, false
 	}
 	entry.lastSeen = now
+
+	for i := range entry.records {
+		record := &entry.records[i]
+		if record.ID != "" && record.Status == "denied" && record.Persistence != nil && *record.Persistence == "permanent" && record.ToolName == tool {
+			return *record, true
+		}
+	}
 
 	candidates := make([]candidate, 0, len(entry.records))
 	indices := make([]int, 0, len(entry.records))

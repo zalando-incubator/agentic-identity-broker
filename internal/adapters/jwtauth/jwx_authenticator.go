@@ -45,6 +45,10 @@ type JWXAuthenticatorConfig struct {
 
 	// Logger is the structured logger for authentication events.
 	Logger *slog.Logger
+
+	// KeySet, when set, supplies the verification keys instead of JWTConfig.JWKSURI.
+	// The authenticator then skips its own key fetching and does not own the key set's lifecycle.
+	KeySet ports.JWKSPort
 }
 
 // JWXAuthenticator implements the domain JWTAuthenticator port using lestrrat-go/jwx v4.
@@ -59,6 +63,7 @@ type JWXAuthenticator struct {
 	celEvaluator *jwtauth.CELEvaluator
 	jwksCache    *jwkfetch.Cache
 	jwksURL      string
+	keySet       ports.JWKSPort
 	logger       *slog.Logger
 }
 
@@ -84,8 +89,14 @@ func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) 
 		logger:       logger,
 	}
 
+	signed := cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == ""
+	if signed && cfg.KeySet != nil {
+		auth.keySet = cfg.KeySet
+		return auth, nil
+	}
+
 	// Initialize JWKS cache for signed verification mode
-	if cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == "" {
+	if signed {
 		httpClient := cfg.HTTPClient
 		if httpClient == nil {
 			httpClient = http.DefaultClient
@@ -214,6 +225,15 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 
 // parseAndVerify parses the JWT and verifies its signature using JWKS.
 func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) (jwt.Token, error) {
+	if a.keySet != nil {
+		keySet, err := a.keySet.GetKeySet(ctx)
+		if err != nil {
+			a.logger.Error("local JWT pre-authentication key set unavailable", "error", err)
+			return nil, fmt.Errorf("%w: %v", jwtauth.ErrJWKSUnavailable, err)
+		}
+		return a.verifyWithKeySet(tokenStr, keySet)
+	}
+
 	if a.jwksCache != nil {
 		// JWKS verification mode: ensure cache is ready, then fetch keyset
 		if !a.jwksCache.Ready(ctx, a.jwksURL) {
@@ -229,20 +249,26 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 
-		token, err := jwt.Parse([]byte(tokenStr),
-			jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
-			jwt.WithValidate(false), // We do our own validation below
-		)
-		if err != nil {
-			return nil, a.classifyParseError(err)
-		}
-		return token, nil
+		return a.verifyWithKeySet(tokenStr, keySet)
 	}
 
 	// Unsigned mode: parse without verification
 	token, err := jwt.Parse([]byte(tokenStr),
 		jwt.WithVerify(false),
 		jwt.WithValidate(false),
+	)
+	if err != nil {
+		return nil, a.classifyParseError(err)
+	}
+	return token, nil
+}
+
+// verifyWithKeySet verifies the JWT signature against keySet, with the same options for remote
+// and local key sets.
+func (a *JWXAuthenticator) verifyWithKeySet(tokenStr string, keySet jwk.Set) (jwt.Token, error) {
+	token, err := jwt.Parse([]byte(tokenStr),
+		jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
+		jwt.WithValidate(false), // We do our own validation below
 	)
 	if err != nil {
 		return nil, a.classifyParseError(err)

@@ -4,7 +4,7 @@
   "description": "Renders Wireloom wireframes in spec Markdown to SVG (Constitution Principle XIV)",
   "type": "module",
   "dependencies": {
-    "markdown-it": "15.0.2",
+    "markdown-it": "15.0.3",
     "wireloom": "0.7.0"
   }
 }

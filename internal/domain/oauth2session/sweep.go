@@ -49,6 +49,7 @@ type SessionSweepService struct {
 	logger           *slog.Logger
 	refreshedCounter metric.Int64Counter
 	failedCounter    metric.Int64Counter
+	skippedCounter   metric.Int64Counter
 }
 
 func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *OAuth2SessionService, logger *slog.Logger) *SessionSweepService {
@@ -57,12 +58,14 @@ func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *
 		metric.WithDescription("Sessions refreshed and committed by an admin sweep"), metric.WithUnit("{refresh}"))
 	failed, _ := meter.Int64Counter("session_sweep_failed_total",
 		metric.WithDescription("Admin sweep candidates that could not be refreshed"), metric.WithUnit("{refresh}"))
+	skipped, _ := meter.Int64Counter("session_sweep_skipped_total",
+		metric.WithDescription("Admin sweep candidates skipped because they were already refreshed or deleted"), metric.WithUnit("{refresh}"))
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &SessionSweepService{
 		expiry: expiry, sessions: sessions, logger: logger,
-		refreshedCounter: refreshed, failedCounter: failed,
+		refreshedCounter: refreshed, failedCounter: failed, skippedCounter: skipped,
 	}
 }
 
@@ -146,6 +149,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 					switch {
 					case metadata.Detail() == DetailSessionMissing:
 						result.Skipped++
+						s.skippedCounter.Add(ctx, 1, sweepMetricAttributes)
 						s.logger.DebugContext(ctx, "session sweep candidate no longer exists", "session_id", candidate.ID, "service_id", candidate.ServiceID, "triggered_by", RefreshTriggerSweep)
 					case metadata.Kind() == KindCanceled:
 						return result, refreshErr
@@ -177,6 +181,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 					s.refreshedCounter.Add(ctx, 1, sweepMetricAttributes)
 				} else {
 					result.Skipped++
+					s.skippedCounter.Add(ctx, 1, sweepMetricAttributes)
 				}
 			}
 			result.TotalEvaluated++

@@ -54,6 +54,13 @@ go test -tags=integration -v ./tests/integration/storage/infra/...
 ```
 
 The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
+
+Application-level PostgreSQL journeys must apply the migrations required by the current storage adapter, including migration 041 for credential-source support. Keep older schema versions only for migration-specific tests.
+
+`TestUserSessionReadsAfterSchemaExpansion` adds an unmapped `future_metadata` column and verifies that session reads and refresh writes preserve it. Keep this test column separate from production columns when adding migrations.
+
+Provider updates preserve protected-resource ownership and creation timestamps when normalized membership is unchanged, while advancing the parent version. `TestProtectedResourceUpdatePreservesUnchangedCreatedAt` covers omitted resources, normalized-equivalent membership, replacement, empty membership, and stale CAS through the domain service.
+
 Run them against PostgreSQL with:
 
 ```bash
@@ -66,6 +73,23 @@ Tests:
 - `TestPostgresAdapter_CreateUser_ValidationErrors` - Input validation
 - `TestPostgresAdapter_ContextCancellation` - Context cancellation handling
 - `TestPostgresAdapter_FullLifecycle_Integration` - Full lifecycle with real PostgreSQL container
+
+### Database schema setup
+
+Ordinary PostgreSQL tests use `bootstrap.RequireSharedPostgres(t)` followed by
+`(*SharedPostgres).SetupMigratedDatabase(t)`. The helper discovers every migration in
+`migrations/` with `golang-migrate`, prepares one fully migrated template per package,
+and clones an isolated database for each test. New migrations require no test fixture
+version or filename updates. The PostgreSQL adapter package and PostgreSQL E2E fixture
+also apply all discovered migrations.
+
+Only migration-specific upgrade and rollback tests can request a historical schema.
+For those tests, use `SetupDatabaseFromTemplate` with `ApplyMigrationsUpTo(t, dbName, version)`.
+Do not maintain SQL filename lists. Connection-error and uninitialized-adapter tests deliberately do not provision a schema.
+
+`just test-integration-infra` includes the bootstrap regression tests for current-schema
+discovery, clone isolation, and upgrading a historical fixture through the remaining
+migrations, including concurrent-index migrations.
 
 ## Container Runtime
 

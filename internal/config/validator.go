@@ -3,17 +3,21 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -28,6 +32,10 @@ func Validate(cfg *ports.Config) error {
 	// Validate log format
 	if err := validateLogFormat(cfg.Log.Format); err != nil {
 		return formatValidationError("log.format", string(cfg.Log.Format), "text or json", err)
+	}
+
+	if err := validateTrustMaterialDir(&cfg.Security); err != nil {
+		return err
 	}
 
 	// Validate server configuration (pass security config for HTTPS validation)
@@ -62,6 +70,19 @@ func Validate(cfg *ports.Config) error {
 	}
 
 	if err := validateTokenExchangeConfig(&cfg.TokenExchange, &cfg.Security); err != nil {
+		return err
+	}
+	clientAssertion := &cfg.TokenExchange.ClientAssertion
+	issuerURI := clientAssertion.IssuerURI
+	if issuerURI == "" {
+		issuerURI = cfg.OAuth2AuthServer.Proxy.UpstreamIssuerURI
+	}
+	if err := trustanchor.RequireClientAssertionIssuer(issuerURI,
+		clientAssertion.JWKSURI != "" || clientAssertion.JWKS != "" || clientAssertion.JWKSFile != ""); err != nil {
+		var anchorErr *trustanchor.Error
+		if errors.As(err, &anchorErr) {
+			return formatValidationError(anchorErr.Path, "", anchorErr.Message(), nil)
+		}
 		return err
 	}
 	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
@@ -406,6 +427,21 @@ func validateThirdPartyOAuth2Config(cfg *ports.ThirdPartyOAuth2Config) error {
 		}
 	}
 
+	return validateCredentialFiles(cfg.CredentialFiles)
+}
+
+func validateCredentialFiles(bindings map[string]ports.CredentialFileBinding) error {
+	for key, pair := range bindings {
+		if err := canonical.Validate(&key); err != nil {
+			return credentialFilesConfigError("", "canonical IDs using 1-128 ASCII letters, digits, '.', '_', or '-', excluding UUID-shaped strings")
+		}
+		if strings.TrimSpace(pair.ClientIDFile) == "" || !filepath.IsAbs(pair.ClientIDFile) {
+			return credentialFilesConfigError("", "client_id_file must be a non-empty, non-whitespace-only absolute path")
+		}
+		if strings.TrimSpace(pair.ClientSecretFile) == "" || !filepath.IsAbs(pair.ClientSecretFile) {
+			return credentialFilesConfigError("", "client_secret_file must be a non-empty, non-whitespace-only absolute path")
+		}
+	}
 	return nil
 }
 
@@ -574,7 +610,7 @@ func validateMemoryConfig(cfg *ports.MemoryConfig) error {
 
 // validateJWTConfig validates JWT pre-authentication configuration.
 // Applies defaults for HeaderName, Verification, and PrincipalExpression when not set.
-// Enforces mutual exclusivity between verification: none and jwks_uri.
+// Enforces mutual exclusivity between verification: none and every explicit key source.
 // Enforces HTTPS for JWKS URI per SR-004.
 func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.SecurityConfig) error {
 	// Apply defaults for fields that have default values
@@ -608,12 +644,22 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 		)
 	}
 
-	// Required jwks_uri when verification is jwks
-	if jwt.Verification == "jwks" && jwt.JWKSURI == "" {
+	if err := validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorJWTPreauth, ConfigPath: prefix}, trustanchor.SourceInput{
+		JWKSURI:              jwt.JWKSURI,
+		JWKS:                 jwt.JWKS,
+		JWKSFile:             jwt.JWKSFile,
+		TrustDirectory:       trustDirectory(security),
+		VerificationDisabled: jwt.Verification == "none",
+	}); err != nil {
+		return err
+	}
+
+	// A signed JWT needs exactly one key source.
+	if jwt.Verification == "jwks" && jwt.JWKSURI == "" && jwt.JWKS == "" && jwt.JWKSFile == "" {
 		return formatValidationError(
 			prefix+".jwks_uri",
 			"",
-			"non-empty JWKS URI (required when verification is 'jwks')",
+			"one of jwks_uri, jwks, or jwks_file (required when verification is 'jwks')",
 			nil,
 		)
 	}
@@ -682,6 +728,59 @@ func validateTokenExchangeConfig(cfg *ports.TokenExchangeConfig, security *ports
 	if clientAssertion.JWKSMaxRefresh < 0 {
 		return formatValidationError("token_exchange.client_assertion.jwks_max_refresh", clientAssertion.JWKSMaxRefresh.String(), "non-negative duration", nil)
 	}
+	return validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorClientAssertion, ConfigPath: "token_exchange.client_assertion"}, trustanchor.SourceInput{
+		JWKSURI:        clientAssertion.JWKSURI,
+		JWKS:           clientAssertion.JWKS,
+		JWKSFile:       clientAssertion.JWKSFile,
+		MinRefresh:     clientAssertion.JWKSMinRefresh,
+		MaxRefresh:     clientAssertion.JWKSMaxRefresh,
+		TrustDirectory: security.TrustMaterialDir,
+	})
+}
+
+// inlineKeySetRedacted replaces an inline JWK Set in configuration errors, which otherwise echo
+// the rejected value.
+const inlineKeySetRedacted = "[inline JWK Set redacted]"
+
+// validateKeySource applies the trust-anchor key-source structural rules at load time. The
+// builder applies the same rules, and also validates the key-set documents themselves.
+func validateKeySource(anchor trustanchor.AnchorRef, in trustanchor.SourceInput) error {
+	_, err := trustanchor.ResolveKeySetSource(anchor, in)
+	var anchorErr *trustanchor.Error
+	if !errors.As(err, &anchorErr) {
+		return err
+	}
+	field, value := anchorErr.Path, ""
+	switch {
+	case anchorErr.Category == trustanchor.CategoryInvalidTrustDirectory:
+		field, value = "security.trust_material_dir", in.TrustDirectory
+	case in.JWKS != "":
+		value = inlineKeySetRedacted
+	case in.JWKSFile != "":
+		value = in.JWKSFile
+	default:
+		value = in.JWKSURI
+	}
+	return formatValidationError(field, value, anchorErr.Message(), nil)
+}
+
+func trustDirectory(security *ports.SecurityConfig) string {
+	if security == nil {
+		return ""
+	}
+	return security.TrustMaterialDir
+}
+
+// validateTrustMaterialDir checks the security.trust_material_dir string. Existence is checked
+// at startup, and only when a trust anchor uses jwks_file.
+func validateTrustMaterialDir(security *ports.SecurityConfig) error {
+	if security.TrustMaterialDir == "" {
+		return nil
+	}
+	if trustanchor.ValidateTrustDirectory(security.TrustMaterialDir) != nil {
+		return formatValidationError("security.trust_material_dir", security.TrustMaterialDir,
+			"absolute path to an existing directory other than /", nil)
+	}
 	return nil
 }
 
@@ -694,6 +793,9 @@ func validateTokenRefreshConfig(cfg *ports.TokenRefreshConfig) error {
 	}
 	if cfg.Sweep.DefaultPageSize < 1 || cfg.Sweep.DefaultPageSize > 1000 {
 		return formatValidationError("token_refresh.sweep.default_page_size", strconv.Itoa(cfg.Sweep.DefaultPageSize), "between 1 and 1000", nil)
+	}
+	if cfg.HealthMetrics.QueryTimeout <= 0 {
+		return formatValidationError("token_refresh.health_metrics.query_timeout", cfg.HealthMetrics.QueryTimeout.String(), "greater than 0", nil)
 	}
 	return nil
 }
@@ -1055,6 +1157,16 @@ func validateImpersonationTrustedIssuers(rule *ports.ImpersonationRuleConfig, rb
 			return err
 		}
 		if err := validateOptionalHTTPSURL(issuer.JWKSURI, ibase+".jwks_uri", security); err != nil {
+			return err
+		}
+		if err := validateKeySource(trustanchor.AnchorRef{Kind: trustanchor.AnchorImpersonationIssuer, ConfigPath: ibase}, trustanchor.SourceInput{
+			JWKSURI:        issuer.JWKSURI,
+			JWKS:           issuer.JWKS,
+			JWKSFile:       issuer.JWKSFile,
+			MinRefresh:     issuer.JWKSMinRefresh,
+			MaxRefresh:     issuer.JWKSMaxRefresh,
+			TrustDirectory: security.TrustMaterialDir,
+		}); err != nil {
 			return err
 		}
 		if issuer.JWKSMinRefresh < 0 {

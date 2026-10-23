@@ -604,6 +604,10 @@
           "additionalProperties": false,
           "description": "OAuth2 third-party service configuration",
           "properties": {
+            "clientName": {
+              "type": "string",
+              "description": "Optional broker or platform name mapped to third_party_oauth2.client_name. An absent or whitespace-only name blocks DCR registration, not startup, manual services, or hosted CIMD."
+            },
             "jweSigningKey": {
               "type": "string",
               "description": "Raw 32-byte JWE signing key; the chart base64-encodes it into the broker-facing Secret string"
@@ -624,6 +628,32 @@
                 "key": {
                   "type": "string",
                   "description": "Key within the secret"
+                }
+              }
+            },
+            "credentialFiles": {
+              "type": "object",
+              "default": {},
+              "description": "Exact canonical-ID bindings to paired credential paths; never selects a registered service source",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,128}$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["client_id_file", "client_secret_file"],
+                "properties": {
+                  "client_id_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Absolute client-ID file path, validated by the broker at startup"
+                  },
+                  "client_secret_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Absolute client-secret file path, validated by the broker at startup"
+                  }
                 }
               }
             }
@@ -991,6 +1021,14 @@
                               "type": "string",
                               "description": "Explicit JWKS endpoint; empty discovers it from issuer metadata"
                             },
+                            "jwks": {
+                              "type": "string",
+                              "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwks_uri and jwks_file"
+                            },
+                            "jwks_file": {
+                              "type": "string",
+                              "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwks_uri and jwks"
+                            },
                             "jwks_min_refresh": {
                               "type": "string",
                               "description": "Minimum JWKS refresh interval (Go duration); default 15m"
@@ -1123,6 +1161,14 @@
                 "jwksMaxRefresh": {
                   "type": "string",
                   "description": "Maximum client-assertion JWKS refresh interval as a Go duration"
+                },
+                "jwks": {
+                  "type": "string",
+                  "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwksUri and jwksFile"
+                },
+                "jwksFile": {
+                  "type": "string",
+                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwksUri and jwks"
                 }
               }
             },
@@ -1198,6 +1244,22 @@
                   "description": "Default sessions per admin sweep page"
                 }
               }
+            },
+            "healthMetrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Session-health gauge (oauth2_sessions) configuration",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Publish the oauth2_sessions gauge when telemetry metrics are enabled"
+                },
+                "queryTimeout": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+                  "description": "Timeout of the per-export health count query as a Go duration"
+                }
+              }
             }
           }
         },
@@ -1209,6 +1271,46 @@
             "skipThirdpartyHttpsValidation": {
               "type": "boolean",
               "description": "Skip HTTPS validation for third-party services (dev/test only)"
+            },
+            "trustMaterial": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Trust material mounted for jwks_file key sets",
+              "properties": {
+                "directory": {
+                  "type": "string",
+                  "pattern": "^(/.*)?$",
+                  "description": "Absolute path of the trust directory (security.trust_material_dir); empty disables jwks_file"
+                },
+                "sources": {
+                  "type": "array",
+                  "description": "Existing Secrets or ConfigMaps projected read-only into the trust directory",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["secret"],
+                        "properties": {
+                          "secret": {
+                            "$ref": "#/definitions/trustMaterialSource"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["configMap"],
+                        "properties": {
+                          "configMap": {
+                            "$ref": "#/definitions/trustMaterialSource"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
             }
           }
         },
@@ -1325,6 +1427,35 @@
           },
           "description": "Additional broker environment variables"
         },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Additional Kubernetes volumes for the broker pod",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": ["name"]
+          }
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Additional Kubernetes volume mounts for the broker container",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "mountPath": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "mountPath"]
+          }
+        },
         "extraConfig": {
           "type": "object",
           "description": "Additional broker configuration (merged into config.yaml)"
@@ -1360,6 +1491,204 @@
               "description": "Maximum approval creation requests per minute per principal/agent pair"
             }
           }
+        }
+      }
+    },
+    "extraObjects": {
+      "type": "array",
+      "description": "Additional Kubernetes manifests rendered with tpl, as maps or multi-line strings",
+      "items": {
+        "type": ["object", "string"]
+      }
+    },
+    "sessionSweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Scheduled session sweep: a CronJob calling POST /api/sessions/sweep with operator-supplied request credentials",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the CronJob and its ServiceAccount"
+        },
+        "schedule": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cron schedule; keep lookaheadDuration longer than one interval plus a missed run"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "Optional IANA time zone for the schedule"
+        },
+        "startingDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds after the scheduled time within which a late run may still start"
+        },
+        "activeDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard cap on one Job in seconds; must exceed timeoutSeconds"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Request timeout in seconds"
+        },
+        "lookaheadDuration": {
+          "type": "string",
+          "allOf": [
+            {
+              "pattern": "^P([0-9]+D)?(T([0-9]+H)?([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?)?$"
+            },
+            {
+              "not": {
+                "pattern": "T$"
+              }
+            },
+            {
+              "pattern": "[1-9]"
+            }
+          ],
+          "description": "ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only)"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Send dry_run=true: classify candidates without refreshing"
+        },
+        "pageSize": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Optional page_size; null uses token_refresh.sweep.default_page_size"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^(https?://[^\\s]+)?$",
+          "description": "Target URL; empty targets this release's admin Service"
+        },
+        "host": {
+          "type": "string",
+          "description": "Host header override; empty derives it from broker.server.admin.publicUrl for the default target only",
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^\\r\\n]*$"
+          },
+          "description": "Literal request headers without line breaks; rendered into the manifest, so never secrets"
+        },
+        "headersFromFile": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Absolute path of a mounted file whose contents are the header value; letters, digits, \".\", \"_\", \"-\", and \"/\" only",
+                "pattern": "^/[A-Za-z0-9._/-]+$"
+              },
+              "prefix": {
+                "type": "string",
+                "description": "Text sent before the file value, e.g. 'Bearer '; no braces or line breaks",
+                "pattern": "^[^\\r\\n{}]*$"
+              }
+            }
+          },
+          "description": "Headers read from mounted files at run time"
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "TLS files presented to or trusted for the target",
+          "properties": {
+            "certFile": {
+              "type": "string",
+              "description": "PEM client certificate path",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
+            },
+            "keyFile": {
+              "type": "string",
+              "description": "PEM private key path for certFile",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
+            },
+            "caFile": {
+              "type": "string",
+              "description": "PEM CA bundle path used to verify the target",
+              "pattern": "^(/[A-Za-z0-9._/-]+)?$"
+            }
+          }
+        },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Volumes that provide header and TLS files"
+        },
+        "volumeMounts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Mounts for those volumes in the sweep container"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Image with a POSIX shell and curl 8.3 or later",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image repository"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image tag"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Image pull policy"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/resourceRequirements"
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels; override commonLabels for shared keys"
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod annotations"
         }
       }
     }
@@ -1501,6 +1830,40 @@
         }
       }
     },
+    "trustMaterialSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "items"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the existing Secret or ConfigMap"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Keys projected into the trust directory",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "path"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Key in the Secret or ConfigMap"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "File path relative to the trust directory"
+              }
+            }
+          }
+        }
+      }
+    },
     "serverConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -1550,7 +1913,15 @@
                 },
                 "jwks_uri": {
                   "type": "string",
-                  "description": "JWKS URI (required when verification is jwks)"
+                  "description": "JWKS URI (required when verification is jwks and neither jwks nor jwks_file is set)"
+                },
+                "jwks": {
+                  "type": "string",
+                  "description": "Inline JWK Set JSON (public keys only); mutually exclusive with jwks_uri and jwks_file"
+                },
+                "jwks_file": {
+                  "type": "string",
+                  "description": "Absolute key-set file path inside broker.security.trustMaterial.directory; mutually exclusive with jwks_uri and jwks"
                 },
                 "expected_audience": {
                   "type": "string",

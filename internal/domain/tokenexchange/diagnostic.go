@@ -84,6 +84,8 @@ const (
 	DetailSessionEncryptionFailed         FailureDetail = "session_encryption_failed"
 	DetailSessionPersistenceFailed        FailureDetail = "session_persistence_failed"
 	DetailSessionConfiguration            FailureDetail = "session_configuration"
+	DetailCredentialSourceUnavailable     FailureDetail = "credential_source_unavailable" // #nosec G101 -- diagnostic detail code, not a credential.
+	DetailCredentialIdentityChanged       FailureDetail = "credential_identity_changed"   // #nosec G101 -- diagnostic detail code, not a credential.
 	DetailSessionScopeInsufficient        FailureDetail = "session_scope_insufficient"
 	DetailResponseWriteFailed             FailureDetail = "response_write_failed"
 	DetailInternalUnclassified            FailureDetail = "internal_unclassified"
@@ -138,7 +140,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage = StageGrantAuthorization
 	case DetailSessionMissing:
 		d.stage, d.outcome, d.action, d.target = StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
-	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable:
+	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable, DetailCredentialIdentityChanged:
 		d.outcome, d.action, d.target = OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
 	case DetailRefreshRejected:
 		d.stage, d.outcome, d.action, d.target = StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
@@ -147,7 +149,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 	case DetailProviderRejected, DetailProviderUnavailable, DetailProviderResponseInvalid:
 		d.stage = StageRefresh
 	case DetailSessionRepositoryUnavailable, DetailSessionDecryptionFailed, DetailSessionEncryptionFailed, DetailSessionPersistenceFailed,
-		DetailJWKSUnavailable, DetailCELEvaluationFailed, DetailInternalUnclassified:
+		DetailCredentialSourceUnavailable, DetailJWKSUnavailable, DetailCELEvaluationFailed, DetailInternalUnclassified:
 		// These failures can occur at more than one stage; retain the origin's stage.
 	case DetailSessionScopeInsufficient:
 		d.stage, d.outcome, d.action, d.target = StageScopeValidation, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession

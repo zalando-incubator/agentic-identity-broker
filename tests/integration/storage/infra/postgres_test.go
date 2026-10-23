@@ -6,8 +6,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -24,87 +22,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-// init disables Ryuk for Podman compatibility
-// Ryuk tries to use "bridge" network which is a reserved network mode in Podman
-// See: https://golang.testcontainers.org/system_requirements/using_podman/
-func init() {
-	// Disable Ryuk only if user hasn't explicitly configured it
-	// This is needed because Ryuk requires Docker's "bridge" network name,
-	// which conflicts with Podman's network mode system
-	if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
-		os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
-	}
-}
-
-// canAccessContainerRuntime checks if Docker or Podman is available on this system
-func canAccessContainerRuntime() error {
-	// Try Docker first
-	cmd := exec.Command("docker", "ps")
-	if err := cmd.Run(); err == nil {
-		return nil // Docker is available
-	}
-
-	// Fall back to Podman if Docker is not available
-	cmd = exec.Command("podman", "ps")
-	if err := cmd.Run(); err == nil {
-		return nil // Podman is available
-	}
-
-	return fmt.Errorf("neither docker nor podman is accessible")
-}
-
-// setupPostgresContainer creates a test PostgreSQL container
-// Returns error if Docker is not available or testcontainers setup fails
-func setupPostgresContainer(ctx context.Context) (testcontainers.Container, string, error) {
-
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:15-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30 * time.Second),
-		// Use "podman" network on Podman (available by default)
-		// On Docker, this will use the default network. Podman requires explicit network for container communication.
-		Networks: []string{"podman"},
-	}
-
-	genericReq := testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	}
-
-	// If DOCKER_HOST is set (Podman mode), explicitly use Podman provider
-	if os.Getenv("DOCKER_HOST") != "" {
-		genericReq.ProviderType = testcontainers.ProviderPodman
-	}
-
-	container, err := testcontainers.GenericContainer(ctx, genericReq)
-	if err != nil {
-		return nil, "", err
-	}
-
-	host, err := container.Host(ctx)
-	if err != nil {
-		container.Terminate(ctx)
-		return nil, "", err
-	}
-
-	port, err := container.MappedPort(ctx, "5432")
-	if err != nil {
-		container.Terminate(ctx)
-		return nil, "", err
-	}
-
-	connStr := fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb", host, port.Port())
-	return container, connStr, nil
-}
 
 // initializeSchema creates the required database schema
 func initializeSchema(ctx context.Context, connStr string) error {
@@ -286,32 +204,11 @@ func TestPostgresAdapter_ContextCancellation(t *testing.T) {
 // In CI, a missing container runtime must fail rather than mask infra coverage.
 
 func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	// Skip if neither Docker nor Podman is available
-	// In production CI, either Docker or Podman should be configured for integration tests
-	if err := canAccessContainerRuntime(); err != nil {
-		if os.Getenv("CI") != "" {
-			t.Fatalf("PostgreSQL integration requires a container runtime in CI: %v", err)
-		}
-		t.Skipf("Skipping PostgreSQL integration test: No container runtime available - %v", err)
-	}
+	sharedPostgres := testbootstrap.RequireSharedPostgres(t)
+	_, connStr, cleanupDatabase := sharedPostgres.SetupMigratedDatabase(t)
+	defer cleanupDatabase()
 
 	ctx := context.Background()
-	container, connStr, err := setupPostgresContainer(ctx)
-	if err != nil {
-		if os.Getenv("CI") != "" {
-			t.Fatalf("Starting PostgreSQL integration container in CI: %v", err)
-		}
-		t.Skipf("Skipping integration test: Failed to setup PostgreSQL - %v", err)
-	}
-	defer container.Terminate(ctx)
-
-	// Note: In a real scenario, we would initialize schema here
-	// For now, tests verify adapter behavior without actual database connection
-
 	config := &ports.StorageConfig{
 		Backend: "postgres",
 		Postgres: ports.PostgresConfig{
@@ -326,19 +223,12 @@ func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
 	adapter, err := postgres.NewAdapter(config)
 	require.NoError(t, err)
 
-	// Initialize would fail without schema setup
-	// This test verifies the connection is attempted
+	defer func() { require.NoError(t, adapter.Close(ctx)) }()
+
 	initCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	err = adapter.Initialize(initCtx)
-	// Expected to fail due to missing schema_migrations table
-	// But connection should succeed
-	if err != nil {
-		if storErr, ok := err.(*storage.StorageError); ok {
-			assert.Equal(t, storage.ErrorKindValidation, storErr.Kind)
-		}
-	}
+	require.NoError(t, adapter.Initialize(initCtx))
 }
 
 func TestPostgresAdapter_CRUD_Operations_Simulation(t *testing.T) {
@@ -395,7 +285,8 @@ func TestPostgresAdapter_CRUD_Operations_Simulation(t *testing.T) {
 }
 
 func TestPostgresAdapter_CIMDKeyDomainPersistence(t *testing.T) {
-	sharedPostgres, dbName, connStr, cleanupDatabase := setupCIMDKeyDomainDatabase(t, 34)
+	sharedPostgres := testbootstrap.RequireSharedPostgres(t)
+	dbName, connStr, cleanupDatabase := sharedPostgres.SetupMigratedDatabase(t)
 	defer cleanupDatabase()
 
 	store, cleanupStore := newCIMDKeyDomainStorage(t, connStr)
@@ -718,13 +609,7 @@ func setupCIMDKeyDomainDatabase(t *testing.T, migrationVersion uint) (*testboots
 	dbName, connStr, cleanupDatabase := sharedPostgres.SetupDatabaseFromTemplate(t,
 		fmt.Sprintf("cimd_key_domain_migrations_%d", migrationVersion),
 		func(t *testing.T, dbName string) {
-			migrationRunner := newProjectMigrationRunner(t, sharedPostgres.ConnectionString(dbName))
-			defer func() { _, _ = migrationRunner.Close() }()
-
-			err := migrationRunner.Migrate(migrationVersion)
-			if err != nil && err != migrate.ErrNoChange {
-				require.NoError(t, err)
-			}
+			sharedPostgres.ApplyMigrationsUpTo(t, dbName, migrationVersion)
 		},
 	)
 

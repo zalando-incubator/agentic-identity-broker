@@ -1068,6 +1068,33 @@ func TestService_HandleAuthorization_RedirectURIValidation(t *testing.T) {
 			wantAction:   "redirect_to_consent",
 		},
 		{
+			name:         "registered private-use URI is accepted",
+			redirectURIs: []string{"github-app://oauth/callback"},
+			requestURI:   "github-app://oauth/callback",
+			wantAction:   "redirect_to_consent",
+		},
+		{
+			name:          "private-use scheme case variant is rejected",
+			redirectURIs:  []string{"github-app://oauth/callback"},
+			requestURI:    "GITHUB-APP://oauth/callback",
+			wantAction:    "error",
+			wantErrorCode: "invalid_redirect_uri",
+		},
+		{
+			name:          "private-use path extension is rejected",
+			redirectURIs:  []string{"github-app://oauth/callback"},
+			requestURI:    "github-app://oauth/callback/extra",
+			wantAction:    "error",
+			wantErrorCode: "invalid_redirect_uri",
+		},
+		{
+			name:          "private-use query extension is rejected",
+			redirectURIs:  []string{"github-app://oauth/callback"},
+			requestURI:    "github-app://oauth/callback?x=1",
+			wantAction:    "error",
+			wantErrorCode: "invalid_redirect_uri",
+		},
+		{
 			name:          "non-matching URI returns invalid_redirect_uri with no redirect",
 			redirectURIs:  []string{registeredURI},
 			requestURI:    unregisteredURI,
@@ -1632,6 +1659,90 @@ func TestService_HandleAuthorization_CIMDClientInHybridMode(t *testing.T) {
 	assert.Equal(t, "proceed", decision.Action)
 	assert.Equal(t, "", decision.RedirectURL, "CIMD agents must not get an upstream redirect URL")
 	assert.Equal(t, storage.CIMDClient, decision.ClientType)
+}
+
+func TestService_HandleAuthorization_CIMDPrivateUseRedirectURI(t *testing.T) {
+	const clientURI = "https://cimd.example.com/agent.json"
+	const nativeURI = "github-app://oauth/callback"
+	const loopbackURI = "http://127.0.0.1/callback"
+
+	tests := []struct {
+		name          string
+		agentURIs     []string
+		documentURIs  string
+		requestURI    string
+		wantAction    string
+		wantErrorCode string
+	}{
+		{
+			name:         "agent and document both register private-use callback",
+			agentURIs:    []string{nativeURI},
+			documentURIs: `"github-app://oauth/callback","http://127.0.0.1/callback"`,
+			requestURI:   nativeURI,
+			wantAction:   "proceed",
+		},
+		{
+			name:          "document callback without agent allowlist invalidates entire document",
+			documentURIs:  `"github-app://oauth/callback","http://127.0.0.1/callback"`,
+			requestURI:    loopbackURI,
+			wantAction:    "error",
+			wantErrorCode: "invalid_client",
+		},
+		{
+			name:          "agent allowlist does not replace document registration",
+			agentURIs:     []string{nativeURI},
+			documentURIs:  `"http://127.0.0.1/callback"`,
+			requestURI:    nativeURI,
+			wantAction:    "error",
+			wantErrorCode: "invalid_request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agentID := id.NewAgentID()
+			agentRepo := NewMockAgentRepository()
+			grantRepo := NewMockGrantRepository()
+			agent := &storage.Agent{
+				ID:           agentID,
+				ClientURIs:   []string{clientURI},
+				DisplayName:  "CIMD Agent",
+				RedirectURIs: tt.agentURIs,
+			}
+			require.NoError(t, agentRepo.Create(context.Background(), agent))
+			agentRepo.RegisterURI(clientURI, agent)
+			require.NoError(t, grantRepo.Create(context.Background(), &storage.UserGrant{
+				ID:                    id.NewGrantID(),
+				Principal:             id.Principal("user@example.com"),
+				AgentID:               agentID,
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{},
+			}))
+
+			body := `{"client_id":"https://cimd.example.com/agent.json","client_name":"CIMD Agent","redirect_uris":[` + tt.documentURIs + `]}`
+			cimdSvc := cimdServiceForTest(t, &ports.CIMDFetchResult{Body: []byte(body), CacheControl: "max-age=300"}, nil)
+			svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, nil), &OAuth2Config{
+				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+				PublicURL:                 "https://broker.example.com",
+				ModeStrategy:              NewHybridModeStrategy(),
+			}, nil, newTestSessionTokenService())
+
+			decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
+				ClientID:     id.ClientID(clientURI),
+				RedirectURI:  tt.requestURI,
+				ResponseType: "code",
+				State:        "xyz",
+				OriginalURL:  "https://broker.example.com/oauth2/authorize",
+			}, id.NewPrincipal("user@example.com"))
+			require.NoError(t, err)
+			require.NotNil(t, decision)
+			assert.Equal(t, tt.wantAction, decision.Action)
+			assert.Equal(t, tt.wantErrorCode, decision.ErrorCode)
+			assert.Empty(t, decision.RedirectURL)
+			if tt.wantAction == "proceed" {
+				assert.Equal(t, storage.CIMDClient, decision.ClientType)
+			}
+		})
+	}
 }
 
 // TestService_GenerateMetadata_TokenExchangeGrant verifies that the token-exchange

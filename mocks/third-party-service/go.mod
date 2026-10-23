@@ -1,6 +1,6 @@
 module github.com/agentic-identity-broker/mock-oauth2-service
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/go-oauth2/oauth2/v4 v4.6.0
@@ -29,5 +29,5 @@ require (
 	github.com/tidwall/tinyqueue v0.0.0-20180302190814-1e39f5511563 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sys v0.44.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )

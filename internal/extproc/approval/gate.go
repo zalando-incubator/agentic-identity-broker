@@ -80,7 +80,7 @@ func (g *Gate) Evaluate(ctx context.Context, invocation Invocation) (outcome Out
 
 	g.cache.RecordSession(invocation.AgentSessionID)
 	if record, matched := g.cache.Match(invocation.Identity, invocation.AgentSessionID, invocation.ToolName, invocation.Arguments); matched {
-		return g.consumeOrProceed(ctx, invocation, record)
+		return g.enforceDecision(ctx, invocation, record)
 	}
 
 	pairs, etag, err := g.broker.Read(ctx, invocation.Identity.Principal, g.cache.ActiveSessions())
@@ -94,7 +94,7 @@ func (g *Gate) Evaluate(ctx context.Context, invocation Invocation) (outcome Out
 		return Outcome{Reason: "approval state could not be refreshed"}
 	}
 	if record, matched := g.cache.Match(invocation.Identity, invocation.AgentSessionID, invocation.ToolName, invocation.Arguments); matched {
-		return g.consumeOrProceed(ctx, invocation, record)
+		return g.enforceDecision(ctx, invocation, record)
 	}
 
 	arguments := invocation.Arguments
@@ -119,7 +119,10 @@ func (g *Gate) Evaluate(ctx context.Context, invocation Invocation) (outcome Out
 	return Outcome{URL: approvalURL}
 }
 
-func (g *Gate) consumeOrProceed(ctx context.Context, invocation Invocation, record Record) Outcome {
+func (g *Gate) enforceDecision(ctx context.Context, invocation Invocation, record Record) Outcome {
+	if record.Status == "denied" {
+		return Outcome{Reason: "tool permanently denied"}
+	}
 	if record.Persistence == nil || *record.Persistence != "once" {
 		return Outcome{Proceed: true}
 	}

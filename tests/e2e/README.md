@@ -55,6 +55,10 @@ This directory contains comprehensive end-to-end (E2E) tests for the Agentic Ide
   - Use both servers in tests that need both route types (see `agent_permission_requirements_test.go`)
 - See `test_server.go` for detailed flow documentation
 
+Credential-file bootstrap keeps both listeners open from configuration preparation through server startup. Its subprocess helper passes the listeners with `exec.Cmd.ExtraFiles`, so parallel tests cannot acquire the ports between those steps. Server and subprocess cleanup close their listener copies.
+
+The credential subprocess remains alive until `Close`; readiness retains a 10-second deadline and graceful shutdown retains a five-second deadline. US7-S2 checks both health endpoints for 36 seconds before rotating credentials and refreshing the same session, then verifies both ports are released.
+
 ### Layer 2: Fixtures (`fixtures/`)
 
 **Purpose**: Generates stable test data (agents, grants, principals, configurations).

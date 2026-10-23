@@ -18,11 +18,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 const staleServeRelogEvery = 10
-const maxJWKSResponseBytes = 1 << 20
+const maxJWKSResponseBytes = trustanchor.MaxKeySetBytes
 
 // Adapter implements the JWKSPort interface for fetching and caching JWKS from a known upstream JWKS URI.
 // Each adapter instance maintains its own cached key set, refresh schedule, and refresh health.
@@ -161,6 +162,20 @@ func NewJWKSAdapter(
 	return adapter, nil
 }
 
+// startFetchSpan starts the jwks.fetch span that every key-set adapter records. The returned
+// function ends it and marks a failed retrieval without recording the error text.
+func startFetchSpan(ctx context.Context) (context.Context, func(err error)) {
+	ctx, span := otel.Tracer("jwks").Start(ctx, "jwks.fetch")
+	span.SetAttributes(attribute.String("dependency", "jwks"), attribute.String("operation", "fetch"))
+	return ctx, func(err error) {
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", "jwks_unavailable"))
+			span.SetStatus(codes.Error, "JWKS retrieval failed")
+		}
+		span.End()
+	}
+}
+
 // GetKeySet returns the cached JWKS key set from the upstream OAuth2 server.
 //
 // On first call, this will fetch the JWKS from the upstream server (may block briefly).
@@ -183,15 +198,8 @@ func (a *Adapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 		defer cancel()
 	}
 
-	ctx, span := otel.Tracer("jwks").Start(ctx, "jwks.fetch")
-	defer func() {
-		if err != nil {
-			span.SetAttributes(attribute.String("error.type", "jwks_unavailable"))
-			span.SetStatus(codes.Error, "JWKS retrieval failed")
-		}
-		span.End()
-	}()
-	span.SetAttributes(attribute.String("dependency", "jwks"), attribute.String("operation", "fetch"))
+	ctx, endSpan := startFetchSpan(ctx)
+	defer func() { endSpan(err) }()
 
 	if !a.resourceReady() || a.staleError() != nil {
 		if refreshErr := awaitRefresh(ctx, a.startRefresh(ctx)); refreshErr != nil {

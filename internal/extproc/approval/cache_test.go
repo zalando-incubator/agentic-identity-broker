@@ -1,6 +1,8 @@
 package approval
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -209,6 +211,64 @@ func TestReplaceForPrincipalRejectsOlderVersion(t *testing.T) {
 	record, matched = cache.Match(identity, "", "tool", map[string]any{})
 	require.True(t, matched)
 	assert.Equal(t, "latest", record.ID)
+}
+
+func TestCacheDoesNotRestoreRevocationsFromOlderSnapshots(t *testing.T) {
+	for _, targetedRevocation := range []bool{false, true} {
+		for _, targetedReplay := range []bool{false, true} {
+			t.Run(fmt.Sprintf("targeted_revocation=%t/targeted_replay=%t", targetedRevocation, targetedReplay), func(t *testing.T) {
+				cache := NewCache(time.Minute, time.Minute)
+				identity := Identity{Principal: "alice", AgentID: "agent"}
+				old := []Pair{{Identity: identity, Approvals: []Record{approvedRecord("revoked", "tool", map[string]string{}, "permanent", time.Now().UTC())}}}
+				cache.Replace(old, `"v1"`)
+				if targetedRevocation {
+					require.True(t, cache.ReplaceForPrincipal(identity.Principal, nil, `"v3"`))
+				} else {
+					cache.Replace(nil, `"v3"`)
+				}
+				if targetedReplay {
+					assert.False(t, cache.ReplaceForPrincipal(identity.Principal, old, `"v2"`))
+				} else {
+					cache.Replace(old, `"v2"`)
+				}
+				_, matched := cache.Match(identity, "", "tool", map[string]any{})
+				assert.False(t, matched, "an older response must not restore a revoked approval")
+				if targetedRevocation {
+					assert.Equal(t, `"v1"`, cache.ETag())
+				} else {
+					assert.Equal(t, `"v3"`, cache.ETag())
+				}
+				cache.Replace(nil, `"v3"`)
+				assert.Equal(t, `"v3"`, cache.ETag(), "global polling must catch up to a targeted read at the same version")
+				cache.Replace(old, `"v4"`)
+				_, matched = cache.Match(identity, "", "tool", map[string]any{})
+				assert.True(t, matched, "a newer approval must still become usable")
+			})
+		}
+	}
+}
+
+func TestCacheOlderPollDoesNotRefreshOtherPrincipals(t *testing.T) {
+	for _, unchanged := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unchanged=%t", unchanged), func(t *testing.T) {
+			cache := NewCache(time.Minute, time.Minute)
+			bob := Identity{Principal: "bob", AgentID: "agent"}
+			old := []Pair{{Identity: bob, Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", time.Now().UTC())}}}
+			cache.Replace(old, `"v1"`)
+			cache.lastSync = time.Now().Add(-2 * time.Minute)
+			cache.pairs[pairKey{principal: bob.Principal, agentID: bob.AgentID}].syncedAt = cache.lastSync
+			require.True(t, cache.ReplaceForPrincipal("alice", nil, `"v3"`))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			poller := &pollerStub{poll: func(context.Context, []string, string, time.Duration) ([]Pair, string, bool, error) {
+				cancel()
+				return old, `"v1"`, unchanged, nil
+			}}
+			NewSyncer(cache, poller, time.Second, discardLogger()).Run(ctx)
+			_, matched := cache.Match(bob, "", "tool", map[string]any{})
+			assert.False(t, matched, "an older poll must not make another principal's stale approval usable")
+		})
+	}
 }
 
 func TestParseSyncVersion(t *testing.T) {

@@ -102,6 +102,14 @@ oauth2_authorization_server:
     upstream_jwks_min_refresh: ${IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_JWKS_MIN_REFRESH:15m}
     upstream_jwks_max_refresh: ${IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_JWKS_MAX_REFRESH:1h}
 
+# Third-party session refresh
+token_refresh:
+  lookahead_duration: 5m
+  health_metrics:
+    # Publishes oauth2_sessions{service_id,expiry,refreshable} when telemetry metrics are enabled
+    enabled: true
+    query_timeout: 5s
+
 # Future sections for expanded configuration:
 #
 # monitoring:

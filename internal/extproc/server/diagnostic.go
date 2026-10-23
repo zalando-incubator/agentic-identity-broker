@@ -40,7 +40,7 @@ const (
 	DetailSubjectInvalid          FailureDetail = "subject_invalid"
 	DetailClientInvalid           FailureDetail = "client_invalid"
 	DetailClientExpired           FailureDetail = "client_expired"
-	DetailCredentialRejected      FailureDetail = "credential_rejected"
+	DetailCredentialRejected      FailureDetail = "credential_rejected" // #nosec G101 -- Diagnostic classification identifier, not a credential.
 	DetailAuthorizationDenied     FailureDetail = "authorization_denied"
 	DetailConsentRequired         FailureDetail = "consent_required"
 	DetailReauthRequired          FailureDetail = "reauth_required"

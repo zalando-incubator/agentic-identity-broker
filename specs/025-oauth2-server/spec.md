@@ -23,6 +23,13 @@
 - Q: What variables should the CEL token-claims expression have access to? → A: Agent entity (`agent.id`, `agent.client_id`, `agent.display_name`), principal as an object (`principal.id` always present, `principal.email` and `principal.display_name` optional), and request context (`request.grant_type`, `request.scopes`).
 - Q: Should CEL expression runtime failure block token issuance or fall back to base claims? → A: Fail closed — token issuance is rejected with an error; no token is returned. Consistent with Security-First constitution principle.
 
+### Session 2026-10-22
+
+- Q: Which redirect URI forms may an operator register in `redirect_uris`? → A: `https` URIs, `http` URIs on a loopback host, and native-app private-use scheme URIs (RFC 8252 §7.1) that pass FR-006e. This supersedes the "list of HTTPS URIs" wording in FR-006b. Source: issue #242. Decision: ADR 042.
+- Q: Does the broker support GitHub's `github-app://oauth/callback` form, which does not use RFC 8252's reverse-domain or single-slash convention? → A: Yes. The broker accepts both `scheme:/path` and `scheme://host/path`, and it does not require a reverse-domain scheme.
+- Q: How does the broker exclude dangerous or ambiguous private-use URIs? → A: FR-006e allows only canonical form and denies script, local-content, and WHATWG special schemes.
+- Q: Is a private-use callback matched like a loopback callback? → A: No. The broker matches it byte for byte, as FR-006c requires.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Operator Generates Client Credentials for an Agent (Priority: P1)
@@ -132,6 +139,24 @@ An OAuth2 client library or API gateway needs to automatically configure itself 
 
 ---
 
+### User Story 7 - Operator Allowlists a Native-App Private-Use Callback (Priority: P4)
+
+A native desktop or mobile agent receives its authorization response through a private-use URI scheme callback (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or GitHub's `github-app://oauth/callback`. The operator registers the exact callback in the Agent's `redirect_uris`. The agent then completes the authorization code flow with PKCE through that callback. The broker refuses unsafe, ambiguous, and look-alike callbacks.
+
+**Why this priority**: It extends User Story 4 to native clients that cannot receive HTTPS or loopback callbacks. Web and loopback agents are unaffected.
+
+**Independent Test**: Register an Agent with private-use callbacks through the Admin API and read it back. Then run authorize and token exchange for a public local Agent with PKCE.
+
+**Acceptance Scenarios**:
+
+1. **Given** the Admin API, **When** an operator creates an Agent with `redirect_uris: ["https://agent.example.com/callback", "http://127.0.0.1/callback", "github-app://oauth/callback", "com.example.app:/oauth2redirect/example-provider"]` and then updates it with the same entries in reverse order, **Then** both requests succeed, and after each write `GET /api/agents/{agent-id}` returns exactly the submitted entries in the submitted order
+2. **Given** the Admin API, **When** an operator submits a `redirect_uris` entry that is unsafe, malformed, or not canonical (`javascript://oauth/callback`, `data:text/html,callback`, `file:///etc/passwd`, `github-app://oauth/callback#fragment`, `GitHub-App://oauth/callback`, `github-app:oauth/callback`, `github-app://user@oauth/callback`, `github-app://oauth/../callback`, or `github-app://oauth/%63allback`), **Then** the broker rejects the request with `400` and `"error": "validation failed"`, and the message names the offending `redirect_uris` index
+3. **Given** a local Agent without broker credentials, whose `redirect_uris` is `["com.example.app:/oauth2redirect/example-provider"]`, and a user with an active grant, **When** the agent sends an authorization request with that `redirect_uri` and an S256 `code_challenge`, and then exchanges the code at `POST /oauth2/token` with the same `redirect_uri` and the `code_verifier` but no client secret, **Then** the broker redirects to `com.example.app:/oauth2redirect/example-provider?code=...&state=...` and returns a Bearer access token
+4. **Given** the Agent from scenario 3, **When** an authorization request uses a `redirect_uri` that differs in any character (`com.example.app:/oauth2redirect/other`, `COM.EXAMPLE.APP:/oauth2redirect/example-provider`, `com.example.app://oauth2redirect/example-provider`, `com.example.app:/oauth2redirect/example-provider/`, or `com.example.app:/oauth2redirect/example-provider?x=1`), **Then** the broker returns `400` with `invalid_redirect_uri`, issues no code, and performs no redirect
+5. **Given** an authorization code issued for `com.example.app:/oauth2redirect/example-provider`, **When** the token request presents `redirect_uri=com.example.app:/oauth2redirect/other`, **Then** the broker returns `invalid_grant` and issues no token
+
+---
+
 ### Edge Cases
 
 - What happens when credentials are generated for an agent in `proxy` mode? Credentials are stored but the token endpoint rejects them until the broker is switched to `issue_token` mode.
@@ -144,6 +169,127 @@ An OAuth2 client library or API gateway needs to automatically configure itself 
 - What happens when the broker is in `proxy` mode and a client attempts to authenticate with broker-issued credentials? The request is rejected; proxy mode forwards all token requests upstream. Note: agents always use their UUID as `client_id` at every OAuth2 endpoint. The broker-issued credential identifier is an internal implementation detail used for rotation safety and is never presented by agents at runtime.
 - What happens when an authorization code flow is attempted for an agent with no registered `redirect_uris`? The authorization endpoint returns `invalid_request` — no code is issued and no redirect is performed.
 - What happens when the `token_claims_expression` fails at runtime (e.g., references a missing `principal.email`)? Token issuance is rejected (fail closed); the broker returns a `server_error` OAuth2 error response and logs the evaluation failure with full context. No token with partial claims is ever issued.
+- Registering `GitHub-App://oauth/callback` or `github-app://oauth/%63allback` is rejected with `400 validation failed` because FR-006e rejects ambiguous normalization. The operator registers the lowercase, unencoded form.
+- Registering `javascript://…`, `data:…`, or `file:///…` is rejected under FR-006e, even as an explicit entry.
+- A private-use callback with a query, such as `github-app://oauth/callback?window=1`, is allowed. The request must repeat it exactly. The broker appends `code` and `state`, and it keeps `window`.
+
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — An operator allowlists a desktop app's callback and the app signs Alice in (User Story 7, Scenarios 1–5)
+
+**Cast**: The operator is `admin@example.com` and the user is Alice (`alice@example.com`). Both authenticate through `X-Remote-User`. The Agent is *Example Desktop App* (`9b1c3f2e-4d5a-4b6c-8d7e-0f1a2b3c4d5e`), a public client without broker credentials. It requires permission set `770e8400-e29b-41d4-a716-446655440001` for service `880e8400-e29b-41d4-a716-446655440010`. Alice already has an active grant. All times are 2026-10-22 UTC. All IDs, codes, keys, and tokens are synthetic.
+
+**Step 1 — Broker configuration (initial state; other required settings omitted)**
+
+```yaml
+server:
+  enduser:
+    public_url: "https://broker.example.com" # iss
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+  admin:
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+oauth2_authorization_server:
+  mode: "local"
+  local:
+    token_ttl: "1h" # expires_in 3600
+```
+
+**Step 2 — 14:00:00: the operator registers the native callback (Scenario 7.1)**
+
+```http
+POST /api/agents HTTP/1.1
+Host: broker.example.com:14000
+X-Remote-User: admin@example.com
+Content-Type: application/json
+
+{
+  "display_name": "Example Desktop App",
+  "description": "Desktop assistant that signs in through its native callback",
+  "redirect_uris": ["com.example.app:/oauth2redirect/example-provider"],
+  "permission_sets": [{"permission_set_id": "770e8400-e29b-41d4-a716-446655440001", "requirement_type": "mandatory"}]
+}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"id": "9b1c3f2e-4d5a-4b6c-8d7e-0f1a2b3c4d5e", "redirect_uris": ["com.example.app:/oauth2redirect/example-provider"], ...}
+```
+
+The response echoes the callback without changes. Scenario 7.1 also reads the Agent after creation and after an update with four callbacks in reverse order. Each read returns the entries in the submitted order.
+
+Variant (Scenario 7.2): The operator sends `"redirect_uris": ["GitHub-App://oauth/callback"]` in the same request. The broker rejects it:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "validation failed", "message": "redirect_uris[0] must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI"}
+```
+
+**Step 3 — 14:05:39: Alice authorizes the Agent (Scenarios 7.3 and 7.4)**
+
+```http
+GET /oauth2/authorize?client_id=9b1c3f2e-4d5a-4b6c-8d7e-0f1a2b3c4d5e&response_type=code&redirect_uri=com.example.app%3A%2Foauth2redirect%2Fexample-provider&scope=read&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: com.example.app:/oauth2redirect/example-provider?code=SplxlOBeZQQYbYS6WxSbIA&state=af0ifjsldkj
+```
+
+The OS hands the callback URL to the app. Alice's active grant lets the broker issue a code without a new consent request.
+
+Variant (Scenario 7.4): The app sends `redirect_uri=com.example.app%3A%2Foauth2redirect%2Fother` instead. The broker returns no `Location` header:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_redirect_uri", "error_description": "redirect_uri not registered for this client"}
+```
+
+**Step 4 — 14:05:40: the app exchanges the code (Scenarios 7.3 and 7.5)**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=SplxlOBeZQQYbYS6WxSbIA&redirect_uri=com.example.app%3A%2Foauth2redirect%2Fexample-provider&client_id=9b1c3f2e-4d5a-4b6c-8d7e-0f1a2b3c4d5e&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Pragma: no-cache
+Content-Type: application/json
+
+{"access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6...", "expires_in": 3600, "scope": "read", "token_type": "Bearer"}
+```
+
+The public client sends no secret. The response has no `refresh_token` because the app did not request `offline_access`.
+
+Variant (Scenario 7.5): The app sends `redirect_uri=com.example.app%3A%2Foauth2redirect%2Fother` with the issued code. The broker returns:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_grant", "error_description": "..."}
+```
+
+Decoded synthetic access token:
+
+```json
+{"alg": "ES256", "kid": "3f1c2b4a-8d7e-4f60-9a1b-2c3d4e5f6a7b"}
+{"iss": "https://broker.example.com", "sub": "alice@example.com", "iat": 1792677940, "exp": 1792681540, "jti": "6b4f1a2c-3d5e-4f70-8a9b-1c2d3e4f5a6b", "agent_id": "9b1c3f2e-4d5a-4b6c-8d7e-0f1a2b3c4d5e", "scope": "read"}
+```
+
+`iat` is 14:05:40 and `exp` is 15:05:40 UTC on 2026-10-22.
+
+**Observable result**: The app holds a one-hour token for Alice. Only the exact registered callback received the code.
 
 ## Requirements *(mandatory)*
 
@@ -155,9 +301,11 @@ An OAuth2 client library or API gateway needs to automatically configure itself 
 - **FR-004**: Admin API MUST expose an endpoint to retrieve broker-issued credential metadata (client ID, creation time, rotation time) for a given agent, without ever returning the plaintext secret
 - **FR-005**: System MUST store broker-issued client secrets in hashed form; plaintext secret MUST only be returned once at generation time
 - **FR-006**: System MUST bind each broker-issued client ID uniquely to exactly one agent; a single agent has at most one active credential set at a time
-- **FR-006b**: The Admin API for agent create/update MUST accept an optional `redirect_uris` field (list of HTTPS URIs); agents may be created or updated with an empty list regardless of the broker's operating mode
-- **FR-006c**: The authorization endpoint MUST reject any `redirect_uri` in an authorization request that is not an exact match of one of the agent's registered redirect URIs, or if the agent has no registered redirect URIs; no redirect is performed on rejection
+- **FR-006b**: The Admin API for agent create/update MUST accept an optional `redirect_uris` field. Each entry MUST be an absolute `https` URI, an `http` URI whose host is `localhost`, `127.0.0.1`, or `::1`, or a valid private-use scheme redirect URI (FR-006e); no entry may contain a fragment. Any other entry MUST be rejected with `400` `validation failed` naming its index. Accepted entries MUST be stored and returned unchanged and in order. Agents may be created or updated with an empty list regardless of the broker's operating mode.
+- **FR-006c**: The authorization endpoint MUST reject any `redirect_uri` that does not match one of the agent's registered redirect URIs, or any request for an agent with no registered redirect URIs; no redirect is performed on rejection. Matching is exact, except that the port of a loopback `http` redirect URI is ignored (028b FR-007). A private-use scheme redirect URI matches only byte for byte: no case folding, prefix, scheme-only, host-only, or wildcard match. For a CIMD client, 028 FR-004, FR-004a, and FR-004b govern instead.
 - **FR-006d**: The Admin API for agent create/update MUST accept an optional `allowed_scopes` field (list of strings); when non-empty, it defines the maximum set of scopes the agent may request in token or authorization requests; when empty, the agent may request any scope; the token endpoint MUST return `invalid_scope` if requested scopes are not a subset of the agent's `allowed_scopes`
+- **FR-006e**: A private-use scheme redirect URI (RFC 8252 §7.1) is valid only if all of the following hold: (1) it contains only ASCII letters, digits, and `- . _ ~ : / ? @ ! $ & ' ( ) + , ; =` — no whitespace, control or non-ASCII characters, `#`, `%`, `*`, `\`, `[` or `]`; (2) its scheme has at least two characters, is lowercase, and is not `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`; (3) it has the form `scheme:/path` (RFC 8252 §7.1) or `scheme://host[:port][/path]` (as in GitHub Copilot Desktop's `github-app://oauth/callback`); (4) a host is lowercase and non-empty, with no userinfo and no empty, zero, or out-of-range port; (5) no path segment is `.` or `..`; (6) it has no empty query delimiter; (7) it is already in the canonical form the broker emits when it appends response parameters. ADR 042 records this decision.
+- **FR-006f**: After a private-use scheme `redirect_uri` passes FR-006c, the broker MUST deliver the authorization response (`code`, `state`) and every error that RFC 6749 §4.1.2.1 allows to be redirected by appending query parameters to that URI, keeping its scheme, authority, path, and query parameters. The token request MUST present the identical `redirect_uri` (RFC 6749 §4.1.3), and S256 PKCE stays mandatory (FR-007e).
 - **FR-007**: In `issue_token` mode, the token endpoint MUST accept `grant_type=client_credentials` requests authenticated with broker-issued credentials and return locally-signed access tokens. The `client_id` at the token endpoint MUST be the agent's internal UUID (`agent.id`). The broker resolves the bound `BrokerClientCredential` by agent UUID internally — clients never present a broker-issued `client_id` at any endpoint.
 - **FR-007b**: In `issue_token` mode, the authorization endpoint MUST accept `grant_type=authorization_code` flow, issuing authorization codes itself by trusting the identity established by the configured preauth method (X-Remote-User header or JWT preauth) — no upstream OAuth2 redirect is performed
 - **FR-007c**: In `issue_token` mode, the authorization endpoint MUST validate the `client_id` against registered agents and enforce existing consent checks before issuing an authorization code. The `client_id` at the authorization endpoint MUST be the agent's internal UUID (`agent.id`), NOT a broker-issued credential identifier. The broker resolves credentials transparently by agent UUID.
@@ -332,6 +480,7 @@ oauth2_authorization_server:
 - **SC-003**: All existing proxy-mode behavior is unchanged; zero regressions in existing E2E and integration test suites
 - **SC-004**: Locally-issued tokens are verifiable using the broker's published JWKS endpoint with no additional configuration by consumers
 - **SC-005**: Credential rotation takes effect immediately; no window exists where both old and new secrets are simultaneously valid
+- **SC-006**: An operator can register `github-app://oauth/callback` and `com.example.app:/oauth2redirect/example-provider` on an Agent, and a public native agent completes authorize → token through the private-use callback with PKCE, as verified by E2E tests (User Story 7).
 
 ## Assumptions
 

@@ -67,6 +67,9 @@ header contains the current version.
 **Query Parameters**:
 - `principal` (optional): Filter results for one principal.
 
+ExtProc retains the highest snapshot version from global and principal-filtered reads. Older responses cannot replace decisions or refresh global cache freshness.
+Principal-filtered reads do not advance the global polling ETag. A global response at the retained version can update the full snapshot.
+
 Each approval summary includes server-derived `tool_pattern` and `params_pattern`. The exact tool pattern matches only the approval's tool name. The params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
 
 Each approved summary includes `approved_at` as an RFC 3339 timestamp. Pending and denied summaries omit this field.
@@ -111,8 +114,10 @@ The request accepts only `params_pattern` and does not change approval state. Th
 POST /api/approvals/{id}/deny
 ```
 
-Changes a pending approval to denied. The request can include `persistence: "permanent"` to
-create a permanent denial. The request body is optional.
+Changes a pending approval to denied. The request body is optional.
+With `persistence: "permanent"`, the denial blocks the exact tool for that principal and agent until revocation, regardless of arguments or session.
+The broker clears parameter constraints for permanent denials. ExtProc also treats existing permanent denials with parameter constraints as tool-wide blocks.
+A permanent denial overrides matching approvals. ExtProc returns a hard denial without creating a pending approval or an approval URL.
 
 ### Consume
 

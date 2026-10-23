@@ -274,7 +274,7 @@ func TestRefreshAccessToken_AcceptsStringExpiresIn(t *testing.T) {
 	provider := createTestService(serviceID)
 	provider.Endpoints.TokenEndpoint = upstream.URL
 
-	token, err := service.RefreshAccessToken(ctx, provider, "stored-refresh")
+	token, err := service.RefreshAccessToken(ctx, provider, "stored-refresh", nil)
 	require.NoError(t, err, "expires_in encoded as a string must be accepted")
 	assert.Equal(t, "string-expiry-access", token.AccessToken)
 	assert.WithinDuration(t, time.Now().Add(time.Hour), token.Expiry, time.Minute)
@@ -309,7 +309,7 @@ func TestRefreshAccessToken_RejectsUnusableExpiresIn(t *testing.T) {
 			provider := createTestService(id.NewServiceID())
 			provider.Endpoints.TokenEndpoint = upstream.URL
 
-			token, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+			token, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh", nil)
 			metadata := assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderResponseInvalid)
 			assert.Equal(t, http.StatusOK, metadata.StatusCode())
 			assert.Nil(t, token, "unusable lifetime must not produce a non-expiring token")

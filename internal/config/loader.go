@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -55,9 +56,18 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		return nil, err
 	}
 
-	// Phase 3: Load YAML (User Story 2)
-	if err := l.loadYAML(); err != nil {
+	credentialFiles, credentialSource, err := l.credentialFilesJSONOverride()
+	if err != nil {
 		return nil, err
+	}
+
+	// Phase 3: Load YAML (User Story 2)
+	yamlCredentialFiles, err := l.loadYAML(credentialSource != "")
+	if err != nil {
+		return nil, err
+	}
+	if credentialSource == "" {
+		credentialFiles = yamlCredentialFiles
 	}
 
 	// Phase 4: Expand environment variables (User Story 2)
@@ -80,6 +90,7 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 			Err:      err,
 		}
 	}
+	cfg.ThirdPartyOAuth2.CredentialFiles = credentialFiles
 
 	// Phase 6: Validate configuration (User Story 4)
 	if cfg.Encryption.AWSKMS != nil && cfg.Encryption.AWSKMS.DisableSSL && os.Getenv("GO_ENV") != "development" {
@@ -164,9 +175,11 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trace", "response_enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "client_name"), "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "jwe_signing_key"), "IDENTITY_BROKER_JWE_SIGNING_KEY")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "state_token_ttl"), "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "pkce_verifier_length"), "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "credential_files"), credentialFilesEnvKey)
 	// Bind encryption configuration to environment variables
 	// AWS KMS backend - KMS key and DynamoDB cache configuration
 	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "key_arn"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
@@ -189,12 +202,14 @@ func (l *Loader) setDefaults() {
 	// Set OAuth2 configuration defaults
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "state_token_ttl"), "10m")
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "pkce_verifier_length"), 32)
+	l.v.SetDefault(configutil.Key("third_party_oauth2", "credential_files"), "{}")
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.
 
 	// Set security configuration defaults
 	l.v.SetDefault(configutil.Key("security", "skip_thirdparty_https_validation"), false)
+	_ = l.v.BindEnv(configutil.Key("security", "trust_material_dir"), "IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR")
 
 	// Approval configuration defaults
 	l.v.SetDefault(configutil.Key("approvals", "pending_ttl"), "10m")
@@ -210,9 +225,13 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("token_refresh", "lookahead_duration"), "5m")
 	l.v.SetDefault(configutil.Key("token_refresh", "background_workers"), 10)
 	l.v.SetDefault(configutil.Key("token_refresh", "sweep", "default_page_size"), 100)
+	l.v.SetDefault(configutil.Key("token_refresh", "health_metrics", "enabled"), true)
+	l.v.SetDefault(configutil.Key("token_refresh", "health_metrics", "query_timeout"), "5s")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "lookahead_duration"), "IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "background_workers"), "IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS")
 	_ = l.v.BindEnv(configutil.Key("token_refresh", "sweep", "default_page_size"), "IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE")
+	_ = l.v.BindEnv(configutil.Key("token_refresh", "health_metrics", "enabled"), "IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("token_refresh", "health_metrics", "query_timeout"), "IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT")
 
 	// Telemetry configuration defaults
 	telDefaults := ports.DefaultTelemetryConfig()
@@ -281,6 +300,8 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_file"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_min_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_max_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH")
 
@@ -300,8 +321,10 @@ func (l *Loader) setDefaults() {
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
 			"third_party_oauth2.state_token_ttl", "third_party_oauth2.pkce_verifier_length",
+			credentialFilesConfigKey,
 			"security.skip_thirdparty_https_validation",
 			"token_refresh.lookahead_duration", "token_refresh.background_workers", "token_refresh.sweep.default_page_size",
+			"token_refresh.health_metrics.enabled", "token_refresh.health_metrics.query_timeout",
 			"telemetry.enabled", "telemetry.service_name",
 			"telemetry.traces.enabled", "telemetry.traces.sampling_rate", "telemetry.traces.propagators",
 			"telemetry.metrics.enabled", "telemetry.metrics.export_interval",
@@ -387,7 +410,11 @@ func (l *Loader) loadEnvFile(filename string) error {
 			viperKey = after
 		}
 		// Keep underscore-separated segments as structural Viper paths.
-		viperKey = configutil.Key(strings.Split(strings.ToLower(viperKey), "_")...)
+		if key == credentialFilesEnvKey {
+			viperKey = configutil.Key("third_party_oauth2", "credential_files")
+		} else {
+			viperKey = configutil.Key(strings.Split(strings.ToLower(viperKey), "_")...)
+		}
 		l.v.Set(viperKey, value)
 		keys = append(keys, strings.ReplaceAll(viperKey, configutil.Delimiter, "."))
 	}
@@ -408,9 +435,12 @@ func (l *Loader) loadEnvFile(filename string) error {
 // File path is determined by --config flag or IDENTITY_BROKER_CONFIG_PATH env var.
 // If neither is set, looks for config.yaml in the current directory.
 // Records source metadata for audit logging.
-func (l *Loader) loadYAML() error {
+func (l *Loader) loadYAML(skipCredentialFiles bool) (map[string]ports.CredentialFileBinding, error) {
 	// Determine config file path
 	configPath := os.Getenv("IDENTITY_BROKER_CONFIG_PATH")
+	if l.cmd != nil && l.cmd.Flags().Changed("config") {
+		configPath, _ = l.cmd.Flags().GetString("config")
+	}
 	if configPath == "" {
 		configPath = "config.yaml"
 	}
@@ -418,13 +448,13 @@ func (l *Loader) loadYAML() error {
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) { // #nosec G703 -- config path is local operator configuration, not an HTTP input.
 		// Config file is optional
-		return nil
+		return nil, nil
 	}
 
 	// Get absolute path
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return &config.ConfigError{
+		return nil, &config.ConfigError{
 			Field:    "config_file",
 			Value:    configPath,
 			Expected: "valid file path",
@@ -435,11 +465,12 @@ func (l *Loader) loadYAML() error {
 	// Set config file in Viper
 	l.v.SetConfigFile(absPath)
 
-	// Read config file
-	if err := l.v.ReadInConfig(); err != nil {
+	// Read the selected file once, retaining its original credential key spelling.
+	data, err := os.ReadFile(absPath) // #nosec G703 G304 -- the path is local operator configuration.
+	if err != nil {
 		// Check for specific error types
 		if os.IsPermission(err) {
-			return &config.ConfigError{
+			return nil, &config.ConfigError{
 				Field:    "config_file",
 				Value:    absPath,
 				Expected: "readable file with proper permissions",
@@ -447,7 +478,24 @@ func (l *Loader) loadYAML() error {
 				Err:      err,
 			}
 		}
-		return &config.ConfigError{
+		return nil, &config.ConfigError{
+			Field:    "config_file",
+			Value:    absPath,
+			Expected: "valid YAML syntax",
+			Source:   "yaml",
+			Err:      err,
+		}
+	}
+
+	var credentialFiles map[string]ports.CredentialFileBinding
+	if !skipCredentialFiles {
+		credentialFiles, err = l.decodeCredentialFilesYAML(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := l.v.ReadConfig(bytes.NewReader(data)); err != nil {
+		return nil, &config.ConfigError{
 			Field:    "config_file",
 			Value:    absPath,
 			Expected: "valid YAML syntax",
@@ -471,7 +519,7 @@ func (l *Loader) loadYAML() error {
 		Keys:       keys,
 	})
 
-	return nil
+	return credentialFiles, nil
 }
 
 // expandEnvVars expands environment variable references in configuration values.
@@ -480,8 +528,13 @@ func (l *Loader) loadYAML() error {
 func (l *Loader) expandEnvVars() error {
 	// Get all configuration keys
 	allKeys := l.v.AllKeys()
+	credentialFilesKey := configutil.Key("third_party_oauth2", "credential_files")
+	credentialFilesPrefix := credentialFilesKey + configutil.Delimiter
 
 	for _, key := range allKeys {
+		if key == credentialFilesKey || strings.HasPrefix(key, credentialFilesPrefix) {
+			continue
+		}
 		value := l.v.GetString(key)
 		if value == "" {
 			continue
@@ -492,11 +545,16 @@ func (l *Loader) expandEnvVars() error {
 			continue
 		}
 
+		reported := value
+		if isInlineKeySetKey(key) {
+			reported = inlineKeySetRedacted
+		}
+
 		// Validate against command injection patterns
 		if err := l.validateSecurePattern(value); err != nil {
 			return &config.ConfigError{
 				Field:    key,
-				Value:    value,
+				Value:    reported,
 				Expected: "environment variable reference without command injection patterns",
 				Source:   "yaml",
 				Err:      err,
@@ -508,7 +566,7 @@ func (l *Loader) expandEnvVars() error {
 		if err != nil {
 			return &config.ConfigError{
 				Field:    key,
-				Value:    value,
+				Value:    reported,
 				Expected: "resolvable environment variable reference",
 				Source:   "yaml",
 				Err:      err,
@@ -520,6 +578,11 @@ func (l *Loader) expandEnvVars() error {
 	}
 
 	return nil
+}
+
+// isInlineKeySetKey reports whether key holds an inline JWK Set, which configuration errors never echo.
+func isInlineKeySetKey(key string) bool {
+	return strings.HasSuffix(key, configutil.Delimiter+"jwks")
 }
 
 // expandWithCircularCheck expands environment variables with circular reference detection.
@@ -659,12 +722,6 @@ func (l *Loader) bindFlags() error {
 	// Track which keys came from CLI flags
 	cliKeys := make([]string, 0)
 
-	// Bind config file path flag
-	if l.cmd.Flags().Changed("config") {
-		configPath, _ := l.cmd.Flags().GetString("config")
-		_ = os.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
-	}
-
 	// Bind log.level flag
 	if l.cmd.Flags().Changed("log-level") {
 		logLevel, _ := l.cmd.Flags().GetString("log-level")
@@ -750,6 +807,32 @@ func (l *Loader) bindFlags() error {
 		pageSize, _ := l.cmd.Flags().GetInt("token_refresh.sweep.default_page_size")
 		l.v.Set(configutil.Key("token_refresh", "sweep", "default_page_size"), pageSize)
 		cliKeys = append(cliKeys, "token_refresh.sweep.default_page_size")
+	}
+	if l.cmd.Flags().Changed("token_refresh.health_metrics.enabled") {
+		enabled, _ := l.cmd.Flags().GetBool("token_refresh.health_metrics.enabled")
+		l.v.Set(configutil.Key("token_refresh", "health_metrics", "enabled"), enabled)
+		cliKeys = append(cliKeys, "token_refresh.health_metrics.enabled")
+	}
+	if l.cmd.Flags().Changed("token_refresh.health_metrics.query_timeout") {
+		queryTimeout, _ := l.cmd.Flags().GetDuration("token_refresh.health_metrics.query_timeout")
+		l.v.Set(configutil.Key("token_refresh", "health_metrics", "query_timeout"), queryTimeout)
+		cliKeys = append(cliKeys, "token_refresh.health_metrics.query_timeout")
+	}
+
+	// Bind third_party_oauth2.client_name flag
+	if l.cmd.Flags().Changed("third_party_oauth2.client_name") {
+		clientName, _ := l.cmd.Flags().GetString("third_party_oauth2.client_name")
+		l.v.Set(configutil.Key("third_party_oauth2", "client_name"), clientName)
+		cliKeys = append(cliKeys, "third_party_oauth2.client_name")
+	}
+
+	if flag := l.cmd.Flags().Lookup(credentialFilesConfigKey); flag != nil {
+		if err := l.v.BindPFlag(configutil.Key("third_party_oauth2", "credential_files"), flag); err != nil {
+			return credentialFilesConfigError("cli", "a bindable JSON object string flag")
+		}
+		if flag.Changed {
+			cliKeys = append(cliKeys, credentialFilesConfigKey)
+		}
 	}
 
 	// Record CLI source if any flags were set

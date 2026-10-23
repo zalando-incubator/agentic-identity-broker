@@ -37,7 +37,7 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
-The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level and route sweep CronJobs through that proxy.
+The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level. The optional [scheduled session sweep](#scheduled-session-sweep) calls the admin Service directly unless `sessionSweep.url` points at the proxy; that section describes the trust requirements of each target.
 
 `broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
 are optional, independent JWT pre-authentication blocks (default: unset). Each supports
@@ -129,6 +129,51 @@ Keep AWS TLS certificate verification enabled in production. If
 startup requires explicit `GO_ENV=development`. Production, staging, unset,
 and unknown environments reject that development-only bypass.
 
+Use `broker.extraVolumes` and `broker.extraVolumeMounts` to append standard Kubernetes volumes and container mounts. Both default to empty lists. Mount names must reference a pod volume; use names other than the chart's built-in `config` and `tmp`. Create any referenced Secrets or ConfigMaps in the broker's namespace before deploying it.
+
+For example, mount an existing ConfigMap read-only:
+
+```yaml
+broker:
+  extraVolumes:
+    - name: supplemental-config
+      configMap:
+        name: broker-settings
+  extraVolumeMounts:
+    - name: supplemental-config
+      mountPath: /etc/broker/settings
+      readOnly: true
+```
+
+### Filesystem OAuth2 credentials
+
+`broker.thirdPartyOauth2.credentialFiles` maps exact service canonical IDs to two paths. The default `{}` renders no broker binding. Keys preserve case and dots. Both `client_id_file` and `client_secret_file` are required strings. Broker startup validates absolute, non-empty paths and the full canonical-ID grammar without opening files.
+
+The chart does not register services or choose their credential source. Register an eligible service through Admin API 2.0.0 with `credential_source: filesystem` and no inline `client_id` or `client_secret`, including null or empty fields. Stored services ignore bindings. A filesystem service without its exact binding fails closed at use. Use a feature-capable broker image with this contract.
+
+```yaml
+broker:
+  thirdPartyOauth2:
+    credentialFiles:
+      zalando-platform:
+        client_id_file: /meta/credentials/employee-client-id
+        client_secret_file: /meta/credentials/employee-client-secret
+  extraVolumes:
+    - name: credentials
+      secret:
+        secretName: agentic-platform-credentials
+  extraVolumeMounts:
+    - name: credentials
+      mountPath: /meta/credentials
+      readOnly: true
+```
+
+Use the existing volume inputs for a read-only directory mount. Do not use credential-file `subPath`. Preserve the built-in `config` and `tmp` mounts. The non-root pod identity must read both files and traverse every parent directory. Read-only mounting does not grant those permissions.
+
+Publish each replacement pair together through fresh immutable targets. Never modify published targets or republish retired targets during acquisition. Code exchange and refresh acquire both values and revalidate their targets. A detected change produces `generation_changed` before authentication without acquisition retries. Publication after validation can leave an in-flight operation using its validated pair. Later operations acquire current targets.
+
+Authorization initiation reads only the client-ID file. Metadata reads resolve neither file. Same-client secret rotation requires no restart or registration update. A changed client ID requires new connections for old codes or sessions. Provider validity overlap remains an operator responsibility, not an uninterrupted-rotation guarantee.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |
@@ -137,6 +182,8 @@ and unknown environments reject that development-only bypass.
 | `image.repository` | Broker container image repository | `agentic-identity-broker` |
 | `image.tag` | Broker image tag | Chart appVersion |
 | `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
+| `broker.extraVolumes` | Additional Kubernetes volumes for the broker pod | `[]` |
+| `broker.extraVolumeMounts` | Additional Kubernetes volume mounts for the broker container | `[]` |
 | `migration.image.repository` | Migration container image repository | `agentic-identity-broker-migrate` |
 | `migration.image.tag` | Migration image tag | Chart appVersion |
 | `storage.type` | Storage backend (`memory` or `postgres`) | `memory` |
@@ -156,6 +203,7 @@ and unknown environments reject that development-only bypass.
 | `postgresql.operator.secretSuffix` | Operator credentials secret suffix | `postgresql.acid.zalan.do` |
 | `broker.thirdPartyOauth2.jweSigningKeySecret` | Secret ref for JWE signing key | `{name: "", key: signing-key}` |
 | `broker.thirdPartyOauth2.jweSigningKeyBase64` | Base64-encoded JWE signing key (highest precedence) | `""` |
+| `broker.thirdPartyOauth2.credentialFiles` | Exact canonical-ID object with required `client_id_file` and `client_secret_file` string paths in each binding | `{}` |
 | `broker.encryption.memory.rawKey` | Base64-encoded memory encryption key | `""` |
 | `broker.encryption.awsKms.keyArn` | AWS KMS key ARN | `""` |
 | `broker.encryption.awsKms.dynamodbTableName` | DynamoDB table for branch keys | `IdentityBrokerEncryptionBranchKeys` |
@@ -172,13 +220,19 @@ and unknown environments reject that development-only bypass.
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
 | `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
-| `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required for configured token exchange in local mode; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
+| `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required in local mode when token exchange, approval authentication, or any client-assertion key source is configured; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
-| `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration). For `jwksFile`, empty or below-minimum values default to `max(3 × jwksMinRefresh, 1h)`; remote sources default to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenExchange.clientAssertion.jwks` | Inline JWK Set JSON (public keys only) for client assertions. Mutually exclusive with `jwksUri`, `jwksFile`, `jwksMinRefresh`, and `jwksMaxRefresh`. Skips discovery and key fetch. | `""` |
+| `broker.tokenExchange.clientAssertion.jwksFile` | Absolute key-set file path inside `broker.security.trustMaterial.directory`. Mutually exclusive with `jwksUri` and `jwks`. | `""` |
+| `broker.security.trustMaterial.directory` | Absolute path of the trust directory (`security.trust_material_dir`), the only place `jwks_file` key sets are read. Required when `sources` is set. | `""` |
+| `broker.security.trustMaterial.sources` | Existing Secrets or ConfigMaps projected read-only into the trust directory. Entries are `{secret: {name, items}}` or `{configMap: {name, items}}`; items are `{key, path}`. | `[]` |
 | `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
 | `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
 | `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
+| `broker.tokenRefresh.healthMetrics.enabled` | Boolean: publish the `oauth2_sessions{service_id,expiry,refreshable}` gauge when telemetry metrics are enabled. Each replica runs one grouped count query per metric export cycle. | `true` |
+| `broker.tokenRefresh.healthMetrics.queryTimeout` | String (Go duration): timeout of the per-export health count query; a slower query reports no data for that cycle. | `"5s"` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |
@@ -196,6 +250,16 @@ and unknown environments reject that development-only bypass.
 | `broker.requestContext.trustedProxy.enabled` | Trust forwarded headers from an upstream proxy for caller-IP derivation | `false` |
 | `broker.requestContext.trustedProxy.forwardedHeader` | Forwarded header to inspect when trusted proxy mode is enabled | `X-Forwarded-For` |
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
+| `extraObjects` | Additional manifests deployed with the release, rendered with `tpl` (see [Extra Objects](#extra-objects)) | `[]` |
+
+### Protected-resource discovery
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `broker.thirdPartyOauth2.clientName` | `string` | `""` | Optional broker or platform name. The chart maps it to `third_party_oauth2.client_name`. DCR requires a non-blank value. Startup, manual services, and hosted CIMD do not. |
+| `broker.server.enduser.publicUrl` | `string` | `""` | The chart maps it to `server.enduser.public_url`. Hosted CIMD and DCR require a stable, public HTTPS URL. DCR uses it for the OAuth2 callback. |
+
+The chart does not configure a service's `discovery.resource_url`. Send that public HTTPS URL in the service's Admin API create or update request.
 
 ### Custom Values File
 
@@ -300,6 +364,56 @@ ingress:
             pathType: ImplementationSpecific
 ```
 
+## Extra Objects
+
+`extraObjects` deploys additional manifests with the release, such as routing resources for an
+ingress controller the chart does not template. Each entry is a map or a multi-line string, and
+the chart renders it with Helm's `tpl`, so entries can reference values and chart helpers.
+
+Use the string form when a templated field must keep its YAML type. In the map form, a quoted
+template such as `'{{ .Values.service.ports.enduser }}'` renders as a string, while the string
+form below keeps `port` an integer:
+
+```yaml
+extraObjects:
+  - |
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: {{ include "agentic-identity-broker.fullname" . }}-enduser
+      namespace: {{ include "agentic-identity-broker.namespace" . }}
+      labels:
+        {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+    spec:
+      parentRefs:
+        - name: public-gateway
+      hostnames:
+        - broker.example.com
+      rules:
+        - backendRefs:
+            - name: {{ include "agentic-identity-broker.fullname" . }}
+              port: {{ .Values.service.ports.enduser }}
+```
+
+Text in the form `{{ ... }}` is a Helm template expression. When a later tool templates the
+rendered manifests, such as a deployment pipeline that substitutes `{{{BUILD_VERSION}}}`, write the
+placeholder as a string constant so that Helm emits it literally:
+
+```yaml
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: broker-build-info
+    data:
+      build: '{{ "{{{BUILD_VERSION}}}" }}'   # renders as '{{{BUILD_VERSION}}}'
+```
+
+Mustache-based pipelines HTML-escape a `{{VAR}}` value and insert a `{{{VAR}}}` value unchanged.
+Use the triple-brace form for values that can contain characters such as `&`, `/`, or `=`.
+
+Quote a value that starts with `{{` in single quotes. Unquoted, YAML parses it as a flow mapping.
+
 ## Database Migration
 
 ### How Migrations Work
@@ -308,7 +422,36 @@ ingress:
 2. Migration Job uses a **separate Docker image** (`agentic-identity-broker-migrate`) containing only migration tooling
 3. Migration Job uses a separate ServiceAccount and user credentials (least privilege)
 4. Broker Deployment uses the main image and a different user with appropriate runtime permissions
-5. Migration Job completes before broker pods start
+5. Migration Job completes before new broker pods start; on upgrade, existing pods continue serving until the hook succeeds
+
+### Credential-source migrations 040 and 041
+
+Migration 040 performs metadata-only schema expansion. It adds CHECK constraints as `NOT VALID`: new writes are checked immediately, but existing rows are not scanned under the exclusive schema locks. Both table locks use `NOWAIT`, and the schema statement has a one-second timeout. A busy table causes the hook to fail immediately rather than queue an exclusive lock that blocks live traffic.
+
+Migration 041 validates existing rows in a separate transaction. Its `SHARE UPDATE EXCLUSIVE` locks permit ordinary reads and writes. It also uses `NOWAIT` to avoid waiting on other schema maintenance. Each migration is atomic; keep `x-multi-statement` disabled when using golang-migrate.
+
+Before migration 040, deploy a compatibility release with explicit session-query columns to every pod. Wildcard scans in older binaries reject the new `upstream_client_id` column, even for stored services. Changing queries in the new release cannot repair those running binaries.
+
+Complete both migrations before rolling out the new broker. Keep services in `stored` mode until all old broker pods are replaced. Older binaries cannot scan filesystem services with NULL `client_id`, including during startup validation. The expansion still needs a brief exclusive lock, so it cannot promise zero request latency. Validation can also consume database I/O. Allow sufficient Helm timeout and database headroom.
+
+On failure, leave the old Deployment running and inspect migration logs and actual schema before clearing dirty metadata:
+
+| Failed step | Schema to verify | Recovery after verification |
+|---|---|---|
+| 040 UP: contention or timeout | Intact 039 columns, constraints, and data | `migrate force 39`, then retry the upgrade separately |
+| 041 UP: contention or invalid legacy data | Intact 040 columns and all three CHECKs still `NOT VALID`; data unchanged | Resolve contention or repair invalid data explicitly, `migrate force 40`, then rerun validation |
+
+The migration Job defaults to `backoffLimit: 0`. A failed migration can leave dirty metadata, so automatic Job retries cannot recover it. If inspection finds a different schema, stop and reconcile it before forcing any version. Never force 41 after failed validation.
+
+#### Application rollback with the schema retained
+
+1. Select a rollback release that includes explicit session-query columns. Do not roll back to a binary with wildcard session scans.
+2. Before starting older pods, list services through the current Admin API.
+3. PUT every filesystem service back to `credential_source: stored` with explicit, non-empty `client_id` and `client_secret`. Supply the complete replacement metadata. Use inline credentials from the operator's secure source, not values imported by the broker. Omit `protected_resources` to preserve them, or supply the current `If-Match` when replacing them.
+4. Verify that every service reports stored mode before running `helm rollback`.
+5. Retain schema 040 and the transition evidence. Returning to stored does not permit a database downgrade: migration 040 DOWN still rejects transitioned rows.
+
+An earlier compatibility release can instead exclude NULL-client-ID rows from every provider lookup and listing query. Those services must return not-found and fail closed. Converting NULL to an empty string is not sufficient. This branch does not change already-released binaries.
 
 ### Security: Separate Migration Image
 
@@ -339,6 +482,93 @@ Both images share the same version tag to ensure consistency between migrations 
 - Secret names follow the pattern: `{username}.{teamId}-{instanceName}.credentials.postgresql.acid.zalan.do`
 - Migration user gets: `superuser` and `createdb` role attributes
 - Broker user gets: `login` attribute + database ownership (grants full table access)
+
+## Scheduled Session Sweep
+
+Set `sessionSweep.enabled: true` to render a CronJob that calls `POST /api/sessions/sweep` on a schedule. Each run refreshes the stored third-party sessions whose access tokens expire within `sessionSweep.lookaheadDuration`, including sessions of inactive users. The broker itself runs no scheduler. See the [session sweep runbook](../../docs/operations/session-sweep.md) for scheduling guidance and monitoring.
+
+The chart only sends the request. It has no identity model of its own: you supply the credential the admin API accepts as literal headers, headers read from mounted files, or a TLS client certificate. Rendering fails when the sweep is enabled without any of them. Give the job a dedicated operator principal, so the `session sweep` audit event distinguishes scheduled sweeps from manual ones.
+
+| Parameter | Description | Default |
+|---|---|---|
+| `sessionSweep.enabled` | Render the CronJob and its ServiceAccount | `false` |
+| `sessionSweep.schedule` | Cron schedule | `"0 * * * *"` |
+| `sessionSweep.timeZone` | Optional IANA time zone | `""` |
+| `sessionSweep.startingDeadlineSeconds` | Late-start window before a run is skipped | `3600` |
+| `sessionSweep.activeDeadlineSeconds` | Hard cap on one Job; must exceed `timeoutSeconds` | `2100` |
+| `sessionSweep.timeoutSeconds` | Request timeout | `1800` |
+| `sessionSweep.lookaheadDuration` | ISO 8601 lookahead (days, hours, minutes, seconds). Cover one interval plus a missed run; stay shorter than the shortest provider access-token lifetime | `PT2H` |
+| `sessionSweep.dryRun` | Classify candidates without refreshing | `false` |
+| `sessionSweep.pageSize` | Optional `page_size` (1–1000); `null` uses `broker.tokenRefresh.sweep.defaultPageSize` | `null` |
+| `sessionSweep.url` | Target URL; empty targets this release's admin Service, `http://<fullname>.<namespace>.svc:<service.ports.admin>` | `""` |
+| `sessionSweep.host` | `Host` override; empty derives it from `broker.server.admin.publicUrl` for the default target only | `""` |
+| `sessionSweep.headers` | Literal headers. They are rendered into the manifest, so never put secrets here | `{}` |
+| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Paths are absolute and use only letters, digits, `.`, `_`, `-`, and `/`. `curl` trims the file value and escapes quotes, backslashes, and line breaks in it | `{}` |
+| `sessionSweep.tls.certFile`, `.keyFile`, `.caFile` | TLS client certificate, key, and CA bundle paths | `""` |
+| `sessionSweep.volumes`, `sessionSweep.volumeMounts` | Volumes that provide header and TLS files | `[]` |
+| `sessionSweep.image.repository`, `.tag`, `.pullPolicy` | Image with a POSIX shell and `curl` 8.3 or later, which reads header files through config variables | `curlimages/curl`, `8.16.0`, `IfNotPresent` |
+| `sessionSweep.resources` | Container resources | `50m` CPU, `64Mi` memory |
+| `sessionSweep.podLabels`, `sessionSweep.podAnnotations` | Extra pod metadata; `podLabels` override `commonLabels` | `{}` |
+
+The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent; `curl` trims and escapes the value, so a malformed file cannot alter the request and fails with the target's status. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
+
+### Through the authenticating proxy with a projected ServiceAccount token
+
+```yaml
+sessionSweep:
+  enabled: true
+  url: https://broker-admin.example.com      # the proxy; it must authorize this ServiceAccount as a sweep operator
+  headersFromFile:
+    Authorization:
+      path: /var/run/secrets/session-sweep/token
+      prefix: "Bearer "
+  volumes:
+    - name: proxy-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: broker-admin-proxy
+              expirationSeconds: 3600
+  volumeMounts:
+    - name: proxy-token
+      mountPath: /var/run/secrets/session-sweep
+      readOnly: true
+```
+
+The proxy must validate the token issuer, signature, audience, expiry, and ServiceAccount (`<fullname>-session-sweep`), then forward the operator principal the admin server expects.
+
+### Through the authenticating proxy with a TLS client certificate
+
+```yaml
+sessionSweep:
+  enabled: true
+  url: https://broker-admin.example.com
+  tls:
+    certFile: /var/run/secrets/session-sweep/tls.crt
+    keyFile: /var/run/secrets/session-sweep/tls.key
+    caFile: /var/run/secrets/session-sweep/ca.crt
+  volumes:
+    - name: client-cert
+      secret:
+        secretName: broker-session-sweep-client-cert
+  volumeMounts:
+    - name: client-cert
+      mountPath: /var/run/secrets/session-sweep
+      readOnly: true
+```
+
+### Trust requirements
+
+The admin server authenticates the configured identity but does not decide who is an operator; the authenticating proxy normally makes that decision. A request to the admin Service directly, which is the default target, is trusted only as far as the admin server's own authentication goes. If your deployment calls the admin Service directly, restrict network access to the admin port to the proxy and the sweep job, for example with a NetworkPolicy that admits pods labeled `app.kubernetes.io/component: session-sweep`.
+
+### Render the CronJob as a plain manifest
+
+```bash
+helm template broker ./charts/agentic-identity-broker -n identity -f values.yaml \
+  --show-only templates/cronjob-session-sweep.yaml \
+  --show-only templates/serviceaccount-session-sweep.yaml
+```
 
 ## Static Manifest Generation
 
@@ -436,6 +666,65 @@ The chart enforces Kubernetes Pod Security Standards (restricted):
 - **Migration user**: Schema modification permissions (varies by PostgreSQL setup)
 - **Broker user**: Runtime data access permissions (varies by PostgreSQL setup)
 - **Separate Secrets**: Different Kubernetes Secrets for each user
+
+### Trust material for local key sets
+
+A trust anchor can take its public verification keys from an inline JWK Set (`jwks`) or a key-set file (`jwks_file`) instead of a remote `jwks_uri`. The broker reads key-set files only from `broker.security.trustMaterial.directory`. The chart mounts existing Secrets or ConfigMaps there, so no custom image is needed.
+
+The chart exposes these settings for the token-exchange client-assertion trust anchor (`broker.tokenExchange.clientAssertion.jwks` and `jwksFile`). Impersonation trusted issuers (`broker.oauth2AuthorizationServer.impersonation.rules[].trusted_issuers[]`) and JWT pre-authentication on either server (`broker.server.enduser.authentication.jwt`, `broker.server.admin.authentication.jwt`) accept `jwks` and `jwks_file` in their pass-through blocks, with the broker's snake_case key names.
+
+```bash
+kubectl create secret generic agentgateway-jwks --from-file=jwks.json=./agentgateway-jwks.json
+```
+
+```yaml
+broker:
+  security:
+    trustMaterial:
+      directory: "/etc/agentic-identity-broker/trust"
+      sources:
+        - secret:
+            name: agentgateway-jwks
+            items:
+              - key: jwks.json
+                path: agentgateway-jwks.json
+        - configMap:
+            name: mesh-jwks
+            items:
+              - key: jwks.json
+                path: mesh-jwks.json
+  tokenExchange:
+    clientAssertion:
+      issuerUri: "https://agentgateway.internal.example.com"
+      jwksFile: "/etc/agentic-identity-broker/trust/agentgateway-jwks.json"
+      jwksMinRefresh: "5m"
+      jwksMaxRefresh: "1h"
+```
+
+- **Projected volume**: each entry becomes one source of a read-only `projected` volume named `trust-material`, mounted at `directory`. Setting `sources` without `directory` fails `helm template` with `broker.security.trustMaterial.directory is required when sources are set`.
+- **No `subPath`**: the chart never mounts the volume with `subPath`. Kubernetes does not update `subPath` mounts, so a `subPath` mount would never deliver a rotated key set. The projected volume keeps the `..data` relative-link layout that the broker accepts. Absolute symbolic links inside the trust directory are rejected.
+- **Rotation**: when the Secret or ConfigMap changes, the kubelet updates the volume without restarting the pod. The broker re-reads each file every `jwksMinRefresh` (default `15m`; JWT pre-authentication uses a fixed `5m`) and applies a valid set without a restart. A failed re-read keeps the last valid set and reports `components.trust_anchor_key_files` as `degraded` on `GET /health`. If `jwksMaxRefresh` is unset or below `jwksMinRefresh`, a file uses `max(3 × jwksMinRefresh, 1h)`; remote sources use `max(jwksMinRefresh, 1h)`. An explicit maximum at least as large as the minimum applies as configured. JWT pre-authentication uses a fixed `15m` maximum. After the applicable maximum without a successful read, the trust anchor fails closed.
+- **Inline alternative**: `jwks` is rendered as a YAML block scalar and is never refreshed, so `jwksMinRefresh` and `jwksMaxRefresh` are rejected next to it.
+
+A whole-value environment reference keeps the key set in a Secret:
+
+```yaml
+broker:
+  extraEnv:
+    - name: GATEWAY_JWKS
+      valueFrom:
+        secretKeyRef:
+          name: agentgateway-jwks
+          key: jwks.json
+  tokenExchange:
+    clientAssertion:
+      issuerUri: "https://agentgateway.internal.example.com"
+      jwks: "${GATEWAY_JWKS}"
+```
+
+- **One source per trust anchor**: set at most one of `jwksUri`, `jwks`, and `jwksFile`.
+
+See `examples/config/trust-anchor-local-jwks.yaml` for the rendered configuration.
 
 ## Examples
 

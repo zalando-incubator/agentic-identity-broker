@@ -1,0 +1,66 @@
+{{- if .Values.sessionSweep.enabled }}
+{{- include "agentic-identity-broker.sessionSweep.validate" . }}
+{{- $sweep := .Values.sessionSweep }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "agentic-identity-broker.sessionSweep.name" . }}
+  namespace: {{ include "agentic-identity-broker.namespace" . }}
+  labels:
+    {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-sweep
+spec:
+  schedule: {{ $sweep.schedule | quote }}
+  {{- with $sweep.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ int $sweep.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ int $sweep.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-identity-broker.sessionSweep.podLabels" . | nindent 12 }}
+          {{- with $sweep.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "agentic-identity-broker.sessionSweep.name" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: session-sweep
+              image: "{{ $sweep.image.repository }}:{{ $sweep.image.tag }}"
+              imagePullPolicy: {{ $sweep.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  {{- include "agentic-identity-broker.sessionSweep.script" . | nindent 18 }}
+              resources:
+                {{- toYaml $sweep.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                {{- with $sweep.volumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            {{- with $sweep.volumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+{{- end }}

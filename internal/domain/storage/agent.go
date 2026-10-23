@@ -96,10 +96,10 @@ func (a *Agent) validateFields() error {
 		return errors.New("agent_interface_url is not a valid HTTP/HTTPS URL")
 	}
 
-	// Redirect URI validation (stricter than isValidURL: requires non-empty host, no fragment)
+	// Redirect URIs: https, loopback http, or a private-use scheme (RFC 8252 §7.1).
 	for i, uri := range a.RedirectURIs {
-		if !urivalidation.IsValidRedirectURI(uri) {
-			return fmt.Errorf("redirect_uris[%d] is not a valid absolute HTTP/HTTPS URI without a fragment", i)
+		if !urivalidation.IsValidRedirectURI(uri) && !urivalidation.IsValidPrivateUseRedirectURI(uri) {
+			return fmt.Errorf("redirect_uris[%d] must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", i)
 		}
 	}
 

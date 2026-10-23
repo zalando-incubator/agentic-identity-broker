@@ -16,16 +16,17 @@ Read `tests/integration/bootstrap/postgres.go` before you write a PostgreSQL-bac
 Use these helpers:
 
 - `bootstrap.RequireSharedPostgres(t)` — Starts or reuses one PostgreSQL container for the package.
+- `(*SharedPostgres).SetupMigratedDatabase(t)` — Clones a database with all repository migrations applied. Use it for ordinary database tests.
 - `(*SharedPostgres).SetupDatabaseFromTemplate(...)` — Clones a fresh database from a prepared template.
-- `(*SharedPostgres).ApplyMigrationsUpTo(...)` — Applies a bounded migration set into a template DB.
+- `(*SharedPostgres).ApplyMigrationsUpTo(t, dbName, version)` — Discovers migrations through a fixed version. Use it only for migration-specific tests.
 - `(*SharedPostgres).ApplyMigration(...)`, `QuerySQL(...)`, `ExecuteSQL(...)` — SQL helpers.
 - `bootstrap.TerminateSharedPostgres(ctx)` — Call from `TestMain` for a shared container.
 
 **Preferred pattern:**
 
 1. Start one shared container per package.
-2. Build a template DB once.
-3. Clone a fresh DB per test.
+2. Call `SetupMigratedDatabase(t)` for each ordinary database test. It prepares the template once and clones an isolated database.
+3. Use historical templates only for tests that verify a specific migration or rollback. Do not maintain migration filename lists.
 4. Close adapters and drop the cloned DB in `defer`.
 
 For many small CRUD assertions against one schema, reuse a cloned database in sequential `t.Run(...)` subtests:

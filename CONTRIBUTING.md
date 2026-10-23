@@ -52,7 +52,7 @@ just verify   # Security scanning plus test, integration, and E2E checks
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
 `just verify` runs security scanning before the existing test, integration, and E2E gate.
 
-`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.1 export-data format.
+`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.3 export-data format.
 If lint reports an unsupported export-data version, run `just install-tools` with the repository's Go toolchain.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
 

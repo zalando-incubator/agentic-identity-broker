@@ -23,19 +23,36 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 		return nil, errors.New("entity cannot be nil")
 	}
 
-	if err := entity.TokenEndpointAuthMethod.Validate(); err != nil {
+	if err := entity.ValidateStoredClientAuthentication(); err != nil {
 		return nil, err
 	}
-	if (entity.IsPublicClient() || entity.IsCIMDConfidentialClient()) != entity.Secret.IsAbsent() {
-		return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
+
+	copy := entity.Copy()
+	source := entity.CredentialSource
+	if source == "" && !entity.CredentialSourceProvided {
+		source = model.CredentialSourceStored
 	}
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
-		if _, err := entity.Secret.GetCiphertext(); err != nil {
+	if source == model.CredentialSourceStored && entity.ClientID.IsZero() {
+		return nil, errors.New("client_id is required for stored credential_source")
+	}
+	if source == model.CredentialSourceFilesystem && entity.Flavor != "" && entity.Flavor != model.OAuth2FlavorStandard && entity.Flavor != model.OAuth2FlavorGitHub {
+		return nil, errors.New("filesystem credential_source requires standard or github shared-secret authentication")
+	}
+	copy.CredentialSource = source
+	copy.ClearCanonicalID = false
+	copy.CredentialSourceProvided = false
+	copy.ClientIDProvided = false
+	copy.ClientSecretProvided = false
+	if entity.Secret.IsAbsent() {
+		copy.Secret = model.NewAbsentSecret()
+	} else {
+		ciphertext, err := entity.Secret.GetCiphertext()
+		if err != nil {
 			return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
 		}
+		copy.Secret = model.NewEncryptedSecret(ciphertext)
 	}
-
-	return entity.Copy(), nil
+	return copy, nil
 }
 
 func providerEntityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*thirdpartyOAuth2ProviderRecord, error) {

@@ -159,7 +159,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	}
 
 	// Step 1b: Validate redirect_uri.
-	// For CIMD clients, validate against the document's redirect_uris.
+	// For CIMD clients, validate against the document's redirect_uris; private-use
+	// callbacks must also be listed in the agent's redirect_uris.
 	// For opaque clients, validate against the agent's registered redirect_uris.
 	// Per RFC 6749 §4.1.2.1, MUST NOT redirect if redirect_uri is unverified.
 	var allowedRedirectURIs []string
@@ -179,22 +180,15 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if len(allowedRedirectURIs) == 0 {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
-	uriAllowed := false
-	for _, allowed := range allowedRedirectURIs {
-		if urivalidation.MatchesRedirectURI(allowed, req.RedirectURI) {
-			uriAllowed = true
-			break
-		}
-	}
-	if !uriAllowed {
+	if !urivalidation.IsRegisteredRedirectURI(allowedRedirectURIs, agent.RedirectURIs, req.RedirectURI) {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
 
-	// Step 1b-runtime: Enforce HTTPS for non-loopback hosts even on legacy data.
-	// Write-time validation (Agent.Validate/ValidateForCreate) prevents new non-HTTPS
+	// Step 1b-runtime: Reject invalid web and private-use callbacks even on legacy data.
+	// Write-time validation (Agent.Validate/ValidateForCreate) prevents new invalid
 	// registrations, but this guard closes the gap for pre-existing stored URIs.
-	if !urivalidation.IsValidRedirectURI(req.RedirectURI) {
-		return ports.ErrorDecision("invalid_redirect_uri", "redirect_uri must use HTTPS for non-local hosts", ""), nil
+	if !urivalidation.IsValidRedirectURI(req.RedirectURI) && !urivalidation.IsValidPrivateUseRedirectURI(req.RedirectURI) {
+		return ports.ErrorDecision("invalid_redirect_uri", "redirect_uri must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", ""), nil
 	}
 
 	// Step 1c: Validate requested scopes against agent's allowed scopes.

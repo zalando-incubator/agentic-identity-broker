@@ -59,7 +59,6 @@ For repeated authorization requests from the same agent, the broker caches the p
 2. **Given** a cached CIMD document has expired (Cache-Control max-age elapsed), **When** an authorization request arrives, **Then** the broker re-fetches the document and refreshes the cache.
 3. **Given** a CIMD fetch returns an error (non-200 status or network failure), **When** the broker evaluates caching, **Then** the error response is never cached and subsequent requests always retry the fetch.
 4. **Given** operator configuration sets a maximum cache TTL shorter than the document's `max-age`, **When** the broker stores the document, **Then** the operator-configured TTL takes precedence.
-
 ---
 
 ### User Story 4 - Authorization Server Advertises CIMD Support (Priority: P3)
@@ -109,6 +108,27 @@ The individual CIMD components (authorize redirect, consent context decode, gran
 
 ---
 
+### User Story 7 - Native App Uses an Operator-Allowlisted Private-Use Callback (Priority: P2)
+
+A native desktop agent such as GitHub Copilot Desktop publishes a CIMD document. Its `redirect_uris` list a private-use URI scheme callback (`github-app://oauth/callback`, RFC 8252 §7.1) with loopback callbacks. For each Agent, the operator decides whether the broker may redirect to that callback by listing the exact URI in the Agent's `redirect_uris`. The broker then accepts the document and completes the authorization code flow with PKCE through the custom-scheme callback. Without that Agent entry, the whole document stays invalid.
+
+**Why this priority**: It lets the broker serve a widely used native client class without trusting arbitrary schemes from remote documents.
+
+**Independent Test**: Serve the GitHub Copilot Desktop document from a mock CIMD endpoint. Register the Agent with and without `github-app://oauth/callback`. Then drive authorize, consent, code issuance, and token exchange.
+
+**Acceptance Scenarios**:
+
+1. **Given** the CIMD document at `https://github.com/copilot/desktop/client-metadata.json` lists `redirect_uris: ["github-app://oauth/callback", "http://127.0.0.1/", "http://127.0.0.1/callback"]`, and the Agent that pre-registers this URL in `client_uris` lists `github-app://oauth/callback` in `redirect_uris`, **When** an authorization request arrives with that `client_id` and `redirect_uri=github-app://oauth/callback`, **Then** the broker accepts the document and redirects to the consent page with a `session_token`.
+2. **Given** the same document and an Agent whose `redirect_uris` does not contain `github-app://oauth/callback`, **When** an authorization request arrives with `redirect_uri=http://127.0.0.1/callback`, **Then** the broker rejects the request with `invalid_client`, issues no redirect, and makes none of the document's callbacks available.
+3. **Given** the document and Agent from scenario 1, **When** an authorization request uses a callback that only resembles the allowlisted one (`GITHUB-APP://oauth/callback`, `github-app://OAUTH/callback`, `github-app://oauth/callback/extra`, `github-app://oauth/callback?x=1`, or `github-app://evil/callback`), **Then** the broker rejects the request with `invalid_request` and issues no redirect.
+4. **Given** an Agent that lists `github-app://oauth/callback` in `redirect_uris` and a CIMD document that lists only `http://127.0.0.1/callback`, **When** an authorization request arrives with `redirect_uri=github-app://oauth/callback`, **Then** the broker rejects the request with `invalid_request` and issues no redirect. The Agent entry does not replace document registration (FR-004).
+5. **Given** the document and Agent from scenario 1 and a user without a grant, **When** the user completes authorize, consent, and re-authorize with an S256 `code_challenge`, and the client exchanges the code at `POST /oauth2/token` with `redirect_uri=github-app://oauth/callback`, the `code_verifier`, and no client secret, **Then** the broker redirects to `github-app://oauth/callback?code=...&state=...` and returns a Bearer access token.
+6. **Given** an authorization code issued for `github-app://oauth/callback`, **When** the token request presents `redirect_uri=http://127.0.0.1/callback`, **Then** the broker returns `invalid_grant` and issues no token.
+7. **Given** an authorization code issued for `github-app://oauth/callback`, **When** the token request presents a `code_verifier` that does not match the `code_challenge`, **Then** the broker returns `invalid_grant` and issues no token.
+8. **Given** that the document from scenario 1 is cached after an accepted authorization request, **When** the operator removes `github-app://oauth/callback` from the Agent's `redirect_uris` and a new authorization request arrives, **Then** the broker rejects it with `invalid_client` without fetching the document again.
+
+---
+
 ### Edge Cases
 
 - What happens when `cimd.enabled: true` is configured but the broker is in `proxy` mode? (Startup validation error; the broker refuses to start. CIMD requires `issue_token` mode.)
@@ -123,10 +143,183 @@ The individual CIMD components (authorize redirect, consent context decode, gran
 - What happens when a `client_id` URL has a non-443 port? (Always rejected; port 443 is the only permitted port.)
 - What happens when a Client ID Metadata Document URL matches pre-registered entries in more than one Agent? (Ambiguous match — request is rejected; operator must ensure pre-registered Client ID Metadata Document URLs are unique across all agents.)
 - What happens when a Client ID Metadata Document URL is not pre-registered under any Agent? (Request is rejected per FR-027; clients presenting an unregistered Client ID Metadata Document URL are not permitted.)
-- What happens when a CIMD document declares a `redirect_uri` on a different origin than the `client_id` URL (e.g. a CDN or a partner domain)? (Rejected per FR-004a; cross-origin redirect URIs are not permitted, with the sole exception of localhost/127.0.0.1.)
+- What happens when a CIMD document declares a `redirect_uri` on a different origin than the `client_id` URL (e.g. a CDN or a partner domain)? (Rejected per FR-004a; cross-origin HTTPS redirect URIs are not permitted. The only exceptions are loopback hosts and private-use scheme callbacks that the Agent allowlists.)
 - What happens when a CIMD document declares a `redirect_uri` of `http://localhost:3000` but the `client_id` URL is `https://agent.example.com/client`? (Permitted; localhost is an unconditional exception regardless of the client_id origin.)
+- A document that declares a private-use callback such as `github-app://oauth/callback` is permitted only when the resolved Agent lists the identical URI in `redirect_uris`. Otherwise, the whole document is rejected and none of its callbacks are usable, as FR-004a requires.
+- A document that declares `javascript://…`, `data:…`, `file:///…`, or a non-canonical private-use URI such as `GitHub-App://oauth/callback` is rejected under FR-004a. Agent writes reject these values under 025 FR-006e, so they cannot be allowlisted.
+- If the operator removes an allowlisted private-use callback while the document is cached, the next authorization request returns `invalid_client`. The allowlist check also runs on cache hits (US7 Scenario 8).
 - What happens when a consent page is loaded with an expired or invalid `session_token`? (The decode endpoint returns an error indicating the authorization request has expired; the user must re-initiate the flow.)
 - What happens when consent is submitted with a `session_token` that has expired? (Rejected; the consent submission returns an error. The `exp` claim is validated on every submission.)
+
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — Alice signs in to GitHub Copilot Desktop through its github-app callback (User Story 7, Scenarios 1–6)
+
+**Cast**: The operator is `admin@example.com`. Alice is `alice@example.com`. Both authenticate through `X-Remote-User`. The Agent is *GitHub Copilot* (`3c9d2e7a-5b1f-4c8e-9a6d-2f4b8c1e7d90`). It requires permission set `770e8400-e29b-41d4-a716-446655440001` for service *GitHub Production* (`880e8400-e29b-41d4-a716-446655440010`). Alice has an active service session but no grant. All times are 2026-10-22 UTC. All values are synthetic.
+
+**Step 1 — Broker configuration (initial state; other required settings omitted)**
+
+```yaml
+server:
+  enduser:
+    public_url: "https://broker.example.com" # token issuer (iss)
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+  admin:
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+oauth2_authorization_server:
+  mode: "local"
+  local:
+    token_ttl: "1h" # expires_in 3600
+  cimd:
+    enabled: true # resolve URL-format client_id values through CIMD
+```
+
+**Step 2 — 09:00:00: the operator registers GitHub Copilot**
+
+```http
+POST /api/agents HTTP/1.1
+Host: broker.example.com:14000
+X-Remote-User: admin@example.com
+Content-Type: application/json
+
+{
+  "display_name": "GitHub Copilot",
+  "description": "GitHub Copilot Desktop",
+  "client_uris": ["https://github.com/copilot/desktop/client-metadata.json"],
+  "redirect_uris": ["github-app://oauth/callback"],
+  "permission_sets": [{"permission_set_id": "770e8400-e29b-41d4-a716-446655440001", "requirement_type": "mandatory"}]
+}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{
+  "id": "3c9d2e7a-5b1f-4c8e-9a6d-2f4b8c1e7d90",
+  "client_uris": ["https://github.com/copilot/desktop/client-metadata.json"],
+  "redirect_uris": ["github-app://oauth/callback"],
+  "...": "..."
+}
+```
+
+**Step 3 — The broker fetches the published document**
+
+```http
+GET /copilot/desktop/client-metadata.json HTTP/1.1
+Host: github.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "client_id": "https://github.com/copilot/desktop/client-metadata.json",
+  "client_name": "GitHub Copilot",
+  "client_uri": "https://github.com/github/app",
+  "application_type": "native",
+  "grant_types": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "redirect_uris": ["github-app://oauth/callback", "http://127.0.0.1/", "http://127.0.0.1/callback"]
+}
+```
+
+**Step 4 — 09:30:00: Alice starts authorization (Scenarios 1–2)**
+
+```http
+GET /oauth2/authorize?client_id=https%3A%2F%2Fgithub.com%2Fcopilot%2Fdesktop%2Fclient-metadata.json&response_type=code&redirect_uri=github-app%3A%2F%2Foauth%2Fcallback&scope=read&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/agents/3c9d2e7a-5b1f-4c8e-9a6d-2f4b8c1e7d90?session_token=eyJ...
+```
+
+FR-004a accepts `github-app://oauth/callback` because the Agent allowlists it. It accepts `http://127.0.0.1/` and `http://127.0.0.1/callback` under the loopback exception.
+
+Variant (Scenario 2): Without the Agent entry, the broker rejects the entire document:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_client", "error_description": "CIMD document validation failed"}
+```
+
+The broker logs `cimd_document_invalid` with `error="redirect_uris[0]: private-use redirect_uri \"github-app://oauth/callback\" is not listed in the agent's redirect_uris"`.
+
+**Step 5 — 09:30:15: Alice approves on the existing consent screen**
+
+Advanced Details shows Redirect URI `github-app://oauth/callback`. No local-machine warning appears because the host is not loopback. The UI does not change, so this journey has no wireframe.
+
+```http
+POST /api/consent/agents/3c9d2e7a-5b1f-4c8e-9a6d-2f4b8c1e7d90/grants?session_token=eyJ... HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+Content-Type: application/json
+
+{"granted_permission_sets": {"770e8400-e29b-41d4-a716-446655440001": ["880e8400-e29b-41d4-a716-446655440010"]}}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{
+  "data": {"id": "990e8400-e29b-41d4-a716-446655440020", "principal": "alice@example.com", "agent_id": "3c9d2e7a-5b1f-4c8e-9a6d-2f4b8c1e7d90", "...": "..."},
+  "redirect_url": "/oauth2/authorize?client_id=https%3A%2F%2Fgithub.com%2Fcopilot%2Fdesktop%2Fclient-metadata.json&response_type=code&..."
+}
+```
+
+**Step 6 — 09:30:16: the SPA requests `redirect_url` (Scenarios 3 and 5)**
+
+```http
+GET /oauth2/authorize?client_id=https%3A%2F%2Fgithub.com%2Fcopilot%2Fdesktop%2Fclient-metadata.json&response_type=code&redirect_uri=github-app%3A%2F%2Foauth%2Fcallback&scope=read&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: github-app://oauth/callback?code=SplxlOBeZQQYbYS6WxSbIA&state=af0ifjsldkj
+```
+
+The OS opens GitHub Copilot. Variant (Scenario 3): With `redirect_uri=GITHUB-APP%3A%2F%2Foauth%2Fcallback`, the broker does not redirect:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_request", "error_description": "redirect_uri not registered for this client"}
+```
+
+**Step 7 — 09:31:02: Copilot exchanges the code (Scenario 6)**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=SplxlOBeZQQYbYS6WxSbIA&redirect_uri=github-app%3A%2F%2Foauth%2Fcallback&client_id=https%3A%2F%2Fgithub.com%2Fcopilot%2Fdesktop%2Fclient-metadata.json&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Pragma: no-cache
+Content-Type: application/json
+
+{"access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6...", "expires_in": 3600, "scope": "read", "token_type": "Bearer"}
+```
+
+No client secret is sent. No `refresh_token` is returned because `offline_access` was not requested. Variant (Scenario 6): With `redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback`, the broker returns `400 Bad Request` with `{"error": "invalid_grant", "error_description": "..."}`.
+
+The synthetic access token decodes to this header and payload:
+
+```json
+{"alg": "ES256", "kid": "3f1c2b4a-8d7e-4f60-9a1b-2c3d4e5f6a7b"}
+{"iss": "https://broker.example.com", "sub": "alice@example.com", "iat": 1792661462, "exp": 1792665062, "jti": "a5c8e4f0-6b9d-4e23-8c71-9217e30a5f60", "agent_id": "https://github.com/copilot/desktop/client-metadata.json", "scope": "read"}
+```
+
+`iat` is 09:31:02, and `exp` is 10:31:02. `strategies.go:103` sets `agent_id` from the fosite client ID, which is the CIMD URL for CIMD clients.
+
+**Observable result**: Copilot holds a one-hour token for Alice. Without the operator entry, the broker would have rejected the document.
 
 ## Requirements *(mandatory)*
 
@@ -138,7 +331,8 @@ The individual CIMD components (authorize redirect, consent context decode, gran
 - **FR-002**: System MUST fetch the CIMD document at the `client_id` URL using a hardened HTTP client (SSRF-safe, timeout-bounded, size-limited).
 - **FR-003**: System MUST reject any CIMD document where the `client_id` field does not exactly match the request URL (byte-for-byte string comparison).
 - **FR-004**: System MUST reject authorization requests where the `redirect_uri` is not listed in the CIMD document's `redirect_uris` array.
-- **FR-004a**: System MUST reject CIMD documents where any declared `redirect_uri` is not same-origin with the `client_id` URL (same scheme, host, and port), unless the `redirect_uri` host is `localhost` or `127.0.0.1` (any port), which are always permitted to support locally-running agents.
+- **FR-004a**: System MUST reject a CIMD document when any declared `redirect_uri` is not permitted. A declared `redirect_uri` is permitted only when it is (a) an HTTPS URI that is same-origin with the `client_id` URL (same scheme, host, and port); (b) an `http` or `https` URI whose host is `localhost`, `127.0.0.1`, or `::1` (any port), to support locally-running agents; or (c) a valid private-use scheme redirect URI (025 FR-006e) that the resolved Agent's `redirect_uris` lists byte for byte. Option (c) is the operator's explicit exception to this local same-origin policy, which draft-ietf-oauth-client-id-metadata-document-02 §8.1 lets an authorization server impose; a document alone never makes a private-use callback available, and cross-origin HTTPS entries stay rejected even when the Agent lists them. The broker MUST evaluate (c) against the Agent's current `redirect_uris` every time it resolves the client, including when it serves the document from cache, and MUST NOT cache a document that fails this check (FR-020).
+- **FR-004b**: System MUST accept a private-use scheme `redirect_uri` in an authorization request only when it equals, byte for byte, an entry of the CIMD document's `redirect_uris` (FR-004) and an entry of the Agent's `redirect_uris`. No case folding, prefix, scheme-only, host-only, wildcard, or loopback-port matching applies. On mismatch the broker MUST return `invalid_request` without redirecting. The token request MUST present the identical `redirect_uri`, and S256 PKCE remains mandatory (025 FR-007e).
 - **FR-005**: System MUST NOT follow HTTP redirects when fetching a CIMD document.
 - **FR-006**: System MUST accept only HTTP 200 responses as valid CIMD documents; any other status code is treated as a fetch failure.
 - **FR-007**: System MUST abort CIMD fetches that exceed the configured response size limit (default: 5,120 bytes).
@@ -227,7 +421,10 @@ sequenceDiagram
         CIMDHost-->>Fetcher: 200 OK + JSON (≤5KB)
         Fetcher-->>AuthServer: raw document
         AuthServer->>AuthServer: validate client_id field match
-       AuthServer->>Cache: store with TTL from Cache-Control
+    end
+    AuthServer->>AuthServer: FR-004a: each private-use redirect_uri must be in Agent.redirect_uris (cache hit or miss)
+    opt Cache miss after allowlist validation
+        AuthServer->>Cache: store with TTL from Cache-Control
     end
     AuthServer->>AuthServer: mint JWE session_token (authorization context + exp + principal)
     AuthServer->>Agent: redirect to consent page with session_token only
@@ -237,6 +434,8 @@ sequenceDiagram
 **Agent Entity Extension** (from `025-oauth2-server`, extended for CIMD):
 
 The existing `Agent` entity is extended with a list of pre-registered Client ID Metadata Document URLs `client_uris` — set by the operator during Client ID Metadata Document URL pre-registration. When an incoming `client_id` URL exactly matches an entry in this list, the broker resolves the Agent record as the pre-registered client for consent grouping.
+
+For a CIMD Agent, `redirect_uris` only allowlists private-use scheme callbacks that the document also declares (FR-004a, FR-004b). Web callbacks come from the document.
 
 ```mermaid
 erDiagram
@@ -329,6 +528,7 @@ oauth2_authorization_server:
 - **SC-003**: A repeated authorization request for the same URL-based `client_id` within the cache TTL window completes without issuing a second outbound HTTP fetch, as verified by mock server request counts in E2E tests.
 - **SC-004**: Zero regression in existing authorization flows using opaque (pre-registered) `client_id` values, verified by the full existing E2E test suite passing without modification.
 - **SC-005**: The authorization server metadata endpoint correctly reflects `client_id_metadata_document_supported` status in all configuration states, verified by E2E tests.
+- **SC-006**: The GitHub Copilot Desktop document (`github-app://oauth/callback` plus two loopback callbacks) validates for an Agent that allowlists the callback and is rejected for an Agent that does not, and a full authorize → consent → token flow through `github-app://oauth/callback` succeeds, as verified by E2E tests (User Story 7).
 
 ## Clarifications
 
@@ -357,6 +557,13 @@ oauth2_authorization_server:
 - Q: Where should authorization session state be stored? → A: Nowhere — the JWE token is stateless and self-contained. No database migration or storage adapter is required. Updated SR-014.
 - Q: How does the backend bind the consent decision back to the original authorization request for CIMD flows? → A: Token-bound submission. The consent submission body includes the `session_token`; the backend decrypts it, validates `exp` and `principal`, then uses the token's trusted `redirect_uri`, `state`, and `code_challenge` to issue the authorization code redirect. Updated FR-029.
 - Q: How should the broker enforce that URL-format client_id values are only accepted when CIMD is enabled? → A: Via a ClientResolver strategy interface selected at build time. When `cimd.enabled: false`, `OpaqueClientResolver` is wired — it rejects URL-format client IDs with `invalid_client` immediately. When `true`, `CIMDClientResolver` is wired — it handles URL-format client IDs via CIMD resolution and falls back to UUID for non-URL IDs. The gate is structural (strategy selection in builder), not a runtime conditional. No CIMD infrastructure (fetcher, cache, service) is instantiated when disabled. Added FR-001a and US1 Scenario 5.
+
+### Session 2026-10-22
+
+- Q: May a CIMD client use a private-use URI scheme callback such as GitHub Copilot Desktop's `github-app://oauth/callback`? → A: Only when the operator lists the identical URI in the pre-registered Agent's `redirect_uris` and the document lists it too. The Agent entry is an exception to the FR-004a same-origin policy, not a replacement for FR-004 document registration. This refines the 2026-04-22 answer on `redirect_uri` authority. Source: issue #242. Decision: ADR 042.
+- Q: What happens to a document that lists a private-use callback that the Agent does not allowlist? → A: The broker rejects the whole document with `invalid_client`, including its loopback and HTTPS callbacks.
+- Q: How is a private-use callback matched? → A: It is matched byte for byte against both lists, with no case folding, prefix, scheme-only, host-only, wildcard, or port matching.
+- Q: Is the allowlist re-checked for cached documents? → A: Yes. It is checked on every resolution, so an operator's removal takes effect immediately.
 
 ## Assumptions
 

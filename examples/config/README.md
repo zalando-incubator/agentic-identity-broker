@@ -87,6 +87,7 @@ Production environment configuration. Demonstrates:
 - TLS mandatory with environment-driven paths
 - High connection pool limits
 - Monitoring and metrics configuration
+- Session-health gauge settings (`token_refresh.health_metrics`)
 - Security-first approach
 - Detailed comments on production best practices
 
@@ -127,6 +128,10 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - Environment variable substitution for sensitive keys
 - A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
 - Proactive token refresh with a 5m lookahead, 10 background workers, and 100 sessions per sweep page
+- Explicit empty and single-pair `third_party_oauth2.credential_files` examples, with multiple pairs documented here
+- Exact canonical-ID spelling, including case and dots
+- JSON environment/CLI examples documented here, including a winning `{}`
+- Explicit filesystem registration without inline credentials or stored placeholders
 
 
 This configuration is required when enabling OAuth2 session management with third-party
@@ -146,6 +151,49 @@ export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
 
 **Security Note:** The JWE signing key MUST be kept secret. It protects OAuth2 state
 tokens during the authorization flow. Compromise allows state token forgery and CSRF attacks.
+
+For paired credentials, use the examples in [`third-party-oauth2.yaml`](third-party-oauth2.yaml). Register the eligible service with `credential_source: filesystem` and neither inline credential. Its exact canonical-ID binding supplies both absolute paths. A missing binding or unusable required file stops authentication without stored fallback. Stored services ignore bindings.
+
+The winning source replaces the whole mapping: CLI, environment, configuration file, then default. An explicit `{}` removes all bindings but preserves service source selection. Startup validates mapping syntax and paths, not file availability. Authorization initiation reads only the client ID. Code exchange and refresh acquire both values.
+
+Multiple independent pairs preserve exact canonical-ID case and dots:
+
+```yaml
+third_party_oauth2:
+  credential_files:
+    zalando-platform:
+      client_id_file: /meta/credentials/employee-client-id
+      client_secret_file: /meta/credentials/employee-client-secret
+    GitHub-Prod:
+      client_id_file: /run/broker-secrets/github-client-id
+      client_secret_file: /run/broker-secrets/github-client-secret
+    com.example.service:
+      client_id_file: /run/broker-secrets/example-client-id
+      client_secret_file: /run/broker-secrets/example-client-secret
+```
+
+Environment and CLI sources accept a JSON object string:
+
+```bash
+export IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES='{"zalando-platform":{"client_id_file":"/meta/credentials/employee-client-id","client_secret_file":"/meta/credentials/employee-client-secret"}}'
+./bin/agentic-identity-broker --config examples/config/third-party-oauth2.yaml \
+  --third_party_oauth2.credential_files='{"GitHub-Prod":{"client_id_file":"/run/broker-secrets/github-client-id","client_secret_file":"/run/broker-secrets/github-client-secret"},"com.example.service":{"client_id_file":"/run/broker-secrets/example-client-id","client_secret_file":"/run/broker-secrets/example-client-secret"}}'
+./bin/agentic-identity-broker --third_party_oauth2.credential_files='{}'
+```
+
+### `protected-resource-discovery.yaml`
+
+This [broker configuration example](protected-resource-discovery.yaml) uses PostgreSQL and AWS KMS. Supply `IDENTITY_BROKER_STORAGE_POSTGRES_URL`, `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN`, and `IDENTITY_BROKER_JWE_SIGNING_KEY` from secure environment sources. Run the broker behind an authenticating reverse proxy.
+
+```bash
+./agentic-identity-broker --config ./examples/config/protected-resource-discovery.yaml
+```
+
+The optional `third_party_oauth2.client_name` names the broker or its platform. DCR requires a non-blank value. Startup, manual services, and hosted CIMD do not require it. A service's `display_name` does not supply the DCR name.
+
+Hosted CIMD and DCR require a stable, public HTTPS `server.enduser.public_url`. DCR uses this URL for its OAuth2 callback. If no usable CIMD key exists, generate an ES256 client-authentication key with `POST /api/cimd-client-keys` on the Admin API. This key is separate from the JWE key for OAuth2 state.
+
+Send a public HTTPS `discovery.resource_url` with `discovery.enable_discovery: true` in each service's Admin API create or update request. These are service request fields, not broker configuration keys. Discovery and registration share a fixed 10-second attempt deadline and a fixed 256-KiB limit per remote response. See the [configuration reference](../../docs/configuration.md#protected-resource-discovery-configuration) for the client-name environment variable and CLI flag.
 
 ### `jwt-preauth.yaml`
 
@@ -285,6 +333,7 @@ OpenTelemetry observability configuration for the **Identity Broker** service. D
 - Service name and resource attribute configuration
 - Trace sampling rate and propagator selection
 - Metrics export interval configuration
+- Session-health gauge (`token_refresh.health_metrics.enabled`, `query_timeout`), which publishes `oauth2_sessions` per service and health state
 - OTLP exporter protocol (gRPC or HTTP), endpoint, headers with `${ENV_VAR}` substitution
 - TLS configuration (enabled by default; `insecure: false` is the secure default)
 
@@ -429,6 +478,24 @@ An active `UserGrant` for `(extracted subject, target agent)` is mandatory for e
 ./agentic-identity-broker --config ./examples/config/impersonation.yaml
 ```
 
+### `trust-anchor-local-jwks.yaml` — Inline and File-Based Trust Anchor Key Sets
+
+Complete, loadable `local`-mode configuration in which three trust anchors take their public verification keys from configuration instead of a remote `jwks_uri` or issuer discovery. No outbound request is made for those keys.
+
+- `token_exchange.client_assertion` — client assertions from a locally signing gateway verify against an inline `jwks` JWK Set. Machine-facing approval authentication reuses this trust anchor.
+- `oauth2_authorization_server.impersonation.rules[].trusted_issuers[]` — each impersonation trusted issuer verifies credentials against its own `jwks_file`.
+- `server.enduser.authentication.jwt` — end-user JWT pre-authentication verifies a service mesh's identity JWTs against a `jwks_file`.
+
+Key settings:
+- `security.trust_material_dir` — the only directory from which `jwks_file` key sets are read
+- `jwks` / `jwks_file` — mutually exclusive with `jwks_uri` and each other
+- Key sets hold public asymmetric keys only; invalid or ambiguous key sources fail startup
+
+**Usage:**
+```bash
+IDENTITY_BROKER_CONFIG_PATH=./examples/config/trust-anchor-local-jwks.yaml ./agentic-identity-broker
+```
+
 ### Hybrid Mode (`oauth2-hybrid-mode.yaml`)
 
 Configures the broker to serve both proxy agents (forwarded to an upstream OAuth2 server) and local agents (tokens issued locally) in a single deployment. Agent classification is property-based: agents with `ClientID` set are ProxyClients; agents with `ClientURIs` set are CIMDClients; agents with neither are LocalClients.
@@ -558,7 +625,7 @@ Configuration Summary:
 ### Docker Container
 
 ```dockerfile
-FROM golang:1.27.1-alpine as builder
+FROM golang:1.27.3-alpine as builder
 WORKDIR /app
 COPY . .
 RUN go build -o agentic-identity-broker ./cmd/agentic-identity-broker

@@ -112,12 +112,37 @@ spec:
           readOnly: true
         - name: tmp
           mountPath: /tmp
+        {{- if .Values.broker.security.trustMaterial.sources }}
+        - name: trust-material
+          mountPath: {{ .Values.broker.security.trustMaterial.directory | quote }}
+          readOnly: true
+        {{- end }}
+        {{- with .Values.broker.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
       - name: config
         configMap:
           name: {{ include "agentic-identity-broker.fullname" . }}-config
       - name: tmp
         emptyDir: {}
+      {{- with .Values.broker.security.trustMaterial.sources }}
+      - name: trust-material
+        projected:
+          sources:
+          {{- range . }}
+          {{- if .secret }}
+          - secret:
+              {{- toYaml .secret | nindent 14 }}
+          {{- else if .configMap }}
+          - configMap:
+              {{- toYaml .configMap | nindent 14 }}
+          {{- end }}
+          {{- end }}
+      {{- end }}
+      {{- with .Values.broker.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

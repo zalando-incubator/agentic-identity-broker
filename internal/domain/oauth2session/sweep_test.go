@@ -104,8 +104,8 @@ type sweepFixture struct {
 
 func newSweepFixture(t *testing.T) *sweepFixture {
 	t.Helper()
-	_, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
-	repo := sessions.(*memory.InMemoryUserSessionRepository)
+	_, _, _, _, _, providers := setupServiceWithConfig(t, nil)
+	repo := memory.NewInMemoryUserSessionRepository()
 	f := &sweepFixture{
 		t: t, repo: repo, providers: providers, serviceID: id.NewServiceID(),
 		seedEncryption: newTestEncryption(t), logs: &strings.Builder{},
@@ -454,6 +454,24 @@ func TestSessionSweepDryRunSkipsMovedCandidateID(t *testing.T) {
 	assert.Equal(t, storage.SessionExpiryCursor{AccessTokenExpiresAt: movedExpiry, ID: first.ID}, f.expiry.calls[2].cursor)
 }
 
+func TestSessionSweepDryRunSkippedCandidateIsNotCounted(t *testing.T) {
+	reader := installMeterReader(t)
+
+	f := newSweepFixture(t)
+	later := time.Now().Add(time.Hour)
+	notDue := f.seed(1, &later, nil, true)
+	f.expiry.list = func(_ context.Context, _ time.Time, _ storage.SessionExpiryCursor, _ int) ([]*storage.UserSession, error) {
+		if len(f.expiry.calls) == 1 {
+			return []*storage.UserSession{notDue}, nil
+		}
+		return nil, nil
+	}
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: true})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 0, 1, 0, true)
+	assert.Empty(t, sweepMetrics(t, reader), "dry run must not emit the skipped counter")
+}
+
 func TestSessionSweepRejectsInvalidExpiryPages(t *testing.T) {
 	for _, name := range []string{"nil expiry", "repeated tuple", "decreasing tuple"} {
 		t.Run(name, func(t *testing.T) {
@@ -616,6 +634,7 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 			assert.Equal(t, "new-access", plain)
 			assert.EqualValues(t, 1, sweepMetrics(t, reader)["session_sweep_refreshed_total"])
 			assert.EqualValues(t, tc.wantFail, sweepMetrics(t, reader)["session_sweep_failed_total"])
+			assert.EqualValues(t, tc.wantSkip, sweepMetrics(t, reader)["session_sweep_skipped_total"])
 			if tc.wantFail == 1 {
 				original, err := f.repo.Get(context.Background(), sweepSessionID(1))
 				require.NoError(t, err)

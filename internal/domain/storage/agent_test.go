@@ -52,6 +52,41 @@ func TestAgent_Validate(t *testing.T) {
 			wantErr: "",
 		},
 		{
+			name: "web loopback and private-use redirects coexist",
+			agent: &Agent{
+				ID:             id.MustParseAgentID("550e8400-e29b-41d4-a716-446655440000"),
+				ClientID:       ptr.To(id.ClientID("test-client")),
+				DisplayName:    "Test Agent",
+				Description:    "A test agent",
+				RedirectURIs:   []string{"https://agent.example.com/callback", "http://127.0.0.1/callback", "github-app://oauth/callback", "com.example.app:/oauth2redirect/example-provider"},
+				PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeOptional}},
+			},
+		},
+		{
+			name: "unsafe redirect rejected at its index",
+			agent: &Agent{
+				ID:             id.MustParseAgentID("550e8400-e29b-41d4-a716-446655440000"),
+				ClientID:       ptr.To(id.ClientID("test-client")),
+				DisplayName:    "Test Agent",
+				Description:    "A test agent",
+				RedirectURIs:   []string{"javascript://oauth/callback"},
+				PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeOptional}},
+			},
+			wantErr: "redirect_uris[0] must be an https URI",
+		},
+		{
+			name: "mixed-case callback rejected at its index",
+			agent: &Agent{
+				ID:             id.MustParseAgentID("550e8400-e29b-41d4-a716-446655440000"),
+				ClientID:       ptr.To(id.ClientID("test-client")),
+				DisplayName:    "Test Agent",
+				Description:    "A test agent",
+				RedirectURIs:   []string{"github-app://oauth/callback", "GitHub-App://oauth/callback"},
+				PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeOptional}},
+			},
+			wantErr: "redirect_uris[1]",
+		},
+		{
 			name: "missing ID",
 			agent: &Agent{
 				ClientID:    ptr.To(id.ClientID("test-client")),

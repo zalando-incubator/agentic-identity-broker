@@ -734,11 +734,17 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 
 			principal := "user@example.com"
 			serviceID := uuid.New().String()
-			// Build URL with properly encoded query parameters
+			now := time.Now()
+			stateToken, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{
+				Principal: id.Principal(principal), ServiceID: id.MustParseServiceID(serviceID),
+				PKCEVerifier: "valid-verifier", RedirectURI: "https://broker.example.com/sessions",
+				IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute),
+			})
+			require.NoError(t, err)
 			params := url.Values{}
 			params.Set("error", tt.error)
 			params.Set("error_description", tt.errorDesc)
-			params.Set("state", "state-token")
+			params.Set("state", stateToken)
 			reqURL := "/api/third-party/" + serviceID + "/oauth2/callback?" + params.Encode()
 
 			req := httptest.NewRequest("GET", reqURL, nil)
@@ -753,7 +759,10 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 			location := w.Header().Get("Location")
 			assert.True(t, strings.HasPrefix(location, "/sessions?"), "unexpected callback redirect: %s", location)
 			assert.Contains(t, location, "error="+tt.error)
-			assert.Contains(t, location, url.QueryEscape(tt.errorDesc))
+			assert.NotContains(t, location, url.QueryEscape(tt.errorDesc), "provider-controlled descriptions must not reach the redirect")
+			parsed, err := url.Parse(location)
+			require.NoError(t, err)
+			assert.Equal(t, "Authorization failed - please try again", parsed.Query().Get("error_description"))
 		})
 	}
 }

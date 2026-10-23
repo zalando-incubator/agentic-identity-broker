@@ -36,7 +36,7 @@ func (c *confidentialClient) IsPublic() bool                { return false }
 func (c *confidentialClient) GetAudience() fosite.Arguments { return fosite.Arguments{} }
 
 // publicClient wraps a CIMD agent that uses no client secret (public client).
-// redirectURIs comes from the CIMD document, not from agent.RedirectURIs (which is empty for CIMD agents).
+// redirectURIs comes from the CIMD document; private-use entries must also match agent.RedirectURIs.
 type publicClient struct {
 	clientID     string
 	agent        *storage.Agent

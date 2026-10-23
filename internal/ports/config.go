@@ -51,13 +51,20 @@ type Config struct {
 
 // TokenRefreshConfig declares the proactive refresh settings for production configuration.
 type TokenRefreshConfig struct {
-	LookaheadDuration time.Duration           `mapstructure:"lookahead_duration"`
-	BackgroundWorkers int                     `mapstructure:"background_workers"`
-	Sweep             TokenRefreshSweepConfig `mapstructure:"sweep"`
+	LookaheadDuration time.Duration                   `mapstructure:"lookahead_duration"`
+	BackgroundWorkers int                             `mapstructure:"background_workers"`
+	Sweep             TokenRefreshSweepConfig         `mapstructure:"sweep"`
+	HealthMetrics     TokenRefreshHealthMetricsConfig `mapstructure:"health_metrics"`
 }
 
 type TokenRefreshSweepConfig struct {
 	DefaultPageSize int `mapstructure:"default_page_size"`
+}
+
+// TokenRefreshHealthMetricsConfig controls the oauth2_sessions gauge.
+type TokenRefreshHealthMetricsConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	QueryTimeout time.Duration `mapstructure:"query_timeout"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.
@@ -136,17 +143,25 @@ type JWTConfig struct {
 	HeaderName string `mapstructure:"header_name"`
 
 	// Verification controls JWT signature verification behavior.
-	// "jwks" (default): Signature verified against JWKS endpoint (requires JWKSURI).
+	// "jwks" (default): Signature verified with one of JWKSURI, JWKS, or JWKSFile.
 	// "none": Unsigned JWTs accepted (for trusted upstream/service mesh environments).
-	// Mutually exclusive with JWKSURI when set to "none".
+	// "none" is mutually exclusive with every explicit key source.
 	// Default: "jwks"
 	Verification string `mapstructure:"verification"`
 
-	// JWKSURI is the URL of the JWKS endpoint for signature verification.
-	// Required when Verification is "jwks" (or omitted). Must be HTTPS unless
-	// Security.SkipThirdpartyHTTPSValidation is true.
-	// MUST NOT be set when Verification is "none".
+	// JWKSURI is the URL of a remote JWKS endpoint for signature verification.
+	// It is one alternative when Verification is "jwks" (or omitted). It must be HTTPS
+	// unless Security.SkipThirdpartyHTTPSValidation is true, and cannot be set with
+	// JWKS, JWKSFile, or Verification "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
+
+	// JWKS is an inline JWK Set for signature verification on either server.
+	// It is mutually exclusive with JWKSURI, JWKSFile, and Verification "none".
+	JWKS string `mapstructure:"jwks"`
+
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir
+	// for either server. It is mutually exclusive with JWKSURI, JWKS, and Verification "none".
+	JWKSFile string `mapstructure:"jwks_file"`
 
 	// ExpectedAudience is the expected value in the JWT aud claim.
 	// If set, JWTs without this audience are rejected with 401.
@@ -311,6 +326,10 @@ type ThirdPartyOAuth2Config struct {
 	// Store in environment variable: IDENTITY_BROKER_JWE_SIGNING_KEY
 	JWESigningKey string `mapstructure:"jwe_signing_key"`
 
+	// ClientName identifies this broker or platform in DCR requests. It is optional
+	// for startup, manual services, and hosted CIMD; DCR requires a non-blank value.
+	ClientName string `mapstructure:"client_name"`
+
 	// StateTokenTTL is the time-to-live for OAuth2 state tokens.
 	// Maximum allowed: 15 minutes per security requirements (SR-008).
 	// Shorter TTL reduces exposure window for state token leakage.
@@ -320,7 +339,13 @@ type ThirdPartyOAuth2Config struct {
 	// PKCEVerifierLength is the length of PKCE code verifier in bytes.
 	// Must be 32-128 bytes per RFC 7636.
 	// Default: 32 bytes (256 bits of entropy)
-	PKCEVerifierLength int `mapstructure:"pkce_verifier_length"`
+	PKCEVerifierLength int                              `mapstructure:"pkce_verifier_length"`
+	CredentialFiles    map[string]CredentialFileBinding `mapstructure:"-"`
+}
+
+type CredentialFileBinding struct {
+	ClientIDFile     string `mapstructure:"client_id_file" json:"client_id_file" yaml:"client_id_file"`
+	ClientSecretFile string `mapstructure:"client_secret_file" json:"client_secret_file" yaml:"client_secret_file"`
 }
 
 // MultiAgentClientConfig holds configuration for multi-agent OAuth2 client sharing.
@@ -762,9 +787,15 @@ type TrustedTokenIssuerConfig struct {
 	IssuerURI string `mapstructure:"issuer_uri"`
 	// JWKSURI is the explicit key-set location; discovered from issuer metadata when empty.
 	JWKSURI string `mapstructure:"jwks_uri"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile string `mapstructure:"jwks_file"`
 	// JWKSMinRefresh bounds the minimum JWKS refresh cadence (default 15m).
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
-	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence (default max(min, 1h)).
+	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence. For JWKSFile, unset or
+	// below-minimum values default to max(3 × JWKSMinRefresh, 1h); remote sources
+	// default to max(JWKSMinRefresh, 1h).
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 	// AllowedAlgorithms is a non-empty subset of the broker-approved asymmetric set (CR-007).
 	AllowedAlgorithms []string `mapstructure:"allowed_algorithms"`
@@ -779,8 +810,12 @@ type TrustedTokenIssuerConfig struct {
 // in proxy and hybrid modes. In local mode it must be set explicitly and must identify an external
 // identity provider; broker-minted tokens must never be accepted as client assertions.
 type ClientAssertionTrustConfig struct {
-	IssuerURI      string        `mapstructure:"issuer_uri"`
-	JWKSURI        string        `mapstructure:"jwks_uri"`
+	IssuerURI string `mapstructure:"issuer_uri"`
+	JWKSURI   string `mapstructure:"jwks_uri"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile       string        `mapstructure:"jwks_file"`
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 }
@@ -900,6 +935,10 @@ type SecurityConfig struct {
 	// for CIMD document fetches.
 	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
+
+	// TrustMaterialDir is the only directory from which key-set files (jwks_file) are read.
+	// Absolute, resolves to an existing directory other than "/". Unset disables jwks_file.
+	TrustMaterialDir string `mapstructure:"trust_material_dir"`
 }
 
 // EncryptionConfig contains configuration for encryption operations.

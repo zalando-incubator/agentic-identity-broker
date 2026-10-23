@@ -119,6 +119,12 @@ oauth2_authorization_server:
             jwks_uri: "https://idp.internal.example.com/.well-known/jwks.json"
             jwks_min_refresh: "15m"
             jwks_max_refresh: "1h"
+            # Alternatives to jwks_uri (mutually exclusive with it and each other; no discovery
+            # or key fetch). `jwks` is an inline JWK Set and rejects jwks_min_refresh and
+            # jwks_max_refresh; `jwks_file` must lie inside security.trust_material_dir and
+            # uses the refresh bounds as its re-read interval. See trust-anchor-local-jwks.yaml.
+            # jwks: '{"keys":[{"kty":"EC","crv":"P-256","kid":"idp-2026-10","use":"sig","alg":"ES256","x":"<base64url>","y":"<base64url>"}]}'
+            # jwks_file: "/etc/agentic-identity-broker/trust/idp-jwks.json"
             allowed_algorithms: ["ES256", "RS256"] # CR-007: asymmetric only; no HS*/none
             # CR-008: every signed role is covered by at least one trusted issuer.
             signs_roles: ["client_assertion", "actor", "subject"]

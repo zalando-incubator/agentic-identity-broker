@@ -41,25 +41,27 @@ type signingKeyAdapter interface {
 // Adapters implement repository interfaces (UserRepository, etc.)
 // This struct is returned by NewAdapter factory function.
 type Adapter struct {
-	lifecycle            lifecycleAdapter
-	users                ports.UserRepository
-	agents               ports.AgentRepository
-	providers            ports.ThirdpartyOAuth2ProviderRepository
-	userGrants           ports.UserGrantRepository
-	userSessions         ports.UserSessionRepository
-	sessionRefresh       ports.UserSessionRefreshRepository
-	sessionExpiry        ports.UserSessionExpiryRepository
-	toolApprovals        ports.ToolApprovalRepository
-	toolApprovalQueries  ports.ToolApprovalQueryRepository
-	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
-	approvalSyncState    ports.ApprovalSyncStateRepository
-	permissionSets       ports.PermissionSetRepository
-	brokerCredentials    ports.ClientCredentialRepository
-	signingKeys          signingKeyAdapter
-	refreshTokenSessions ports.RefreshTokenSessionRepository
-	transactions         ports.StorageTransactionManager
-	authorizationCodes   ports.AuthorizationCodeRepository
-	pkceSessions         ports.PKCESessionRepository
+	lifecycle             lifecycleAdapter
+	users                 ports.UserRepository
+	agents                ports.AgentRepository
+	providers             ports.ThirdpartyOAuth2ProviderRepository
+	discoveryStatusWriter ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter
+	userGrants            ports.UserGrantRepository
+	userSessions          ports.UserSessionRepository
+	sessionRefresh        ports.UserSessionRefreshRepository
+	sessionExpiry         ports.UserSessionExpiryRepository
+	sessionHealth         ports.UserSessionHealthRepository
+	toolApprovals         ports.ToolApprovalRepository
+	toolApprovalQueries   ports.ToolApprovalQueryRepository
+	toolApprovalMetrics   ports.ToolApprovalMetricsRepository
+	approvalSyncState     ports.ApprovalSyncStateRepository
+	permissionSets        ports.PermissionSetRepository
+	brokerCredentials     ports.ClientCredentialRepository
+	signingKeys           signingKeyAdapter
+	refreshTokenSessions  ports.RefreshTokenSessionRepository
+	transactions          ports.StorageTransactionManager
+	authorizationCodes    ports.AuthorizationCodeRepository
+	pkceSessions          ports.PKCESessionRepository
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -96,26 +98,29 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	toolApprovalRepo := memory.NewToolApprovalRepository()
 	signingKeys := memory.NewSigningKeyStore()
 	sessions := memory.NewInMemoryUserSessionRepository()
+	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
 	return &Adapter{
-		lifecycle:            memAdapter,
-		users:                memAdapter,
-		agents:               agentRepo,
-		providers:            memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
-		userGrants:           userGrants,
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		sessionExpiry:        sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    memory.NewApprovalSyncStateRepository(),
-		permissionSets:       permissionSets,
-		brokerCredentials:    memory.NewClientCredentialStore(),
-		signingKeys:          signingKeys,
-		authorizationCodes:   memory.NewAuthorizationCodeStore(),
-		refreshTokenSessions: memory.NewRefreshTokenSessionStore(),
-		transactions:         noOpStorageTransactionManager{},
-		pkceSessions:         memory.NewPKCESessionStore(),
+		lifecycle:             memAdapter,
+		users:                 memAdapter,
+		agents:                agentRepo,
+		providers:             providerRepo,
+		discoveryStatusWriter: providerRepo,
+		userGrants:            userGrants,
+		userSessions:          sessions,
+		sessionRefresh:        sessions,
+		sessionExpiry:         sessions,
+		sessionHealth:         sessions,
+		toolApprovals:         toolApprovalRepo,
+		toolApprovalQueries:   toolApprovalRepo,
+		toolApprovalMetrics:   toolApprovalRepo,
+		approvalSyncState:     memory.NewApprovalSyncStateRepository(),
+		permissionSets:        permissionSets,
+		brokerCredentials:     memory.NewClientCredentialStore(),
+		signingKeys:           signingKeys,
+		authorizationCodes:    memory.NewAuthorizationCodeStore(),
+		refreshTokenSessions:  memory.NewRefreshTokenSessionStore(),
+		transactions:          noOpStorageTransactionManager{},
+		pkceSessions:          memory.NewPKCESessionStore(),
 	}, nil
 }
 
@@ -132,27 +137,30 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	toolApprovalRepo := postgres.NewToolApprovalRepository(pgAdapter)
 	signingKeys := postgres.NewSigningKeyRepo(pgAdapter)
 	sessions := postgres.NewUserSessionRepository(pgAdapter)
+	providerRepo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter)
 
 	return &Adapter{
-		lifecycle:            pgAdapter,
-		users:                pgAdapter,
-		agents:               postgres.NewAgentRepository(pgAdapter),
-		providers:            postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
-		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		sessionExpiry:        sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    postgres.NewApprovalSyncStateRepository(pgAdapter),
-		permissionSets:       postgres.NewPermissionSetRepository(pgAdapter),
-		brokerCredentials:    postgres.NewClientCredentialRepo(pgAdapter),
-		signingKeys:          signingKeys,
-		authorizationCodes:   postgres.NewAuthorizationCodeRepo(pgAdapter),
-		refreshTokenSessions: postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		transactions:         pgAdapter,
-		pkceSessions:         postgres.NewPKCESessionRepo(pgAdapter),
+		lifecycle:             pgAdapter,
+		users:                 pgAdapter,
+		agents:                postgres.NewAgentRepository(pgAdapter),
+		providers:             providerRepo,
+		discoveryStatusWriter: providerRepo,
+		userGrants:            postgres.NewUserGrantRepository(pgAdapter),
+		userSessions:          sessions,
+		sessionRefresh:        sessions,
+		sessionExpiry:         sessions,
+		sessionHealth:         sessions,
+		toolApprovals:         toolApprovalRepo,
+		toolApprovalQueries:   toolApprovalRepo,
+		toolApprovalMetrics:   toolApprovalRepo,
+		approvalSyncState:     postgres.NewApprovalSyncStateRepository(pgAdapter),
+		permissionSets:        postgres.NewPermissionSetRepository(pgAdapter),
+		brokerCredentials:     postgres.NewClientCredentialRepo(pgAdapter),
+		signingKeys:           signingKeys,
+		authorizationCodes:    postgres.NewAuthorizationCodeRepo(pgAdapter),
+		refreshTokenSessions:  postgres.NewRefreshTokenSessionRepo(pgAdapter),
+		transactions:          pgAdapter,
+		pkceSessions:          postgres.NewPKCESessionRepo(pgAdapter),
 	}, nil
 }
 
@@ -214,6 +222,11 @@ func (a *Adapter) Services() ports.ThirdpartyOAuth2ProviderRepository {
 	return a.providers
 }
 
+// DiscoveryStatusWriter records failed discovery without changing active services.
+func (a *Adapter) DiscoveryStatusWriter() ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter {
+	return a.discoveryStatusWriter
+}
+
 // UserGrants returns the UserGrantRepository interface implementation.
 // Used for user grant CRUD operations.
 func (a *Adapter) UserGrants() ports.UserGrantRepository {
@@ -234,6 +247,11 @@ func (a *Adapter) SessionRefresh() ports.UserSessionRefreshRepository {
 // SessionExpiry returns the bounded expiring-session read repository.
 func (a *Adapter) SessionExpiry() ports.UserSessionExpiryRepository {
 	return a.sessionExpiry
+}
+
+// SessionHealth returns the session-health count repository.
+func (a *Adapter) SessionHealth() ports.UserSessionHealthRepository {
+	return a.sessionHealth
 }
 
 // ToolApprovals returns the ToolApprovalRepository interface implementation.

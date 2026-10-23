@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,41 @@ func TestNewAdapter_Memory(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, adapter)
 	assert.NotNil(t, adapter.Users())
+}
+
+func TestMemoryAdapter_MissingServiceSessionIsNotFound(t *testing.T) {
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	repo := adapter.UserSessions()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		create func(context.Context, *domainstorage.UserSession) error
+	}{
+		{"Create", repo.Create},
+		{"CreateIfAbsent", func(ctx context.Context, session *domainstorage.UserSession) error {
+			_, err := repo.CreateIfAbsent(ctx, session)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			serviceID := id.NewServiceID()
+			now := time.Now().UTC()
+			session := &domainstorage.UserSession{
+				ID: id.NewSessionID(), Principal: id.Principal("missing-service@example.com"), ServiceID: serviceID,
+				EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"read"},
+				EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+				InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+			}
+			err := tc.create(ctx, session)
+			var storageErr *domainstorage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, domainstorage.ErrorKindNotFound, storageErr.Kind)
+			count, err := repo.CountByService(ctx, serviceID)
+			require.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
 func TestNewAdapter_MemoryExposesSigningKeyBootstrapCoordinator(t *testing.T) {
@@ -210,4 +247,164 @@ func TestBackendSelectionValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	serviceID := id.NewServiceID()
+	resourceURL := "https://mcp.example.test/mcp"
+	completedAt := time.Now().UTC().Add(-time.Hour)
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "MCP", ClientID: "registered-client", IssuerURI: "https://old-issuer.example.test",
+		Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceURL, ClientMethod: model.ClientBootstrapDCR},
+		AuthorizationParams: map[string]string{"resource": resourceURL},
+		DiscoveryStatus:     model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt},
+	}
+	require.NoError(t, adapter.Services().Create(ctx, provider))
+	changed := provider.Copy()
+	changed.IssuerURI = "https://new-issuer.example.test"
+	nextAt := completedAt.Add(time.Minute)
+	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &nextAt, LastSuccessAt: &nextAt}
+	require.NoError(t, adapter.Services().Update(ctx, changed, &provider.Version))
+
+	session := &domainstorage.UserSession{
+		ID: id.NewSessionID(), Principal: id.Principal("issuer-race@example.test"), ServiceID: serviceID,
+		EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"read"},
+		EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       nextAt, CreatedAt: nextAt, UpdatedAt: nextAt,
+		ExpectedIssuerURI: provider.IssuerURI,
+		ExpectedResource:  resourceURL,
+	}
+	err = adapter.UserSessions().Create(ctx, session)
+	var storageErr *domainstorage.StorageError
+	require.ErrorAs(t, err, &storageErr, "the old issuer's callback cannot insert after its service moves")
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+
+	session.ExpectedIssuerURI = changed.IssuerURI
+	require.NoError(t, adapter.UserSessions().Create(ctx, session))
+	third := changed.Copy()
+	third.IssuerURI = "https://third-issuer.example.test"
+	laterAt := nextAt.Add(time.Minute)
+	third.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &laterAt, LastSuccessAt: &laterAt}
+	err = adapter.Services().Update(ctx, third, &changed.Version)
+	require.ErrorAs(t, err, &storageErr, "the final issuer update must recheck sessions")
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+	stored, err := adapter.Services().Get(ctx, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, changed.IssuerURI, stored.IssuerURI)
+}
+
+func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing.T) {
+	ctx := context.Background()
+	for range 32 {
+		adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+		require.NoError(t, err)
+		serviceID := id.NewServiceID()
+		resourceURL := "https://mcp.example.test/mcp"
+		initialAt := time.Now().UTC().Add(-time.Hour)
+		provider := &model.ThirdpartyOAuth2ProviderEntity{
+			ID: serviceID, DisplayName: "MCP", ClientID: "registered-client", IssuerURI: "https://old-issuer.example.test",
+			Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+			Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceURL, ClientMethod: model.ClientBootstrapDCR},
+			AuthorizationParams: map[string]string{"resource": resourceURL},
+			DiscoveryStatus:     model.DiscoveryStatus{LastAttemptAt: &initialAt, LastSuccessAt: &initialAt},
+		}
+		require.NoError(t, adapter.Services().Create(ctx, provider))
+		changed := provider.Copy()
+		changed.IssuerURI = "https://new-issuer.example.test"
+		readyAt := initialAt.Add(time.Minute)
+		changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &readyAt, LastSuccessAt: &readyAt}
+		session := &domainstorage.UserSession{
+			ID: id.NewSessionID(), Principal: id.Principal("concurrent@example.test"), ServiceID: serviceID,
+			EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"read"},
+			EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+			InitiatedAt:       readyAt, CreatedAt: readyAt, UpdatedAt: readyAt,
+			ExpectedIssuerURI: provider.IssuerURI,
+			ExpectedResource:  resourceURL,
+		}
+		start := make(chan struct{})
+		insertResult := make(chan error, 1)
+		changeResult := make(chan error, 1)
+		go func() { <-start; insertResult <- adapter.UserSessions().Create(ctx, session) }()
+		go func() { <-start; changeResult <- adapter.Services().Update(ctx, changed, &provider.Version) }()
+		close(start)
+		insertErr, changeErr := <-insertResult, <-changeResult
+		count, err := adapter.UserSessions().CountByService(ctx, serviceID)
+		require.NoError(t, err)
+		stored, err := adapter.Services().Get(ctx, serviceID)
+		require.NoError(t, err)
+		if changeErr == nil {
+			require.Error(t, insertErr)
+			assert.Zero(t, count)
+			assert.Equal(t, changed.IssuerURI, stored.IssuerURI)
+		} else {
+			require.NoError(t, insertErr)
+			require.ErrorIs(t, changeErr, domainstorage.ErrIssuerChangeHasSessions)
+			assert.Equal(t, 1, count)
+			assert.Equal(t, provider.IssuerURI, stored.IssuerURI)
+		}
+	}
+}
+
+func TestMemoryAdapter_StaleAudienceCannotInsertOrReplaceSession(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	serviceID := id.NewServiceID()
+	const audienceA = "https://mcp.example.test/a"
+	const audienceB = "https://mcp.example.test/b"
+	resourceA := audienceA
+	initialAt := time.Now().UTC().Add(-time.Hour)
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "MCP", ClientID: "registered-client", IssuerURI: "https://issuer.example.test",
+		Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceA, ClientMethod: model.ClientBootstrapDCR},
+		AuthorizationParams: map[string]string{"resource": audienceA},
+		DiscoveryStatus:     model.DiscoveryStatus{LastAttemptAt: &initialAt, LastSuccessAt: &initialAt},
+	}
+	require.NoError(t, adapter.Services().Create(ctx, provider))
+	principal := id.Principal("callback@example.test")
+	stale := &domainstorage.UserSession{
+		ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+		EncryptedAccessToken: []byte("stale-access"), EncryptedRefreshToken: []byte("stale-refresh"),
+		TokenType: "Bearer", Scope: []string{"read"},
+		EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       initialAt, CreatedAt: initialAt, UpdatedAt: initialAt,
+		ExpectedIssuerURI: provider.IssuerURI, ExpectedResource: audienceA,
+	}
+	changed := provider.Copy()
+	resourceB := audienceB
+	changed.Discovery.ResourceURL = &resourceB
+	changed.AuthorizationParams["resource"] = audienceB
+	committedAt := initialAt.Add(time.Minute)
+	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
+	require.NoError(t, adapter.Services().Update(ctx, changed, &provider.Version))
+
+	err = adapter.UserSessions().Create(ctx, stale)
+	var storageErr *domainstorage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+	count, err := adapter.UserSessions().CountByService(ctx, serviceID)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+
+	current := *stale
+	current.ExpectedResource = audienceB
+	current.EncryptedAccessToken = []byte("current-access")
+	current.EncryptedRefreshToken = []byte("current-refresh")
+	require.NoError(t, adapter.UserSessions().Create(ctx, &current))
+	err = adapter.UserSessions().Create(ctx, stale)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+	stored, err := adapter.UserSessions().FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, current.ID, stored.ID)
+	assert.Equal(t, current.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, current.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+	assert.Empty(t, stored.ExpectedIssuerURI)
+	assert.Empty(t, stored.ExpectedResource)
 }

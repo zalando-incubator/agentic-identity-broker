@@ -36,6 +36,24 @@ func TestParseDocument(t *testing.T) {
 		assert.Equal(t, []string{"https://agent.example.com/callback"}, doc.RedirectURIs)
 	})
 
+	t.Run("accepts published GitHub Copilot Desktop document structurally", func(t *testing.T) {
+		const clientID = "https://github.com/copilot/desktop/client-metadata.json"
+		data := []byte(`{"client_id":"https://github.com/copilot/desktop/client-metadata.json","client_name":"GitHub Copilot","client_uri":"https://github.com/github/app","application_type":"native","grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:device_code"],"response_types":["code"],"token_endpoint_auth_method":"none","redirect_uris":["github-app://oauth/callback","http://127.0.0.1/","http://127.0.0.1/callback"]}`)
+		doc, err := ParseDocument(data, clientID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"github-app://oauth/callback", "http://127.0.0.1/", "http://127.0.0.1/callback"}, doc.RedirectURIs)
+	})
+
+	t.Run("rejects executable redirect scheme", func(t *testing.T) {
+		_, err := ParseDocument(validDoc(map[string]any{"redirect_uris": []string{"javascript://agent.example.com/callback"}}), fetchURL, nil)
+		require.ErrorContains(t, err, "not a valid redirect URI")
+	})
+
+	t.Run("rejects mixed-case private-use scheme", func(t *testing.T) {
+		_, err := ParseDocument(validDoc(map[string]any{"redirect_uris": []string{"GitHub-App://oauth/callback"}}), fetchURL, nil)
+		require.ErrorContains(t, err, "not a valid redirect URI")
+	})
+
 	t.Run("rejects malformed JSON", func(t *testing.T) {
 		_, err := ParseDocument([]byte("not json"), fetchURL, nil)
 		require.Error(t, err)
@@ -193,4 +211,31 @@ func TestParseDocument(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "HTTPS")
 	})
+}
+
+func TestClientIDMetadataDocument_ValidatePrivateUseRedirectURIs(t *testing.T) {
+	const callback = "github-app://oauth/callback"
+	tests := []struct {
+		name      string
+		redirects []string
+		agent     []string
+		wantErr   string
+	}{
+		{"allowlisted entry", []string{callback, "http://127.0.0.1/callback"}, []string{callback}, ""},
+		{"missing Agent list", []string{callback}, nil, `redirect_uris[0]: private-use redirect_uri "github-app://oauth/callback" is not listed in the agent's redirect_uris`},
+		{"second private-use entry missing", []string{callback, "com.example.app:/oauth2redirect/example-provider"}, []string{callback}, "redirect_uris[1]"},
+		{"web and loopback need no Agent entry", []string{"https://agent.example.com/callback", "http://127.0.0.1/callback"}, nil, ""},
+		{"trailing slash is not equal", []string{callback}, []string{callback + "/"}, "redirect_uris[0]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := &ClientIDMetadataDocument{RedirectURIs: tt.redirects}
+			err := document.ValidatePrivateUseRedirectURIs(tt.agent)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tt.wantErr)
+			}
+		})
+	}
 }

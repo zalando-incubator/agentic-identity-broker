@@ -104,7 +104,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 | Section | Technology | AGENTS.md |
 |---|---|---|
-| `internal/` | Go 1.27.1 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
+| `internal/` | Go 1.27.3 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
 | `web/` | React 19 + TypeScript + Vite 7 + Tailwind 4 | `web/AGENTS.md` |
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
@@ -123,6 +123,8 @@ After that merge, a change or deviation requires a new Accepted superseding ADR.
 See Principle II in `.specify/memory/constitution.md`.
 
 For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs. On 2026-10-12, the stakeholder approved renumbering ADR 039's migration from `036` to `037` after `main` took version 36.
+
+For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
 
 | ADR | File | Decision |
 |---|---|---|
@@ -160,6 +162,10 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
+| 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
+| 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
+| 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
 
 ## Domain Glossary
 
@@ -178,6 +184,9 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
+| **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
+| **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 
 ## Development Workflow
 
@@ -209,6 +218,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Match surrounding style** — Keep naming, error handling, and file structure consistent with adjacent code.
 - **Explicit over clever** — Make intent clear without tracing abstractions.
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
+- **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
@@ -218,4 +228,4 @@ Use `NNN_description.{up,down}.sql` for migrations in `migrations/`. For large t
 
 ## Active Technologies
 
-Go 1.27.1 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
+Go 1.27.3 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
