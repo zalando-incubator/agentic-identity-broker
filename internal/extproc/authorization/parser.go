@@ -24,6 +24,11 @@ func ParseMCPMessage(value any) (*MCPMessage, error) {
 	if field := duplicateEnvelopeField(object); field != "" {
 		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: duplicate %s field", field)
 	}
+	for key := range object {
+		if noncanonicalMCPKey(key, "jsonrpc", "id", "method", "params") {
+			return nil, fmt.Errorf("mcp parser: noncanonical envelope key %q", key)
+		}
+	}
 	msg := &MCPMessage{ID: object["id"]}
 	if version, ok := object["jsonrpc"].(string); ok {
 		msg.JSONRPC = version
@@ -46,7 +51,23 @@ func ParseMCPMessage(value any) (*MCPMessage, error) {
 	if msg.Method == "" {
 		return nil, fmt.Errorf("mcp parser: missing or empty method field")
 	}
+	if msg.Method == "tools/call" {
+		for key := range msg.Params {
+			if noncanonicalMCPKey(key, "name", "arguments") {
+				return nil, fmt.Errorf("mcp parser: noncanonical params key %q", key)
+			}
+		}
+	}
 	return msg, nil
+}
+
+func noncanonicalMCPKey(key string, recognized ...string) bool {
+	for _, name := range recognized {
+		if key != name && strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func duplicateEnvelopeField(object map[string]any) string {

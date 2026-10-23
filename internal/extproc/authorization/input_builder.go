@@ -145,7 +145,11 @@ func buildMCPInput(input OPAInput, parsed any, sessionID, targetServerName strin
 			return nil, fmt.Errorf("input builder: tools/call missing or invalid params.name")
 		}
 		mcpInput["tool_name"] = name
-		if args, ok := msg.Params["arguments"].(map[string]any); ok && len(args) > 0 {
+		if value, present := msg.Params["arguments"]; present {
+			args, ok := value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("input builder: tools/call invalid params.arguments")
+			}
 			mcpInput["arguments"] = args
 		}
 		input["type"] = "mcp_tool_call"
