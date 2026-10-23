@@ -13,7 +13,6 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   merge_group:
   push:
     branches: [main]
@@ -480,8 +479,8 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
-      - name: Spec Kit and architecture review automation guards
-        run: node --test .github/scripts/speckit-automation.test.cjs .github/scripts/architecture-review-automation.test.cjs
+      - name: Automation guards
+        run: node --test .github/scripts/pr-conflict-automation.test.cjs .github/scripts/speckit-automation.test.cjs .github/scripts/architecture-review-automation.test.cjs
       - name: Validate agentic workflows
         env:
           GH_TOKEN: ${{ github.token }}

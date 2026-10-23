@@ -1,0 +1,73 @@
+name: PR Conflict Assist
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] -- Only default-branch router code runs with read permissions; PR code runs in the isolated worker.
+    branches: [main]
+    types: [labeled, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions: {}
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      APP_CONFIGURED: ${{ vars.PR_CONFLICT_APP_CLIENT_ID != '' && secrets.PR_CONFLICT_APP_PRIVATE_KEY != '' }}
+    outputs:
+      candidates: ${{ steps.route.outputs.candidates }}
+      count: ${{ steps.route.outputs.count }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Check conflict automation guards
+        run: node --test .github/scripts/pr-conflict-automation.test.cjs
+      - name: Select eligible conflicted PRs
+        id: route
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { selectConflicts } = require('./.github/scripts/pr-conflict-automation.cjs');
+            const candidates = await selectConflicts({ github, context });
+            core.setOutput('candidates', JSON.stringify(candidates));
+            core.setOutput('count', String(candidates.length));
+            if (candidates.length && process.env.APP_CONFIGURED !== 'true') {
+              throw new Error('PR Conflict Resolver App client ID or private key is not configured');
+            }
+            core.info(`Eligible conflicted PRs: ${candidates.length}`);
+
+  resolve:
+    needs: route
+    if: needs.route.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pr: ${{ fromJSON(needs.route.outputs.candidates) }}
+    concurrency:
+      group: pr-conflicts-${{ github.repository }}-${{ matrix.pr.number }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/pr-conflict-resolution.lock.yml
+    with:
+      pr: ${{ matrix.pr.number }}
+      head: ${{ matrix.pr.head }}
+      base: ${{ matrix.pr.base }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      PR_CONFLICT_APP_PRIVATE_KEY: ${{ secrets.PR_CONFLICT_APP_PRIVATE_KEY }}

@@ -7,6 +7,13 @@ paths:
   .github/workflows/architecture-review-assisted.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-assist.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-resolution.lock.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+      - '^property "workflow_(repository|sha|ref|file_path)" is not defined in object type'
   .github/workflows/*.lock.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
