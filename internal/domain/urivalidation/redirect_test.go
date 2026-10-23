@@ -24,6 +24,7 @@ func TestIsValidRedirectURI(t *testing.T) {
 		{"port above range rejected", "https://client.example.com:65536/cb", false},
 		{"http non-local rejected", "http://client.example.com/callback", false},
 		{"http non-local with port rejected", "http://client.example.com:8080/cb", false},
+		{"private-use scheme is not a web redirect URI", "github-app://oauth/callback", false},
 		{"empty string", "", false},
 		{"no scheme", "client.example.com/callback", false},
 		{"non-http scheme", "ftp://client.example.com/callback", false},
@@ -64,6 +65,12 @@ func TestMatchesRedirectURI(t *testing.T) {
 		{"non-loopback: port differs", "https://app.example.com/cb", "https://app.example.com:9999/cb", false},
 		{"non-loopback: explicit port differs", "https://app.example.com:8443/cb", "https://app.example.com:9000/cb", false},
 		{"non-loopback: portless reg, port in request", "https://app.example.com/cb", "https://app.example.com:443/cb", false},
+		{"private-use authority exact", "github-app://oauth/callback", "github-app://oauth/callback", true},
+		{"private-use scheme case differs", "github-app://oauth/callback", "GITHUB-APP://oauth/callback", false},
+		{"private-use host case differs", "github-app://oauth/callback", "github-app://OAUTH/callback", false},
+		{"private-use path differs", "github-app://oauth/callback", "github-app://oauth/callback/", false},
+		{"private-use query differs", "github-app://oauth/callback", "github-app://oauth/callback?x=1", false},
+		{"private-use single-slash exact", "com.example.app:/oauth2redirect/example-provider", "com.example.app:/oauth2redirect/example-provider", true},
 		// Defense-in-depth — reject malformed values even if legacy data bypassed write validation
 		{"invalid: registered empty port rejected", "http://localhost:/cb", "http://localhost:52341/cb", false},
 		{"invalid: incoming empty port rejected", "http://localhost/cb", "http://localhost:/cb", false},
@@ -79,6 +86,34 @@ func TestMatchesRedirectURI(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("MatchesRedirectURI(%q, %q) = %v, want %v", tc.registered, tc.incoming, got, tc.want)
 			}
+		})
+	}
+}
+
+func TestIsRegisteredRedirectURI(t *testing.T) {
+	callback := "github-app://oauth/callback"
+	tests := []struct {
+		name     string
+		client   []string
+		agent    []string
+		incoming string
+		want     bool
+	}{
+		{"web URI comes from client list", []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
+		{"loopback port may vary", []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
+		{"private-use in both lists", []string{callback}, []string{callback}, callback, true},
+		{"private-use only in client list", []string{callback}, nil, callback, false},
+		{"private-use only in Agent list", nil, []string{callback}, callback, false},
+		{"scheme alone cannot authorize", []string{callback}, []string{callback}, "github-app://evil/steal", false},
+		{"host alone cannot authorize", []string{callback}, []string{callback}, "github-app://oauth", false},
+		{"prefix cannot authorize", []string{callback}, []string{callback}, "github-app://oauth/callback/extra", false},
+		{"wildcard cannot authorize", []string{callback}, []string{callback}, "github-app://*/callback", false},
+		{"case variant cannot authorize", []string{callback}, []string{callback}, "GITHUB-APP://oauth/callback", false},
+		{"port cannot vary", []string{"myapp://oauth:8080/callback"}, []string{"myapp://oauth:8080/callback"}, "myapp://oauth:9090/callback", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.client, tt.agent, tt.incoming))
 		})
 	}
 }

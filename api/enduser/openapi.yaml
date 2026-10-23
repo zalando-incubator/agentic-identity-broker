@@ -1279,9 +1279,14 @@ paths:
         In local/hybrid mode the `client_id` may also be an HTTPS URL identifying a
         Client ID Metadata Document (CIMD) when CIMD is enabled.
 
+        **redirect_uri validation** (all modes):
+        - `redirect_uri` is matched against the agent's `redirect_uris`. For a CIMD `client_id`, it is matched against the fetched document's `redirect_uris`.
+        - Loopback `http` URIs match on any port.
+        - A private-use scheme URI such as `github-app://oauth/callback` matches only character for character. For a CIMD client, the agent's `redirect_uris` must also list it.
+        - The broker never redirects to an unregistered `redirect_uri`.
+
         **Local/Hybrid Mode**:
         When the broker acts as its own OAuth2 authorization server:
-        - Validates the agent's registered `redirect_uris`
         - If user has an active grant, redirects to `redirect_uri` with `code` and `state`
         - If no active grant exists, redirects to the consent UI for user approval
         - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`
@@ -1294,9 +1299,9 @@ paths:
         **Error Handling** (RFC 6749 §4.1.2.1):
 
         Direct JSON responses (no redirect — RFC 6749 §4.1.2.1):
-        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists
+        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; or the CIMD document fails validation, including a private-use redirect URI that the agent's `redirect_uris` does not list
         - `invalid_redirect_uri` (400): `redirect_uri` not registered on the agent
-        - `invalid_request` (400): Missing PKCE parameters
+        - `invalid_request` (400): Missing PKCE parameters, or `redirect_uri` not registered for a CIMD client
         - `unsupported_response_type` (400): `response_type` is not `code`
         - `server_error` (500): Internal infrastructure failure
 
@@ -1330,7 +1335,8 @@ paths:
         - name: redirect_uri
           in: query
           required: true
-          description: Callback URI to redirect to after authorization. Must be pre-registered.
+          description: >
+            Callback URI to redirect to after authorization. Must be pre-registered: an https URI, a loopback http URI, or an allowlisted native-app private-use scheme URI (see redirect_uri validation).
           schema:
             type: string
             format: uri
@@ -1371,7 +1377,7 @@ paths:
                 Destination URL:
                 - Upstream authorization URL with PKCE and agent ID parameters (proxy mode)
                 - Consent UI URL if user has no active grant (local/hybrid mode)
-                - redirect_uri with `code` and `state` query parameters (local/hybrid mode, active grant)
+                - redirect_uri with `code` and `state` query parameters (local/hybrid mode, active grant); a private-use scheme callback receives the same parameters
               schema:
                 type: string
                 format: uri
@@ -2095,6 +2101,9 @@ paths:
       summary: Deny a pending tool call
       description: |
         Transitions a pending approval to denied state.
+        With persistence: permanent, blocks the exact tool for this principal and agent
+        until revocation, regardless of arguments or session. Clears parameter constraints.
+        ExtProc enforces the denial before matching approvals and does not create another approval request.
         Auth: acting user principal from the browser auth layer; principal must match.
       tags:
         - Approvals

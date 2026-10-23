@@ -4,6 +4,8 @@ package oauth2
 import (
 	"fmt"
 	"net/url"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 )
 
 // OAuth2Error represents an OAuth2 error (RFC 6749 Section 5.2).
@@ -50,15 +52,15 @@ func TemporarilyUnavailableError(description string) *OAuth2Error {
 	}
 }
 
-// buildErrorRedirectURL constructs an OAuth2 error redirect URL per RFC 6749 Section 4.1.2.5.
+// BuildErrorRedirectURL constructs an OAuth2 error redirect URL per RFC 6749 §4.1.2.1.
 // Parameters:
 // - redirectURI: Client's registered callback URL
 // - state: Original state parameter (preserved in error response)
 // - errorCode: OAuth2 error code (e.g., "invalid_client")
 // - errorDescription: Human-readable error description
 //
-// Returns the redirect URL with error parameters in query string.
-// Example: https://client.example.com/callback?error=invalid_client&error_description=...&state=xyz
+// Web callbacks and validated private-use callbacks (RFC 8252 §7.1) can receive errors.
+// Example: https://client.example.com/callback?error=invalid_client&state=xyz
 func BuildErrorRedirectURL(redirectURI, state, errorCode, errorDescription string) (string, error) {
 	if redirectURI == "" {
 		return "", fmt.Errorf("redirect_uri is required")
@@ -70,9 +72,8 @@ func BuildErrorRedirectURL(redirectURI, state, errorCode, errorDescription strin
 		return "", fmt.Errorf("invalid redirect_uri: %w", err)
 	}
 
-	// Only allow absolute HTTP(S) callback URLs.
-	// This prevents open redirect abuse when untrusted redirect_uri values are provided.
-	if u.Opaque != "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	// Callers verify registration first. Never redirect to an unsafe native scheme.
+	if !urivalidation.IsValidPrivateUseRedirectURI(redirectURI) && (u.Opaque != "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http")) {
 		return "", fmt.Errorf("invalid redirect_uri")
 	}
 

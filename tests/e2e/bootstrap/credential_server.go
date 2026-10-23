@@ -108,10 +108,10 @@ func prepareCredentialServer(options CredentialServerOptions) (_ *CredentialServ
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(options.Directory, 0o755); err != nil {
+	if err := os.Chmod(options.Directory, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
 		return nil, err
 	}
-	if err := os.WriteFile(server.ConfigPath, encoded, 0o644); err != nil {
+	if err := os.WriteFile(server.ConfigPath, encoded, 0o644); err != nil { // #nosec G306 -- the non-root E2E broker process must read this configuration.
 		return nil, err
 	}
 	return server, nil

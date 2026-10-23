@@ -121,6 +121,8 @@ For example, `https://chatgpt.com/oauth/codex/*/client.json` matches one install
 The broker uses an exact registration first.
 It rejects multiple matching Agents and literal or encoded path separators.
 
+For a private-use callback such as `github-app://oauth/callback`, the Agent's `redirect_uris` and the fetched document must list the identical URI. The broker matches it character for character. Without the Agent entry, the broker rejects the whole document, including its loopback callbacks. Web callbacks still come from the document, not the Agent list. See [ADR 042](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/042-agent-allowlisted-private-use-redirect-uris.md).
+
 Inbound CIMD provides two functions:
 
 - **Self-describing agents.** An agent can be registered by URL. The broker has metadata for the user who decides about delegation.

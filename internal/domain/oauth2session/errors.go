@@ -103,7 +103,7 @@ const (
 	DetailProviderRejected            ErrorDetail = "provider_rejected"
 	DetailProviderUnavailable         ErrorDetail = "provider_unavailable"
 	DetailProviderResponseInvalid     ErrorDetail = "provider_response_invalid"
-	DetailCredentialSourceUnavailable ErrorDetail = "credential_source_unavailable"
+	DetailCredentialSourceUnavailable ErrorDetail = "credential_source_unavailable" // #nosec G101 -- diagnostic detail code, not a credential.
 	DetailRepositoryUnavailable       ErrorDetail = "repository_unavailable"
 	DetailDecryptionFailed            ErrorDetail = "decryption_failed"
 	DetailEncryptionFailed            ErrorDetail = "encryption_failed"
@@ -132,7 +132,7 @@ const (
 	DependencyProviderRepository Dependency = "provider_repository"
 	DependencyProvider           Dependency = "provider"
 	DependencyEncryption         Dependency = "encryption"
-	DependencyCredentialSource   Dependency = "credential_source"
+	DependencyCredentialSource   Dependency = "credential_source" // #nosec G101 -- diagnostic dependency name, not a credential.
 	DependencySigning            Dependency = "signing"
 )
 

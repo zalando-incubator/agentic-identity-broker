@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	credentialFilesConfigKey = "third_party_oauth2.credential_files"
+	credentialFilesConfigKey = "third_party_oauth2.credential_files" // #nosec G101 -- configuration key name, not a credential.
 	credentialFilesEnvKey    = "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES"
 )
 

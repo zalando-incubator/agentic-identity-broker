@@ -643,6 +643,40 @@ func TestAgentRepository_CIMD(t *testing.T) {
 			assert.Equal(t, []string{uri2}, retrieved.ClientURIs)
 		})
 	})
+	t.Run("RedirectURIs", func(t *testing.T) {
+		t.Run("private-use redirect URIs round-trip through Create, Get, and Update", func(t *testing.T) {
+			redirectURIs := []string{
+				"github-app://oauth/callback",
+				"com.example.app:/oauth2redirect/example-provider",
+				"http://127.0.0.1/callback",
+			}
+			now := time.Now().UTC()
+			agent := &storage.Agent{
+				DisplayName:  "Native CIMD Agent",
+				Description:  "Tests private-use redirect URI persistence",
+				ClientURIs:   []string{"https://example.com/native-client"},
+				RedirectURIs: redirectURIs,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}
+			attachTestPermissionSet(t, adapter, agent)
+			require.NoError(t, repo.Create(ctx, agent))
+
+			retrieved, err := repo.Get(ctx, agent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, redirectURIs, retrieved.RedirectURIs)
+
+			reversed := []string{redirectURIs[2], redirectURIs[1], redirectURIs[0]}
+			agent.RedirectURIs = reversed
+			agent.UpdatedAt = time.Now().UTC()
+			require.NoError(t, repo.Update(ctx, agent))
+
+			retrieved, err = repo.Get(ctx, agent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, reversed, retrieved.RedirectURIs)
+		})
+	})
+
 }
 
 func TestAgentRepository_List_Empty(t *testing.T) {

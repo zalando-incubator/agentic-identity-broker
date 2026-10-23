@@ -21,8 +21,9 @@ trap 'rm -rf "$tool_gobin"' EXIT
 
 cd "$trusted_root"
 
-# gosec v2.29.0: proxy VCS commit deb54465fea23d19a77f037e11e6589021f8501d; module Go 1.25.0.
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+# gosec master: proxy VCS commit 1cbfd7e6488c2464f18603623354de1be9565b39; module Go 1.26.0.
+# v2.29.0 bundles golang.org/x/tools v0.49.0, which cannot read Go 1.27 export data; return to a tag once released.
+GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/securego/gosec/v2/cmd/gosec@v2.29.1-0.20261022115301-1cbfd7e6488c
 # govulncheck v1.8.0: proxy VCS commit 709015412431dd2b5b28a53c06c70bc02d49074c; module Go 1.26.0.
 GOTOOLCHAIN=local GOBIN="$tool_gobin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
 # OSV-Scanner v2.5.1: proxy VCS commit c84fa4568f2526d0333e9a914ea8a0a5f74ad68; module Go 1.26.5.

@@ -56,6 +56,10 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Cache hit
 	if entry := s.cache.Get(rawURL); entry != nil {
 		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "url", rawURL)
+		if err := entry.Document.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
+			s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+			return nil, err
+		}
 		return entry.Document, nil
 	}
 
@@ -74,6 +78,10 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Parse and validate the raw response body
 	doc, err := ParseDocument(result.Body, rawURL, s.nameBlocklist)
 	if err != nil {
+		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+		return nil, err
+	}
+	if err := doc.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
 		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
 		return nil, err
 	}

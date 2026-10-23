@@ -466,7 +466,7 @@ func (l *Loader) loadYAML(skipCredentialFiles bool) (map[string]ports.Credential
 	l.v.SetConfigFile(absPath)
 
 	// Read the selected file once, retaining its original credential key spelling.
-	data, err := os.ReadFile(absPath) // #nosec G703 -- the path is local operator configuration.
+	data, err := os.ReadFile(absPath) // #nosec G703 G304 -- the path is local operator configuration.
 	if err != nil {
 		// Check for specific error types
 		if os.IsPermission(err) {

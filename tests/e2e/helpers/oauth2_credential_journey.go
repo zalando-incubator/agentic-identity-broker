@@ -40,7 +40,7 @@ func NewOAuth2CredentialJourney() (*OAuth2CredentialJourney, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(directory, 0o755); err != nil {
+	if err := os.Chmod(directory, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
 		_ = os.RemoveAll(directory)
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (j *OAuth2CredentialJourney) WritePair(clientID, clientSecret string) (map[
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(directory, 0o755); err != nil {
+	if err := os.Chmod(directory, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
 		return nil, err
 	}
 	binding := map[string]string{
@@ -70,7 +70,7 @@ func (j *OAuth2CredentialJourney) WritePair(clientID, clientSecret string) (map[
 	if err := PublishCredentialPair(binding, clientID, clientSecret); err != nil {
 		return nil, err
 	}
-	for name, target := range map[string]string{"identity": "..data/identity", "credential": "..data/credential"} {
+	for name, target := range map[string]string{"identity": "..data/identity", "credential": "..data/credential"} { // #nosec G101 -- credential file names and symlink targets, not credentials.
 		if err := os.Symlink(target, filepath.Join(directory, name)); err != nil {
 			return nil, err
 		}
@@ -84,11 +84,11 @@ func PublishCredentialPair(binding map[string]string, clientID, clientSecret str
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(generation, 0o755); err != nil {
+	if err := os.Chmod(generation, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
 		return err
 	}
 	for name, value := range map[string]string{"identity": clientID, "credential": clientSecret} {
-		if err := os.WriteFile(filepath.Join(generation, name), []byte(value), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(generation, name), []byte(value), 0o644); err != nil { // #nosec G306 -- the non-root E2E broker process must read these fake credentials.
 			return err
 		}
 	}
@@ -111,7 +111,7 @@ func (j *OAuth2CredentialJourney) StartDocument(document map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(j.ConfigPath, encoded, 0o644); err != nil {
+	if err := os.WriteFile(j.ConfigPath, encoded, 0o600); err != nil {
 		return err
 	}
 	cfg, err := bootstrap.LoadCredentialConfiguration(j.ConfigPath, nil, nil)

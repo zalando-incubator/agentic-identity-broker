@@ -87,7 +87,7 @@ info:
 
     ### URL Validation
 
-    - All URLs must use HTTP or HTTPS schemes
+    - All URLs must use HTTP or HTTPS schemes — except agent `redirect_uris`, which also accept native-app private-use scheme URIs (see the `redirect_uris` schema)
     - OAuth2 issuer URIs **must** use HTTPS
     - Metadata URLs **must** use HTTPS
     - URL validation prevents injection attacks
@@ -305,7 +305,7 @@ paths:
         - `client_id`: Optional; when provided must be non-empty; unique across all agents when `multi_agent_client.enabled = false`
         - `display_name`: Required, max 255 characters
         - `description`: Required, max 1000 characters
-        - URLs: Must be valid HTTP/HTTPS URLs if provided
+        - URLs: Must be valid HTTP/HTTPS URLs if provided; `redirect_uris` entries follow the `redirect_uris` schema rules
 
         **ID Generation**: System generates a UUID for the agent ID. `client_id` is not auto-generated — omit it for agents that do not need one.
       operationId: createAgent
@@ -2521,12 +2521,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true
@@ -2659,12 +2674,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true
@@ -2792,12 +2822,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true

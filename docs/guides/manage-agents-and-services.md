@@ -689,6 +689,7 @@ The fields:
   [delegation and consent](/docs/concepts/delegation-and-consent#mandatory-vs-optional-requirements).
 - `client_id` — Optional. Use it only for an agent that uses an upstream OAuth2 client ID.
   Omit it for agents identified in another way.
+- `redirect_uris` — Optional. Register HTTPS, loopback HTTP (`localhost`, `127.0.0.1`, or `[::1]`), or native-app private-use callbacks such as `com.example.app:/oauth2redirect/example-provider` and `github-app://oauth/callback`. The broker stores accepted entries unchanged and in order. Private-use entries must be canonical, lowercase, unencoded, and free of fragments.
 - `governance_url`, `user_documentation_url`, and `agent_interface_url` — Optional URLs for
   the consent interface.
 
@@ -714,6 +715,28 @@ The response contains an agent with a system-generated `id` (a UUID). This `id` 
 agent canonical identifier. Use it as `client_id` on the broker `/oauth2/authorize`
 endpoint. Do not use the optional upstream `client_id` field. The broker does not generate
 an upstream `client_id`.
+
+### Allow a native-app callback for a CIMD agent
+
+Register the exact callback on the Agent before the CIMD client uses it:
+
+```bash
+curl -X POST http://localhost:14000/api/agents \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "display_name": "GitHub Copilot",
+    "description": "GitHub Copilot Desktop",
+    "client_uris": ["https://github.com/copilot/desktop/client-metadata.json"],
+    "redirect_uris": ["github-app://oauth/callback"],
+    "permission_sets": [{
+      "permission_set_id": "770e8400-e29b-41d4-a716-446655440001",
+      "requirement_type": "mandatory"
+    }]
+  }'
+```
+
+The fetched CIMD document must also list `github-app://oauth/callback`. Without the Agent entry, the broker rejects the whole document, including its web callbacks. The broker matches private-use callbacks character for character in both lists. Register the lowercase, unencoded URI shown in the document. Web callbacks for a CIMD client come from the document, not the Agent list.
 
 ## Issue broker client credentials
 

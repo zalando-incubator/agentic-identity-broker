@@ -426,6 +426,7 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Domain Model**:
 - **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
 - **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
+- **Permanent denial**: Blocks the exact tool for one principal-agent pair until revocation, independent of arguments and session. Both storage adapters clear parameter constraints. ExtProc enforces existing denials with constrained parameters as tool-wide blocks, ahead of approved records.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -457,6 +458,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
 - **ApprovalSyncSubscriber**: One goroutine per broker instance holds a dedicated `pgx.Conn` for `LISTEN approval_sync`. On notification receipt, triggers broadcaster.
 - **Cross-Instance**: PostgreSQL `NOTIFY approval_sync` issued in the same transaction as `approval_sync_state.version` increment. All broker instances receive the notification and wake their local long-poll connections.
+- **ExtProc snapshot ordering**: The cache retains the highest version from global and principal-filtered reads, including empty snapshots. Older responses cannot replace decisions or extend global freshness. Principal-filtered reads leave the global polling ETag unchanged.
 
 **Components**:
 ```
@@ -935,11 +937,12 @@ OAuth2 /authorize request
   ↓  ├─ URL detected → AgentClientResolver (cimdService != nil)
   ↓  │    ↓ Validate URL (scheme, path, no credentials, no dot-segments, no wildcard, no literal or encoded path separators)
   ↓  │    ↓ AgentRepository.GetByClientURI → exact URI, then whole-segment URI pattern
-  ↓  │    ↓ CIMDService.FetchAndValidate(url, agent)
-  ↓  │         ↓ Cache hit? → return cached document
-  ↓  │         ↓ CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
-  ↓  │         ↓ Validate: client_id match, redirect_uris present, auth_method safe
-  ↓  │         ↓ Cache store with HTTP-header-derived TTL (clamped to operator bounds)
+  ↓  │    ↓ CIMDService.Resolve(url, agent)
+  ↓  │         ↓ Cache hit? → use cached document
+  ↓  │         ↓ Cache miss → CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
+  ↓  │         ↓ Validate: client_id match, redirect_uris present and permitted (FR-004a), auth_method safe
+  ↓  │         ↓ Agent allowlist: every private-use redirect_uri must be in Agent.redirect_uris (hit or miss)
+  ↓  │         ↓ Cache store on miss with HTTP-header-derived TTL (clamped to operator bounds)
   ↓  │    ↓ Return ClientResolution{Agent, CIMDDocument}
 
   ↓  └─ UUID detected → AgentClientResolver (opaque path, cimdService may be nil)
@@ -955,9 +958,9 @@ OAuth2 /authorize request
 
 **CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
 
-**Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
+**Redirect URI Matching**: `urivalidation.IsRegisteredRedirectURI` (`internal/domain/urivalidation/redirect.go`) decides registration. For CIMD clients, the client list comes from the fetched document. Otherwise, it comes from the Agent's `redirect_uris`. Web URIs retain `MatchesRedirectURI` behavior: loopback HTTP ports are ignored, while every other component must match exactly. A private-use URI must pass `IsValidPrivateUseRedirectURI` and equal an entry in both the client list and the Agent's `redirect_uris` byte for byte. A CIMD document alone cannot enable a custom-scheme callback (ADR 042).
 
-**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
+**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. That relocation leaves the timeout, response limit, and cache policy unchanged. [ADR 042](adrs/042-agent-allowlisted-private-use-redirect-uris.md) defines the private-use redirect exception and Agent allowlist.
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
@@ -1797,6 +1800,8 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.
 
+**PrivateUseRedirectURI**: A native-app redirect URI with a private-use scheme (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or `github-app://oauth/callback`. `urivalidation.IsValidPrivateUseRedirectURI` enforces R1–R6: a restricted ASCII character set, canonical form, no opaque URI or userinfo, a safe scheme, a valid single-slash path or lowercase authority, and no dot path segments. Only an Agent's `redirect_uris` can authorize it; a CIMD client also needs the URI in its document. Match it byte for byte (ADR 042).
+
 **ClientID** (credential): String-typed identifier for broker-issued OAuth2 client credentials. Always equals the agent's UUID string. Globally unique. Bound to authorization codes for rotation safety. Located in `internal/domain/id/string_ids.go`.
 
 **KeyID**: String-typed identifier for JWT signing keys (`kid` claim). UUID format, immutable after creation. Used in JWT headers to identify the signing key for token validation. Located in `internal/domain/id/string_ids.go`.
@@ -1847,7 +1852,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### Inbound Client ID Metadata Document (CIMD) Domain
 
-**ClientIDMetadataDocument**: Immutable value object representing a parsed and validated CIMD JSON document fetched from a client's registered HTTPS URL. Validated at construction time: `client_id` field must exactly match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not be a client-secret variant, and `client_name` must not match the keyword blocklist. Located in `internal/domain/oauth2/cimd/`.
+**ClientIDMetadataDocument**: Immutable value object representing a parsed CIMD JSON document fetched from a client's registered HTTPS URL. At construction, `client_id` must match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not use a client secret, and `client_name` must not match the keyword blocklist. Each redirect URI must be same-origin HTTPS, loopback, or a structurally valid private-use URI. `ValidatePrivateUseRedirectURIs` checks private-use entries against the resolved Agent's `redirect_uris` on every resolution, including cache hits. Located in `internal/domain/oauth2/cimd/`.
 
 **CIMDCacheEntry**: In-process (non-persisted) cache record keyed by the Client ID Metadata Document URL. Fields: URL (cache key), parsed Document, FetchedAt timestamp, ExpiresAt (computed from HTTP cache headers clamped to operator TTL bounds). Stored in a `sync.RWMutex`-protected map; expired entries are lazily evicted on next access. Located in `internal/domain/oauth2/cimd/`.
 

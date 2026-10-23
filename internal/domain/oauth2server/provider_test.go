@@ -206,6 +206,31 @@ func TestProvider_HandleAuthorize(t *testing.T) {
 		assert.NotEmpty(t, code)
 	})
 
+	t.Run("private-use redirect registered on agent returns code", func(t *testing.T) {
+		provider, agentRepo, _ := newTestProvider(t)
+		agent, _, _ := setupTestCredentials(t, provider, agentRepo)
+		agent.RedirectURIs = []string{"github-app://oauth/callback"}
+		require.NoError(t, agentRepo.Update(context.Background(), agent))
+
+		code, err := provider.HandleAuthorize(context.Background(), agent.ID.String(),
+			"github-app://oauth/callback", "code", "read", "state", "challenge123", "S256",
+			id.NewPrincipal("user@example.com"))
+		require.NoError(t, err)
+		assert.NotEmpty(t, code)
+	})
+
+	t.Run("private-use redirect case variant rejected", func(t *testing.T) {
+		provider, agentRepo, _ := newTestProvider(t)
+		agent, _, _ := setupTestCredentials(t, provider, agentRepo)
+		agent.RedirectURIs = []string{"github-app://oauth/callback"}
+		require.NoError(t, agentRepo.Update(context.Background(), agent))
+
+		_, err := provider.HandleAuthorize(context.Background(), agent.ID.String(),
+			"GITHUB-APP://oauth/callback", "code", "read", "state", "challenge123", "S256",
+			id.NewPrincipal("user@example.com"))
+		assert.ErrorIs(t, err, ErrInvalidRedirectURI)
+	})
+
 	t.Run("allowed scope exact match succeeds even when redirect URI matching is port-agnostic", func(t *testing.T) {
 		provider, agentRepo, _ := newTestProvider(t)
 		agent, _, _ := setupTestCredentials(t, provider, agentRepo)
@@ -734,6 +759,79 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("private-use redirect binds code exchange", func(t *testing.T) {
+		provider, agentRepo, _ := newTestProvider(t)
+		agent, _, plaintext := setupTestCredentials(t, provider, agentRepo)
+		const redirectURI = "github-app://oauth/callback"
+		agent.RedirectURIs = []string{redirectURI}
+		require.NoError(t, agentRepo.Update(context.Background(), agent))
+
+		verifier := "native-redirect-verifier-12345678901234567890"
+		challenge := generateS256Challenge(verifier)
+		issue := func() string {
+			code, err := provider.HandleAuthorize(context.Background(), agent.ID.String(),
+				redirectURI, "code", "read", "state", challenge, "S256",
+				id.NewPrincipal("user@example.com"))
+			require.NoError(t, err)
+			require.NotEmpty(t, code)
+			return code
+		}
+
+		resp, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(),
+			plaintext, issue(), redirectURI, verifier)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.NotEmpty(t, resp.AccessToken)
+
+		resp, err = provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(),
+			plaintext, issue(), "github-app://oauth/other", verifier)
+		assert.ErrorIs(t, err, ErrInvalidGrant)
+		assert.Nil(t, resp)
+	})
+
+	t.Run("cimd public client private-use redirect requires agent allowlist", func(t *testing.T) {
+		ctx := context.Background()
+		const redirectURI = "github-app://oauth/callback"
+		const clientID = "https://client.example.com/metadata.json"
+		agent := &dstorage.Agent{
+			ID: id.NewAgentID(), DisplayName: "CIMD Agent", Description: "Native public client",
+			PermissionSets: testAgentPermissionSets(), RedirectURIs: []string{redirectURI},
+		}
+		resolver := &mockClientResolver{resolveFunc: func(_ context.Context, requestedID id.ClientID) (*ports.ClientResolution, error) {
+			return &ports.ClientResolution{
+				Agent: agent,
+				CIMDMetadata: &ports.CIMDMetadataDTO{
+					ClientID: string(requestedID), RedirectURIs: []string{redirectURI},
+					GrantTypes: []string{"authorization_code"},
+				},
+			}, nil
+		}}
+		signingKeyRepo := memory.NewSigningKeyStore()
+		logger := testSlogger()
+		signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+		provider, err := NewProvider(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(),
+			memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, signingKeySvc,
+			"https://broker.example.com", time.Hour, time.Hour, "", nil, logger)
+		require.NoError(t, err)
+		_, err = signingKeySvc.generateAndStore(ctx, "ES256", true, time.Now())
+		require.NoError(t, err)
+
+		verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+		code, err := provider.HandleAuthorize(ctx, clientID, redirectURI, "code", "read", "state",
+			generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+		require.NoError(t, err)
+		require.NotEmpty(t, code)
+		resp, err := provider.HandleAuthorizationCodeExchange(ctx, clientID, "", code, redirectURI, verifier)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.NotEmpty(t, resp.AccessToken)
+
+		agent.RedirectURIs = nil
+		_, err = provider.HandleAuthorize(ctx, clientID, redirectURI, "code", "read", "state",
+			generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+		assert.ErrorIs(t, err, ErrInvalidRedirectURI)
+	})
 
 	t.Run("redirect_uri substitution rejected", func(t *testing.T) {
 		provider, agentRepo, _ := newTestProvider(t)

@@ -61,7 +61,7 @@ func StartCredentialProcess(options CredentialProcessOptions) (*CredentialProces
 		UID:              uint32(uid),
 		done:             make(chan struct{}),
 		cancel:           cancel,
-		cmd:              exec.CommandContext(ctx, binary, "-test.run=^TestCredentialBrokerProcess$", "-test.count=1", "-test.timeout=0"),
+		cmd:              exec.CommandContext(ctx, binary, "-test.run=^TestCredentialBrokerProcess$", "-test.count=1", "-test.timeout=0"), // #nosec G204 -- binary is the current test executable from os.Executable.
 	}
 	if options.NonRoot {
 		if err := process.dropRootPrivileges(options.Directory); err != nil {
@@ -166,7 +166,7 @@ func (p *CredentialProcess) dropRootPrivileges(directory string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(copiedDirectory, 0o755); err != nil {
+	if err := os.Chmod(copiedDirectory, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
 		return err
 	}
 	copiedBinary := filepath.Join(copiedDirectory, "broker-test-process")
@@ -175,7 +175,7 @@ func (p *CredentialProcess) dropRootPrivileges(directory string) error {
 		return err
 	}
 	defer func() { _ = input.Close() }()
-	output, err := os.OpenFile(copiedBinary, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o755)
+	output, err := os.OpenFile(copiedBinary, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o755) // #nosec G302 G304 -- creates a fresh copy of the test executable for the non-root E2E broker process.
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (p *CredentialProcess) dropRootPrivileges(directory string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Chmod(copiedBinary, 0o755); err != nil {
+	if err := os.Chmod(copiedBinary, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must execute this binary.
 		return err
 	}
 	p.UID = uint32(uid)

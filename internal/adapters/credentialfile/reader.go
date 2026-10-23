@@ -65,7 +65,7 @@ type openedCredential struct {
 }
 
 func openCredential(path string) (*openedCredential, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- path is an operator-configured credential file; non-regular files are rejected below.
 	if err != nil {
 		if info, statErr := os.Stat(path); statErr == nil && !info.Mode().IsRegular() {
 			return nil, model.NewCredentialSourceError(model.CredentialSourceReasonNotRegular)

@@ -193,7 +193,7 @@ func NewTrustDir(root string) *TrustDir {
 	}
 	dir := &TrustDir{Path: filepath.Join(resolved, "trust"), Outside: filepath.Join(resolved, "outside")}
 	for _, path := range []string{dir.Path, dir.Outside} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, 0o750); err != nil {
 			panic(fmt.Sprintf("create %s: %v", path, err))
 		}
 	}
@@ -208,7 +208,7 @@ func (d *TrustDir) File(name string) string {
 // WriteFile writes content as a plain file inside the trust directory.
 func (d *TrustDir) WriteFile(name, content string) string {
 	path := d.File(name)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		panic(fmt.Sprintf("write %s: %v", path, err))
 	}
 	return path
@@ -223,10 +223,10 @@ func (d *TrustDir) WriteCorruptFile(name string) string {
 // ConfigMap key: <name> -> ..data/<name> -> ..<generation>/<name>, using relative links only.
 func (d *TrustDir) WriteKubernetesLayout(name, content, generation string) string {
 	generationDir := filepath.Join(d.Path, ".."+generation)
-	if err := os.MkdirAll(generationDir, 0o755); err != nil {
+	if err := os.MkdirAll(generationDir, 0o750); err != nil {
 		panic(fmt.Sprintf("create %s: %v", generationDir, err))
 	}
-	if err := os.WriteFile(filepath.Join(generationDir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(generationDir, name), []byte(content), 0o600); err != nil {
 		panic(fmt.Sprintf("write generation file: %v", err))
 	}
 	d.pointDataAt(".." + generation)
@@ -266,7 +266,7 @@ func (d *TrustDir) pointDataAt(target string) {
 // WriteOutsideFile writes content to ../outside/<name> beside the trust directory.
 func (d *TrustDir) WriteOutsideFile(name, content string) string {
 	path := filepath.Join(d.Outside, name)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		panic(fmt.Sprintf("write %s: %v", path, err))
 	}
 	return path

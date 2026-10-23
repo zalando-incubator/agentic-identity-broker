@@ -84,8 +84,8 @@ const (
 	DetailSessionEncryptionFailed         FailureDetail = "session_encryption_failed"
 	DetailSessionPersistenceFailed        FailureDetail = "session_persistence_failed"
 	DetailSessionConfiguration            FailureDetail = "session_configuration"
-	DetailCredentialSourceUnavailable     FailureDetail = "credential_source_unavailable"
-	DetailCredentialIdentityChanged       FailureDetail = "credential_identity_changed"
+	DetailCredentialSourceUnavailable     FailureDetail = "credential_source_unavailable" // #nosec G101 -- diagnostic detail code, not a credential.
+	DetailCredentialIdentityChanged       FailureDetail = "credential_identity_changed"   // #nosec G101 -- diagnostic detail code, not a credential.
 	DetailSessionScopeInsufficient        FailureDetail = "session_scope_insufficient"
 	DetailResponseWriteFailed             FailureDetail = "response_write_failed"
 	DetailInternalUnclassified            FailureDetail = "internal_unclassified"

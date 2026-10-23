@@ -231,16 +231,15 @@ func (p *Provider) HandleAuthorize(
 	}
 	agent := h.getAgent()
 
-	// Validate redirect_uri: must be registered and use HTTPS (or loopback HTTP).
-	// GetRedirectURIs() returns the agent's registered URIs for confidential clients,
-	// and the CIMD document's redirect_uris for public (CIMD) clients.
-	if !containsRedirectURI(fositeClient.GetRedirectURIs(), redirectURI) {
+	// Validate redirect_uri against the client's registrations. CIMD clients use
+	// document redirect URIs, and private-use callbacks also require the Agent allowlist.
+	if !urivalidation.IsRegisteredRedirectURI(fositeClient.GetRedirectURIs(), agent.RedirectURIs, redirectURI) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri %q is not registered for this client", redirectURI))
 	}
-	if !urivalidation.IsValidRedirectURI(redirectURI) {
+	if !urivalidation.IsValidRedirectURI(redirectURI) && !urivalidation.IsValidPrivateUseRedirectURI(redirectURI) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
-			fosite.ErrInvalidRequest.WithHintf("redirect_uri must use HTTPS for non-loopback hosts"))
+			fosite.ErrInvalidRequest.WithHintf("redirect_uri must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI"))
 	}
 
 	if responseType != "code" {
@@ -444,15 +443,6 @@ func (p *Provider) HandleRefreshToken(
 		resp.RefreshToken = newRefreshToken
 	}
 	return resp, nil
-}
-
-func containsRedirectURI(list []string, item string) bool {
-	for _, v := range list {
-		if urivalidation.MatchesRedirectURI(v, item) {
-			return true
-		}
-	}
-	return false
 }
 
 // isStorageNotFound returns true when err is a domain storage "not found" error.
