@@ -11,6 +11,8 @@ token_exchange:
   # It MUST be an external IdP; broker-minted tokens are never valid client assertions.
   # client_assertion:
   #   issuer_uri: "https://privileged-gateway-idp.example.com"
+  #   # Optional: defaults to token_exchange.expected_audience when omitted.
+  #   expected_audience: "https://broker.example.com/oauth2/token"
   #   # Optional when the IdP does not support discovery:
   #   jwks_uri: "https://privileged-gateway-idp.example.com/keys"
   #   # Refresh defaults: min 15m; max max(jwks_min_refresh, 1h).

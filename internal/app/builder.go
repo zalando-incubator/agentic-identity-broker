@@ -1257,15 +1257,21 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		if brokerAudience == "" {
 			brokerAudience = tokenexchange.DefaultBrokerAudience
 		}
+		clientAssertionAudience := b.config.TokenExchange.ClientAssertion.ExpectedAudience
+		if clientAssertionAudience == "" {
+			clientAssertionAudience = brokerAudience
+		}
 
 		approvalJWTValidator, err = tokenexchange.NewJWTValidatorWithPolicies(
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    subjectTokenJWKSAdapter,
-				ExpectedIssuers: subjectTokenIssuers,
+				JWKSProvider:     subjectTokenJWKSAdapter,
+				ExpectedIssuers:  subjectTokenIssuers,
+				ExpectedAudience: brokerAudience,
 			},
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    clientAssertionJWKS,
-				ExpectedIssuers: []string{clientAssertionIssuerURI},
+				JWKSProvider:     clientAssertionJWKS,
+				ExpectedIssuers:  []string{clientAssertionIssuerURI},
+				ExpectedAudience: clientAssertionAudience,
 			},
 			brokerAudience,
 			tokenexchange.DefaultClockSkewTolerance,

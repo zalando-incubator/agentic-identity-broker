@@ -328,6 +328,8 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "token-exchange-broker", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should default to token-exchange-broker via Viper SetDefault")
+		assert.Empty(t, cfg.TokenExchange.ClientAssertion.ExpectedAudience,
+			"client assertion audience should inherit the token exchange audience when omitted")
 	})
 
 	t.Run("expected_audience is overridden by environment variable", func(t *testing.T) {
@@ -340,6 +342,19 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "my-custom-gateway-audience", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should be overridden by IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE env var")
+	})
+
+	t.Run("client assertion expected_audience is overridden independently", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE", "subject-token-audience")
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE", "client-assertion-audience")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, "subject-token-audience", cfg.TokenExchange.ExpectedAudience)
+		assert.Equal(t, "client-assertion-audience", cfg.TokenExchange.ClientAssertion.ExpectedAudience)
 	})
 }
 

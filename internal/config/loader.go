@@ -299,6 +299,7 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("token_exchange", "expected_audience"), tokenexchange.DefaultBrokerAudience)
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_file"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE")

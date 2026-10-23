@@ -1264,6 +1264,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
 | `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.expected_audience` | string | `token_exchange.expected_audience` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE` | Audience required only for client assertions. When omitted, the shared token-exchange audience is retained for backward compatibility; subject tokens always use `token_exchange.expected_audience`. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
 | `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
@@ -1276,6 +1277,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 token_exchange:
   client_assertion:
     issuer_uri: "https://privileged-gateway-idp.example.com"
+    expected_audience: "https://broker.example.com/oauth2/token"
     # Optional when discovery is unavailable:
     # jwks_uri: "https://privileged-gateway-idp.example.com/keys"
     # jwks_min_refresh: "15m"

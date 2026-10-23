@@ -812,6 +812,9 @@ type TrustedTokenIssuerConfig struct {
 type ClientAssertionTrustConfig struct {
 	IssuerURI string `mapstructure:"issuer_uri"`
 	JWKSURI   string `mapstructure:"jwks_uri"`
+	// ExpectedAudience is the aud claim required for client assertions. When empty,
+	// TokenExchangeConfig.ExpectedAudience is used for backward compatibility.
+	ExpectedAudience string `mapstructure:"expected_audience"`
 	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
 	JWKS string `mapstructure:"jwks"`
 	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
@@ -825,7 +828,8 @@ type ClientAssertionTrustConfig struct {
 // for third-party OAuth2 tokens stored in the token vault.
 type TokenExchangeConfig struct {
 	// ExpectedAudience is the broker's own identifier that must appear in the audience (aud) claim
-	// of both subject_token and client_assertion JWTs submitted for token exchange.
+	// of subject_token JWTs. It is also the client_assertion fallback when no role-specific
+	// audience is configured.
 	// If empty, defaults to "token-exchange-broker".
 	// Configurable to support deployments where the broker is known under a different identifier.
 	// Environment variable: IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE
