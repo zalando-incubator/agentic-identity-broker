@@ -159,6 +159,6 @@ All technical-context unknowns are resolved. Evidence paths are relative to the 
 ## Findings that affect scheduling, not design
 
 - Migration `035_add_cimd_private_key_jwt_authentication` belongs to spec 046 (outbound) and is unrelated.
-- After rebase, migrations 038 and 039 are occupied, so this feature uses migrations 040 and 041. The `refresh_token_sessions` change must still be reviewed against feature 049.
+- After rebase, migrations 038 to 041 are occupied, so this feature uses migrations 042 and 043. The `refresh_token_sessions` change must still be reviewed against feature 049.
 - ADR 040 is occupied by the protected-resource discovery decision, ADR 041 by the OAuth2 client-secret file override decision, and ADR 042 by the Agent-allowlisted private-use redirect decision, so this feature uses ADR 043. The earlier ADR 040 draft on the reused branch is discarded.
 - `docs/api/enduser-api.md` exists and gets the client-authentication section.

@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMigration040ClientAssertionReplays(t *testing.T) {
+func TestMigration042ClientAssertionReplays(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 39))
+	require.NoError(t, f.Up(t, 41))
 
 	require.NoError(t, f.UpAll(t))
 	exists, err := f.TableExists(t, "client_assertion_replays")
@@ -29,7 +29,7 @@ func TestMigration040ClientAssertionReplays(t *testing.T) {
 		VALUES ('client-a', 'shared-jti', '2030-01-01');
 	`), "the primary key must reject a repeated client and jti")
 
-	require.NoError(t, f.Down(t, 39))
+	require.NoError(t, f.Down(t, 41))
 	exists, err = f.TableExists(t, "client_assertion_replays")
 	require.NoError(t, err)
 	assert.False(t, exists)
@@ -39,10 +39,10 @@ func TestMigration040ClientAssertionReplays(t *testing.T) {
 	assert.True(t, exists)
 }
 
-func TestMigration041RefreshTokenClientAuthMethod(t *testing.T) {
+func TestMigration043RefreshTokenClientAuthMethod(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 40))
+	require.NoError(t, f.Up(t, 42))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO agents (id, display_name, description)
 		VALUES ('10000000-0000-0000-0000-000000000039', 'migration agent', 'test');
@@ -89,7 +89,7 @@ func TestMigration041RefreshTokenClientAuthMethod(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "false", validated)
 
-	require.NoError(t, f.Down(t, 40))
+	require.NoError(t, f.Down(t, 42))
 	exists, err = f.ColumnExists(t, "refresh_token_sessions", "client_auth_method")
 	require.NoError(t, err)
 	assert.False(t, exists)

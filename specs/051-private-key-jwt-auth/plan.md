@@ -53,7 +53,7 @@ Design in one paragraph: `ParseDocument` accepts `private_key_jwt` and records t
 - [x] **API Design First**: Contract deltas are in [contracts/](./contracts/) and are confirmed before implementation (Phase 2 gate).
 - [x] **API Documentation**: `api/enduser/openapi.yaml` (token endpoint, metadata schema). No admin API change.
 - [x] **API Changes**: Stakeholder confirmation of the contract deltas is a blocking task in Phase 2 and is recorded in the PR description.
-- [x] **Database Design**: Two migrations in `/migrations/` with go-migrate naming. Versions `040` and `041`, the next available numbers after the rebased `main` migrations (see Risks R1).
+- [x] **Database Design**: Two migrations in `/migrations/` with go-migrate naming. Versions `042` and `043`, the next available numbers after the rebased `main` migrations (see Risks R1).
 - [x] **E2E Acceptance Tests**: One It() per spec scenario; see mapping table.
 - [x] **E2E Test Mapping**: Table below; every acceptance scenario has an E2E test. The `DescribeTable` grouping for US2-S2 and US4-S4 is justified under Complexity Tracking.
 - [x] **E2E Red Phase**: Tests are written with realistic assertions before implementation.
@@ -131,8 +131,8 @@ internal/
 │   ├── builder.go                   # wire key-set fetcher, service, verifier, replay repo
 │   └── local_strategy.go            # adapt to ClientCredentials
 migrations/
-├── 040_create_client_assertion_replays.{up,down}.sql
-└── 041_add_refresh_token_client_auth_method.{up,down}.sql
+├── 042_create_client_assertion_replays.{up,down}.sql
+└── 043_add_refresh_token_client_auth_method.{up,down}.sql
 api/enduser/openapi.yaml             # token endpoint and metadata schema
 justfile                             # backend E2E targets exclude label docker; new test-e2e-docker
 adrs/043-inbound-cimd-private-key-jwt.md
@@ -280,7 +280,7 @@ Locations: `internal/ports/config.go` (`DefaultCIMDConfig`, validation next to `
 
 ## Risks and Open Points
 
-- **R1 – Numbering collisions.** After rebasing, migrations 038 and 039 and ADR 040 are already present, and feature number 050 is used by protected-resource discovery. ADR 041 is occupied by the OAuth2 client-secret file override decision, and ADR 042 by Agent-allowlisted private-use redirect URIs. This feature therefore uses feature 051, ADR 043, and migrations 040 and 041. The `refresh_token_sessions` column must still be reviewed against feature 049 before implementation.
+- **R1 – Numbering collisions.** After rebasing, migrations 038 to 041 and ADR 040 are already present, and feature number 050 is used by protected-resource discovery. ADR 041 is occupied by the OAuth2 client-secret file override decision, and ADR 042 by Agent-allowlisted private-use redirect URIs. This feature therefore uses feature 051, ADR 043, and migrations 042 and 043. The `refresh_token_sessions` column must still be reviewed against feature 049 before implementation.
 - **R2 – Refresh path ordering (FR-013).** `HandleRefreshToken` authenticates before the stored session is read. The plan reads the stored session first and applies the stricter of (stored method, current document method). A missing or unknown session must not change the error returned before authentication has been attempted, to avoid a probing oracle.
 - **R3 – Dependency errors in resolution.** `resolveCIMD` currently turns every document error into `invalid_client`. Changing fetch and timeout failures to `server_error` affects the authorisation path too. Existing E2E and unit tests that pin this are updated in Phase 2.5, and the change is called out in the PR.
 - **R4 – JWKS content type.** The current fetcher requires `application/json…`; RFC 7517 allows `application/jwk-set+json`. The key-set fetcher accepts both. Whether ChatGPT's `jwks.json` sends either has to be confirmed against the real endpoint in the quickstart's manual check.

@@ -114,7 +114,7 @@ Located in `internal/domain/storage/client_assertion_replay.go`.
 - It is never deleted early; only `expires_at < now()` records are swept.
 - No typed ID: the natural key is the pair, so ADR 013 does not apply.
 
-**Schema (migration `040_create_client_assertion_replays`):**
+**Schema (migration `042_create_client_assertion_replays`):**
 
 ```sql
 CREATE TABLE client_assertion_replays (
@@ -145,7 +145,7 @@ Implementations: `memory/client_assertion_replay_store.go` (mutex and map) and `
 |---|---|---|
 | `ClientAuthMethod` (new) | `*string`, column `client_auth_method` | `private_key_jwt` if the code exchange or refresh that created the session was authenticated that way; `NULL` otherwise |
 
-**Migration `041_add_refresh_token_client_auth_method`:**
+**Migration `043_add_refresh_token_client_auth_method`:**
 
 ```sql
 ALTER TABLE refresh_token_sessions ADD COLUMN client_auth_method TEXT NULL;

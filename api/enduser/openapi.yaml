@@ -1299,7 +1299,7 @@ paths:
         **Error Handling** (RFC 6749 §4.1.2.1):
 
         Direct JSON responses (no redirect — RFC 6749 §4.1.2.1):
-  - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; a retrieved CIMD document is malformed or violates policy, including an unallowlisted private-use redirect URI
+        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; a retrieved CIMD document is malformed or violates policy, including an unallowlisted private-use redirect URI
         - `invalid_redirect_uri` (400): `redirect_uri` not registered on the agent
         - `invalid_request` (400): Missing PKCE parameters, or `redirect_uri` not registered for a CIMD client
         - `unsupported_response_type` (400): `response_type` is not `code`
