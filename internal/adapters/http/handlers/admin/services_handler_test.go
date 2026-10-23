@@ -3857,3 +3857,39 @@ func TestServicesHandler_CredentialSourceFilesystemRejectsExplicitInvalidSelecto
 		})
 	}
 }
+
+func TestServiceRequestUnmarshalJSONStrictnessAndPresence(t *testing.T) {
+	for _, body := range []string{
+		`{"unexpected":true}`,
+		`{"discovery":{"unexpected":true}}`,
+		`{"endpoints":{"unexpected":true}}`,
+		`{"scopes":[{"scope_value":"read","description":"Read","unexpected":true}]}`,
+		`{} {}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			var request ServiceRequest
+			require.Error(t, json.Unmarshal([]byte(body), &request))
+		})
+	}
+	for _, field := range []string{"client_id_file", "client_secret_file", "credential_files", "credential_source_transitioned"} {
+		t.Run(field, func(t *testing.T) {
+			var request ServiceRequest
+			err := json.Unmarshal([]byte(`{"`+field+`":null}`), &request)
+			require.ErrorContains(t, err, "credential file configuration and transition history are not service request fields")
+		})
+	}
+	var request ServiceRequest
+	require.NoError(t, json.Unmarshal([]byte(`{"canonical_id":null,"credential_source":null,"client_id":null,"client_secret":"","protected_resources":[],"authorization_params":{"vendor_extension":"value"}}`), &request))
+	assert.True(t, request.clearCanonicalID)
+	assert.True(t, request.CredentialSourceProvided)
+	assert.True(t, request.ClientIDProvided)
+	assert.True(t, request.ClientSecretProvided)
+	assert.True(t, request.protectedResourcesProvided)
+	assert.Equal(t, map[string]string{"vendor_extension": "value"}, request.AuthorizationParams)
+	require.NoError(t, json.Unmarshal([]byte(`{}`), &request))
+	assert.False(t, request.clearCanonicalID)
+	assert.False(t, request.CredentialSourceProvided)
+	assert.False(t, request.ClientIDProvided)
+	assert.False(t, request.ClientSecretProvided)
+	assert.False(t, request.protectedResourcesProvided)
+}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -68,11 +68,6 @@ type ServiceRequest struct {
 
 // UnmarshalJSON retains field presence so null and empty credentials are not omission.
 func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
-	type request ServiceRequest
-	var decoded request
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
 	var fields struct {
 		CredentialSource             json.RawMessage `json:"credential_source"`
 		ClientID                     json.RawMessage `json:"client_id"`
@@ -84,11 +79,18 @@ func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 		CredentialFiles              json.RawMessage `json:"credential_files"`
 		CredentialSourceTransitioned json.RawMessage `json:"credential_source_transitioned"`
 	}
+	// This projection retains field presence and the dedicated sensitive-field
+	// rejection. The full request is strictly decoded below using a method-free alias.
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
 	if fields.ClientIDFile != nil || fields.ClientSecretFile != nil || fields.CredentialFiles != nil || fields.CredentialSourceTransitioned != nil {
 		return errors.New("credential file configuration and transition history are not service request fields")
+	}
+	type request ServiceRequest
+	var decoded request
+	if err := requestbody.Unmarshal(data, &decoded); err != nil {
+		return err
 	}
 	*req = ServiceRequest(decoded)
 	req.CredentialSourceProvided = fields.CredentialSource != nil
@@ -226,9 +228,9 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 
 	var req ServiceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
@@ -435,15 +437,10 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
-		return
-	}
 	var req ServiceRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 

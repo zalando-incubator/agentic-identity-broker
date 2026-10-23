@@ -16,6 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -1745,4 +1746,87 @@ func TestAgentsHandler_CanonicalPresentationRendersNestedReferencesSelectively(t
 	assert.Contains(t, writer.Header().Get("Vary"), "Prefer")
 	agentRepo.AssertExpectations(t)
 	serviceRepo.AssertExpectations(t)
+}
+
+func TestAdminJSONBodyRejections(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	agents := newAgentsHandlerForTest(new(MockAgentRepository), new(MockProviderRepository), logger)
+	services := setupHandler(t, new(MockProviderRepository))
+	permissionSets := newPermissionSetsHandlerForTest(new(MockPermissionSetRepository), logger)
+	resources := newProtectedResourcesHandler(new(MockProviderRepository), logger)
+	signingKeys := NewSigningKeysHandler(new(MockSigningKeyManager), logger)
+	cimdKeys := NewCIMDClientKeysHandler(new(MockCIMDClientKeyLifecycle), logger)
+	sweep := NewSessionSweepHandler(&fakeSessionSweeper{sweep: func(context.Context, oauth2session.SweepRequest) (oauth2session.SweepResult, error) {
+		t.Fatal("rejected body reached session sweep")
+		return oauth2session.SweepResult{}, nil
+	}}, logger)
+
+	routes := []struct {
+		name    string
+		limit   int
+		handler http.HandlerFunc
+		nested  string
+		audit   bool
+	}{
+		{"agent create", 64 << 10, agents.CreateAgent, `{"permission_sets":[{"unexpected":true}]}`, false},
+		{"agent update", 64 << 10, agents.UpdateAgent, `{"service_requirements":[{"unexpected":true}]}`, false},
+		{"service create", 64 << 10, services.CreateService, `{"discovery":{"unexpected":true}}`, false},
+		{"service update", 64 << 10, services.UpdateService, `{"endpoints":{"unexpected":true}}`, false},
+		{"permission set create", 64 << 10, permissionSets.Create, `{"service_scopes":[{"unexpected":true}]}`, false},
+		{"permission set update", 64 << 10, permissionSets.Update, `{"service_scopes":[{"unexpected":true}]}`, false},
+		{"resource create", 8 << 10, resources.Create, "", true},
+		{"resource rename", 8 << 10, resources.Rename, "", true},
+		{"signing key", 4 << 10, signingKeys.Add, "", false},
+		{"CIMD key", 4 << 10, cimdKeys.Create, "", false},
+		{"session sweep", 4 << 10, sweep.Sweep, "", false},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			cases := []struct {
+				name, body string
+				status     int
+				chunked    bool
+			}{
+				{"unknown field", `{"unexpected":true}`, http.StatusBadRequest, false},
+				{"second document", `{} {}`, http.StatusBadRequest, false},
+				{"trailing garbage", `{} trailing`, http.StatusBadRequest, false},
+				{"oversized whitespace", `{}` + strings.Repeat(" ", route.limit-1), http.StatusRequestEntityTooLarge, false},
+				{"chunked oversized whitespace", `{}` + strings.Repeat(" ", route.limit-1), http.StatusRequestEntityTooLarge, true},
+				{"chunked malformed oversized", strings.Repeat("x", route.limit+1), http.StatusRequestEntityTooLarge, true},
+			}
+			if route.nested != "" {
+				cases = append(cases, struct {
+					name, body string
+					status     int
+					chunked    bool
+				}{"nested unknown field", route.nested, http.StatusBadRequest, false})
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					logs.Reset()
+					req := withPrincipal(httptest.NewRequest(http.MethodPost, "/api/services/550e8400-e29b-41d4-a716-446655440000/protected-resources/https%3A%2F%2Fapi.example.com", strings.NewReader(tc.body)), "operator@example.com")
+					if tc.chunked {
+						req.ContentLength = -1
+						req.TransferEncoding = []string{"chunked"}
+					}
+					rctx := chi.NewRouteContext()
+					for _, param := range []string{"agent-id", "service-id", "id"} {
+						rctx.URLParams.Add(param, "550e8400-e29b-41d4-a716-446655440000")
+					}
+					req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+					w := httptest.NewRecorder()
+					route.handler(w, req)
+					require.Equal(t, tc.status, w.Code)
+					var response ErrorResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+					assert.Equal(t, "invalid request body", response.Error)
+					if route.audit {
+						assert.Contains(t, logs.String(), fmt.Sprintf(`"status":%d`, tc.status))
+						assert.Contains(t, logs.String(), `"outcome":"rejected"`)
+					}
+				})
+			}
+		})
+	}
 }

@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -129,9 +129,9 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req AgentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
@@ -254,23 +254,22 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-	body, err := io.ReadAll(r.Body)
+	body, err := requestbody.Read(w, r, 64<<10)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
 	var req AgentRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := requestbody.Unmarshal(body, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
 	// Detect three-state client_id semantics: absent=preserve, null=clear, string=update.
 	var rawFields map[string]json.RawMessage
-	_ = json.Unmarshal(body, &rawFields) // cannot fail: same bytes already parsed above
+	_ = requestbody.Unmarshal(body, &rawFields) // cannot fail: same bytes already parsed above
 	rawClientID, clientIDPresent := rawFields["client_id"]
 	clearClientID := clientIDPresent && bytes.Equal(rawClientID, []byte("null"))
 	_, canonicalIDPresent := rawFields["canonical_id"]
