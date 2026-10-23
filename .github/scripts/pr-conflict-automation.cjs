@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const label = "auto-resolve-conflicts";
 const directory = "/tmp/gh-aw/pr-conflicts";
 const shaPattern = /^[a-f0-9]{40}$/i;
+// gh-aw interpolates inputs.base into the App safe-output policy without JSON escaping.
+const unsafeBaseRef = /["\\\x00-\x1f]/;
 
 const prQuery = `query ConflictPR($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -86,6 +88,7 @@ async function eligibility(github, repo, number) {
   }
   if (!pr.baseRef || !pr.baseRefName || pr.baseRef.name !== pr.baseRefName ||
       !shaPattern.test(pr.baseRefOid || "")) return { reason: "PR base ref is unavailable" };
+  if (unsafeBaseRef.test(pr.baseRefName)) return { reason: "PR base ref is unsafe for safe-output configuration" };
   if (!pr.headRef || !pr.headRefName || pr.headRef.name !== pr.headRefName ||
       !shaPattern.test(pr.headRefOid || "")) return { reason: "PR head ref is unavailable" };
   if (pr.mergeable !== "CONFLICTING") return { reason: `PR conflict status is ${pr.mergeable}` };
@@ -131,6 +134,9 @@ async function selectConflicts({ github, context }) {
 async function prepare({ github, context, inputs }) {
   const number = Number(inputs.pr);
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Invalid selected PR number");
+  if (typeof inputs.base !== "string" || unsafeBaseRef.test(inputs.base)) {
+    throw new Error("Unsafe selected base ref for safe-output configuration");
+  }
   const { pr, reason } = await eligibility(github, context.repo, number);
   let data;
   if (!pr) data = { eligible: false, reason };

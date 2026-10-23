@@ -133,6 +133,20 @@ test("ineligible PRs cannot trigger a worker", async () => {
   }
 });
 
+test("JSON-unsafe base refs never reach the App safe-output policy", async (t) => {
+  t.after(() => fs.rmSync(contextPath, { force: true }));
+  for (const base of ['feature/quote"name', "feature/back\\slash", "feature/new\nline"]) {
+    const f = fixture("schedule", { prs: { 42: pr(42, { baseRefName: base, baseRef: { name: base } }) } });
+    assert.deepEqual(await selectConflicts(f), [], JSON.stringify(base));
+    const context = await prepare({ ...f, inputs: { pr: 42, head: sha, base: "main" } });
+    assert.equal(context.eligible, false);
+    assert.match(context.reason, /unsafe|unsupported/i);
+    const direct = fixture("schedule");
+    await assert.rejects(prepare({ ...direct, inputs: { pr: 42, head: sha, base } }), /unsafe/i);
+    assert.equal(direct.requests.length, 0, "untrusted input must fail before any API call");
+  }
+});
+
 test("label provenance requires the latest application by a currently authorized human", async () => {
   for (const options of [
     { permission: "triage" }, { permission: "read" },
