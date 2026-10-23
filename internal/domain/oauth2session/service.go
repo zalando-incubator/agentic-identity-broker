@@ -1744,6 +1744,7 @@ func (s *OAuth2SessionService) refreshDueSession(ctx context.Context, principal 
 func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, dueBy func() time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
 	provider, providerErr := s.getRefreshProvider(ctx, serviceID)
 	refreshed := false
+	var rejected error
 	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
 		if current == nil {
 			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
@@ -1763,11 +1764,22 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 			return false, providerErr
 		}
 		if err := s.refreshSessionTokens(ctx, current, provider); err != nil {
-			return false, err
+			if sessionFailureMetadata(err).Detail() != DetailRefreshRejected {
+				return false, err
+			}
+			// invalid_grant means the stored refresh token can never succeed again (RFC 6749 §5.2).
+			// Recording it as expired stops further upstream attempts until the user reconnects.
+			rejectedAt := time.Now()
+			current.RefreshTokenExpiresAt = &rejectedAt
+			rejected = err
+			return true, nil
 		}
 		refreshed = true
 		return true, nil
 	})
+	if rejected != nil {
+		return nil, false, provider, rejected
+	}
 	if err != nil {
 		detail := DetailRepositoryUnavailable
 		if refreshed {

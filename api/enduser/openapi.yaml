@@ -1467,7 +1467,9 @@ paths:
           (`<public URL>/sessions`). This is a browser landing page, not an automatic login redirect.
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
           `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
-          landing-page `error_uri`. The stored session is left unchanged.
+          landing-page `error_uri`. The stored tokens are left unchanged, and the refresh token
+          is recorded as expired. Later exchanges return the same error without contacting the
+          provider until the user reconnects the service.
         - A missing required client-identity association or a mismatch with the selected client ID
           returns 400 `invalid_grant` with the same sessions landing-page `error_uri`.
           The broker stops before provider authentication and leaves the established session unchanged.

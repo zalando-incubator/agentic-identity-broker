@@ -293,6 +293,10 @@ func TestCredentialSourceErrors_UsablePairPreservesProviderRejectionClassificati
 				assert.Equal(t, 1, pairs, "permanent provider rejection is not a fresh acquisition retry")
 				after, findErr := h.sessions.Get(context.Background(), before.ID)
 				require.NoError(t, findErr)
+				if oauthError == "invalid_grant" && operation != "callback" {
+					require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
+					after.RefreshTokenExpiresAt = nil
+				}
 				assert.Equal(t, before, after)
 				assertCredentialSourceAudits(t, logs.String(), provider.ID, eventOperation,
 					credentialSourceAudit{event: "session.oauth2.credential_files_used", outcome: "used"},

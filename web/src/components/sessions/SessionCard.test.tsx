@@ -288,6 +288,58 @@ describe('SessionCard', () => {
 
       expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
     });
+
+    it('does not render Refresh button for an expired session', () => {
+      const session = createMockSession({
+        is_expired: true,
+        has_refresh_token: true,
+      });
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onRefresh={vi.fn()}
+          onLogin={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+    });
+  });
+
+  describe('Login button', () => {
+    it('calls onLogin with service id for an expired session', async () => {
+      const user = userEvent.setup();
+      const session = createMockSession({ is_expired: true });
+      const onLogin = vi.fn();
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onLogin={onLogin}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /login/i }));
+
+      expect(onLogin).toHaveBeenCalledWith(session.service_id);
+    });
+
+    it('does not render Login button for an active session', () => {
+      const session = createMockSession();
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onLogin={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /login/i })).toBeNull();
+    });
   });
   describe('Loading State', () => {
     it('disables buttons and shows loading spinner when loading', () => {
@@ -396,6 +448,21 @@ describe('SessionCard', () => {
       const session = createMockSession({
         has_refresh_token: false,
         refresh_token_expires_at: undefined,
+      });
+      const onTerminate = vi.fn();
+
+      render(<SessionCard session={session} onTerminate={onTerminate} />);
+
+      expect(
+        screen.queryByText(/Session might expire after/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it('does not display refresh token expiry info for an expired session', () => {
+      const session = createMockSession({
+        is_expired: true,
+        has_refresh_token: true,
+        refresh_token_expires_at: new Date(Date.now() - 60_000).toISOString(),
       });
       const onTerminate = vi.fn();
 

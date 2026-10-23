@@ -984,7 +984,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md
-		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and preserve the session", func() {
+		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and stop reusing it", func() {
 			// Given: The stored access token has expired and the provider rejects the refresh
 			// token with invalid_grant and a secret-bearing description.
 			ctx := context.Background()
@@ -1026,24 +1026,30 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.failure_detail=refresh_rejected"))
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.recovery_target=provider_session"))
 
-			// And: The stored session is unchanged.
+			// And: The stored tokens are unchanged and the refresh token is recorded as expired.
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(after.EncryptedAccessToken).To(Equal(before.EncryptedAccessToken))
 			Expect(after.EncryptedRefreshToken).To(Equal(before.EncryptedRefreshToken))
 			Expect(after.AccessTokenExpiresAt).To(Equal(before.AccessTokenExpiresAt))
+			Expect(after.RefreshTokenExpiresAt).NotTo(BeNil())
+			Expect(after.CanRefresh()).To(BeFalse())
 
-			// When: The provider accepts the preserved refresh token again
+			// When: A later exchange arrives, even though the provider would now accept the token
+			providerRequests := len(mockUpstream.GetTokenRequests())
 			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("recovered-token")
 			retry, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = retry.Body.Close() }()
 
-			// Then: The exchange succeeds with the refreshed token.
-			Expect(retry).To(matchers.HaveStatusCode(http.StatusOK))
-			var tokenResponse map[string]interface{}
-			Expect(json.NewDecoder(retry.Body).Decode(&tokenResponse)).To(Succeed())
-			Expect(tokenResponse["access_token"]).To(Equal("recovered-token"))
+			// Then: The same re-authentication error is returned without contacting the provider.
+			Expect(retry).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			var retryResponse map[string]interface{}
+			Expect(json.NewDecoder(retry.Body).Decode(&retryResponse)).To(Succeed())
+			Expect(retryResponse["error"]).To(Equal("invalid_grant"))
+			Expect(retryResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+			Expect(retryResponse).NotTo(HaveKey("access_token"))
+			Expect(mockUpstream.GetTokenRequests()).To(HaveLen(providerRequests))
 		})
 
 		// Spec Reference: US5-S5 from specs/013-token-exchange/spec.md

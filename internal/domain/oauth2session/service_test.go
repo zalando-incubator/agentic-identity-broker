@@ -2765,8 +2765,10 @@ func TestForceRefreshSession(t *testing.T) {
 		require.NoError(t, err)
 		before := *stored
 
+		var rejectRequests int
 		rejectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			require.NoError(t, r.ParseForm())
+			rejectRequests++
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh rejected"}`))
@@ -2777,6 +2779,7 @@ func TestForceRefreshSession(t *testing.T) {
 		provider.Endpoints.TokenEndpoint = rejectServer.URL
 		require.NoError(t, providerService.Update(ctx, provider, nil))
 
+		rejectedAt := time.Now()
 		_, err = service.ForceRefreshSession(ctx, principal, serviceID)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, oauth2session.ErrRefreshFailed))
@@ -2792,7 +2795,15 @@ func TestForceRefreshSession(t *testing.T) {
 		assert.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
 		assert.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
 		assert.Equal(t, before.AccessTokenExpiresAt, after.AccessTokenExpiresAt)
-		assert.Equal(t, before.RefreshTokenExpiresAt, after.RefreshTokenExpiresAt)
+		require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
+		assert.False(t, after.RefreshTokenExpiresAt.Before(rejectedAt))
+		assert.False(t, after.RefreshTokenExpiresAt.After(time.Now()))
+		assert.False(t, after.CanRefresh())
+
+		_, err = service.ForceRefreshSession(ctx, principal, serviceID)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, oauth2session.ErrRefreshNotAvailable))
+		assert.Equal(t, 1, rejectRequests, "a rejected refresh token must not be sent to the provider again")
 	})
 }
 

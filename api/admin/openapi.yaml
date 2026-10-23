@@ -2108,7 +2108,9 @@ paths:
         are stored. A candidate that another refresh already renewed, or that was deleted during
         the sweep, is counted as `skipped`. A candidate that cannot be refreshed (no usable refresh
         token, upstream error) is counted as `failed`. The sweep then continues and the stored
-        session is left unchanged.
+        tokens are left unchanged. When the provider rejects the refresh token with
+        `invalid_grant`, the refresh token is recorded as expired, so later sweeps count the
+        session as `failed` without contacting the provider until the user reconnects.
 
         **Dry run**: With `dry_run: true`, candidates are classified without calling any upstream
         provider and without writing. Candidates that would be refreshed are counted in
