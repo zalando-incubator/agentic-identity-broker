@@ -1263,3 +1263,199 @@ func TestThirdpartyOAuth2ProviderEntity_EffectiveResourceAfterSourceChange(t *te
 		})
 	}
 }
+
+func TestThirdpartyOAuth2ProviderEntity_ClientRegistrationRequests(t *testing.T) {
+	t.Parallel()
+	newEntity := func() *ThirdpartyOAuth2ProviderEntity {
+		return &ThirdpartyOAuth2ProviderEntity{
+			ID:          id.MustParseServiceID("650e8400-e29b-41d4-a716-446655440001"),
+			DisplayName: "Provider",
+			ClientID:    "operator-client",
+			Secret:      NewPlaintextSecret("client-secret"),
+			IssuerURI:   "https://issuer.example.com",
+			Discovery:   DiscoveryConfig{EnableDiscovery: true},
+		}
+	}
+	for _, operation := range []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{"create", func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(false) }},
+		{"update", func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(false) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name         string
+				registration ClientRegistration
+				provided     bool
+				method       TokenEndpointAuthMethod
+				want         ClientRegistration
+				wantErr      string
+			}{
+				{"static confidential", ClientRegistrationStatic, true, "", ClientRegistrationStatic, ""},
+				{"static public", ClientRegistrationStatic, true, TokenEndpointAuthMethodNone, ClientRegistrationStatic, ""},
+				{"CIMD confidential", ClientRegistrationCIMD, true, TokenEndpointAuthMethodPrivateKeyJWT, ClientRegistrationCIMD, ""},
+				{"CIMD public", ClientRegistrationCIMD, true, TokenEndpointAuthMethodNone, ClientRegistrationCIMD, ""},
+				{"static private key", ClientRegistrationStatic, true, TokenEndpointAuthMethodPrivateKeyJWT, ClientRegistrationStatic, "client_registration"},
+				{"CIMD shared secret", ClientRegistrationCIMD, true, "", ClientRegistrationCIMD, "client_registration"},
+				{"omitted confidential", "", false, "", ClientRegistrationStatic, ""},
+				{"omitted public", "", false, TokenEndpointAuthMethodNone, ClientRegistrationStatic, ""},
+				{"omitted private key", "", false, TokenEndpointAuthMethodPrivateKeyJWT, ClientRegistrationCIMD, ""},
+				{"explicit null", "", true, TokenEndpointAuthMethodNone, "", "client_registration"},
+				{"explicit empty", "", true, TokenEndpointAuthMethodNone, "", "client_registration"},
+				{"unknown", "dynamic", true, TokenEndpointAuthMethodNone, "dynamic", "client_registration"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					e := newEntity()
+					e.ClientRegistration, e.ClientRegistrationProvided = tc.registration, tc.provided
+					e.TokenEndpointAuthMethod = tc.method
+					if tc.method != "" {
+						e.Secret = NewAbsentSecret()
+					}
+					if tc.method == TokenEndpointAuthMethodPrivateKeyJWT || tc.registration == ClientRegistrationCIMD && tc.method == TokenEndpointAuthMethodNone {
+						e.ClientID = ""
+					}
+					originalID, originalSecret := e.ClientID, e.Secret
+					err := operation.validate(e)
+					if tc.wantErr != "" {
+						require.ErrorContains(t, err, tc.wantErr)
+						require.Equal(t, originalID, e.ClientID)
+						require.Equal(t, originalSecret, e.Secret)
+					} else {
+						require.NoError(t, err)
+					}
+					require.Equal(t, tc.want, e.ClientRegistration)
+				})
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_CIMDPublicRejectsCallerCredentials(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		clientID id.ClientID
+		secret   Secret
+		wantErr  string
+	}{
+		{"client ID", "operator-client", NewAbsentSecret(), "client_id"},
+		{"client secret", "", NewPlaintextSecret("secret"), "client_secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &ThirdpartyOAuth2ProviderEntity{
+				ID:          id.MustParseServiceID("650e8400-e29b-41d4-a716-446655440001"),
+				DisplayName: "Provider", ClientRegistration: ClientRegistrationCIMD,
+				ClientRegistrationProvided: true, TokenEndpointAuthMethod: TokenEndpointAuthMethodNone,
+				ClientID: tc.clientID, Secret: tc.secret, IssuerURI: "https://issuer.example.com",
+				Discovery: DiscoveryConfig{EnableDiscovery: true},
+			}
+			for _, validate := range []func(*ThirdpartyOAuth2ProviderEntity) error{
+				func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(false) },
+				func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(false) },
+			} {
+				require.ErrorContains(t, validate(e), tc.wantErr)
+				require.Equal(t, tc.clientID, e.ClientID)
+				require.Equal(t, tc.secret, e.Secret)
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_ClientRegistrationRestrictions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		configure func(*ThirdpartyOAuth2ProviderEntity)
+	}{
+		{"google", func(e *ThirdpartyOAuth2ProviderEntity) { e.Flavor = OAuth2FlavorGoogle }},
+		{"filesystem", func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.CredentialSource = CredentialSourceFilesystem
+			e.Secret = NewAbsentSecret()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &ThirdpartyOAuth2ProviderEntity{
+				ID:          id.MustParseServiceID("650e8400-e29b-41d4-a716-446655440001"),
+				DisplayName: "Provider", ClientRegistration: ClientRegistrationCIMD,
+				ClientRegistrationProvided: true, TokenEndpointAuthMethod: TokenEndpointAuthMethodNone,
+				Secret: NewAbsentSecret(), IssuerURI: "https://issuer.example.com",
+				Discovery: DiscoveryConfig{EnableDiscovery: true},
+			}
+			tc.configure(e)
+			for _, validate := range []func(*ThirdpartyOAuth2ProviderEntity) error{
+				func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(false) },
+				func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(false) },
+			} {
+				require.ErrorContains(t, validate(e), "client_registration")
+				require.Equal(t, ClientRegistrationCIMD, e.ClientRegistration)
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_DiscoveryRejectsClientRegistration(t *testing.T) {
+	t.Parallel()
+	for _, registration := range []ClientRegistration{ClientRegistrationStatic, ClientRegistrationCIMD, ""} {
+		e := discoveryEntity()
+		e.Discovery.ClientMethod = ""
+		e.TokenEndpointAuthMethod = ""
+		e.ClientRegistration, e.ClientRegistrationProvided = registration, true
+		require.ErrorContains(t, e.ValidateDiscoveryRequest(), "client_registration")
+		require.Equal(t, registration, e.ClientRegistration)
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_StoredClientRegistrationConsistency(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		registration ClientRegistration
+		method       TokenEndpointAuthMethod
+		clientMethod ClientBootstrapMethod
+		secret       bool
+		filesystem   bool
+		valid        bool
+	}{
+		{"static public", ClientRegistrationStatic, TokenEndpointAuthMethodNone, "", false, false, true},
+		{"CIMD public", ClientRegistrationCIMD, TokenEndpointAuthMethodNone, "", false, false, true},
+		{"CIMD confidential", ClientRegistrationCIMD, TokenEndpointAuthMethodPrivateKeyJWT, "", false, false, true},
+		{"missing registration resolves", "", TokenEndpointAuthMethodPrivateKeyJWT, "", false, false, true},
+		{"static with private key", ClientRegistrationStatic, TokenEndpointAuthMethodPrivateKeyJWT, "", false, false, false},
+		{"CIMD with shared secret", ClientRegistrationCIMD, "", "", true, false, false},
+		{"CIMD public with secret", ClientRegistrationCIMD, TokenEndpointAuthMethodNone, "", true, false, false},
+		{"CIMD filesystem", ClientRegistrationCIMD, "", "", false, true, false},
+		{"static hosted discovery", ClientRegistrationStatic, TokenEndpointAuthMethodPrivateKeyJWT, ClientBootstrapCIMD, false, false, false},
+		{"CIMD DCR discovery", ClientRegistrationCIMD, TokenEndpointAuthMethodNone, ClientBootstrapDCR, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := storedDiscoveryEntity()
+			if tc.clientMethod == "" {
+				e.Discovery = DiscoveryConfig{}
+				e.DiscoveryStatus = DiscoveryStatus{}
+			}
+			e.ClientRegistration = tc.registration
+			e.TokenEndpointAuthMethod = tc.method
+			e.Discovery.ClientMethod = tc.clientMethod
+			e.Secret = NewAbsentSecret()
+			e.ClientID = "https://broker.example/.well-known/oauth-client/650e8400-e29b-41d4-a716-446655440001"
+			if tc.secret {
+				e.Secret = NewEncryptedSecret([]byte("ciphertext"))
+			}
+			if tc.filesystem {
+				e.CredentialSource = CredentialSourceFilesystem
+			}
+			before := e.ClientRegistration
+			err := e.ValidateStoredClientAuthentication()
+			if tc.valid {
+				require.NoError(t, err)
+				if before == "" {
+					require.Equal(t, ClientRegistrationCIMD, e.ClientRegistration)
+				}
+			} else {
+				require.Error(t, err)
+				require.Equal(t, before, e.ClientRegistration)
+			}
+		})
+	}
+}

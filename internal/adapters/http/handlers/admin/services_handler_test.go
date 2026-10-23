@@ -139,6 +139,12 @@ type readyCIMDKeyReadiness struct{}
 
 func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
+type unavailableCIMDKeyReadiness struct{}
+
+func (unavailableCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error {
+	return errors.New("no CIMD client-authentication key is available")
+}
+
 // setupHandler creates a handler backed by a mock repository and test encryption.
 func setupHandler(t *testing.T, mockRepo *MockProviderRepository) *ServicesHandler {
 	return setupHandlerWithConfig(t, mockRepo, testConfig())
@@ -237,6 +243,7 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		assert.NotEmpty(t, resp.ID)
 		assert.Equal(t, "GitHub", resp.DisplayName)
 		assert.Equal(t, "github-client-id", resp.ClientID)
+		assert.Equal(t, model.ClientRegistrationStatic, resp.ClientRegistration)
 		require.NotNil(t, resp.ClientSecret)
 		assert.Equal(t, "REDACTED", *resp.ClientSecret) // Secret must be redacted
 		assert.False(t, resp.Discovery.EnableDiscovery)
@@ -578,6 +585,7 @@ func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.
 			var response map[string]json.RawMessage
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 			method, methodPresent := response["token_endpoint_auth_method"]
+			assert.JSONEq(t, `"static"`, string(response["client_registration"]))
 			require.True(t, methodPresent)
 
 			if tt.wantPublic {
@@ -780,6 +788,7 @@ func TestServicesHandler_CreateCIMDConfidentialService(t *testing.T) {
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.JSONEq(t, `"cimd"`, string(payload["client_registration"]))
 	assert.NotContains(t, payload, "client_secret")
 
 	var serviceID, clientID string
@@ -901,7 +910,6 @@ func TestServicesHandler_RejectsCIMDForGoogleFlavor(t *testing.T) {
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&errorResponse))
 			assert.Equal(t, "validation failed", errorResponse.Error)
 			assert.Contains(t, errorResponse.Message, "google")
-			assert.Contains(t, errorResponse.Message, "private_key_jwt")
 			repo.AssertNotCalled(t, "Create")
 			repo.AssertNotCalled(t, "Update")
 		})
@@ -971,12 +979,15 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 	staticID := id.NewServiceID()
 	publicID := id.NewServiceID()
 	cimdID := id.NewServiceID()
+	cimdPublicID := id.NewServiceID()
 	staticService := encryptedEntity(staticID, "Static provider", "static-client-id", "static-secret", "https://static.example.com", nil)
+	staticService.ClientRegistration = model.ClientRegistrationStatic
 	publicService := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                      publicID,
 		DisplayName:             "Public provider",
 		ClientID:                "public-client-id",
 		Secret:                  model.NewAbsentSecret(),
+		ClientRegistration:      model.ClientRegistrationStatic,
 		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
 		IssuerURI:               "https://public.example.com",
 		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://public.example.com/token", AuthorizeEndpoint: "https://public.example.com/authorize"},
@@ -989,9 +1000,23 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 		DisplayName:             "CIMD provider",
 		ClientID:                id.ClientID(cimdClientID),
 		Secret:                  model.NewAbsentSecret(),
-		TokenEndpointAuthMethod: model.TokenEndpointAuthMethod("private_key_jwt"),
+		ClientRegistration:      model.ClientRegistrationCIMD,
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
 		IssuerURI:               "https://issuer.example.com",
 		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://issuer.example.com/token", AuthorizeEndpoint: "https://issuer.example.com/authorize"},
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	cimdPublicClientID := "https://broker.example.com/.well-known/oauth-client/" + cimdPublicID.String()
+	cimdPublicService := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      cimdPublicID,
+		DisplayName:             "CIMD public provider",
+		ClientID:                id.ClientID(cimdPublicClientID),
+		Secret:                  model.NewAbsentSecret(),
+		ClientRegistration:      model.ClientRegistrationCIMD,
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		IssuerURI:               "https://issuer.example.com",
+		Endpoints:               cimdService.Endpoints,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -1000,12 +1025,14 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 		name             string
 		service          *model.ThirdpartyOAuth2ProviderEntity
 		wantMethod       string
+		wantRegistration model.ClientRegistration
 		wantClientID     string
 		wantClientSecret bool
 	}{
-		{name: "static confidential", service: staticService, wantMethod: "null", wantClientID: "static-client-id", wantClientSecret: true},
-		{name: "public", service: publicService, wantMethod: `"none"`, wantClientID: "public-client-id"},
-		{name: "CIMD confidential", service: cimdService, wantMethod: `"private_key_jwt"`, wantClientID: cimdClientID},
+		{name: "static confidential", service: staticService, wantMethod: "null", wantRegistration: model.ClientRegistrationStatic, wantClientID: "static-client-id", wantClientSecret: true},
+		{name: "static public", service: publicService, wantMethod: `"none"`, wantRegistration: model.ClientRegistrationStatic, wantClientID: "public-client-id"},
+		{name: "CIMD confidential", service: cimdService, wantMethod: `"private_key_jwt"`, wantRegistration: model.ClientRegistrationCIMD, wantClientID: cimdClientID},
+		{name: "CIMD public", service: cimdPublicService, wantMethod: `"none"`, wantRegistration: model.ClientRegistrationCIMD, wantClientID: cimdPublicClientID},
 	}
 
 	for _, tt := range tests {
@@ -1027,6 +1054,9 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 			var payload map[string]json.RawMessage
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 			assert.JSONEq(t, tt.wantMethod, string(payload["token_endpoint_auth_method"]))
+			registration, present := payload["client_registration"]
+			require.True(t, present)
+			assert.JSONEq(t, `"`+string(tt.wantRegistration)+`"`, string(registration))
 			var clientID string
 			require.NoError(t, json.Unmarshal(payload["client_id"], &clientID))
 			assert.Equal(t, tt.wantClientID, clientID)
@@ -1562,6 +1592,7 @@ func TestServicesHandler_UpdateCIMDConfidentialService(t *testing.T) {
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.JSONEq(t, `"cimd"`, string(payload["client_registration"]))
 	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
 	assert.NotContains(t, payload, "client_secret")
 	repo.AssertExpectations(t)
@@ -1714,6 +1745,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method, methodPresent := response["token_endpoint_auth_method"]
 			require.True(t, methodPresent)
 
+			assert.JSONEq(t, `"static"`, string(response["client_registration"]))
 			if tt.wantPublic {
 				assert.JSONEq(t, `"none"`, string(method))
 				assert.NotContains(t, response, "client_secret")
@@ -1814,6 +1846,9 @@ func TestServicesHandler_ListServices(t *testing.T) {
 			encryptedEntity(serviceID2, "Google", "google-client", "secret2", "https://accounts.google.com",
 				[]model.OAuthScope{{ScopeValue: "email", Description: "Email access"}}),
 		}
+		for _, entity := range entities {
+			entity.ClientRegistration = model.ClientRegistrationStatic
+		}
 
 		mockRepo.On("List", mock.Anything).Return(entities, nil)
 
@@ -1830,6 +1865,8 @@ func TestServicesHandler_ListServices(t *testing.T) {
 		assert.Len(t, resp, 2)
 		assert.Equal(t, "GitHub", resp[0].DisplayName)
 		assert.Equal(t, "Google", resp[1].DisplayName)
+		assert.Equal(t, model.ClientRegistrationStatic, resp[0].ClientRegistration)
+		assert.Equal(t, model.ClientRegistrationStatic, resp[1].ClientRegistration)
 		require.NotNil(t, resp[0].ClientSecret)
 		require.NotNil(t, resp[1].ClientSecret)
 		assert.Equal(t, "REDACTED", *resp[0].ClientSecret)
@@ -2292,6 +2329,15 @@ func adminDiscoveryPayload(t *testing.T, body []byte, serviceID, clientMethod, t
 	assert.True(t, response.Discovery.EnableDiscovery)
 	assert.Equal(t, adminTestResource, response.Discovery.ResourceURL)
 	assert.Equal(t, clientMethod, response.Discovery.ClientMethod)
+	var registration struct {
+		ClientRegistration model.ClientRegistration `json:"client_registration"`
+	}
+	require.NoError(t, json.Unmarshal(body, &registration))
+	if clientMethod == "cimd" {
+		assert.Equal(t, model.ClientRegistrationCIMD, registration.ClientRegistration)
+	} else {
+		assert.Equal(t, model.ClientRegistrationStatic, registration.ClientRegistration)
+	}
 	assert.Equal(t, "https://auth.example.test/tenant/authorize", response.Endpoints.AuthorizeEndpoint)
 	assert.Equal(t, "https://auth.example.test/tenant/token", response.Endpoints.TokenEndpoint)
 	assert.Equal(t, resource, response.AuthorizationParams["resource"])
@@ -2362,6 +2408,10 @@ func TestServicesHandler_ResourceDiscoveryReadAndListRepresentActiveClient(t *te
 			}
 			if tc.confidentialDCR {
 				entity.Secret = model.NewEncryptedSecret(encryptSecretForTest(serviceID.String(), "registered-secret-not-for-admin"))
+			}
+			entity.ClientRegistration = model.ClientRegistrationStatic
+			if tc.clientMethod == "cimd" {
+				entity.ClientRegistration = model.ClientRegistrationCIMD
 			}
 			repo.On("Get", mock.Anything, serviceID).Return(entity, nil).Once()
 			repo.On("List", mock.Anything).Return([]*model.ThirdpartyOAuth2ProviderEntity{entity}, nil).Once()
@@ -2728,6 +2778,7 @@ func TestServicesHandler_ResourceMetadataFailureKeepsActiveService(t *testing.T)
 		Endpoints:           model.OAuth2Endpoints{TokenEndpoint: adminTestIssuer + "/token", AuthorizeEndpoint: adminTestIssuer + "/authorize"},
 		AuthorizationParams: map[string]string{"resource": adminTestResource}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 9,
 	}
+	persisted.ClientRegistration = model.ClientRegistrationCIMD
 	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil)
 	initial := httptest.NewRecorder()
 	handler.GetService(initial, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
@@ -3856,4 +3907,325 @@ func TestServicesHandler_CredentialSourceFilesystemRejectsExplicitInvalidSelecto
 			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
+}
+
+func clientRegistrationHandlerBody(registration model.ClientRegistration, method string) map[string]any {
+	body := map[string]any{
+		"display_name": "Provider",
+		"issuer_uri":   "https://provider.example.com",
+		"discovery":    map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://provider.example.com/token",
+			"authorize_endpoint": "https://provider.example.com/authorize",
+		},
+	}
+	if registration != "" {
+		body["client_registration"] = registration
+	}
+	switch method {
+	case "":
+		body["client_id"] = "operator-client"
+		body["client_secret"] = "operator-secret"
+	case "none":
+		body["token_endpoint_auth_method"] = method
+		if registration != model.ClientRegistrationCIMD {
+			body["client_id"] = "operator-client"
+		}
+	case "private_key_jwt":
+		body["token_endpoint_auth_method"] = method
+	}
+	return body
+}
+
+func assertClientRegistrationHandlerView(t *testing.T, response *httptest.ResponseRecorder, registration model.ClientRegistration, method, clientID string, secret bool) string {
+	t.Helper()
+	payload := credentialSourceHandlerPayload(t, response)
+	value, present := payload["client_registration"]
+	require.True(t, present, "client_registration must be present even for the default")
+	assert.JSONEq(t, `"`+string(registration)+`"`, string(value))
+	var actualID string
+	require.NoError(t, json.Unmarshal(payload["id"], &actualID))
+	if registration == model.ClientRegistrationCIMD {
+		clientID = "https://broker.example.com/.well-known/oauth-client/" + actualID
+	}
+	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
+	if method == "" {
+		assert.JSONEq(t, `null`, string(payload["token_endpoint_auth_method"]))
+	} else {
+		assert.JSONEq(t, `"`+method+`"`, string(payload["token_endpoint_auth_method"]))
+	}
+	if secret {
+		assert.JSONEq(t, `"REDACTED"`, string(payload["client_secret"]))
+	} else {
+		assert.NotContains(t, payload, "client_secret")
+	}
+	return actualID
+}
+
+func TestServicesHandler_ClientRegistrationFourModesAcrossCRUD(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+		secret       bool
+	}{
+		{"static confidential", model.ClientRegistrationStatic, "", true},
+		{"static public", model.ClientRegistrationStatic, "none", false},
+		{"CIMD confidential", model.ClientRegistrationCIMD, "private_key_jwt", false},
+		{"CIMD public", model.ClientRegistrationCIMD, "none", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := clientRegistrationHandlerBody(tc.registration, tc.method)
+			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+			serviceID := assertClientRegistrationHandlerView(t, created, tc.registration, tc.method, "operator-client", tc.secret)
+			path := "/api/services/" + serviceID
+			read := credentialSourceHandlerRequest(t, router, http.MethodGet, path, nil, "")
+			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+			assertClientRegistrationHandlerView(t, read, tc.registration, tc.method, "operator-client", tc.secret)
+			list := credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services", nil, "")
+			require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+			var services []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(list.Body.Bytes(), &services))
+			require.Len(t, services, 1)
+			listed, err := json.Marshal(services[0])
+			require.NoError(t, err)
+			listedResponse := httptest.NewRecorder()
+			_, err = listedResponse.Write(listed)
+			require.NoError(t, err)
+			assertClientRegistrationHandlerView(t, listedResponse, tc.registration, tc.method, "operator-client", tc.secret)
+			body["display_name"] = "Updated provider"
+			updated := credentialSourceHandlerRequest(t, router, http.MethodPut, path, body, "")
+			require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+			assertClientRegistrationHandlerView(t, updated, tc.registration, tc.method, "operator-client", tc.secret)
+		})
+	}
+}
+
+func TestServicesHandler_ClientRegistrationOmissionAndInvalidValues(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+	}{
+		{"static confidential", model.ClientRegistrationStatic, ""},
+		{"static public", model.ClientRegistrationStatic, "none"},
+		{"CIMD confidential", model.ClientRegistrationCIMD, "private_key_jwt"},
+	} {
+		t.Run("omitted/"+tc.name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := clientRegistrationHandlerBody("", tc.method)
+			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+			serviceID := assertClientRegistrationHandlerView(t, created, tc.registration, tc.method, "operator-client", tc.method == "")
+			updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+			require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+			assertClientRegistrationHandlerView(t, updated, tc.registration, tc.method, "operator-client", tc.method == "")
+		})
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"null", nil},
+		{"empty", ""},
+		{"unknown", "dynamic"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody("", "")
+				body["client_registration"] = tc.value
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				var failure ErrorResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+				assert.Equal(t, "validation failed", failure.Error)
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationRejectsInvalidPairsBeforeDiscovery(t *testing.T) {
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+	}{
+		{"static with private_key_jwt", model.ClientRegistrationStatic, "private_key_jwt"},
+		{"CIMD with absent method", model.ClientRegistrationCIMD, ""},
+		{"CIMD with null method", model.ClientRegistrationCIMD, "null"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				requests.Store(0)
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody(tc.registration, tc.method)
+				if tc.method == "null" {
+					body["token_endpoint_auth_method"] = nil
+					body["client_id"] = "operator-client"
+					body["client_secret"] = "operator-secret"
+				}
+				body["issuer_uri"] = upstream.URL
+				body["discovery"] = map[string]any{"enable_discovery": true}
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				var failure ErrorResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+				assert.Equal(t, "validation failed", failure.Error)
+				assert.Zero(t, requests.Load(), "invalid registration must be rejected before discovery")
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationRejectsDiscoverySelectionBeforeTraffic(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			client := adminCIMDDiscoveryClient(t)
+			handler := setupHandlerWithConfig(t, repo, testConfig())
+			handler.providerService.WithOAuthDiscoveryClient(client)
+			body := map[string]any{
+				"display_name":        "Discovered provider",
+				"client_registration": "cimd",
+				"discovery":           map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+			}
+			serviceID := ""
+			if method == http.MethodPut {
+				serviceID = credentialSourceHandlerStoredFixture(t, repo).ID.String()
+			}
+			before, err := repo.List(context.Background())
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			request := adminDiscoveryRequest(t, method, serviceID, body)
+			if method == http.MethodPost {
+				handler.CreateService(response, request)
+			} else {
+				handler.UpdateService(response, request)
+			}
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			var failure ErrorResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+			assert.Equal(t, "validation failed", failure.Error)
+			assert.Empty(t, client.probeCalls)
+			assert.Empty(t, client.getCalls)
+			assert.Empty(t, client.postCalls)
+			after, err := repo.List(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
+func TestServicesHandler_ClientRegistrationPublicPUTRequiresExplicitCIMD(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	router := credentialSourceHandlerRouter(t, repo)
+	body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+	created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	serviceID := assertClientRegistrationHandlerView(t, created, model.ClientRegistrationCIMD, "none", "", false)
+	before, err := repo.List(context.Background())
+	require.NoError(t, err)
+	delete(body, "client_registration")
+	updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusBadRequest, updated.Code, updated.Body.String())
+	after, err := repo.List(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestServicesHandler_ClientRegistrationPublicRejectsCallerCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"client ID", "client_id", "operator-client"},
+		{"client secret", "client_secret", "operator-secret"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+				body[tc.field] = tc.value
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationPublicNeedsNoCIMDKey(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	handler := setupHandlerWithConfig(t, repo, testConfig())
+	handler.providerService.WithCIMDKeyReadiness(unavailableCIMDKeyReadiness{})
+	router := chi.NewRouter()
+	router.Post("/api/services", handler.CreateService)
+	router.Put("/api/services/{service-id}", handler.UpdateService)
+	body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+	created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	serviceID := assertClientRegistrationHandlerView(t, created, model.ClientRegistrationCIMD, "none", "", false)
+	body["display_name"] = "Updated keyless provider"
+	updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+	assertClientRegistrationHandlerView(t, updated, model.ClientRegistrationCIMD, "none", "", false)
 }

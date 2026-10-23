@@ -344,4 +344,4 @@ After T019 and Phase 2.5, three tracks can proceed: (A) US1 then US2 on the prov
 
 - Existing artefacts reused: `FositeStorage` transaction pattern, `SessionCleanup`, the CIMD fetcher and SSRF blocklist, `urivalidation.ValidateCIMDClientURL`, `jwx` v4 as used in `internal/domain/tokenexchange/jwt_validator.go`.
 - The earlier branch draft (`specs/050-cimd-private-key-jwt/`, old ADR 040) is discarded, not merged.
-- Migration numbers (042, 043) and ADR number 042 account for the already-landed migrations 038 to 041 and ADR 040; feature number 051 avoids the existing feature 050. T090 records this re-numbering.
+- Migration numbers (042, 043) and ADR number 043 account for the already-landed migrations 038 to 041 and ADRs 040 to 042; feature 051-private-key-jwt-auth avoids the existing feature 050. T090 records this re-numbering.

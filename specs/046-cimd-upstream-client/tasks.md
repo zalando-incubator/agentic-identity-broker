@@ -19,7 +19,7 @@ description: "Task list for CIMD client authentication for third-party OAuth2 se
 - `[US#]` identifies the user story served by the task.
 - `private_key_jwt` is explicit; it is never inferred from missing input or provider metadata.
 - Do not introduce a frontend surface. This feature changes backend, API, persistence, documentation, and E2E coverage only.
-- `cimd-upstream-client` is the unique Ginkgo label for this feature. Its label-filtered command must select only the 31 feature scenarios.
+- `cimd-upstream-client` labels both increments. The non-performance filter selects 51 scenarios: 31 from increment 1 and 20 from increment 2. `cimd-public-client` selects only the 20 new scenarios.
 
 ---
 
@@ -111,7 +111,7 @@ description: "Task list for CIMD client authentication for third-party OAuth2 se
 **Feature filter and traceability**: Every functional `It()` below MUST use `Label("cimd-upstream-client")` and a nearby comment in the form `// US#-S# from specs/046-cimd-upstream-client/spec.md`. The SC-008 test also uses `Label("performance")`.
 
 - [X] T026 [P] [US1] Write five isolated Ginkgo `It()` blocks in `tests/e2e/thirdparty_cimd_service_test.go`: registration without caller credentials, contradiction rejection before provider traffic, static compatibility, public compatibility, and Google/credential-derived flavor rejection.
-- [X] T027 [P] [US2] Write seven isolated Ginkgo `It()` blocks in `tests/e2e/thirdparty_cimd_metadata_test.go`: exact client ID, callback/method/JWK fields, public-only output, non-CIMD non-exposure, JSON/cache headers, canonical `404` for unknown, deleted, public, static, and unusable service states, and disjoint CIMD/token `kid` sets.
+- [X] T027 [P] [US2] Write seven isolated Ginkgo `It()` blocks in `tests/e2e/thirdparty_cimd_metadata_test.go`: exact client ID, callback/method/JWK fields, public-only output, non-CIMD non-exposure, JSON/cache headers, canonical `404` for unknown, deleted, static public, static confidential, and unusable service states, and disjoint CIMD/token `kid` sets. Increment 2 adds a keyless CIMD public document.
 - [X] T028 [P] [US3] Write eight isolated Ginkgo `It()` blocks in `tests/e2e/thirdparty_cimd_authentication_test.go`: broker URL authorization identity, code assertion, refresh assertion, fail-closed errors, public/static compatibility, exact assertion form and claims, proxy isolation, and no cross-domain signing.
 - [X] T029 [P] [US4] Write eight isolated Ginkgo `It()` blocks in `tests/e2e/thirdparty_cimd_rotation_test.go`: stable published location, cached-key refresh, no-usable-key failure, grace publication, immediate promotion, immediate first-key activation, all-mode route isolation, and non-ES256 rejection.
 - [X] T030 [US5] After T026 has completed its edit of `tests/e2e/thirdparty_cimd_service_test.go`, add three isolated Ginkgo `It()` blocks: list all three postures, read a CIMD service without a secret, and convert static confidential state to CIMD while removing its secret.
@@ -172,11 +172,11 @@ description: "Task list for CIMD client authentication for third-party OAuth2 se
 
 **Independent Test**: Fetch the configured service's client identifier URL anonymously and verify an exact matching client ID, callback URI, `private_key_jwt`, and only public verification keys.
 
-- [X] T049 [P] [US2] Using the compile-time contracts from T032, add semantic-red metadata and JWK composition coverage in `internal/domain/cimdclient/metadata_service_test.go` for the exact metadata fields, public ES256 filtering, grace-period/publication behavior, stable URLs, and unknown, deleted, public, static, and unusable service states.
+- [X] T049 [P] [US2] Using the compile-time contracts from T032, add semantic-red metadata and JWK composition coverage in `internal/domain/cimdclient/metadata_service_test.go` for the exact metadata fields, public ES256 filtering, grace-period/publication behavior, stable URLs, and unknown, deleted, static public, static confidential, and unusable service states. Increment 2 adds keyless CIMD public metadata.
 - [X] T050 [P] [US2] Using the compile-time contracts from T032, add semantic-red anonymous HTTP coverage in `internal/adapters/http/handlers/enduser/cimd_metadata_handler_test.go` for `application/json`, `Cache-Control: public, max-age=300`, the canonical error JSON `404`, no redirects, and absence of private material.
 - [X] T051 [US2] Implement a metadata-safe third-party service projection in `internal/ports/cimd_client.go` and `internal/domain/thirdparty/service.go`; it may reveal only ID, authentication mode, generated client ID, callback inputs, and document eligibility. It must never reveal secret state or decrypted credentials.
-- [X] T052 [US2] Implement `internal/domain/cimdclient/metadata_service.go` to derive a document only for an existing, non-deleted, ready `private_key_jwt` service. Return exactly one callback URI, grant types `authorization_code` and `refresh_token`, response type `code`, auth method `private_key_jwt`, signing algorithm `ES256`, and `<client-id>/jwks.json`; publish only CIMD-domain public P-256 keys with `use: sig`, `kid`, `alg`, `x`, and `y`.
-- [X] T053 [US2] Implement anonymous document and key handlers in `internal/adapters/http/handlers/enduser/cimd_metadata_handler.go`, mapping unknown, deleted, public, static, and unusable states to the same existing JSON `404` and emitting metadata-access audit records with identifiers and outcomes only.
+- [X] T052 [US2] In Increment 1, implement `internal/domain/cimdclient/metadata_service.go` to derive a document for an existing, non-deleted, ready `private_key_jwt` service. Return exactly one callback URI, grant types `authorization_code` and `refresh_token`, response type `code`, auth method `private_key_jwt`, signing algorithm `ES256`, and `<client-id>/jwks.json`; publish only CIMD-domain public P-256 keys with `use: sig`, `kid`, `alg`, `x`, and `y`. Increment 2 also serves a keyless CIMD public document.
+- [X] T053 [US2] Implement anonymous document and key handlers in `internal/adapters/http/handlers/enduser/cimd_metadata_handler.go`, mapping unknown, deleted, static public, static confidential, and unusable states to the same JSON `404` and emitting metadata-access audit records with identifiers and outcomes only. Increment 2 serves CIMD public metadata but returns `404` for its JWK Set.
 - [X] T054 [US2] Add the pre-wired CIMD public handler fields in `internal/app/handlers.go`, construct them in `internal/app/builder.go`, and register both `/.well-known/oauth-client/{service-id}` routes before the SPA fallback in `internal/adapters/http/routing/enduser.go`.
 - [X] T055 [US2] Turn `US2-S1` through `US2-S7` green in `tests/e2e/thirdparty_cimd_metadata_test.go`, including proof that `/oauth2/jwks.json` remains free of CIMD key IDs.
 
@@ -355,3 +355,97 @@ Then run T070; it exercises the shared US1 mapper and adds no speculative produc
 - Use `internal/ports/` interfaces and both in-memory/PostgreSQL adapters; do not bypass storage ports.
 - Use existing JSON error contracts and structured logs with only identifiers/outcomes.
 - Never add CIMD keys to `/oauth2/jwks.json`, reuse proxy credentials, expose private material, or downgrade authentication after an assertion/key error.
+
+---
+
+## Increment 2 (issue #264): CIMD public clients
+
+**Date**: 2026-10-22. This increment augments feature 046 in place. T001–T088 and the original mandatory Phase 2 and Phase N sections remain unchanged.
+
+**Gate**: The stakeholder confirmed API-014 (D-A–D-D) and accepted ADR 044 (D-E–D-J, including D-I) on 2026-10-22. Issue #264 confirms API-013. No task in this increment introduces a new configuration key, frontend, ExtProc behavior, CIMD key lifecycle, or OAuth2Session retry behavior.
+
+### Increment 2 Phase 1: Approval and shared design
+
+- [X] T089 Record the 2026-10-22 stakeholder acceptance and confirmation in `adrs/044-client-registration-independent-of-authentication.md`, `AGENTS.md`, `specs/046-cimd-upstream-client/spec.md`, and both `specs/046-cimd-upstream-client/contracts/{admin-api,enduser-api}.md` (API-014; Principle II).
+
+### Increment 2 Phase 2: Design Preconditions [MANDATORY]
+
+**Checkpoint**: Complete Phase 2a–2f in order. Verify each subphase before the next. E2E tests must compile and fail semantically before the production behavior in later phases.
+
+#### Phase 2a: Domain Model & Glossary [MANDATORY]
+
+- [X] T090 Add client registration, CIMD public service, and static public service to the glossary in `ARCHITECTURE.md`; amend its Broker-hosted Client ID Metadata Document and Public JWK trust surfaces sections without weakening confidential key isolation (FR-037–FR-040; Principles II/V).
+- [X] T091 Confirm `specs/046-cimd-upstream-client/data-model.md` and Accepted `adrs/044-client-registration-independent-of-authentication.md` agree on all four modes, discovery classification, exact hosted identity, and the keyless public document (FR-032–FR-047; Principle V).
+
+#### Phase 2b: Configuration Design [MANDATORY]
+
+- [X] T092 Update only the existing HTTPS public-URL comment in `examples/config/third-party-oauth2.yaml` so every `client_registration: cimd` service requires HTTPS; add no configuration key, Helm value, or frontend setting (FR-037; Principle VII).
+
+#### Phase 2c: API Design [MANDATORY]
+
+- [X] T093 Apply confirmed `specs/046-cimd-upstream-client/contracts/admin-api.md` to `api/admin/openapi.yaml`: add non-null `ClientRegistration` (`static`/`cimd`), require it in Service responses, allow optional non-null create/PUT values, document all four modes, omission, discovery, transitions, `400` errors, a CIMD public example, and version 2.1.0 (API-010/API-011/API-014).
+- [X] T094 Apply confirmed `specs/046-cimd-upstream-client/contracts/enduser-api.md` to `api/enduser/openapi.yaml`: use a closed `oneOf` of seven-member confidential and five-member public metadata, document keyless `200` and public JWK `404`, and set version 1.1.0 (API-012/API-014).
+- [X] T095 Update `docs/reference/api.md` from both confirmed OpenAPI contracts; do not hand-write `docs/api/` pages because Redocusaurus renders them from OpenAPI (API-011/API-012; Principle IV).
+
+#### Phase 2d: Database Design [MANDATORY]
+
+- [X] T096 Add compile-ready migration tests to `tests/integration/migrations/client_registration_migration_test.go` for legacy static confidential, static public, CIMD confidential, DCR, filesystem classification; invalid rows; guarded rollback; and replay. Observe a semantic red result before completing 044/045 behavior (DB-005–DB-007; Principle VIII).
+- [X] T097 Implement `migrations/044_add_thirdparty_client_registration.{up,down}.sql`: add `TEXT NOT NULL DEFAULT 'static'`, use 040's 1s/ACCESS EXCLUSIVE NOWAIT pattern and separate `NOT VALID` constraint for the four-mode matrix, absent CIMD secret, stored source, discovery compatibility, and client-ID suffix; refuse rollback for CIMD public rows (DB-005–DB-007).
+- [X] T098 Implement `migrations/045_validate_thirdparty_client_registration.{up,down}.sql`: use 041's SHARE UPDATE EXCLUSIVE NOWAIT pattern, backfill `cimd` for `private_key_jwt` rows, validate the constraint, and restore `NOT VALID` without changing rows on down. Run the focused migration tests green (DB-005–DB-007).
+
+#### Phase 2e: Frontend/Design System Review [MANDATORY]
+
+- [X] T099 Confirm the no-frontend decision in `specs/046-cimd-upstream-client/plan.md`: no `web/` code, design-system component, Playwright scenario, screenshot, or Helm setting changes (Principle XI).
+
+#### Phase 2f: E2E Acceptance Test Design [MANDATORY]
+
+- [X] T100 Extend `tests/e2e/helpers/mock_cimd_upstream.go` with `WithPublicClientMode()`: require the exact hosted URL and PKCE verifier, a five-member `none` document with no key members, no JWK fetch, and no secret, assertion, or Authorization header; log no codes, verifiers, or tokens (US8-S1–S6).
+- [X] T101 [P] [US6] Add six production-bootstrap `It()` blocks in `tests/e2e/thirdparty_cimd_public_service_test.go`, one for each US6-S1–S6; each has `Label("cimd-upstream-client", "cimd-public-client")` and its nearby `US6-S# from specs/046-cimd-upstream-client/spec.md` comment (Principle XIII).
+- [X] T102 [P] [US7] Add six production-bootstrap `It()` blocks in `tests/e2e/thirdparty_client_registration_test.go`, one for each US7-S1–S6 with the same two labels and nearby spec comment (Principle XIII).
+- [X] T103 [P] [US8] Add eight production-bootstrap `It()` blocks in `tests/e2e/thirdparty_cimd_public_authentication_test.go`, one for each US8-S1–S8 with the same labels and nearby spec comment. US8-S4/S5 must prove successful token/refresh requests and stored sessions (Principle XIII).
+- [X] T104 Compile and run `ginkgo -v --label-filter="cimd-public-client" ./tests/e2e/` with exactly 20 scenarios; observe semantic red behavior, not compile failures or always-fail placeholders. Review the six concrete journeys in `specs/046-cimd-upstream-client/spec.md` against these scenarios (Principles VIII/XIII/XIV).
+
+### Increment 2 Phase 3: US6 — Register a CIMD public service (Priority: P1)
+
+**Goal**: An operator creates or replaces a hosted, keyless `cimd` + `none` service without a caller ID or secret.
+**Independent test**: With no CIMD key, create and replace a CIMD public service, read its hosted URL, and reject contradictory credentials before provider traffic.
+
+- [X] T105 [P] [US6] Write semantic-red table-driven tests in `internal/domain/model/client_registration_test.go` and `internal/domain/model/thirdparty_oauth2_provider_test.go` for two values, four valid and two invalid pairs, omission, explicit null/empty/unknown, Google, filesystem, discovery exclusion, and stored consistency (FR-032–FR-036/FR-043–FR-045).
+- [X] T106 [P] [US6] Write semantic-red service and Builder tests in `internal/domain/thirdparty/service_test.go` and `internal/app/builder_test.go`: create/update without a key, confidential key readiness, identity transitions, exact startup URL for both CIMD methods, conditional bootstrap, projection, and safe audits (FR-037/FR-038/FR-046–FR-049).
+- [X] T107 [P] [US6] Write semantic-red metadata tests in `internal/domain/cimdclient/metadata_service_test.go` and `internal/adapters/http/handlers/enduser/cimd_metadata_handler_test.go` for the exact five-member document, no key dependency, public JWK `404`, and unchanged confidential document (FR-039/FR-040).
+- [X] T108 [P] [US6] Write semantic-red handler and storage tests in `internal/adapters/http/handlers/admin/services_handler_test.go` and `internal/adapters/storage/{memory,postgres}/thirdparty_provider{,_record}_test.go`: absent/null/empty/unknown presence, four response modes, round trips, reject invalid stored values, and constraint violations (API-010; DB-006).
+- [X] T109 [US6] Add `ClientRegistration` (`static`, `cimd`), `Validate()`, and omission resolver to `internal/domain/model/client_registration.go`; add fields, `IsCIMDClient()`/`IsCIMDPublicClient()`, matrix and stored/discovery validation to `internal/domain/model/thirdparty_oauth2_provider.go`. Keep public wire behavior on `IsPublicClient()` and key behavior on `IsCIMDConfidentialClient()` (FR-032–FR-045).
+- [X] T110 [US6] Set registration from discovery selection in `internal/domain/thirdparty/protected_resource_discovery.go`; update identity, safe projection, audit messaging, and `VerifyCIMDServiceIdentities(ctx) (requiresClientKey bool, err error)` in `internal/domain/thirdparty/service.go`. Migrate both callers and bootstrap keys only for confidential CIMD in `internal/app/builder.go` (FR-043–FR-049).
+- [X] T111 [US6] Extend `internal/domain/cimdclient/metadata_service.go` to serve both methods, require a published key only for confidential, omit public key members, and return `ports.ErrCIMDPublicKeyUnavailable` for public JWK requests. Add `omitempty` to the two optional fields in `internal/ports/cimd_client.go` (FR-038–FR-040).
+- [X] T112 [US6] Parse `client_registration` with `json.RawMessage` presence in `internal/adapters/http/handlers/admin/services_handler.go`, return it in every response, and leave resolution in the domain. Add explicit column lists and strict stored reads in `internal/adapters/storage/postgres/thirdparty_provider{,_record}.go`; retain validation through `internal/adapters/storage/memory/thirdparty_provider{,_record}.go` (API-010; DB-005/DB-006).
+- [X] T113 [US6] Turn US6-S1–S6 green in `tests/e2e/thirdparty_cimd_public_service_test.go`; preserve confidential registration and static compatibility in the existing E2E suite (SC-009).
+
+### Increment 2 Phase 4: US7 — Preserve existing registrations (Priority: P1)
+
+**Goal**: Explicit registration and omission retain all existing client identities, methods, sessions, and discovery selection.
+**Independent test**: Read migrated services and create/replace all valid modes; reject invalid combinations and field-supplied discovery before outbound traffic.
+
+- [X] T114 [P] [US7] Add targeted omission/discovery regression tests to `internal/domain/model/thirdparty_oauth2_provider_test.go`, `internal/domain/thirdparty/service_test.go`, and `internal/adapters/http/handlers/admin/services_handler_test.go`. Cover `static` + private-key rejection, `cimd` + null rejection, read/list reporting, and exact-shape responses (US7-S1–S6).
+- [X] T115 [P] [US7] Update exact-shape E2E expectations in `tests/e2e/thirdparty_cimd_service_test.go` and `tests/e2e/thirdparty_public_client_test.go` to include `client_registration` without changing prior authentication behavior (FR-045).
+- [X] T116 [US7] Turn US7-S1–S6 green in `tests/e2e/thirdparty_client_registration_test.go` and verify the legacy classifications from the migration and both storage adapters (SC-011/SC-012).
+
+### Increment 2 Phase 5: US8 — Connect through a CIMD public client (Priority: P1)
+
+**Goal**: Alice connects and refreshes with the hosted URL, PKCE S256, and no token-endpoint client authentication in all server modes.
+**Independent test**: The `none`-only provider validates the code verifier and both token requests, then the broker stores encrypted replacement tokens with an empty CIMD key set.
+
+- [X] T117 [P] [US8] Add semantic-red session security tests in `internal/domain/oauth2session/service_security_test.go`: CIMD public exchange/refresh never call the assertion signer, send the hosted URL and code verifier, omit secret/assertion/Authorization header, retain existing retry classification, and stop after one `invalid_client` rejection (FR-041/FR-042).
+- [X] T118 [P] [US8] Extend `internal/app/builder_test.go` startup coverage: CIMD-public-only brokers create no CIMD key in proxy, local, or hybrid mode and fail closed for a mismatched stored hosted URL (FR-047/FR-048).
+- [X] T119 [US8] Turn US8-S1–S8 green in `tests/e2e/thirdparty_cimd_public_authentication_test.go`. Confirm no change to `internal/domain/oauth2session/**` production behavior or `internal/adapters/http/handlers/enduser/cimd_metadata_handler.go` logic (SC-010/SC-013).
+
+### Increment 2 Phase N: Constitution Compliance & Polish [MANDATORY COMPLIANCE SECTION]
+
+- [X] T120 Update `docs/guides/manage-agents-and-services.md`, `docs/guides/operate-oauth2-server-modes.md`, and `docs/concepts/oauth2-server-modes.md` to document explicit CIMD public registration, full-replacement omission, keyless startup, all modes, and the 300-second cache; update `docs/reference/api.md` from OpenAPI (Principles IV/X).
+- [X] T121 Review accepted ADR 044, `AGENTS.md`, `ARCHITECTURE.md`, both OpenAPI contracts, `migrations/044*` and `045*`, both adapters, and US6–US8 E2E mapping for constitution Principles I, II, IV, V, VI, VIII, IX, X, XII, XIII, and XIV. Confirm no UI/configuration/ExtProc/key-lifecycle changes (Principle XI).
+- [ ] T122 Run the commands in `specs/046-cimd-upstream-client/quickstart.md`: `just check`, `just test`, `just test-integration`, `just test-integration-infra`, the 20-scenario `cimd-public-client` and 51-scenario `cimd-upstream-client && !performance` Ginkgo filters, `just docs-build`, and `just verify` (SC-009–SC-013).
+  **Verification note (2026-10-23):** All other commands and the post-merge T123 smoke passed. `just verify` reached OSV-Scanner, which reported 22 existing npm advisories in the web, Docusaurus, and Wireloom lockfiles. It also reported five unused ignores in `osv-scanner.toml`: `GO-2026-4883`, `GO-2026-5617`, `GO-2026-5668`, `GO-2026-5746`, and `GO-2026-4887`. OSV exited with status 1. T122 remains open. The stakeholder kept dependency remediation outside issue #264.
+- [X] T123 Follow the Increment 2 `specs/046-cimd-upstream-client/quickstart.md` smoke journey with a broker containing only CIMD public services and a `none`-only mock provider: register, fetch document, observe JWK `404`, connect, refresh, inspect encrypted session and empty CIMD key list (US8-S8).
+
+**Execution order**: T089 → Phase 2a → 2b → 2c → 2d → 2e → 2f (T101–T103 can run concurrently after T100) → US6 (tests before code) → US7 → US8 → Phase N. US7 and US8 may proceed after US6 shared state is green. Do not run builds, tests, linters, or formatters inside parallel agents; the integration owner runs checkpoint commands after their edits.
+
+**Parallel examples**: After T104, T105–T108 use disjoint test files. After T113, T114/T115 are independent except for `internal/adapters/http/handlers/admin/services_handler_test.go`; sequence any overlapping edit. After T116, T117/T118 use separate packages. The earliest independently useful increment is US6 registration and keyless metadata; the full P1 end-user journey requires US8.

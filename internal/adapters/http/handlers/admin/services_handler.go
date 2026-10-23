@@ -46,27 +46,29 @@ func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderServ
 
 // ServiceRequest represents the request body for creating/updating a service.
 type ServiceRequest struct {
-	CanonicalID                *string                 `json:"canonical_id,omitempty"`
-	DisplayName                string                  `json:"display_name"`
-	CredentialSource           model.CredentialSource  `json:"credential_source,omitempty"`
-	ClientID                   string                  `json:"client_id"`
-	ClientSecret               string                  `json:"client_secret"`
-	TokenEndpointAuthMethod    *string                 `json:"token_endpoint_auth_method,omitempty"`
-	OAuth2Flavor               string                  `json:"oauth2_flavor,omitempty"`
-	IssuerURI                  string                  `json:"issuer_uri"`
-	Discovery                  DiscoveryConfigRequest  `json:"discovery"`
-	Endpoints                  *OAuth2EndpointsRequest `json:"endpoints,omitempty"`
-	Scopes                     []OAuthScopeRequest     `json:"scopes"`
-	ProtectedResources         []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
-	AuthorizationParams        map[string]string       `json:"authorization_params,omitempty"`
-	CredentialSourceProvided   bool                    `json:"-"`
-	ClientIDProvided           bool                    `json:"-"`
-	ClientSecretProvided       bool                    `json:"-"`
+	CanonicalID                *string                  `json:"canonical_id,omitempty"`
+	DisplayName                string                   `json:"display_name"`
+	CredentialSource           model.CredentialSource   `json:"credential_source,omitempty"`
+	ClientRegistration         model.ClientRegistration `json:"client_registration,omitempty"`
+	ClientID                   string                   `json:"client_id"`
+	ClientSecret               string                   `json:"client_secret"`
+	TokenEndpointAuthMethod    *string                  `json:"token_endpoint_auth_method,omitempty"`
+	OAuth2Flavor               string                   `json:"oauth2_flavor,omitempty"`
+	IssuerURI                  string                   `json:"issuer_uri"`
+	Discovery                  DiscoveryConfigRequest   `json:"discovery"`
+	Endpoints                  *OAuth2EndpointsRequest  `json:"endpoints,omitempty"`
+	Scopes                     []OAuthScopeRequest      `json:"scopes"`
+	ProtectedResources         []string                 `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
+	AuthorizationParams        map[string]string        `json:"authorization_params,omitempty"`
+	CredentialSourceProvided   bool                     `json:"-"`
+	ClientRegistrationProvided bool                     `json:"-"`
+	ClientIDProvided           bool                     `json:"-"`
+	ClientSecretProvided       bool                     `json:"-"`
 	clearCanonicalID           bool
 	protectedResourcesProvided bool
 }
 
-// UnmarshalJSON retains field presence so null and empty credentials are not omission.
+// UnmarshalJSON retains field presence so explicit null values are not omissions.
 func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 	type request ServiceRequest
 	var decoded request
@@ -75,6 +77,7 @@ func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 	}
 	var fields struct {
 		CredentialSource             json.RawMessage `json:"credential_source"`
+		ClientRegistration           json.RawMessage `json:"client_registration"`
 		ClientID                     json.RawMessage `json:"client_id"`
 		ClientSecret                 json.RawMessage `json:"client_secret"`
 		CanonicalID                  json.RawMessage `json:"canonical_id"`
@@ -92,6 +95,7 @@ func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 	}
 	*req = ServiceRequest(decoded)
 	req.CredentialSourceProvided = fields.CredentialSource != nil
+	req.ClientRegistrationProvided = fields.ClientRegistration != nil
 	req.ClientIDProvided = fields.ClientID != nil
 	req.ClientSecretProvided = fields.ClientSecret != nil
 	req.clearCanonicalID = isJSONNull(fields.CanonicalID)
@@ -122,22 +126,23 @@ type OAuthScopeRequest struct {
 // ServiceResponse represents the response body for service operations.
 // Filesystem credentials are omitted; stored confidential secrets are redacted.
 type ServiceResponse struct {
-	ID                      string                  `json:"id"`
-	CanonicalID             *string                 `json:"canonical_id"`
-	DisplayName             string                  `json:"display_name"`
-	CredentialSource        model.CredentialSource  `json:"credential_source"`
-	ClientID                string                  `json:"client_id,omitempty"`
-	ClientSecret            *string                 `json:"client_secret,omitempty"`
-	TokenEndpointAuthMethod *string                 `json:"token_endpoint_auth_method"`
-	OAuth2Flavor            string                  `json:"oauth2_flavor"`
-	IssuerURI               string                  `json:"issuer_uri"`
-	Discovery               DiscoveryConfigResponse `json:"discovery"`
-	Endpoints               OAuth2EndpointsResponse `json:"endpoints"`
-	Scopes                  []OAuthScopeResponse    `json:"scopes"`
-	ProtectedResources      []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
-	AuthorizationParams     map[string]string       `json:"authorization_params,omitempty"`
-	CreatedAt               string                  `json:"created_at"`
-	UpdatedAt               string                  `json:"updated_at"`
+	ID                      string                   `json:"id"`
+	CanonicalID             *string                  `json:"canonical_id"`
+	DisplayName             string                   `json:"display_name"`
+	CredentialSource        model.CredentialSource   `json:"credential_source"`
+	ClientRegistration      model.ClientRegistration `json:"client_registration"`
+	ClientID                string                   `json:"client_id,omitempty"`
+	ClientSecret            *string                  `json:"client_secret,omitempty"`
+	TokenEndpointAuthMethod *string                  `json:"token_endpoint_auth_method"`
+	OAuth2Flavor            string                   `json:"oauth2_flavor"`
+	IssuerURI               string                   `json:"issuer_uri"`
+	Discovery               DiscoveryConfigResponse  `json:"discovery"`
+	Endpoints               OAuth2EndpointsResponse  `json:"endpoints"`
+	Scopes                  []OAuthScopeResponse     `json:"scopes"`
+	ProtectedResources      []string                 `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
+	AuthorizationParams     map[string]string        `json:"authorization_params,omitempty"`
+	CreatedAt               string                   `json:"created_at"`
+	UpdatedAt               string                   `json:"updated_at"`
 }
 
 // DiscoveryConfigResponse represents the discovery configuration in responses.
@@ -259,23 +264,25 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	now := time.Now().UTC()
 	serviceID := id.NewServiceID()
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                       serviceID,
-		CanonicalID:              req.CanonicalID,
-		DisplayName:              req.DisplayName,
-		ClientID:                 id.ClientID(req.ClientID),
-		Secret:                   secret,
-		CredentialSource:         req.CredentialSource,
-		CredentialSourceProvided: req.CredentialSourceProvided,
-		ClientIDProvided:         req.ClientIDProvided,
-		ClientSecretProvided:     req.ClientSecretProvided,
-		TokenEndpointAuthMethod:  tokenEndpointAuthMethod,
-		Flavor:                   flavor,
-		IssuerURI:                req.IssuerURI,
-		Discovery:                model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
-		ProtectedResources:       req.ProtectedResources,
-		AuthorizationParams:      req.AuthorizationParams,
-		CreatedAt:                now,
-		UpdatedAt:                now,
+		ID:                         serviceID,
+		CanonicalID:                req.CanonicalID,
+		DisplayName:                req.DisplayName,
+		ClientID:                   id.ClientID(req.ClientID),
+		Secret:                     secret,
+		CredentialSource:           req.CredentialSource,
+		CredentialSourceProvided:   req.CredentialSourceProvided,
+		ClientRegistration:         req.ClientRegistration,
+		ClientRegistrationProvided: req.ClientRegistrationProvided,
+		ClientIDProvided:           req.ClientIDProvided,
+		ClientSecretProvided:       req.ClientSecretProvided,
+		TokenEndpointAuthMethod:    tokenEndpointAuthMethod,
+		Flavor:                     flavor,
+		IssuerURI:                  req.IssuerURI,
+		Discovery:                  model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
+		ProtectedResources:         req.ProtectedResources,
+		AuthorizationParams:        req.AuthorizationParams,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}
 
 	// Convert scopes
@@ -482,23 +489,25 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 
 	// created_at is not set here; repo.Update() populates it from storage (no KMS decrypt needed).
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                       parsedSvcID,
-		CanonicalID:              req.CanonicalID,
-		DisplayName:              req.DisplayName,
-		ClearCanonicalID:         req.clearCanonicalID,
-		ClientID:                 id.ClientID(req.ClientID),
-		Secret:                   secret,
-		CredentialSource:         req.CredentialSource,
-		CredentialSourceProvided: req.CredentialSourceProvided,
-		ClientIDProvided:         req.ClientIDProvided,
-		ClientSecretProvided:     req.ClientSecretProvided,
-		TokenEndpointAuthMethod:  tokenEndpointAuthMethod,
-		Flavor:                   flavor,
-		IssuerURI:                req.IssuerURI,
-		Discovery:                model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
-		ProtectedResources:       req.ProtectedResources,
-		AuthorizationParams:      req.AuthorizationParams,
-		UpdatedAt:                time.Now().UTC(),
+		ID:                         parsedSvcID,
+		CanonicalID:                req.CanonicalID,
+		DisplayName:                req.DisplayName,
+		ClearCanonicalID:           req.clearCanonicalID,
+		ClientID:                   id.ClientID(req.ClientID),
+		Secret:                     secret,
+		CredentialSource:           req.CredentialSource,
+		CredentialSourceProvided:   req.CredentialSourceProvided,
+		ClientRegistration:         req.ClientRegistration,
+		ClientRegistrationProvided: req.ClientRegistrationProvided,
+		ClientIDProvided:           req.ClientIDProvided,
+		ClientSecretProvided:       req.ClientSecretProvided,
+		TokenEndpointAuthMethod:    tokenEndpointAuthMethod,
+		Flavor:                     flavor,
+		IssuerURI:                  req.IssuerURI,
+		Discovery:                  model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
+		ProtectedResources:         req.ProtectedResources,
+		AuthorizationParams:        req.AuthorizationParams,
+		UpdatedAt:                  time.Now().UTC(),
 	}
 
 	// Convert scopes
@@ -707,12 +716,13 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 	}
 
 	response := ServiceResponse{
-		ID:               entity.ID.String(),
-		CanonicalID:      entity.CanonicalID,
-		DisplayName:      entity.DisplayName,
-		CredentialSource: credentialSource,
-		OAuth2Flavor:     flavor.String(),
-		IssuerURI:        entity.IssuerURI,
+		ID:                 entity.ID.String(),
+		CanonicalID:        entity.CanonicalID,
+		DisplayName:        entity.DisplayName,
+		CredentialSource:   credentialSource,
+		ClientRegistration: entity.ClientRegistration,
+		OAuth2Flavor:       flavor.String(),
+		IssuerURI:          entity.IssuerURI,
 		Discovery: DiscoveryConfigResponse{
 			EnableDiscovery: entity.Discovery.EnableDiscovery,
 			MetadataURL:     entity.Discovery.MetadataURL,

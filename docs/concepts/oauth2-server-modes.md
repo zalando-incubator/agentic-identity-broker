@@ -128,9 +128,28 @@ Inbound CIMD provides two functions:
 - **Self-describing agents.** An agent can be registered by URL. The broker has metadata for the user who decides about delegation.
 - **SSRF-protected fetches.** A configurable blocklist prevents the broker from fetching internal addresses. An agent URL does not become a request-forgery path.
 
-## Outbound CIMD client authentication
+## Outbound CIMD client registration
 
-For a `private_key_jwt` third-party service, the broker is the OAuth2 client. It publishes a broker-hosted client identity and signs outbound token requests with its dedicated CIMD client-authentication keys. This works independently of inbound CIMD client resolution and is available in proxy, local, and hybrid mode.
+### Increment 2 (issue #264): confidential and public services
+
+For an outbound third-party service, the broker is the OAuth2 client. Its client registration
+is separate from its token-endpoint authentication method. With `client_registration: cimd`,
+the broker hosts a client identifier URL and its metadata document.
+
+A CIMD confidential service uses `private_key_jwt` and signs token requests with dedicated
+CIMD client-authentication keys. A CIMD public service explicitly uses `none` and needs no
+CIMD key. Its document omits key members, and its public JWK Set endpoint returns `404`.
+It uses PKCE `S256` and sends no client credentials during token exchange or refresh.
+
+Both variants work in proxy, local, and hybrid modes. In proxy mode, the outbound service
+uses its hosted client identifier URL, not the credentials of the proxy upstream server.
+An empty CIMD key set is valid at startup only when no CIMD confidential service exists.
+After an authentication-method switch, a provider can cache the previous document for up
+to 300 seconds. The broker does not fall back to another method after provider rejection.
+These outbound rules do not change [inbound CIMD client resolution](#inbound-cimd-client-resolution),
+which remains available only in local and hybrid modes. See
+[operate the OAuth2 server modes](/docs/guides/operate-oauth2-server-modes#manage-cimd-client-authentication-keys)
+for CIMD key management.
 
 ## Where token issuance meets delegation
 
