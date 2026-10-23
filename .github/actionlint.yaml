@@ -3,6 +3,13 @@ paths:
   .github/workflows/speckit-assisted.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-assist.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-resolution.lock.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+      - '^property "workflow_(repository|sha|ref|file_path)" is not defined in object type'
   .github/workflows/speckit-*.lock.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'

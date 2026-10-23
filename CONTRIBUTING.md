@@ -157,6 +157,23 @@ The last command writes the combined browser and Vitest report to `web/coverage/
 - ✅ Full verification gate passing (`just verify`)
 - ✅ Architecture changes require both maintainers
 
+### Opt-in conflict resolution
+
+Maintainers can add `auto-resolve-conflicts` to an open PR from this repository.
+The latest person to apply the label must have write, maintain, or admin access.
+The workflow does not run on fork PRs or PRs without merge conflicts.
+
+For PRs targeting `main`, the workflow starts on a label or PR update, or when `main` moves.
+For stacked PRs, a scheduled scan runs every ten minutes and merges the current parent branch into the child branch.
+The workflow pushes one merge commit to the same PR only after its checks pass. It never merges the PR itself.
+Changes to protected files, including workflow sources and dependencies, require a human review.
+Remove the label to stop later runs. A blocked resolution leaves the remote branch unchanged and adds a PR comment.
+
+Before enabling the label, install the dedicated PR Conflict Resolver GitHub App on this repository only.
+Grant it Contents, Workflows, Pull requests, and Issues read/write permissions.
+Set Actions variable `PR_CONFLICT_APP_CLIENT_ID` to its client ID and secret `PR_CONFLICT_APP_PRIVATE_KEY` to its PEM private key.
+The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
+
 ## Commit Guidelines
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
