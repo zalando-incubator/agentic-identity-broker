@@ -10,7 +10,7 @@ import (
 
 // SessionCleanup removes expired records retained by the local OAuth2 issuer.
 type SessionCleanup struct {
-	repositories [3]sessionCleanupRepository
+	repositories []sessionCleanupRepository
 	logger       *slog.Logger
 }
 
@@ -23,13 +23,15 @@ func NewSessionCleanup(
 	codes ports.AuthorizationCodeRepository,
 	pkce ports.PKCESessionRepository,
 	refreshTokens ports.RefreshTokenSessionRepository,
+	replays ports.ClientAssertionReplayRepository,
 	logger *slog.Logger,
 ) *SessionCleanup {
 	return &SessionCleanup{
-		repositories: [3]sessionCleanupRepository{
+		repositories: []sessionCleanupRepository{
 			{name: "authorization_codes", deleteExpired: codes.DeleteExpired},
 			{name: "pkce_sessions", deleteExpired: pkce.DeleteExpired},
 			{name: "refresh_token_sessions", deleteExpired: refreshTokens.DeleteExpired},
+			{name: "client_assertion_replays", deleteExpired: replays.DeleteExpired},
 		},
 		logger: logger,
 	}

@@ -1299,11 +1299,11 @@ paths:
         **Error Handling** (RFC 6749 §4.1.2.1):
 
         Direct JSON responses (no redirect — RFC 6749 §4.1.2.1):
-        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; or the CIMD document fails validation, including a private-use redirect URI that the agent's `redirect_uris` does not list
+        - `invalid_client` (400): `client_id` is not a valid UUID OR no agent with that UUID exists; a retrieved CIMD document is malformed or violates policy, including an unallowlisted private-use redirect URI
         - `invalid_redirect_uri` (400): `redirect_uri` not registered on the agent
         - `invalid_request` (400): Missing PKCE parameters, or `redirect_uri` not registered for a CIMD client
         - `unsupported_response_type` (400): `response_type` is not `code`
-        - `server_error` (500): Internal infrastructure failure
+        - `server_error` (500): Internal infrastructure failure, or a CIMD metadata document cannot be retrieved because of a timeout, connection failure, or upstream server error
 
         Redirect responses (error appended to `redirect_uri` as query params; redirect_uri has been validated):
         - `invalid_scope`: Requested scope exceeds the agent's `allowed_scopes`
@@ -1317,12 +1317,12 @@ paths:
           in: query
           required: true
           description: >
-            The internal agent identifier (UUID) registered with the identity broker.
-            This MUST be the agent's `id` field, NOT the upstream OAuth2 `client_id`.
-            Example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            In proxy mode, use the registered agent UUID. In local or hybrid mode,
+            use either the registered agent UUID or, when CIMD is enabled, its
+            pre-registered HTTPS Client ID Metadata Document URL. This is not the
+            upstream OAuth2 `client_id`.
           schema:
             type: string
-            format: uuid
           example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         - name: response_type
           in: query
@@ -1373,6 +1373,9 @@ paths:
             if no active grant exists, or redirect to redirect_uri with authorization code.
           headers:
             Location:
+              example:
+                error: server_error
+                error_description: client metadata document unavailable
               description: |
                 Destination URL:
                 - Upstream authorization URL with PKCE and agent ID parameters (proxy mode)
@@ -1382,17 +1385,22 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Bad Request - Malformed client_id (not a valid UUID), unregistered client UUID, invalid redirect_uri, or missing required parameters; all client-identity errors return direct JSON (no redirect per RFC 6749 §4.1.2.1)
+          description: Bad Request - Unknown client UUID or URL, invalid or blocked CIMD document, invalid redirect_uri, or missing required parameters; all client-identity errors return direct JSON (no redirect per RFC 6749 §4.1.2.1)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuth2ErrorResponse"
               examples:
                 invalid_client:
-                  summary: Invalid client_id
+                  summary: Unknown client identifier
                   value:
                     error: "invalid_client"
-                    error_description: "client_id must be a valid agent UUID"
+                    error_description: "Client not registered"
+                cimd_invalid_client:
+                  summary: Retrieved CIMD document is invalid
+                  value:
+                    error: "invalid_client"
+                    error_description: "CIMD document validation failed"
                 invalid_redirect_uri:
                   summary: Invalid redirect_uri (direct error response, not redirected per RFC 6749 §4.1.2.1)
                   value:
@@ -1404,6 +1412,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuth2Error"
+              examples:
+                cimd_dependency_failure:
+                  summary: CIMD document could not be retrieved
+                  value:
+                    error: "server_error"
+                    error_description: "client metadata document unavailable"
   /oauth2/token:
     post:
       summary: Token Exchange (RFC 8693), Authorization Code Exchange, or Client Credentials
@@ -1427,6 +1441,19 @@ paths:
         - `code`: Authorization code from /oauth2/authorize
         - `redirect_uri`: Must match the URI used in the authorization request
         - `code_verifier`: (optional) PKCE code verifier (RFC 7636)
+
+        ### CIMD Client Authentication (`private_key_jwt`)
+        In local or hybrid mode with CIMD enabled, a pre-registered CIMD client may declare
+        `token_endpoint_auth_method: private_key_jwt`. For `authorization_code` and
+        `refresh_token` requests, it must send `client_assertion_type` and a signed
+        `client_assertion`. The assertion must use a key published by the client, identify
+        the client in `iss` and `sub`, target the broker issuer or canonical token endpoint,
+        and include an unexpired, single-use `jti`. Authorization-code exchange still requires
+        the registered `redirect_uri` and PKCE S256 verifier. A client secret or Authorization
+        header must not accompany the assertion. Assertion failures return `invalid_client`;
+        malformed assertion parameters return `invalid_request`; key-set or metadata fetch
+        failures return `server_error`. Failed authentication does not consume the code or rotate
+        a refresh token.
 
         ### Authorization Code Grant (RFC 6749 - Proxy Mode)
         Exchange an authorization code for an access token via the upstream OAuth2 server.
@@ -1555,6 +1582,16 @@ paths:
                   code: "SplxlOBeZQQYbYS6WxSbIA"
                   redirect_uri: "https://agent.example.com/callback"
                   code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              cimd_private_key_jwt:
+                summary: CIMD authorization-code exchange with private_key_jwt
+                value:
+                  grant_type: "authorization_code"
+                  client_id: "https://client.example.com/metadata.json"
+                  code: "SplxlOBeZQQYbYS6WxSbIA"
+                  redirect_uri: "https://client.example.com/callback"
+                  code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+                  client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                  client_assertion: "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0..."
               token_exchange:
                 summary: Token Exchange Request (RFC 8693)
                 value:
@@ -1631,12 +1668,17 @@ paths:
                     expires_in: 3600
                     scope: "read"
         "400":
-          description: Bad Request - Invalid parameters, invalid tokens, or no valid session
+          description: Bad Request - Invalid parameters, malformed CIMD assertion parameters, invalid tokens, or no valid session
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuth2Error"
               examples:
+                cimd_invalid_request:
+                  summary: Malformed CIMD assertion parameters
+                  value:
+                    error: "invalid_request"
+                    error_description: "client assertion parameters are malformed"
                 invalid_request:
                   summary: Invalid Request
                   value:
@@ -1682,10 +1724,10 @@ paths:
                 $ref: "#/components/schemas/OAuth2Error"
               examples:
                 invalid_client:
-                  summary: Invalid Client Assertion
+                  summary: Invalid Client Assertion or CIMD client authentication
                   value:
                     error: "invalid_client"
-                    error_description: "Invalid client_assertion signature"
+                    error_description: "Client authentication failed"
                 invalid_credentials:
                   summary: Invalid broker client credentials
                   value:
@@ -1737,6 +1779,11 @@ paths:
                   value:
                     error: "server_error"
                     error_description: "An unexpected error occurred"
+                cimd_dependency_failure:
+                  summary: CIMD metadata or key set unavailable
+                  value:
+                    error: "server_error"
+                    error_description: "Client metadata or key set is unavailable"
 
   # ---- Tool Approval Endpoints ----
 
@@ -2498,7 +2545,12 @@ paths:
                   - client_credentials
                   - "urn:ietf:params:oauth:grant-type:token-exchange"
                 token_endpoint_auth_methods_supported:
+                  - none
                   - client_secret_post
+                  - private_key_jwt
+                token_endpoint_auth_signing_alg_values_supported:
+                  - RS256
+                  - ES256
                 code_challenge_methods_supported:
                   - S256
                 scopes_supported:
@@ -3360,14 +3412,15 @@ components:
           type: array
           items:
             type: string
-          description: Token endpoint authentication methods supported
-          example: [client_secret_post]
+          description: Methods accepted by the token endpoint in the active server configuration
+          example: [none, client_secret_post, private_key_jwt]
 
         token_endpoint_auth_signing_alg_values_supported:
           type: array
           items:
             type: string
-          description: Signing algorithms for client authentication
+          description: Signing algorithms accepted for private_key_jwt when CIMD is enabled in local or hybrid mode
+          example: [RS256, ES256]
 
         service_documentation:
           type: string
@@ -3796,6 +3849,8 @@ components:
         **client_credentials**: requires client_id, client_secret. Optional: scope.
         **authorization_code** (local/hybrid): requires client_id, code, redirect_uri. client_secret required for confidential clients, optional for public clients. Optional: code_verifier.
         **authorization_code** (proxy): requires client_id, client_secret, code, redirect_uri.
+        **refresh_token** (local/hybrid): requires client_id and refresh_token; CIMD clients declaring `private_key_jwt` also require client_assertion_type and client_assertion.
+        **CIMD private_key_jwt** (local/hybrid): authorization-code and refresh-token requests require a signed assertion, in addition to the grant parameters. The assertion uses the client's published key, has `iss` and `sub` equal to client_id, an approved broker audience, `exp`, `kid`, and a unique `jti`. PKCE S256 remains required for authorization-code exchange. Do not send client_secret or an Authorization header with the assertion.
         **token-exchange** (RFC 8693): requires subject_token, subject_token_type, resource, client_assertion_type, client_assertion.
         **token-exchange (user impersonation)** (RFC 8693, local mode only): activated only by one `audience` equal to `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>`, which must resolve to a registered target. Both forms retain the target UUID as issued `agent_id`; that target supplies local-policy `agent.*`, and optional scope policy through `allowed_scopes`; an empty allow-list is unrestricted, while the reserved refresh-token scopes `offline` and `offline_access` are always permitted. Required credentials are client assertion, actor token, and subject token. `resource` MUST be absent; a target-disallowed non-reserved optional scope is `invalid_scope`.
       required:
@@ -3807,11 +3862,13 @@ components:
             - "urn:ietf:params:oauth:grant-type:token-exchange"
             - "authorization_code"
             - "client_credentials"
+            - "refresh_token"
           description: |
             The OAuth2 grant type:
             - `urn:ietf:params:oauth:grant-type:token-exchange` for RFC 8693 token exchange
             - `authorization_code` for standard OAuth2 authorization code flow (proxied or local/hybrid)
             - `client_credentials` for broker-issued client credentials (local/hybrid mode)
+            - `refresh_token` for refresh-token grants in local/hybrid mode
           example: "urn:ietf:params:oauth:grant-type:token-exchange"
         client_id:
           type: string
@@ -3903,15 +3960,18 @@ components:
           type: string
           enum:
             - "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-          description: The client authentication method. Must be JWT bearer. Required for token-exchange grant type.
+          description: |
+            JWT bearer assertion type. Required with client_assertion for RFC 8693 token exchange,
+            user impersonation, and CIMD private_key_jwt authorization-code or refresh-token grants.
           example: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
         client_assertion:
           type: string
           description: |
-            Signed JWT authenticating the privileged client. Third-party token exchange
-            validates it against the configured client-assertion issuer; user impersonation
-            validates it against a trusted issuer in the matching impersonation rule. Required
-            for token-exchange grant type.
+            Signed JWT. For third-party token exchange it authenticates the privileged client
+            against the configured client-assertion issuer; user impersonation validates it
+            against a trusted issuer in the matching impersonation rule. For a CIMD client that
+            declares private_key_jwt, it authenticates the client at authorization-code and
+            refresh-token grants using a public key from the client's metadata document.
           example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
         scope:
           type: string

@@ -344,7 +344,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			}
 		})
 
-		It("terminates the connection and rejects the authorization request with invalid_client", func() {
+		It("terminates the connection and rejects the authorization request with server_error", func() {
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
 					"/oauth2/authorize?client_id=%s&redirect_uri=%s/cb&response_type=code&state=xyz",
@@ -355,10 +355,10 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
-			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+			Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
 			var body map[string]any
 			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-			Expect(body["error"]).To(Equal("invalid_client"))
+			Expect(body["error"]).To(Equal("server_error"))
 		})
 	})
 })

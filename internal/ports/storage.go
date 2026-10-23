@@ -510,3 +510,13 @@ type PKCESessionRepository interface {
 	// DeleteExpired removes PKCE sessions whose authorization codes have expired.
 	DeleteExpired(ctx context.Context) (int, error)
 }
+
+// ClientAssertionReplayRepository atomically consumes each CIMD client assertion jti once.
+type ClientAssertionReplayRepository interface {
+	// Consume inserts the client/jti pair until expiresAt. It must be atomic and must not join an ambient transaction.
+	// A previously consumed pair returns a conflict StorageError.
+	Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error
+
+	// DeleteExpired removes replay records whose retention period has elapsed.
+	DeleteExpired(ctx context.Context) (int, error)
+}

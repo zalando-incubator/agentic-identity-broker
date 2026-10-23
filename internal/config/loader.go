@@ -282,6 +282,10 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), cimdDefaults.Cache.MaxTTL)
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), cimdDefaults.Cache.MinTTL)
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), cimdDefaults.Cache.MaxEntries)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_cache_ttl"), cimdDefaults.ClientAuthentication.KeySetCacheTTL)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_min_refetch_interval"), cimdDefaults.ClientAuthentication.KeySetMinRefetchInterval)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_max_bytes"), cimdDefaults.ClientAuthentication.KeySetMaxBytes)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_fetch_timeout"), cimdDefaults.ClientAuthentication.KeySetFetchTimeout)
 
 	// Bind CIMD env vars
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "enabled"), "IDENTITY_BROKER_CIMD_ENABLED")
@@ -290,6 +294,10 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MAX_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MIN_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), "IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_cache_ttl"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_min_refetch_interval"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_max_bytes"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_fetch_timeout"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "ssrf", "extra_blocked_cidrs"), "IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_name_blocklist"), "IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST")
 

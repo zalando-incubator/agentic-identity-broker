@@ -14,6 +14,7 @@ import (
 	"github.com/ory/fosite/handler/pkce"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -30,13 +31,18 @@ type Provider struct {
 	refreshHandler  *fositeOAuth2.RefreshTokenGrantHandler
 	pkceHandler     *pkce.Handler
 
-	fositeStorage   *FositeStorage
-	clientAuth      *ClientAuthService
-	accessStrategy  *JWXAccessTokenStrategy
-	refreshStrategy *RandomRefreshTokenStrategy
+	fositeStorage    *FositeStorage
+	clientAuth       *ClientAuthService
+	clientAssertions clientAssertionAuthenticator
+	accessStrategy   *JWXAccessTokenStrategy
+	refreshStrategy  *RandomRefreshTokenStrategy
 
 	config *fosite.Config
 	logger *slog.Logger
+}
+
+type clientAssertionAuthenticator interface {
+	Verify(context.Context, *ports.CIMDMetadataDTO, string, string) (*VerifiedAssertion, error)
 }
 
 // NewProvider constructs the OAuth2 server provider with fosite handlers.
@@ -52,6 +58,7 @@ func NewProvider(
 	refreshTokenTTL time.Duration,
 	tokenClaimsExpression string,
 	verifier grantVerifier,
+	clientAssertions clientAssertionAuthenticator,
 	logger *slog.Logger,
 	transactions ...ports.StorageTransactionManager,
 ) (*Provider, error) {
@@ -117,12 +124,13 @@ func NewProvider(
 			Storage:               storage,
 			Config:                config,
 		},
-		fositeStorage:   storage,
-		clientAuth:      clientAuth,
-		accessStrategy:  accessStrategy,
-		refreshStrategy: refreshStrategy,
-		config:          config,
-		logger:          logger,
+		fositeStorage:    storage,
+		clientAuth:       clientAuth,
+		clientAssertions: clientAssertions,
+		accessStrategy:   accessStrategy,
+		refreshStrategy:  refreshStrategy,
+		config:           config,
+		logger:           logger,
 	}, nil
 }
 
@@ -231,15 +239,14 @@ func (p *Provider) HandleAuthorize(
 	}
 	agent := h.getAgent()
 
-	// Validate redirect_uri against the client's registrations. CIMD clients use
-	// document redirect URIs, and private-use callbacks also require the Agent allowlist.
+	// Validate redirect_uri against both client and Agent registrations.
 	if !urivalidation.IsRegisteredRedirectURI(fositeClient.GetRedirectURIs(), agent.RedirectURIs, redirectURI) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri %q is not registered for this client", redirectURI))
 	}
 	if !urivalidation.IsValidRedirectURI(redirectURI) && !urivalidation.IsValidPrivateUseRedirectURI(redirectURI) {
 		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
-			fosite.ErrInvalidRequest.WithHintf("redirect_uri must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI"))
+			fosite.ErrInvalidRequest.WithHintf("redirect_uri must be HTTPS, loopback HTTP, or a valid private-use scheme URI"))
 	}
 
 	if responseType != "code" {
@@ -294,7 +301,7 @@ func (p *Provider) HandleAuthorize(
 func (p *Provider) HandleAuthorizationCodeExchange(
 	ctx context.Context,
 	clientID string,
-	secret string,
+	creds ports.ClientCredentials,
 	code string,
 	redirectURI string,
 	codeVerifier string,
@@ -308,10 +315,15 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		}
 		return nil, fosite.ErrServerError.WithDebugf("client lookup failed: %v", err)
 	}
+	if public, ok := fositeClient.(*publicClient); ok {
+		if err := p.authenticatePublicClient(ctx, public, creds); err != nil {
+			return nil, err
+		}
+	}
 
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
-		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
+		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, creds.Secret)
 		if err != nil {
 			return nil, err
 		}
@@ -319,6 +331,9 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 	case *publicClient:
 	default:
 		return nil, fosite.ErrServerError.WithDebugf("unexpected client type %T", fositeClient)
+	}
+	if public, ok := fositeClient.(*publicClient); ok && public.requiresPrivateKeyJWT() {
+		ctx = context.WithValue(ctx, privateKeyJWTAuthenticatedContextKey{}, true)
 	}
 
 	session := &fosite.DefaultSession{
@@ -378,7 +393,7 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 func (p *Provider) HandleRefreshToken(
 	ctx context.Context,
 	clientID string,
-	secret string,
+	creds ports.ClientCredentials,
 	refreshToken string,
 	scope string,
 ) (tokenResp *ports.TokenResponse, err error) {
@@ -391,10 +406,19 @@ func (p *Provider) HandleRefreshToken(
 		}
 		return nil, fosite.ErrServerError.WithDebugf("client lookup failed: %v", err)
 	}
+	if public, ok := fositeClient.(*publicClient); ok {
+		requirePrivateKeyJWT, err := p.refreshRequiresPrivateKeyJWT(ctx, public, refreshToken)
+		if err != nil {
+			return nil, err
+		}
+		if err := p.authenticatePublicClientWithRequirement(ctx, public, creds, requirePrivateKeyJWT); err != nil {
+			return nil, err
+		}
+	}
 
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
-		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
+		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, creds.Secret)
 		if err != nil {
 			return nil, err
 		}
@@ -403,6 +427,9 @@ func (p *Provider) HandleRefreshToken(
 		// Public clients authenticate by client_id only.
 	default:
 		return nil, fosite.ErrServerError.WithDebugf("unexpected client type %T", fositeClient)
+	}
+	if public, ok := fositeClient.(*publicClient); ok && public.requiresPrivateKeyJWT() {
+		ctx = context.WithValue(ctx, privateKeyJWTAuthenticatedContextKey{}, true)
 	}
 
 	requestScope := url.Values{
@@ -443,6 +470,69 @@ func (p *Provider) HandleRefreshToken(
 		resp.RefreshToken = newRefreshToken
 	}
 	return resp, nil
+}
+
+func (p *Provider) authenticatePublicClient(ctx context.Context, client *publicClient, credentials ports.ClientCredentials) error {
+	return p.authenticatePublicClientWithRequirement(ctx, client, credentials, client.requiresPrivateKeyJWT())
+}
+
+func (p *Provider) authenticatePublicClientWithRequirement(ctx context.Context, client *publicClient, credentials ports.ClientCredentials, requirePrivateKeyJWT bool) error {
+	if client.metadata != nil && invalidCIMDClientCredentials(credentials) {
+		return fosite.ErrInvalidRequest.WithHint("client authentication parameters are invalid")
+	}
+	if requirePrivateKeyJWT {
+		if p.clientAssertions == nil {
+			return fosite.ErrServerError
+		}
+		metadata := client.metadata
+		if metadata != nil && metadata.AuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT) {
+			if metadata.JWKSURI != "" {
+				if err := urivalidation.ValidateCIMDClientURL(metadata.JWKSURI); err != nil {
+					return fosite.ErrInvalidClient
+				}
+			}
+			copy := *metadata
+			copy.AuthMethod = string(model.TokenEndpointAuthMethodPrivateKeyJWT)
+			metadata = &copy
+		}
+		_, err := p.clientAssertions.Verify(ctx, metadata, credentials.AssertionType, credentials.Assertion)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrClientAuthentication) {
+			return fosite.ErrInvalidClient
+		}
+		return fosite.ErrServerError
+	}
+	if credentials.Assertion != "" || credentials.AssertionType != "" {
+		return fosite.ErrInvalidClient
+	}
+	return nil
+}
+
+func invalidCIMDClientCredentials(credentials ports.ClientCredentials) bool {
+	hasAssertionType := credentials.HasAssertionType || credentials.AssertionType != ""
+	hasAssertion := credentials.HasAssertion || credentials.Assertion != ""
+	hasClientSecret := credentials.HasClientSecret || credentials.Secret != ""
+	return hasAssertionType != hasAssertion ||
+		(hasAssertion && hasClientSecret) ||
+		(hasAssertion && credentials.HasAuthorizationHeader)
+}
+
+func (p *Provider) refreshRequiresPrivateKeyJWT(ctx context.Context, client *publicClient, refreshToken string) (bool, error) {
+	required := client.requiresPrivateKeyJWT()
+	signature := p.refreshStrategy.RefreshTokenSignature(ctx, refreshToken)
+	session, err := p.fositeStorage.refreshRepo.FindBySignature(ctx, signature)
+	if err != nil {
+		if ports.IsNotFoundErr(err) {
+			return true, nil
+		}
+		return false, fosite.ErrServerError.WithDebugf("refresh session lookup failed: %v", err)
+	}
+	if session.ClientID != id.NewClientID(client.GetID()) {
+		return required, nil
+	}
+	return required || session.ClientAuthMethod != nil && *session.ClientAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT), nil
 }
 
 // isStorageNotFound returns true when err is a domain storage "not found" error.

@@ -219,6 +219,10 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.oauth2AuthorizationServer.local.tokenTtl` | Access token validity period (required in local/hybrid mode) | `""` |
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetCacheTtl` | Maximum cached key-set age; values above 24h are rejected | `1h` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMinRefetchInterval` | Minimum interval between refetches for an unknown key ID | `5m` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMaxBytes` | Maximum key-set response size in bytes | `65536` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetFetchTimeout` | Key-set HTTP request timeout | `5s` |
 | `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
 | `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required in local mode when token exchange, approval authentication, or any client-assertion key source is configured; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |

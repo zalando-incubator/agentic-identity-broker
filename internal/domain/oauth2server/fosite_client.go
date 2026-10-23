@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 var _ fosite.Client = (*confidentialClient)(nil)
@@ -42,6 +43,7 @@ type publicClient struct {
 	agent        *storage.Agent
 	redirectURIs []string
 	grantTypes   fosite.Arguments
+	metadata     *ports.CIMDMetadataDTO
 }
 
 func (c *publicClient) GetID() string             { return c.clientID }
@@ -59,6 +61,10 @@ func (c *publicClient) GetScopes() fosite.Arguments {
 }
 func (c *publicClient) IsPublic() bool                { return true }
 func (c *publicClient) GetAudience() fosite.Arguments { return fosite.Arguments{} }
+
+func (c *publicClient) requiresPrivateKeyJWT() bool {
+	return c.metadata != nil && c.metadata.AuthMethod == "private_key_jwt"
+}
 
 // agentHolder provides access to the underlying Agent for internal use.
 type agentHolder interface {

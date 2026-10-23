@@ -5,6 +5,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 )
 
 // ClientResolver resolves a client_id from an authorization request to an Agent
@@ -46,6 +47,9 @@ type CIMDMetadataDTO struct {
 	LogoURI       string
 	RedirectURIs  []string
 	AuthMethod    string
+	SigningAlg    string
+	JWKSURI       string
+	KeySet        jwk.Set
 	GrantTypes    []string
 	ResponseTypes []string
 	PolicyURI     string
@@ -87,4 +91,18 @@ type SSRFBlockedError struct {
 
 func (e *SSRFBlockedError) Error() string {
 	return "SSRF protection: resolved IP " + e.IP + " is in a blocked range"
+}
+
+// CIMDUnavailableError marks a transient failure while retrieving a CIMD document.
+// Its message does not expose the remote URL or transport details.
+type CIMDUnavailableError struct {
+	Cause error
+}
+
+func (e *CIMDUnavailableError) Error() string {
+	return "CIMD document temporarily unavailable"
+}
+
+func (e *CIMDUnavailableError) Unwrap() error {
+	return e.Cause
 }

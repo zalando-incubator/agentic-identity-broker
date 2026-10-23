@@ -193,6 +193,11 @@ data:
         ssrf:
           extra_blocked_cidrs: {{ toJson .ssrf.extraBlockedCidrs }}
         client_name_blocklist: {{ toJson .clientNameBlocklist }}
+        client_authentication:
+          key_set_cache_ttl: {{ .clientAuthentication.keySetCacheTtl | quote }}
+          key_set_min_refetch_interval: {{ .clientAuthentication.keySetMinRefetchInterval | quote }}
+          key_set_max_bytes: {{ .clientAuthentication.keySetMaxBytes }}
+          key_set_fetch_timeout: {{ .clientAuthentication.keySetFetchTimeout | quote }}
       {{- end }}
       {{- with .Values.broker.oauth2AuthorizationServer.impersonation }}
       # RFC 8693 user impersonation (signed or unverified subject, local mode only)

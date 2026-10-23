@@ -1,10 +1,12 @@
 package cimd
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,6 +178,30 @@ func TestCIMDCache(t *testing.T) {
 		assert.Equal(t, "https://agent.example.com/callback", entry.Document.RedirectURIs[0])
 		assert.Equal(t, "authorization_code", entry.Document.GrantTypes[0])
 		assert.Equal(t, "code", entry.Document.ResponseTypes[0])
+	})
+
+	t.Run("Get returns an independent inline key set", func(t *testing.T) {
+		c := mustNewCIMDCache(t, minTTL, maxTTL)
+		keySet, err := jwk.Parse(publicTestJWKS(t))
+		require.NoError(t, err)
+		mutableDoc := &ClientIDMetadataDocument{
+			ClientID:   testURL,
+			AuthMethod: "private_key_jwt",
+			SigningAlg: "RS256",
+			JWKS:       json.RawMessage(publicTestJWKS(t)),
+			KeySet:     keySet,
+		}
+		c.Set(testURL, mutableDoc, CacheHeaders{CacheControl: "max-age=300"}, time.Now())
+
+		returned := c.Get(testURL)
+		require.NotNil(t, returned)
+		key, ok := returned.Document.KeySet.Key(0)
+		require.True(t, ok)
+		require.NoError(t, returned.Document.KeySet.RemoveKey(key))
+
+		cached := c.Get(testURL)
+		require.NotNil(t, cached)
+		assert.Equal(t, 1, cached.Document.KeySet.Len(), "mutating a returned set must not alter the cache")
 	})
 
 	t.Run("rejects minTTL greater than maxTTL", func(t *testing.T) {

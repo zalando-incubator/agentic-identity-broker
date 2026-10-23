@@ -166,6 +166,7 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
 | 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
 | 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
+| 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 
 ## Domain Glossary
 

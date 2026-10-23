@@ -1190,6 +1190,42 @@ For compliance and troubleshooting, read the JSON audit log. It is the first sta
 ```
 
 ### OAuth2 Authorization Server Configuration
+
+### CIMD
+
+**Description:** Controls Client ID Metadata Document fetching and validation in local and hybrid modes. CIMD is disabled by default. Every setting is optional.
+
+| Parameter | Type | Default | Required | Env var | Description |
+|-----------|------|---------|----------|---------|-------------|
+| `oauth2_authorization_server.cimd.enabled` | boolean | `false` | No | `IDENTITY_BROKER_CIMD_ENABLED` | Enable URL-based client IDs from pre-registered HTTPS metadata URLs. |
+| `oauth2_authorization_server.cimd.fetch_timeout` | duration | `1s` | No | `IDENTITY_BROKER_CIMD_FETCH_TIMEOUT` | Timeout for fetching client metadata documents. |
+| `oauth2_authorization_server.cimd.max_response_bytes` | integer | `5120` | No | `IDENTITY_BROKER_CIMD_MAX_RESPONSE_BYTES` | Maximum metadata document response size. |
+| `oauth2_authorization_server.cimd.cache.max_ttl` | duration | `1h` | No | `IDENTITY_BROKER_CIMD_CACHE_MAX_TTL` | Maximum cache lifetime for metadata documents. |
+| `oauth2_authorization_server.cimd.cache.min_ttl` | duration | `60s` | No | `IDENTITY_BROKER_CIMD_CACHE_MIN_TTL` | Minimum cache lifetime for metadata documents. |
+| `oauth2_authorization_server.cimd.cache.max_entries` | integer | `1000` | No | `IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES` | Maximum number of cached metadata documents. |
+| `oauth2_authorization_server.cimd.ssrf.extra_blocked_cidrs` | string list | `[]` | No | `IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS` | Additional IP ranges blocked during metadata fetches. Built-in blocked ranges remain active. |
+| `oauth2_authorization_server.cimd.client_name_blocklist` | string list | `[]` | No | `IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST` | Additional case-insensitive blocked client-name terms. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_cache_ttl` | duration | `1h` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL` | Maximum age of a cached public key set. Values above `24h` are rejected at startup. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_min_refetch_interval` | duration | `5m` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL` | Minimum interval between key-set refetches for an unknown `kid`. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_max_bytes` | integer | `65536` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES` | Maximum response size for a remote key set. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_fetch_timeout` | duration | `5s` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT` | Timeout for fetching a remote key set. |
+
+**Example:**
+
+```yaml
+oauth2_authorization_server:
+  mode: local
+  cimd:
+    enabled: true
+    client_authentication:
+      key_set_cache_ttl: 1h
+      key_set_min_refetch_interval: 5m
+      key_set_max_bytes: 65536
+      key_set_fetch_timeout: 5s
+```
+
+See [`examples/config/cimd.yaml`](../examples/config/cimd.yaml) for the full annotated example.
+
 #### oauth2_authorization_server.multi_agent_client
 
 **Description:** Controls whether multiple agents share one upstream OAuth2 `client_id`.

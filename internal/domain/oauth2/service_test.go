@@ -932,6 +932,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 				ResponseTypesSupported:            []string{"code"},
 				GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 				TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
+				TokenEndpointAuthSigningAlgValuesSupported: nil,
 			},
 		},
 	}
@@ -949,6 +950,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 			assert.Equal(t, tt.want.ResponseTypesSupported, metadata.ResponseTypesSupported)
 			assert.Equal(t, tt.want.GrantTypesSupported, metadata.GrantTypesSupported)
 			assert.Equal(t, tt.want.TokenEndpointAuthMethodsSupported, metadata.TokenEndpointAuthMethodsSupported)
+			assert.Equal(t, tt.want.TokenEndpointAuthSigningAlgValuesSupported, metadata.TokenEndpointAuthSigningAlgValuesSupported)
 		})
 	}
 }

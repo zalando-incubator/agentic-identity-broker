@@ -506,12 +506,25 @@ func HybridConfigWithCIMD(upstreamURL string) *ports.Config {
 		Enabled:          true,
 		FetchTimeout:     5 * time.Second,
 		MaxResponseBytes: 5120,
+		ClientAuthentication: ports.CIMDClientAuthenticationConfig{
+			KeySetCacheTTL:           time.Hour,
+			KeySetMinRefetchInterval: time.Second,
+			KeySetMaxBytes:           65536,
+			KeySetFetchTimeout:       5 * time.Second,
+		},
 		Cache: ports.CIMDCacheConfig{
 			MinTTL:     60 * time.Second,
 			MaxTTL:     1 * time.Hour,
 			MaxEntries: 1000,
 		},
 	}
+	return config
+}
+
+// OAuth2ConfigWithCIMDKeySetInterval sets the minimum key-set refetch interval.
+func OAuth2ConfigWithCIMDKeySetInterval(upstreamURL string, minRefetch time.Duration) *ports.Config {
+	config := OAuth2ConfigWithCIMD(upstreamURL)
+	config.OAuth2AuthServer.CIMD.ClientAuthentication.KeySetMinRefetchInterval = minRefetch
 	return config
 }
 
@@ -543,6 +556,12 @@ func OAuth2ConfigWithCIMD(_ string) *ports.Config {
 		Enabled:          true,
 		FetchTimeout:     5 * time.Second,
 		MaxResponseBytes: 5120,
+		ClientAuthentication: ports.CIMDClientAuthenticationConfig{
+			KeySetCacheTTL:           time.Hour,
+			KeySetMinRefetchInterval: time.Second,
+			KeySetMaxBytes:           65536,
+			KeySetFetchTimeout:       5 * time.Second,
+		},
 		Cache: ports.CIMDCacheConfig{
 			MinTTL:     60 * time.Second,
 			MaxTTL:     1 * time.Hour,

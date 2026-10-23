@@ -152,7 +152,9 @@ func NewLocalGrantStrategy(minting ports.TokenMintingStrategy, logger *slog.Logg
 }
 
 // HandleTokenGrant dispatches client_credentials, authorization_code, and refresh_token grants to the local minting strategy.
-func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, grantType string, formData url.Values, _ *ports.TokenGrantResolution) {
+func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, grantType string, formData url.Values, resolution *ports.TokenGrantResolution) {
+	isCIMDClient := resolution != nil && resolution.ClientType == storage.CIMDClient
+
 	switch grantType {
 	case "client_credentials":
 		rawClientID := formData.Get("client_id")
@@ -169,7 +171,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			if s.logger != nil {
 				s.logger.ErrorContext(r.Context(), "client_credentials grant failed", "error", err, "client_id", rawClientID)
 			}
-			s.handleMintingError(w, r.Context(), err, "client_credentials", rawClientID)
+			s.handleMintingError(w, r.Context(), err, "client_credentials", false)
 			return
 		}
 
@@ -186,7 +188,6 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 
 	case "authorization_code":
 		rawClientID := formData.Get("client_id")
-		clientSecret := formData.Get("client_secret")
 		code := formData.Get("code")
 		redirectURI := formData.Get("redirect_uri")
 		codeVerifier := formData.Get("code_verifier")
@@ -200,12 +201,16 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		resp, err := s.minting.HandleAuthorizationCodeExchange(r.Context(), id.ClientID(rawClientID), clientSecret, code, redirectURI, codeVerifier)
+		resp, err := s.minting.HandleAuthorizationCodeExchange(r.Context(), id.ClientID(rawClientID), clientCredentialsFromRequest(r, formData), code, redirectURI, codeVerifier)
 		if err != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(r.Context(), "authorization_code exchange failed", "error", err, "client_id", rawClientID)
+				if isCIMDClient {
+					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed")
+				} else {
+					s.logger.ErrorContext(r.Context(), "authorization_code exchange failed")
+				}
 			}
-			s.handleMintingError(w, r.Context(), err, "authorization_code", rawClientID)
+			s.handleMintingError(w, r.Context(), err, "authorization_code", isCIMDClient)
 			return
 		}
 
@@ -221,7 +226,6 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 
 	case "refresh_token":
 		rawClientID := formData.Get("client_id")
-		clientSecret := formData.Get("client_secret")
 		refreshToken := formData.Get("refresh_token")
 		scope := formData.Get("scope")
 
@@ -234,12 +238,12 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		resp, err := s.minting.HandleRefreshToken(r.Context(), id.ClientID(rawClientID), clientSecret, refreshToken, scope)
+		resp, err := s.minting.HandleRefreshToken(r.Context(), id.ClientID(rawClientID), clientCredentialsFromRequest(r, formData), refreshToken, scope)
 		if err != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(r.Context(), "refresh_token grant failed", "error", err, "client_id", rawClientID)
+				s.logger.ErrorContext(r.Context(), "refresh_token grant failed")
 			}
-			s.handleMintingError(w, r.Context(), err, "refresh_token", rawClientID)
+			s.handleMintingError(w, r.Context(), err, "refresh_token", isCIMDClient)
 			return
 		}
 
@@ -260,7 +264,19 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx context.Context, err error, grantType, clientID string) {
+func clientCredentialsFromRequest(r *http.Request, formData url.Values) ports.ClientCredentials {
+	return ports.ClientCredentials{
+		Secret:                 formData.Get("client_secret"),
+		AssertionType:          formData.Get("client_assertion_type"),
+		Assertion:              formData.Get("client_assertion"),
+		HasClientSecret:        formData.Has("client_secret"),
+		HasAssertionType:       formData.Has("client_assertion_type"),
+		HasAssertion:           formData.Has("client_assertion"),
+		HasAuthorizationHeader: r.Header.Get("Authorization") != "",
+	}
+}
+
+func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx context.Context, err error, grantType string, cimdClient bool) {
 	var errorCode, errorDesc string
 	var statusCode int
 
@@ -269,6 +285,9 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 		errorCode = rfc6749Err.Code()
 		errorDesc = rfc6749Err.Description()
 		statusCode = rfc6749Err.HTTPStatus()
+		if cimdClient && errorCode == "invalid_client" {
+			errorDesc = "Client authentication failed"
+		}
 	} else {
 		errorCode = "server_error"
 		errorDesc = "internal server error"
@@ -283,7 +302,6 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 			"grant_type", grantType,
 			"error_code", errorCode,
 			"error_description", errorDesc,
-			"client_id", clientID,
 		}
 		if statusCode >= http.StatusInternalServerError {
 			s.logger.ErrorContext(ctx, "TokenRequestFailed", attrs...)

@@ -75,6 +75,11 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 	// Fetch and validate CIMD document
 	doc, err := r.cimdService.Resolve(ctx, rawURL, agent)
 	if err != nil {
+		var unavailable *ports.CIMDUnavailableError
+		if errors.As(err, &unavailable) {
+			r.logger.ErrorContext(ctx, "CIMD document temporarily unavailable")
+			return nil, &ports.ClientIDError{Code: "server_error", Desc: "CIMD document unavailable"}
+		}
 		r.logger.WarnContext(ctx, "CIMD document validation failed", "error", err, "client_uri", rawURL)
 		return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "CIMD document validation failed"}
 	}
@@ -119,12 +124,23 @@ func toCIMDMetadataDTO(doc *cimd.ClientIDMetadataDocument) *ports.CIMDMetadataDT
 	if doc == nil {
 		return nil
 	}
+	keySet := doc.KeySet
+	if keySet != nil {
+		if cloned, err := keySet.Clone(); err == nil {
+			keySet = cloned
+		} else {
+			keySet = nil
+		}
+	}
 	return &ports.CIMDMetadataDTO{
 		ClientID:      doc.ClientID,
 		ClientName:    doc.ClientName,
 		LogoURI:       doc.LogoURI,
 		RedirectURIs:  append([]string(nil), doc.RedirectURIs...),
 		AuthMethod:    doc.AuthMethod,
+		SigningAlg:    doc.SigningAlg,
+		JWKSURI:       doc.JWKSURI,
+		KeySet:        keySet,
 		GrantTypes:    append([]string(nil), doc.GrantTypes...),
 		ResponseTypes: append([]string(nil), doc.ResponseTypes...),
 		PolicyURI:     doc.PolicyURI,
