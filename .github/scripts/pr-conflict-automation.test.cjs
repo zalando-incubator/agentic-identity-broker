@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { test } = require("node:test");
 const { selectConflicts, prepare } = require("./pr-conflict-automation.cjs");
 
@@ -203,6 +205,21 @@ test("prepare writes only verified refs and SHAs to the sandbox context", async 
   };
   assert.deepEqual(await prepare({ ...f, inputs }), expected);
   assert.deepEqual(JSON.parse(fs.readFileSync(contextPath, "utf8")), expected);
+  assert.equal(fs.statSync(contextPath).mode & 0o777, 0o600);
+});
+
+test("prepare never follows a context-file symlink", async (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "pr-conflict-context-"));
+  const outside = path.join(workspace, "outside.json");
+  fs.writeFileSync(outside, "unchanged");
+  fs.mkdirSync(path.dirname(contextPath), { recursive: true });
+  fs.symlinkSync(outside, contextPath);
+  t.after(() => {
+    fs.rmSync(contextPath, { force: true });
+    fs.rmSync(workspace, { recursive: true, force: true });
+  });
+  await assert.rejects(prepare({ ...fixture("schedule"), inputs: { pr: 42, head: sha, base: "main" } }), /symbolic link|symlink/i);
+  assert.equal(fs.readFileSync(outside, "utf8"), "unchanged");
 });
 
 test("prepare independently rechecks label, provenance, head, base, and conflict before AI runs", async (t) => {
