@@ -15,6 +15,12 @@ After a successful exchange, it replaces the downstream `Authorization` header w
 
 This guide describes the separate Agentgateway policy and ExtProc sidecar configuration.
 
+:::tip
+Agentgateway v1.5.0 and later can exchange tokens without the sidecar. See
+[Use the agentgateway token-exchange policy](/docs/guides/agentgateway-token-exchange) to
+compare both options.
+:::
+
 ## What you need
 
 - An Agentgateway v1.5.0 instance with the ExtProc policy. Configure it with the `jwtAuth` syntax shown in this guide.

@@ -100,6 +100,8 @@ The sidecar does not forward the original agent token.
   fields in detail.
 - [Token exchange at the gateway](/docs/guides/token-exchange-gateway) — deploy the sidecar
   that performs exchange transparently.
+- [Agentgateway token-exchange policy](/docs/guides/agentgateway-token-exchange) — let
+  agentgateway call the broker itself, without the sidecar.
 - [OAuth2 server modes](/docs/concepts/oauth2-server-modes) — how the agent's subject token is
   issued in the first place.
 - [Delegation and consent](/docs/concepts/delegation-and-consent) — the grant the broker
