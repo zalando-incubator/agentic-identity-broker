@@ -219,12 +219,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer stopApprovalSyncer()
 	}
 
-	// 9. Create gRPC server with max_concurrent_streams.
-	grpcOpts := []grpc.ServerOption{
-		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- Validate rejects values outside the uint32 range.
-		grpc.KeepaliveParams(keepalive.ServerParameters{}),
-	}
-	grpcSrv := grpc.NewServer(grpcOpts...)
+	// 9. Create gRPC server.
+	grpcSrv := grpc.NewServer(grpcServerOptions(cfg)...)
 	extprocv3.RegisterExternalProcessorServer(grpcSrv, svc)
 
 	// 10. Listen on configured bind:port.
@@ -263,6 +259,24 @@ func run(cmd *cobra.Command, _ []string) error {
 }
 
 // initLogger creates a structured slog.Logger from the service configuration.
+const (
+	// grpcDefaultMaxRecvMsgSize is grpc-go's default server receive limit.
+	grpcDefaultMaxRecvMsgSize = 4 << 20
+	// grpcRecvMsgOverhead leaves room for the metadata the proxy sends with each body message.
+	grpcRecvMsgOverhead = 64 << 10
+)
+
+// grpcServerOptions builds the ExtProc gRPC server options. A BUFFERED request body
+// arrives as one ProcessingRequest, so the receive limit covers authorization.max_body_size
+// and never drops below grpc-go's default.
+func grpcServerOptions(cfg *extprocconfig.Config) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- Validate rejects values outside the uint32 range.
+		grpc.KeepaliveParams(keepalive.ServerParameters{}),
+		grpc.MaxRecvMsgSize(max(cfg.Authorization.MaxBodySize+grpcRecvMsgOverhead, grpcDefaultMaxRecvMsgSize)),
+	}
+}
+
 func initLogger(cfg *extprocconfig.Config) *slog.Logger {
 	level := slog.LevelInfo
 	switch cfg.Log.Level {
