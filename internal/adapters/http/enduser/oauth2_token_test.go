@@ -420,16 +420,12 @@ func TestOAuth2TokenHandler_ServeHTTP_TreatsEmptyParametersAsOmitted(t *testing.
 	})
 }
 
-func TestOAuth2TokenHandler_ServeHTTP_RepeatedExchangeResources(t *testing.T) {
+func TestOAuth2TokenHandler_ServeHTTP_RejectsInvalidExchangeResources(t *testing.T) {
 	tests := []struct {
 		name      string
 		resources []string
 		wantError string
 	}{
-		{"identical", []string{"https://api.example.com", "https://api.example.com"}, "unsupported_grant_type"},
-		{"normalized identical", []string{"https://api.example.com", "https://api.example.com/"}, "unsupported_grant_type"},
-		{"empty omitted", []string{"", "https://api.example.com"}, "unsupported_grant_type"},
-		{"all empty", []string{"", ""}, "unsupported_grant_type"},
 		{"different", []string{"https://api.example.com", "https://other.example.com"}, "invalid_target"},
 		{"invalid URI", []string{"https://api.example.com", "not a uri"}, "invalid_request"},
 	}

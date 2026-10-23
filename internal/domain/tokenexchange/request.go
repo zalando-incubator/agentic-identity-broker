@@ -156,16 +156,6 @@ func (req *TokenExchangeRequest) GetGrantType() string {
 	return req.GrantType
 }
 
-// GetSubjectTokenType returns the subject token type as supplied.
-func (req *TokenExchangeRequest) GetSubjectTokenType() string {
-	return req.SubjectTokenType
-}
-
-// GetClientAssertionType returns the client assertion type as supplied.
-func (req *TokenExchangeRequest) GetClientAssertionType() string {
-	return req.ClientAssertionType
-}
-
 // IsTokenExchangeRequest returns true if this request is a token exchange request.
 // Checks if grant_type matches RFC 8693 token exchange grant type.
 func (req *TokenExchangeRequest) IsTokenExchangeRequest() bool {

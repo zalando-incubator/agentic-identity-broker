@@ -468,6 +468,8 @@ rejected scopes.
 
 Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
 The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+When one token-exchange grant and its audience identify an impersonation request, repeated nonempty parameters also produce this event before credential authentication.
+The event records `invalid_request` and the resolved target, without unvalidated identities or credential values.
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
