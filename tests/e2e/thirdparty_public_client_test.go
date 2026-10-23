@@ -738,10 +738,13 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			read := get(created["id"].(string))
 			Expect(read).To(HaveKey("token_endpoint_auth_method"))
 			Expect(read["token_endpoint_auth_method"]).To(BeNil())
-			read["display_name"] = "Read-modify-write confidential service"
-			read["client_secret"] = "confidential-secret"
 
-			response := putJSON(adminServer, "/api/services/"+created["id"].(string), principal, read)
+			update := serviceRequest(upstream.URL())
+			update["display_name"] = "Read-modify-write confidential service"
+			update["client_secret"] = "confidential-secret"
+			update["token_endpoint_auth_method"] = read["token_endpoint_auth_method"]
+
+			response := putJSON(adminServer, "/api/services/"+created["id"].(string), principal, update)
 			Expect(response.StatusCode).To(Equal(http.StatusOK))
 			updated := decodeJSON[map[string]any](response)
 			Expect(updated).To(HaveKeyWithValue("display_name", "Read-modify-write confidential service"))

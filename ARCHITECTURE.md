@@ -537,6 +537,16 @@ origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
 
+**JSON request boundaries**: [ADR 042](adrs/042-json-request-boundaries.md) records the shared boundary and route-limit policy (Accepted).
+JSON handlers use the shared HTTP `requestbody` reader before domain calls. Each route declares its byte limit.
+Agents, services, permission sets, and consent grants accept at most 64 KiB. Approval creation accepts 7 MiB: sixfold JSON re-encoding expansion of the ExtProc `authorization.max_body_size` default of 1 MiB, plus 1 MiB of envelope headroom. Go's JSON encoder can expand characters such as `<` to six bytes when ExtProc re-marshals the tool arguments.
+Approval decisions that grant access and scope previews accept 512 KiB, which covers the largest stored parameter pattern including six-byte JSON escaping of keys and values and the request envelope. Protected-resource mutations accept 8 KiB.
+Key generation, session sweep, and approval denial accept 4 KiB.
+The limit includes whitespace and trailing content, including chunked bodies without a declared length. Oversized bodies return 413.
+Malformed JSON, unknown fields in closed request objects, and trailing JSON documents return 400.
+Open map fields retain arbitrary keys. Optional empty bodies retain their existing behavior.
+The OpenAPI documents define the limits and error responses for each operation.
+
 **Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 
 The optional `lookahead_duration` accepts a positive ISO 8601 duration in days, hours, minutes, or seconds. `dry_run` previews classifications without provider calls or writes. `page_size` accepts 1 through 1000. Omitted values use configuration defaults. Invalid JSON or unknown fields return 400. A missing operator principal or repository failure returns 500. A completed sweep returns 200 counts even when all candidates fail. The count invariant is `refreshed + skipped + failed = total_evaluated`.

@@ -59,6 +59,16 @@ info:
     including actions with no request body. Other requests carrying a body
     also require JSON. Media-type parameters such as `charset=utf-8` are accepted.
 
+    JSON readers accept exactly one JSON value and reject malformed JSON, trailing
+    values, and unknown fields in closed request objects (including nested objects)
+    with `400 Bad Request`. Documented maps such as `authorization_params` remain open.
+    Body limits apply to all bytes, including whitespace and chunked requests:
+    agent, service, and permission-set create/update accept at most 64 KiB (65536 bytes);
+    protected-resource add/rename accept 8 KiB (8192 bytes); signing-key generation,
+    CIMD-key generation, and session sweep accept 4 KiB (4096 bytes).
+    Larger bodies return `413 Request Entity Too Large`. Optional key-generation and
+    sweep bodies may still be empty.
+
     These checks return `403 Forbidden` for an unrecognized Host or a
     cross-origin mutation, and `415 Unsupported Media Type` for a missing,
     malformed, or non-JSON Content-Type. Boundary rejection bodies are plain
@@ -313,6 +323,7 @@ paths:
         - Agents
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -365,6 +376,8 @@ paths:
                 updated_at: '2025-12-19T10:30:00Z'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '409':
           $ref: '#/components/responses/ConflictError'
         '500':
@@ -447,6 +460,7 @@ paths:
         - $ref: '#/components/parameters/AgentId'
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -491,6 +505,8 @@ paths:
                 updated_at: '2025-12-19T15:45:00Z'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '500':
@@ -664,6 +680,7 @@ paths:
         - Services
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected except keys in documented maps.
         content:
           application/json:
             schema:
@@ -838,6 +855,8 @@ paths:
                   value:
                     error: client registration failed
                     message: client_name_unconfigured
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '409':
           description: Manual client-ID conflict, duplicate issuer-scoped DCR identity, or protected-resource ownership conflict
           content:
@@ -997,6 +1016,7 @@ paths:
 
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected except keys in documented maps.
         content:
           application/json:
             schema:
@@ -1168,6 +1188,8 @@ paths:
                     message: provider version is stale
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '428':
           $ref: '#/components/responses/PreconditionRequired'
         '504':
@@ -1333,6 +1355,7 @@ paths:
         - Services
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 8192 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -1365,6 +1388,8 @@ paths:
                 $ref: '#/components/schemas/ProtectedResourceMutationResult'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
@@ -1426,6 +1451,7 @@ paths:
         - Services
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 8192 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -1447,6 +1473,8 @@ paths:
                 $ref: '#/components/schemas/ProtectedResourceMutationResult'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
@@ -1498,6 +1526,7 @@ paths:
           must be non-empty (400)
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -1522,6 +1551,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '409':
           description: Permission set name already exists
           content:
@@ -1620,6 +1651,7 @@ paths:
         - $ref: '#/components/parameters/PermissionSetId'
       requestBody:
         required: true
+        description: Exactly one JSON value, at most 65536 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -1639,6 +1671,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
@@ -1838,6 +1872,7 @@ paths:
         - Signing Keys
       requestBody:
         required: false
+        description: Empty body or exactly one JSON value, at most 4096 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -1864,7 +1899,7 @@ paths:
                 activates_at: '2025-12-19T10:40:00Z'
                 created_at: '2025-12-19T10:30:00Z'
         '400':
-          description: Invalid algorithm specified
+          description: Invalid JSON, trailing JSON values, unknown fields, or unsupported algorithm
           content:
             application/json:
               schema:
@@ -1872,6 +1907,8 @@ paths:
               example:
                 error: validation failed
                 message: "algorithm must be ES256"
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -2028,6 +2065,7 @@ paths:
         - CIMD Client Keys
       requestBody:
         required: false
+        description: Empty body or exactly one JSON value, at most 4096 bytes; unknown fields are rejected.
         content:
           application/json:
             schema:
@@ -2055,6 +2093,8 @@ paths:
                 created_at: '2026-09-21T10:30:00Z'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -2137,6 +2177,7 @@ paths:
         description: |
           All fields are optional. An empty body and `{}` are equivalent. The
           `Content-Type: application/json` header is still required (see Browser Request Protection).
+          At most 4096 bytes; unknown fields and trailing JSON values are rejected.
         content:
           application/json:
             schema:
@@ -2214,6 +2255,8 @@ paths:
                   value:
                     error: invalid request body
                     message: 'unknown field "lookahead"'
+        '413':
+          $ref: '#/components/responses/RequestEntityTooLarge'
         '500':
           description: |
             The sweep could not continue because the session store is unavailable, or the request
@@ -2585,6 +2628,7 @@ components:
 
     AgentCreateRequest:
       type: object
+      additionalProperties: false
       required:
         - display_name
         - description
@@ -2726,6 +2770,7 @@ components:
 
     AgentUpdateRequest:
       type: object
+      additionalProperties: false
       required:
         - display_name
         - description
@@ -2919,6 +2964,7 @@ components:
 
     ServiceRequirementRequest:
       type: object
+      additionalProperties: false
       required:
         - service_id
         - requirement_type
@@ -3336,6 +3382,7 @@ components:
 
     ServiceCreateRequest:
       type: object
+      additionalProperties: false
       description: |
         For protected-resource discovery, use `discovery.resource_url` and omit endpoints,
         client credentials, and token authentication method. The broker selects the issuer
@@ -3516,6 +3563,7 @@ components:
 
     ServiceUpdateRequest:
       type: object
+      additionalProperties: false
       description: |
         Protected-resource refresh uses fresh resource and issuer metadata. An omitted
         `issuer_uri` keeps the active issuer if still advertised. A new issuer requires
@@ -3735,6 +3783,7 @@ components:
 
     ProtectedResourceCreateRequest:
       type: object
+      additionalProperties: false
       required:
         - resource_uri
       properties:
@@ -3746,6 +3795,7 @@ components:
 
     ProtectedResourceRenameTarget:
       type: object
+      additionalProperties: false
       required:
         - to
       properties:
@@ -3854,6 +3904,7 @@ components:
 
     DiscoveryConfigRequest:
       type: object
+      additionalProperties: false
       required:
         - enable_discovery
       properties:
@@ -3896,6 +3947,7 @@ components:
 
     OAuth2EndpointsRequest:
       type: object
+      additionalProperties: false
       description: |
         OAuth2 endpoints configuration.
 
@@ -3934,6 +3986,7 @@ components:
 
     OAuth2ScopeRequest:
       type: object
+      additionalProperties: false
       required:
         - scope_value
         - description
@@ -4009,6 +4062,7 @@ components:
 
     SigningKeyCreateRequest:
       type: object
+      additionalProperties: false
       properties:
         algorithm:
           type: string
@@ -4070,6 +4124,7 @@ components:
 
     CIMDClientKeyGenerateRequest:
       type: object
+      additionalProperties: false
       properties:
         algorithm:
           type: string
@@ -4218,6 +4273,7 @@ components:
 
     ServiceScope:
       type: object
+      additionalProperties: false
       required:
         - service_id
       properties:
@@ -4247,6 +4303,7 @@ components:
 
     AgentPermissionSetEntry:
       type: object
+      additionalProperties: false
       required:
         - permission_set_id
         - requirement_type
@@ -4269,6 +4326,7 @@ components:
 
     CreatePermissionSetRequest:
       type: object
+      additionalProperties: false
       required:
         - name
         - description
@@ -4346,8 +4404,14 @@ components:
           readOnly: true
 
   responses:
+    RequestEntityTooLarge:
+      description: Request body exceeds the operation's documented byte limit, including whitespace and chunked bodies.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     BadRequestError:
-      description: Invalid request parameters or validation errors
+      description: Invalid JSON, trailing JSON values, unknown fields in closed objects, invalid request parameters, or validation errors
       content:
         application/json:
           schema:

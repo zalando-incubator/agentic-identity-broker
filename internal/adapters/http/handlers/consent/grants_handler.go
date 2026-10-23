@@ -2,7 +2,6 @@
 package consent
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -102,6 +102,7 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 // Response codes:
 // - 201 Created: Grant created/updated
 // - 400 Bad Request: Invalid request body or validation error
+// - 413 Request Entity Too Large: Request body exceeds 64 KiB
 // - 401 Unauthorized: No principal in context
 // - 404 Not Found: Agent doesn't exist
 // - 500 Internal Server Error: Service error
@@ -114,12 +115,12 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request
 	var req GrantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.Warn("invalid request body",
 			"error", err,
 			"principal", principalValue,
 			"agent_id", agentID)
-		h.writeError(w, http.StatusBadRequest, "invalid request", "request body must be valid JSON")
+		h.writeError(w, requestbody.Status(err), "invalid request", "request body must be valid JSON")
 		return
 	}
 

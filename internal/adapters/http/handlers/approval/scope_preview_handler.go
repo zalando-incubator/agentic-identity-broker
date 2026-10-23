@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -40,8 +41,8 @@ func (h *ScopePreviewHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req scopePreviewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "request body must be valid JSON")
+	if err := requestbody.Decode(w, r, approvalDecisionBodyLimit, &req); err != nil {
+		writeError(w, requestbody.Status(err), "bad_request", "request body must be valid JSON")
 		return
 	}
 	if len(req.DisallowedToolPattern) > 0 {

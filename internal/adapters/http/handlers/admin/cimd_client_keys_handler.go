@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -55,8 +56,8 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request cimdKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", "")
+	if err := requestbody.Decode(w, r, 4<<10, &request); err != nil && !errors.Is(err, io.EOF) {
+		h.writeError(w, requestbody.Status(err), "invalid request body", "")
 		h.audit(operator, "", "generate", "rejected")
 		return
 	}
