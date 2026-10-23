@@ -1,7 +1,8 @@
 const fs = require("node:fs");
 
 const label = "auto-resolve-conflicts";
-const directory = "/tmp/gh-aw/pr-conflicts";
+const root = "/tmp/gh-aw";
+const directory = `${root}/pr-conflicts`;
 const shaPattern = /^[a-f0-9]{40}$/i;
 // gh-aw interpolates inputs.base into the App safe-output policy without JSON escaping.
 const unsafeBaseRef = /["\\\x00-\x1f]/;
@@ -131,6 +132,30 @@ async function selectConflicts({ github, context }) {
   return candidates.sort((a, b) => a.number - b.number);
 }
 
+function writeContext(data) {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(root).isSymbolicLink()) throw new Error("Context directory must not be a symlink");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (fs.lstatSync(directory).isSymbolicLink()) throw new Error("Context directory must not be a symlink");
+  const { O_WRONLY, O_CREAT, O_NOFOLLOW } = fs.constants;
+  if (!O_NOFOLLOW) throw new Error("Symlink-safe context writes are unsupported");
+  let file;
+  try {
+    file = fs.openSync(`${directory}/context.json`, O_WRONLY | O_CREAT | O_NOFOLLOW, 0o600);
+  } catch (error) {
+    if (error.code === "ELOOP") throw new Error("Context file must not be a symlink");
+    throw error;
+  }
+  try {
+    if (!fs.fstatSync(file).isFile()) throw new Error("Context file must be a regular file");
+    fs.fchmodSync(file, 0o600);
+    fs.ftruncateSync(file);
+    fs.writeFileSync(file, JSON.stringify(data));
+  } finally {
+    fs.closeSync(file);
+  }
+}
+
 async function prepare({ github, context, inputs }) {
   const number = Number(inputs.pr);
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Invalid selected PR number");
@@ -146,8 +171,7 @@ async function prepare({ github, context, inputs }) {
     eligible: true, pr: number, head_ref: pr.headRefName, head_sha: pr.headRefOid,
     base_ref: pr.baseRefName, base_sha: pr.baseRefOid,
   };
-  fs.mkdirSync(directory, { recursive: true });
-  fs.writeFileSync(`${directory}/context.json`, JSON.stringify(data));
+  writeContext(data);
   return data;
 }
 
