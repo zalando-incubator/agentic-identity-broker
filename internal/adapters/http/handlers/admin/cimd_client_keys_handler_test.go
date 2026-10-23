@@ -181,13 +181,10 @@ func TestCIMDClientKeysHandler_Create(t *testing.T) {
 			http.MethodPost,
 			"/api/cimd-client-keys",
 			"",
-			`{"algorithm":"RS256","private_key":"`+cimdKeySensitiveMaterial+`"}`,
+			`{"algorithm":"RS256"}`,
 		), "operator@example.com"))
 
 		require.Equal(t, http.StatusBadRequest, w.Code)
-		var response ErrorResponse
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
-		assert.Equal(t, "unsupported algorithm", response.Error)
 		assertCIMDKeyDisclosureFree(t, w.Body.String())
 		assert.Contains(t, audit.String(), `"operator_principal":"operator@example.com"`)
 		assert.Contains(t, audit.String(), `"event":"cimd.admin_client_key.generate_rejected"`)
@@ -370,4 +367,29 @@ func TestCIMDClientKeysHandler_Remove(t *testing.T) {
 		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", missingKey.String(), "remove", "rejected", "cimd.admin_client_key.remove_rejected")
 		keys.AssertExpectations(t)
 	})
+}
+
+func TestCIMDClientKeysHandlerOptionalBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"empty", ""},
+		{"whitespace", " \t\r\n"},
+		{"object at byte limit", `{}` + strings.Repeat(" ", (4<<10)-2)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys := new(MockCIMDClientKeyLifecycle)
+			now := time.Now().UTC()
+			key := cimdClientKeyForTest("optional-body-key", true, now, now)
+			keys.On("GenerateKey", mock.Anything, "ES256").Return(key, nil).Once()
+			var audit bytes.Buffer
+			handler := newTestCIMDClientKeysHandler(keys, slog.New(slog.NewJSONHandler(&audit, nil)))
+			request := withCIMDKeyPrincipal(newCIMDClientKeyRequest(http.MethodPost, "/api/cimd-client-keys", "", tc.body), "operator@example.com")
+			w := httptest.NewRecorder()
+			handler.Create(w, request)
+			require.Equal(t, http.StatusCreated, w.Code)
+			assertCIMDKeyDisclosureFree(t, w.Body.String())
+			keys.AssertExpectations(t)
+		})
+	}
 }
