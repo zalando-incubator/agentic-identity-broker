@@ -408,3 +408,61 @@ With `principal_expression: subject_token.sub` and `agent_id_expression: resolve
 3. **Batch evaluations.** `/access/v1/evaluations` is cheap to add once the single evaluation exists; useful if a PEP wants to pre-check several resources for one token.
 4. **Resource Search.** `search_resource_endpoint` for `permission_set` and `service` would let UIs and agents discover what a token can reach; out of scope here.
 5. **Cache-Control default.** 60s mirrors `tool_approvals.max_staleness`; operators may want it configurable on the broker side later.
+
+---
+
+## 10. Future Extension: Agent Identity from an Actor Token
+
+Today the agent is a claim inside the user's subject token (`azp` by default, resolved through `token_exchange.claim_extraction.agent_id_expression`). RFC 8693 §2.1 offers a stronger shape for delegation: the user's `subject_token` carries only the user, and a separate `actor_token` carries the agent's own credential. This section records how the design absorbs that change without altering its shape.
+
+### 10.1 Two flavours, one of which needs no change
+
+| Flavour | Where the agent lives | Design impact |
+|---|---|---|
+| **Composite subject token** | `act` claim inside the subject token (RFC 8693 §4.1), minted by an IdP that already performed delegation | None. Set `agent_id_expression: subject_token.act.sub` (or a resolver over it). Request, response, trust, and ExtProc are unchanged. |
+| **Separate actor token** | A second credential the agent presents, for example a client-credentials token or a workload identity JWT (SPIFFE JWT-SVID) | The request carries a second credential in `context`; the broker validates it against its own trust anchor; ExtProc forwards one more metadata value. Everything downstream of `ResolveDelegation` is unchanged. |
+
+### 10.2 Request profile with an actor token
+
+The AuthZEN `subject` stays the user. The agent credential goes into `context`, the place COAZ-MCP already reserves for the agent, as a typed credential entity rather than a bare identifier:
+
+```json
+{
+  "subject":  { "type": "urn:ietf:params:oauth:token-type:jwt", "id": "<user subject token>" },
+  "action":   { "name": "urn:ietf:params:oauth:grant-type:token-exchange" },
+  "resource": { "type": "protected_resource", "id": "https://api.github.com" },
+  "context":  {
+    "actor": { "type": "urn:ietf:params:oauth:token-type:jwt", "id": "<agent actor token>" }
+  }
+}
+```
+
+This is the AuthZEN rendering of the RFC 8693 triple `subject_token`, `actor_token`, `client_assertion`: user, agent, and PEP each prove themselves with their own credential. `context.agent` (§4.2) remains an optional anchoring value and is then compared against the actor-derived agent.
+
+### 10.3 What changes in the broker
+
+| Area | Change |
+|---|---|
+| Trust anchor | The actor token needs its own issuer and key set. Reuse the per-role model Feature 037 already has for impersonation (`TrustedTokenIssuerConfig` with `signs_roles: [actor]`, allowed algorithms, audience = the broker). Signature verification is mandatory; the ADR 031 unsigned exception applies only to the impersonation subject role and is not extended. |
+| Claim extraction | `agent_id_expression` evaluates against a second CEL variable, `actor_token`, in addition to `subject_token`. Example: `resolveAgentIdByClientId(actor_token.sub)`. A configuration that references `actor_token` makes the actor token required; its absence is `400`. |
+| `ResolveDelegation` | Takes an optional actor token, validates it, and derives the agent from it when configured. Grant lookup by `(principal, agentID)` and everything after it are unchanged, so token exchange and the evaluation endpoint move in lockstep. |
+| Response | Unchanged shape. The `agent` entity gains the RFC 8693 `act` chain so policies can see who the agent is to its own issuer: `"act": { "iss": "https://workload-idp.example.com", "sub": "spiffe://example.org/agent/github-assistant" }`. Nested delegation maps to nested `act`. |
+| ADR 036 | Unchanged. `principal` and `agent_id` on the exchange response are still the approval identity, now actor-derived. |
+
+### 10.4 What changes in ExtProc
+
+- Agentgateway projects the agent credential as `aib.tokenexchange.actor_token` in the same flat metadata namespace ADR 036 defines, from wherever the deployment carries it (a dedicated header, or the gateway's own mTLS/SPIFFE identity for the agent).
+- `extractTokenExchangeInput()` validates it with the subject-token rules (nonblank string, no `Bearer ` prefix) and passes it to both `Exchanger.Exchange` and `DelegationResolver.Resolve`.
+- Both caches key on `{subjectToken, actorToken, resourceURI}`.
+
+### 10.5 Why this is worth planning for
+
+- **Stronger agent identity.** An `azp` claim is the IdP's statement about which client requested the user token; an actor token is the agent proving possession of its own credential. Agents that are not OAuth clients of the user's IdP (workloads with SPIFFE or cloud identities) become first-class.
+- **Standard delegation semantics.** The `act` chain in the Delegation Context is the RFC 8693 representation of "who is acting for whom", so policies and audit records read the same way across the broker, impersonation (Feature 037), and ExtProc.
+- **No new endpoint and no new shape.** The AuthZEN request gains one `context` member, the response gains one nested object, and the decision logic gains one validation step before the existing grant check.
+
+### 10.6 Open questions for that extension
+
+1. Required or optional per deployment, and whether a deployment may accept both flavours at once.
+2. Audience and replay rules for the actor token: `aud` must name the broker, lifetime bound, and whether a `jti` cache is needed.
+3. Whether the actor token's audience should also be checked against the PEP (the client assertion subject) to bind agent and gateway.
