@@ -390,8 +390,12 @@ With `principal_expression: subject_token.sub` and `agent_id_expression: resolve
 
 ## 9. Trade-offs and Open Questions
 
-**Decided**
+**Decided** (stakeholder confirmation 2026-10-24)
 
+- Access Evaluation API as the endpoint shape; Resource Search stays a later addition.
+- Subject token carried in the AuthZEN `subject` with the RFC 8693 token-type URI; `Authorization` carries the client assertion.
+- Asserted `identity` subjects return `400` in this increment.
+- `granted_permission_sets` on the RFC 8693 response is deprecated and removed after one release; `principal` and `agent_id` stay.
 - One extra broker round trip per cache miss, run concurrently with the exchange, in return for standard shape, bounded staleness, and a single trust boundary for token interpretation.
 - Token in the AuthZEN `subject` rather than in the `Authorization` header (§4.2 rationale).
 - `decision: false` for every delegation failure; `400` for an unverifiable subject (§4.6).
@@ -399,7 +403,7 @@ With `principal_expression: subject_token.sub` and `agent_id_expression: resolve
 
 **Open**
 
-1. **Asserted subjects for third-party PEPs.** A gateway that validates JWTs itself will send `subject = {type: "identity", id: <sub>}` (COAZ-MCP default). Accepting that means trusting the PEP's identity claim, gated by the CEL predicate per gateway. Reserved for a later ADR; this increment returns `400`.
+1. **Asserted subjects for third-party PEPs.** Decided for this increment (`400`). The later ADR question is only whether a CEL-gated `identity` subject type should ever be accepted for gateways that validate JWTs themselves.
 2. **Agent as subject or context.** COAZ-MCP puts the agent in `context.agent`; this design returns it as a typed entity in the response `context` and accepts an optional anchoring value in the request. Confirm with stakeholders before the OpenAPI is frozen.
 3. **Batch evaluations.** `/access/v1/evaluations` is cheap to add once the single evaluation exists; useful if a PEP wants to pre-check several resources for one token.
 4. **Resource Search.** `search_resource_endpoint` for `permission_set` and `service` would let UIs and agents discover what a token can reach; out of scope here.
