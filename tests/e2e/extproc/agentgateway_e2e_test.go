@@ -520,9 +520,9 @@ func agentgwTokenDigest(token string) string {
 // --- Agentgateway Re-authentication Challenge Integration ---
 
 const (
-	agentgwRecoveryURL         = "https://broker.example.com/sessions"
+	agentgwRecoveryURL         = "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 	agentgwRecoveryDescription = "User session is unavailable. Please re-authenticate."
-	agentgwRecoveryChallenge   = `Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"`
+	agentgwRecoveryChallenge   = `Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"`
 	agentgwUpstreamToken       = "agentgateway-reauth-upstream-token"
 	agentgwStepUpClientID      = "e2e-stepup-client"
 	agentgwStepUpRedirectURL   = "http://localhost/callback"
