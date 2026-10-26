@@ -3,6 +3,7 @@
 **Feature Branch**: `023-extproc-mcp-elicitation`
 **Created**: 2026-03-26
 **Status**: Implemented
+**Amended**: 2026-10-26 — User Story 1 Amendment (HTTP 403 re-authentication challenge) and User Story 3 (step-up recovery)
 
 ## Overview
 
@@ -33,6 +34,34 @@ An AI agent makes an MCP tool call via agentgateway. The user's delegated OAuth2
 
 3. **Given** an agent sends an MCP request through agentgateway, **when** ExtProc returns a JSON-RPC `-32042` elicitation response, **then** the HTTP status code of the agentgateway response is `200 OK` (per JSON-RPC 2.0 — errors travel over HTTP 200).
 
+### User Story 1 Amendment - HTTP 403 Re-authentication Challenge (2026-10-26)
+
+This amendment supersedes only the HTTP status of the re-authentication response (Scenario 3 and FR-002's HTTP 200) and the non-MCP 503 in Feature 043's `exchangeErrorResponse` matrix. The JSON-RPC body (FR-002–FR-004), headers-phase delivery (FR-006), and the broker's `error_uri` (FR-001) remain authoritative. The stakeholder requested and confirmed this API change on 2026-10-26 (Principle X).
+
+For a non-transient broker exchange error with `error_uri`, ExtProc returns HTTP 403 for every protocol and processing mode. It sets `Content-Type: application/json` and exactly one `www-authenticate` mutation. The challenge attributes occur in this order: `error`, `error_description`, `error_uri`. The `error` value is `insufficient_scope`. ExtProc includes a nonempty description only when every byte matches RFC 6750 §3 `%x20-21 / %x23-5B / %x5D-7E`. It includes the URI only when every byte matches `%x21 / %x23-5B / %x5D-7E`. Invalid attributes are omitted, not escaped. The challenge never includes `scope`, `resource_metadata`, or `realm`. The body remains the existing URL-elicitation JSON-RPC error with `id: null` and a fresh UUID v4 `elicitationId`. ExtProc does not mutate `Authorization` on failure.
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+```
+
+**Acceptance Scenarios**:
+
+1. **Scenario 1: Challenge through agentgateway.** Given an agent sends an MCP request through agentgateway with a valid Bearer token, When the broker rejects the exchange with `400 invalid_grant` and `error_uri`, Then the response is HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope", error_description="<broker description>", error_uri="<error_uri>"`. Its JSON-RPC body has `id` null, code `-32042`, and exactly one `url` elicitation equal to `error_uri`.
+2. **Scenario 2: mcp-go after initialize.** Given an mcp-go client initialized through agentgateway, When a later `tools/call` hits the same rejection, Then `CallTool` returns `mcp.URLElicitationRequiredError` whose only elicitation URL is `error_uri`.
+3. **Scenario 3: OPA mode.** Given ExtProc runs with OPA authorization enabled, When a body-bearing MCP request's exchange is rejected with `error_uri`, Then the same 403 challenge is returned from the request-headers phase.
+4. **Scenario 4: Non-MCP protocol.** Given agentgateway protocol metadata `a2a`, When the exchange is rejected with `error_uri`, Then ExtProc returns the same 403 challenge instead of 503 `token exchange requires re-authentication`.
+
+**Edge Cases**:
+
+- Transient 5xx, 429 without `error_uri`, no `error_uri`, expired assertion, and open circuit keep their 500/503 responses without `WWW-Authenticate`.
+- A description or URI outside its RFC 6750 set omits that header attribute. The body keeps the value.
+- Repeats within the 5 s re-authentication cooldown return the same challenge.
+- A header-only `GET` gets the same 403.
+
 ---
 
 ### User Story 2 — Operator Diagnoses JWT Validation Failures (Priority: P2)
@@ -51,6 +80,18 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 
 3. **Given** a JWT that has expired, **when** validation runs, **then** the error description states the token has expired (without leaking raw token content).
 
+### User Story 3 - Step-up-capable MCP Client Re-authorizes and Retries (Priority: P2)
+
+A step-up-capable MCP client uses the gateway's protected-resource metadata to re-authorize after the re-authentication challenge and retries its tool call.
+
+**Why this priority**: MCP 2025-11-25 step-up authorization enables recovery without a manual retry. This also lays groundwork for incremental authorization.
+
+**Independent Test**: A go-sdk client calls an MCP tool through agentgateway, completes an authorization-code exchange against an advertised authorization server, and retries successfully.
+
+**Acceptance Scenarios**:
+
+1. **Scenario 1: Step-up authorization and retry.** Given a go-sdk client with an authorization-code OAuth handler holding a valid token, and a gateway serving RFC 9728 metadata at `/.well-known/oauth-protected-resource/mcp` that names the authorization server, When a `tools/call` receives the 403 challenge, Then the client makes exactly one authorization request at that server for resource `<gateway>/mcp` and obtains a new token. The retried call succeeds, and the broker exchanges the new token.
+
 ---
 
 ### Edge Cases
@@ -61,13 +102,158 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 
 ---
 
+## Concrete Example Journeys
+
+**Cast**: Alice (`alice@example.com`) uses the Research Assistant (agent ID `a1b2c3d4-e5f6-7890-abcd-ef1234567890`) at `https://gw.example.com/mcp`. The broker is `https://broker.example.com`; its recovery URL is `https://broker.example.com/sessions`.
+
+### Journey 1 — A provider session expires mid-session (User Story 1 Amendment, Scenarios 1–3)
+
+**Configuration**: ExtProc has `authorization.enabled: true`. The response is identical when this value is `false`.
+
+**Step 1 — 10:00:00Z: Research Assistant calls a tool**
+
+```http
+POST /mcp HTTP/1.1
+Host: gw.example.com
+Authorization: Bearer <agent-token>
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"whoami","arguments":{}}}
+```
+
+**Step 2 — 10:00:01Z: ExtProc exchanges the token and receives a broker error**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=<agent-token>&resource=https%3A%2F%2Fgw.example.com%2Fmcp&...
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"invalid_grant","error_description":"User session is unavailable. Please re-authenticate.","error_uri":"https://broker.example.com/sessions"}
+```
+
+The broker response matches `OAuth2Error` in `api/enduser/openapi.yaml`.
+
+**Step 3 — 10:00:01Z: The gateway sends the 403 response to Research Assistant**
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+```
+
+**Step 4 — 10:02:00Z: Alice reconnects the service**
+
+After initialize, mcp-go returns `URLElicitationRequiredError` for the failed tool call. Alice opens `/sessions` and reconnects. The next tool call succeeds.
+
+### Journey 2 — A step-up-capable client re-authorizes and retries (User Story 3, Scenario 1)
+
+**Step 1 — 11:00:00Z: The client receives a challenge**
+
+The gateway returns the 403 from Journey 1, step 3, for a tool call made with the initial token.
+
+**Step 2 — 11:00:01Z: The client discovers protected-resource metadata**
+
+```http
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: gw.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://gw.example.com/mcp","authorization_servers":["https://broker.example.com"]}
+```
+
+The gateway needs a route for this metadata. Without the route, clients cannot discover the authorization server:
+
+```yaml
+- name: protected-resource-metadata
+  matches: [{path: {exact: /.well-known/oauth-protected-resource/mcp}}]
+  backends: [{host: prm.example.internal:8080}]
+```
+
+**Step 3 — 11:00:02Z: The client discovers authorization-server metadata**
+
+```http
+GET /.well-known/oauth-authorization-server HTTP/1.1
+Host: broker.example.com
+```
+
+**Step 4 — 11:00:03Z: The browser visits the authorization endpoint**
+
+```http
+GET /oauth2/authorize?response_type=code&client_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256&… HTTP/1.1
+Host: broker.example.com
+```
+
+The trailing `…` represents client-added parameters, such as RFC 8707 `resource`. The documented `/oauth2/authorize` parameters omit it, and `internal/adapters/http/enduser/oauth2_authorize.go` does not read it. The broker finds Alice's expired delegated session and redirects to consent (`internal/domain/oauth2/service.go`). After consent, the broker resumes authorization and issues a code. The consent flow retains the original authorization context in a session token, as described in `specs/031-unified-session-token/spec.md`.
+
+**Step 5 — 11:01:00Z: The client exchanges the code for a new token**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=<code>&redirect_uri=<registered-redirect-uri>&code_verifier=<pkce-verifier>
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"<synthetic-signed-jwt>","token_type":"Bearer","expires_in":600}
+```
+
+The synthetic decoded token illustrates the claims minted by `internal/domain/oauth2server/strategies.go`:
+
+```json
+{"iss":"https://broker.example.com","sub":"alice@example.com","iat":1793012460,"exp":1793013060,"jti":"<uuid>","agent_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","scope":""}
+```
+
+**Step 6 — 11:01:01Z: The client retries the tool call**
+
+```http
+POST /mcp HTTP/1.1
+Host: gw.example.com
+Authorization: Bearer <synthetic-signed-jwt>
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"whoami","arguments":{}}}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":8,"result":{"content":[{"type":"text","text":"auth_scheme=Bearer token_digest=<exchanged-token-digest>"}]}}
+```
+
+ExtProc exchanges the new token before the upstream MCP server handles the retried call.
+
+### Journey 3 — An A2A client gets the same challenge (User Story 1 Amendment, Scenario 4)
+
+**Step 1 — 12:00:00Z: An A2A request reaches ExtProc**
+
+The gateway supplies protocol metadata `a2a` and valid token-exchange metadata. The broker rejects the exchange with `error_uri`.
+
+**Step 2 — 12:00:01Z: The gateway returns the re-authentication challenge**
+
+The former `503 {"error":"service_unavailable","error_description":"token exchange requires re-authentication"}` becomes the identical 403 response shown in Journey 1, step 3.
+
+User Story 2 (JWT diagnostics) is unchanged by the 2026-10-26 amendment.
+
+---
+
 ## Requirements
 
 ### Functional Requirements
 
 - **FR-001**: The identity broker token exchange endpoint MUST include `error_uri` in RFC 6749 §5.2 error responses when a user session is not found or has expired, pointing to the service-specific re-authorisation URL.
 
-- **FR-002**: ExtProc MUST parse the `error_uri` field from non-2xx token exchange responses and, when present, return an HTTP 200 response with a JSON-RPC `-32042` error body containing an `elicitations` array with one entry of `mode="url"` and `url` set to the `error_uri` value.
+- **FR-002**: ExtProc MUST parse the `error_uri` field from non-2xx token exchange responses. When present on a non-transient error, it MUST return HTTP 403 with a `WWW-Authenticate: Bearer error="insufficient_scope"` challenge and a JSON-RPC `-32042` error body. The body contains an `elicitations` array with one entry of `mode="url"` and `url` set to the `error_uri` value (amended 2026-10-26; formerly HTTP 200).
 
 - **FR-003**: The JSON-RPC `-32042` elicitation response MUST include a unique `elicitationId` (UUID v4) per response to allow clients to correlate elicitation flows.
 
@@ -77,7 +263,11 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 
 - **FR-006**: ExtProc MUST return `ImmediateResponse` from the **request headers phase** (not body phase) when an elicitation is triggered. This is required for compatibility with agentgateway 0.12.0, which forwards the request to the backend immediately after processing a headers-phase response.
 
-- **FR-007**: When `error_uri` is absent from a broker error response, ExtProc MUST fall through to existing error handling (500 for unclassified errors, 503 for assertion-expired errors).
+- **FR-007**: When `error_uri` is absent from a broker error response, ExtProc MUST fall through to existing error handling (500 for unclassified errors, 503 for assertion-expired errors). These responses carry no `WWW-Authenticate` header.
+
+- **FR-008**: ExtProc MUST return the FR-002 response for every protocol value (absent, `mcp`, `a2a`, or any other) and in every processing mode (OPA disabled, OPA body-bearing, OPA header-only).
+
+- **FR-009**: The challenge MUST contain only the `error`, `error_description`, and `error_uri` attributes, in that order. It carries no `scope`, `resource_metadata`, or `realm` until a source for them exists.
 
 ### Security Requirements
 
@@ -85,6 +275,7 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 - **SR-002**: JWT validation MUST use typed error matching against the JWT library's error hierarchy — `strings.Contains` on error messages is prohibited as a validation mechanism.
 - **SR-003**: Token values (subject tokens, access tokens) MUST NOT appear in client-facing error messages.
 - **SR-004**: The `error_uri` re-auth URL MUST use the broker's configured `PublicURL` as the base, ensuring it resolves to the correct public endpoint.
+- **SR-005**: Each challenge attribute value MUST consist only of its RFC 6750 §3 characters (`error_description`: %x20-21 / %x23-5B / %x5D-7E; `error_uri`: %x21 / %x23-5B / %x5D-7E). A value outside its set omits the attribute; it is never escaped.
 
 ---
 
@@ -92,10 +283,11 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 
 ### Measurable Outcomes
 
-- **SC-001**: An agent client receives `*mcp.URLElicitationRequiredError` (JSON-RPC `-32042`) with a non-empty `elicitations[0].url` when the broker returns `error_uri` on token exchange failure, verified end-to-end through a real agentgateway Docker container.
+- **SC-001**: When the broker returns `error_uri`, an agent client receives HTTP 403 with the `insufficient_scope` challenge and the `-32042` body. An mcp-go client gets `URLElicitationRequiredError` with a non-empty URL on a post-initialize call. Both are verified end-to-end through a real agentgateway container.
 - **SC-002**: JWT issuer mismatch errors include the expected issuer value in the error description, verifiable in unit tests without running a full server.
 - **SC-003**: Broker errors without `error_uri` continue to produce 500 responses (no regression in existing error handling).
 - **SC-004**: All unit and E2E tests pass with the race detector enabled (`go test -race`).
+- **SC-005**: A go-sdk client with an authorization-code OAuth handler completes exactly one step-up authorization, and its retried call succeeds. This is verified end-to-end through a real agentgateway container.
 
 ---
 
@@ -105,3 +297,8 @@ An operator troubleshooting a token exchange failure wants to know precisely *wh
 - The MCP `URLElicitationRequiredError` (-32042) is as defined in the MCP specification 2025-11-05.
 - The broker's public base URL for re-auth links is already configured via `ServerInstanceConfig.PublicURL` — no new configuration field is needed.
 - RFC 6749 §5.2 `error_uri` is an optional extension field; existing clients that do not inspect it are unaffected.
+- (2026-10-26) The E2E gateway is agentgateway v1.5.0 (`cr.agentgateway.dev/agentgateway:v1.5.0`). It copies ImmediateResponse status, headers, and body into its direct response.
+- The challenge follows MCP 2025-11-25 Authorization, Scope Challenge Handling.
+- mcp-go v1.1.0 (and latest v1.4.0) reports any non-401 4xx on `initialize` as `ErrLegacySSEServer`. The URL is machine-readable to mcp-go only after successful initialize.
+- Without `scope`, recovery depends on the authorization server re-running consent. With a refresh token, TS SDK 1.32.2 refreshes instead of re-authorizing. If the cause persists, it fails with `Server returned 403 after trying upscoping`; users then follow `error_uri`.
+- Without `resource_metadata`, step-up needs the gateway to serve protected-resource metadata at the MCP endpoint's well-known path (Journey 2 route or agentgateway `mcpAuthentication.resourceMetadata`). The documented `jwtAuth` deployment does not serve it.

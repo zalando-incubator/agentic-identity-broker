@@ -104,10 +104,23 @@ The sidecar rejects the request if either required metadata field is absent, emp
 It validates `subject_token` before `resource_uri`. If both are invalid, it returns `invalid_subject_token`.
 The response is a 503 JSON immediate response. Diagnostics never contain the subject credential or rejected resource URI.
 
-If exchange fails, the sidecar does not forward the original credential to the third-party service. Generic exchange errors, broker 4xx errors without `error_uri`, transient 429 or 5xx errors, network errors, and timeouts return HTTP 500 with `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
+If exchange fails, the sidecar does not forward the original credential. Generic errors, broker 4xx responses without `error_uri` (including 429), 5xx errors, network errors, and timeouts return HTTP 500. The body is `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
 
-If a nontransient broker error contains `error_uri`, MCP receives JSON-RPC code `-32042` URL elicitation. Non-MCP traffic receives the 503 re-authentication response. Expired assertions and open circuits also return their defined 503 responses.
-For provider-session recovery, the URL opens `/sessions`. It does not automatically start an OAuth2 authorization flow.
+If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It adds an RFC 6750 challenge and keeps the JSON-RPC `-32042` URL elicitation body with `id: null`. For provider-session recovery, the URL opens `/sessions`. It does not start provider login automatically.
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+```
+
+The challenge always has `error="insufficient_scope"`. It adds `error_description` and `error_uri` only when each value uses its RFC 6750 §3 character set. It does not provide `scope`, `resource_metadata`, or `realm`. Generic failures have no `WWW-Authenticate` header. Expired assertions and open circuits also have no challenge and keep their 503 responses.
+
+An mcp-go client can read the URL from a tool-call error after initialization, but not from an `initialize` error.
+
+For automatic step-up, an MCP client must discover RFC 9728 protected-resource metadata for the gateway's MCP URL. This `jwtAuth` route does not provide metadata by itself. Add a separate gateway route for `/.well-known/oauth-protected-resource/mcp`. It must return the MCP resource URL and its authorization server. Match the MCP route on `/mcp`, so route order does not affect dispatch. [Feature 023's example journey](../../specs/023-extproc-mcp-elicitation/spec.md) shows the route and authorization-code retry.
 
 ### Diagnostic telemetry
 

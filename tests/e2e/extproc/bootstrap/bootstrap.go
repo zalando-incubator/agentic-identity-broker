@@ -363,6 +363,7 @@ type MockTokenExchangeServer struct {
 	grantedPermissionSets map[string][]string
 	statusCode            int
 	errorCode             string
+	errorURI              string
 	lastBody              string
 	lastRequestHeaders    http.Header
 }
@@ -482,6 +483,14 @@ func (m *MockTokenExchangeServer) WithError(statusCode int, errorCode string) *M
 	return m
 }
 
+// WithErrorURI configures the error_uri in failed exchange responses.
+func (m *MockTokenExchangeServer) WithErrorURI(uri string) *MockTokenExchangeServer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.errorURI = uri
+	return m
+}
+
 // Reset clears call history and resets to default responses for reuse across test scenarios.
 func (m *MockTokenExchangeServer) Reset() {
 	m.mu.Lock()
@@ -509,6 +518,7 @@ func (m *MockTokenExchangeServer) handleExchange(w http.ResponseWriter, r *http.
 	agentID := m.agentID
 	grantedPermissionSets := cloneGrantedPermissionSets(m.grantedPermissionSets)
 	errorCode := m.errorCode
+	errorURI := m.errorURI
 	m.lastBody = r.Form.Encode()
 	m.lastRequestHeaders = capturedHeaders
 	m.mu.Unlock()
@@ -517,7 +527,11 @@ func (m *MockTokenExchangeServer) handleExchange(w http.ResponseWriter, r *http.
 
 	if statusCode != http.StatusOK {
 		w.WriteHeader(statusCode)
-		fmt.Fprintf(w, `{"error":%q,"error_description":"mock exchange error"}`, errorCode) //nolint:errcheck
+		if errorURI != "" {
+			fmt.Fprintf(w, `{"error":%q,"error_description":"mock exchange error","error_uri":%q}`, errorCode, errorURI) //nolint:errcheck
+		} else {
+			fmt.Fprintf(w, `{"error":%q,"error_description":"mock exchange error"}`, errorCode) //nolint:errcheck
+		}
 		return
 	}
 

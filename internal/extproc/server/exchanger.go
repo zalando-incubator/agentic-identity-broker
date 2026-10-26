@@ -107,9 +107,9 @@ type brokerErrorBody struct {
 }
 
 // BrokerExchangeError is returned by Exchange when the broker responds with a non-200 status
-// and a parseable RFC 8693 error body. ErrorURI, when non-empty, carries the re-authentication
-// URL from the broker (RFC 6749 §5.2 error_uri). Callers that detect a non-empty ErrorURI
-// should return a MCP URLElicitationRequiredError (JSON-RPC -32042).
+// and a parseable RFC 8693 error body. ErrorURI carries the broker's recovery URL
+// (RFC 6749 §5.2). Callers turn a non-transient error with a non-empty ErrorURI into
+// the HTTP 403 insufficient_scope challenge (reauthChallengeResponse).
 type BrokerExchangeError struct {
 	StatusCode  int
 	Code        string
@@ -378,7 +378,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 // authoritative responses (invalid_token, access_denied, 429 with error_uri, etc.)
 // must be propagated so that revoked access is not silently extended.
 // A 429 with a non-empty ErrorURI carries an explicit re-auth signal and must be
-// treated as authoritative so the caller can surface the elicitation URL.
+// treated as authoritative so the caller can surface the recovery URL.
 // ErrAssertionExpired is NOT transient: the service cannot re-authenticate on its
 // own and the client must receive the 503 signal.
 func isTransientBrokerError(err error) bool {

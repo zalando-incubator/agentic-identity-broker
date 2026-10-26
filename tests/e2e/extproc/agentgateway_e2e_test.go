@@ -20,10 +20,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -33,10 +36,14 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -45,6 +52,7 @@ import (
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 	e2ehelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
@@ -143,7 +151,7 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 		// --- 4. Start agentgateway Docker container ---
 		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer setupCancel()
-		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
+		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, 0, jwtFixture)
 		agentgwLogger.Info("agentgateway accessible on host port", "port", agentgatewayPort)
 
 		// --- 5. Create MCP client and connect through agentgateway ---
@@ -373,16 +381,34 @@ func startAgentgwExtProc(
 
 // --- agentgateway Docker Container ---
 
-func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int, jwtFixture *fixtures.RS256JWTFixture) string {
+func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort, prmPort int, jwtFixture *fixtures.RS256JWTFixture) string {
 	image := agentgatewayTestImage()
 	resourceExpression := fmt.Sprintf("'%s'", fixtures.ValidResourceURI)
+
+	routePrefix := ""
+	policyHeader := "    - policies:"
+	hostAccessPorts := []int{extprocPort, mcpPort}
+	if prmPort > 0 {
+		routePrefix = fmt.Sprintf(`    - name: protected-resource-metadata
+      matches:
+      - path:
+          exact: /.well-known/oauth-protected-resource/mcp
+      backends:
+      - host: host.testcontainers.internal:%d
+    - matches:
+      - path:
+          exact: /mcp
+`, prmPort)
+		policyHeader = "      policies:"
+		hostAccessPorts = append(hostAccessPorts, prmPort)
+	}
 
 	// Generate agentgateway config pointing to host services
 	configYAML := fmt.Sprintf(`binds:
 - port: 4000
   listeners:
   - routes:
-    - policies:
+%s%s
         jwtAuth:
           mode: strict
           preserveToken: false
@@ -405,7 +431,7 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int, jwtFix
           - name: tools
             mcp:
               host: http://host.testcontainers.internal:%d/mcp
-`, jwtFixture.Issuer(), jwtFixture.Audience(), extprocPort, resourceExpression, mcpPort)
+`, routePrefix, policyHeader, jwtFixture.Issuer(), jwtFixture.Audience(), extprocPort, resourceExpression, mcpPort)
 
 	agentgwLogger.Info("agentgateway config", "yaml", configYAML)
 
@@ -413,7 +439,7 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int, jwtFix
 		Image:           image,
 		ExposedPorts:    []string{"4000/tcp"},
 		Cmd:             []string{"-f", "/config.yaml"},
-		HostAccessPorts: []int{extprocPort, mcpPort},
+		HostAccessPorts: hostAccessPorts,
 		Files: []testcontainers.ContainerFile{
 			{
 				Reader:            strings.NewReader(configYAML),
@@ -491,46 +517,171 @@ func agentgwTokenDigest(token string) string {
 	return fmt.Sprintf("%x", digest)
 }
 
-// --- Agentgateway Elicitation Integration ---
-// Validates the URLElicitationRequiredError path: when the identity broker returns
-// an RFC 8693 error with error_uri, ExtProc returns JSON-RPC code -32042 with an
-// elicitations array directly from the headers phase (id: null, per JSON-RPC 2.0 §5).
+// --- Agentgateway Re-authentication Challenge Integration ---
 
-const agentgwElicitationReAuthURL = "https://broker.example.com/sessions"
+const (
+	agentgwRecoveryURL         = "https://broker.example.com/sessions"
+	agentgwRecoveryDescription = "User session is unavailable. Please re-authenticate."
+	agentgwRecoveryChallenge   = `Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"`
+	agentgwUpstreamToken       = "agentgateway-reauth-upstream-token"
+	agentgwStepUpClientID      = "e2e-stepup-client"
+	agentgwStepUpRedirectURL   = "http://localhost/callback"
+	agentgwStepUpCode          = "e2e-stepup-code"
+)
 
-// newAgentgwElicitationBroker returns a mock broker that accepts client_credentials at
-// /oauth/token (200) but rejects token exchange at /oauth2/token (401 + error_uri).
-func newAgentgwElicitationBroker() *httptest.Server {
+type agentgwReAuthBroker struct {
+	*httptest.Server
+	mu       sync.Mutex
+	failing  bool
+	subjects []string
+}
+
+func newAgentgwReAuthBroker() *agentgwReAuthBroker {
+	b := &agentgwReAuthBroker{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, //nolint:errcheck
-			`{"access_token":%q,"token_type":"Bearer","expires_in":3600}`,
-			agentgwMockAccessToken,
-		)
+		fmt.Fprintf(w, `{"access_token":%q,"id_token":"mock-id-token","token_type":"Bearer","expires_in":3600}`, agentgwMockAccessToken) //nolint:errcheck
 	})
-	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		b.mu.Lock()
+		b.subjects = append(b.subjects, r.PostForm.Get("subject_token"))
+		failing := b.failing
+		b.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintf(w, //nolint:errcheck
-			`{"error":"invalid_grant","error_description":"Session expired, please re-authenticate","error_uri":%q}`,
-			agentgwElicitationReAuthURL,
-		)
+		if failing {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"error":"invalid_grant","error_description":%q,"error_uri":%q}`, agentgwRecoveryDescription, agentgwRecoveryURL) //nolint:errcheck
+			return
+		}
+		fmt.Fprintf(w, `{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":0}`, agentgwUpstreamToken) //nolint:errcheck
 	})
-	return httptest.NewServer(mux)
+	b.Server = httptest.NewServer(mux)
+	return b
 }
 
-var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
+func (b *agentgwReAuthBroker) setFailing(failing bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failing = failing
+}
+
+func (b *agentgwReAuthBroker) exchangedSubjects() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.subjects...)
+}
+
+type agentgwStepUpAuthServer struct {
+	listener    net.Listener
+	server      *http.Server
+	broker      *agentgwReAuthBroker
+	jwtFixture  *fixtures.RS256JWTFixture
+	mu          sync.Mutex
+	resource    string
+	authorize   []url.Values
+	tokenForms  []url.Values
+	issuedToken string
+}
+
+func newAgentgwStepUpAuthServer(broker *agentgwReAuthBroker, fixture *fixtures.RS256JWTFixture) *agentgwStepUpAuthServer {
+	a := &agentgwStepUpAuthServer{broker: broker, jwtFixture: fixture}
+	var err error
+	a.listener, err = net.Listen("tcp", "0.0.0.0:0")
+	Expect(err).NotTo(HaveOccurred(), "failed to create step-up authorization server listener")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		a.mu.Lock()
+		resource := a.resource
+		a.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"resource":%q,"authorization_servers":[%q]}`, resource, a.URL()) //nolint:errcheck
+	})
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"issuer":%q,"authorization_endpoint":%q,"token_endpoint":%q,"response_types_supported":["code"],"grant_types_supported":["authorization_code"],"code_challenge_methods_supported":["S256"],"token_endpoint_auth_methods_supported":["none"]}`, a.URL(), a.URL()+"/authorize", a.URL()+"/token") //nolint:errcheck
+	})
+	mux.HandleFunc("GET /authorize", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		a.mu.Lock()
+		a.authorize = append(a.authorize, q)
+		a.mu.Unlock()
+		a.broker.setFailing(false) // The user repaired the session during consent.
+		redirect, err := url.Parse(q.Get("redirect_uri"))
+		if err != nil || redirect.String() != agentgwStepUpRedirectURL {
+			http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+			return
+		}
+		values := redirect.Query()
+		values.Set("code", agentgwStepUpCode)
+		values.Set("state", q.Get("state"))
+		redirect.RawQuery = values.Encode()
+		http.Redirect(w, r, redirect.String(), http.StatusFound)
+	})
+	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		a.mu.Lock()
+		a.tokenForms = append(a.tokenForms, r.PostForm)
+		a.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.PostForm.Get("grant_type") != "authorization_code" || r.PostForm.Get("code") != agentgwStepUpCode || r.PostForm.Get("code_verifier") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`) //nolint:errcheck
+			return
+		}
+		token, err := a.jwtFixture.MintToken("agentgateway-stepup-user", time.Now().Add(20*time.Minute))
+		if err != nil {
+			http.Error(w, "failed to mint token", http.StatusInternalServerError)
+			return
+		}
+		a.mu.Lock()
+		a.issuedToken = token
+		a.mu.Unlock()
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":"Bearer","expires_in":600}`, token) //nolint:errcheck
+	})
+	a.server = &http.Server{Handler: mux}
+	go func() {
+		if serveErr := a.server.Serve(a.listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			agentgwLogger.Error("step-up authorization server error", "err", serveErr)
+		}
+	}()
+	return a
+}
+
+func (a *agentgwStepUpAuthServer) Port() int { return a.listener.Addr().(*net.TCPAddr).Port }
+
+func (a *agentgwStepUpAuthServer) URL() string { return fmt.Sprintf("http://127.0.0.1:%d", a.Port()) }
+
+func (a *agentgwStepUpAuthServer) setResource(resource string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.resource = resource
+}
+
+func (a *agentgwStepUpAuthServer) recorded() ([]url.Values, []url.Values, string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]url.Values(nil), a.authorize...), append([]url.Values(nil), a.tokenForms...), a.issuedToken
+}
+
+var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 	var (
-		ctx               context.Context
-		cancel            context.CancelFunc
-		jwtFixture        *fixtures.RS256JWTFixture
-		mintedJWT         string
-		elicitationBroker *httptest.Server
-		extprocGRPC       *grpc.Server
-		exchanger         *extprocserver.TokenExchanger
-		mcpHTTPServer     *http.Server
-		agentgatewayURL   string
+		ctx             context.Context
+		cancel          context.CancelFunc
+		jwtFixture      *fixtures.RS256JWTFixture
+		broker          *agentgwReAuthBroker
+		authServer      *agentgwStepUpAuthServer
+		extprocGRPC     *grpc.Server
+		exchanger       *extprocserver.TokenExchanger
+		mcpHTTPServer   *http.Server
+		agentgatewayURL string
 	)
 
 	BeforeAll(func() {
@@ -541,6 +692,9 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		DeferCleanup(func() {
+			if authServer != nil {
+				authServer.server.Close() //nolint:errcheck
+			}
 			if extprocGRPC != nil {
 				extprocGRPC.GracefulStop()
 			}
@@ -550,103 +704,155 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 			if exchanger != nil {
 				exchanger.Shutdown()
 			}
-			if elicitationBroker != nil {
-				elicitationBroker.Close()
+			if broker != nil {
+				broker.Close()
 			}
 			cancel()
 		})
 
 		var err error
 		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
-		Expect(err).NotTo(HaveOccurred(), "failed to create elicitation Agentgateway JWT fixture")
-		mintedJWT, err = jwtFixture.MintToken("agentgateway-elicitation-subject", time.Now().Add(10*time.Minute))
-		Expect(err).NotTo(HaveOccurred(), "failed to mint elicitation Agentgateway JWT")
-
-		// 1. Broker: client_credentials succeeds, token exchange returns 401 + error_uri.
-		elicitationBroker = newAgentgwElicitationBroker()
-
-		// 2. MCP server: needed by agentgateway config; the elicitation response is
-		//    returned before agentgateway forwards to the backend, so it is never called.
+		Expect(err).NotTo(HaveOccurred(), "failed to create challenge Agentgateway JWT fixture")
+		broker = newAgentgwReAuthBroker()
 		var mcpListener net.Listener
 		mcpListener, mcpHTTPServer = startAgentgwMCPServer()
-		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
-
-		// 3. ExtProc (system under test).
 		var extprocListener net.Listener
-		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(
-			elicitationBroker.URL, elicitationBroker.URL,
-		)
-		extprocPort := extprocListener.Addr().(*net.TCPAddr).Port
-		agentgwLogger.Info("Elicitation ExtProc listening", "port", extprocPort)
-
-		// 4. agentgateway Docker container.
+		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(broker.URL, broker.URL)
+		authServer = newAgentgwStepUpAuthServer(broker, jwtFixture)
 		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer setupCancel()
-		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
-		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		agentgwLogger.Info("Elicitation agentgateway accessible", "url", agentgatewayURL)
+		port := startAgentgwContainer(setupCtx, extprocListener.Addr().(*net.TCPAddr).Port,
+			mcpListener.Addr().(*net.TCPAddr).Port, authServer.Port(), jwtFixture)
+		agentgatewayURL = "http://localhost:" + port
+		authServer.setResource(agentgatewayURL + "/mcp")
+
+		// The gateway must serve PRM at the exact URL go-sdk discovers after a 403.
+		prmReq, err := http.NewRequestWithContext(setupCtx, http.MethodGet, agentgatewayURL+"/.well-known/oauth-protected-resource/mcp", nil)
+		Expect(err).NotTo(HaveOccurred())
+		prmResp, err := e2ehelpers.HTTPClient().Do(prmReq)
+		Expect(err).NotTo(HaveOccurred())
+		defer prmResp.Body.Close() //nolint:errcheck
+		Expect(prmResp.StatusCode).To(Equal(http.StatusOK))
+		var prm struct {
+			Resource             string   `json:"resource"`
+			AuthorizationServers []string `json:"authorization_servers"`
+		}
+		Expect(json.NewDecoder(prmResp.Body).Decode(&prm)).To(Succeed())
+		Expect(prm.Resource).To(Equal(agentgatewayURL + "/mcp"))
+		Expect(prm.AuthorizationServers).To(Equal([]string{authServer.URL()}))
 	})
 
-	// Scenario 1.1 from specs/023-extproc-mcp-elicitation/spec.md:
-	// When the broker returns error_uri on token exchange failure, ExtProc returns
-	// HTTP 200 with a JSON-RPC -32042 URLElicitationRequiredError body.
-	//
-	// We use a raw HTTP client here because the mcp-go StreamableHTTP transport
-	// rejects responses with "id": null (treating them as orphan notifications).
-	// Per JSON-RPC 2.0 §5, null id is correct when the request id is indeterminate
-	// — which is the case here since ExtProc short-circuits from the headers phase
-	// before the request body (containing the id) is read.
-	It("should return URLElicitationRequiredError with re-auth URL when token exchange fails with error_uri", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// Build a JSON-RPC Initialize request (id=1) — the same request mcp-go would send.
-		initBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` +
-			mcp.LATEST_PROTOCOL_VERSION + `","clientInfo":{"name":"e2e-elicitation-client","version":"1.0.0"},"capabilities":{}}}`
+	BeforeEach(func() { broker.setFailing(false) })
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, agentgatewayURL+"/mcp",
-			bytes.NewBufferString(initBody))
+	// Feature 023 User Story 1 Amendment, Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Challenge through agentgateway
+	It("returns HTTP 403 with an insufficient_scope challenge and the URL elicitation body when the broker requires re-authentication", NodeTimeout(time.Minute), func(ctx SpecContext) {
+		token, err := jwtFixture.MintToken("agentgateway-reauth-scenario-1", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		broker.setFailing(true)
+		initBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` +
+			mcp.LATEST_PROTOCOL_VERSION + `","clientInfo":{"name":"e2e-challenge-client","version":"1.0.0"},"capabilities":{}}}`
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, agentgatewayURL+"/mcp", bytes.NewBufferString(initBody))
 		Expect(err).NotTo(HaveOccurred())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		req.Header.Set("Authorization", "Bearer "+mintedJWT)
-
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := e2ehelpers.HTTPClient().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close() //nolint:errcheck
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+		Expect(resp.Header.Get("WWW-Authenticate")).To(Equal(agentgwRecoveryChallenge))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/json"))
+		body, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		helpers.ExpectReauthElicitationBody(body, agentgwRecoveryURL, agentgwRecoveryDescription)
+	})
 
-		// JSON-RPC errors travel over HTTP 200 (per JSON-RPC 2.0).
-		Expect(resp.StatusCode).To(Equal(http.StatusOK),
-			"elicitation response must be HTTP 200")
+	// Feature 023 User Story 1 Amendment, Scenario 2 (specs/023-extproc-mcp-elicitation/spec.md): mcp-go after initialize
+	It("surfaces the challenge to an initialized mcp-go client as a typed URL elicitation error", NodeTimeout(time.Minute), func(ctx SpecContext) {
+		token, err := jwtFixture.MintToken("agentgateway-reauth-scenario-2", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		mcpClient := connectAgentgwMCPClient(ctx, agentgatewayURL, token)
+		DeferCleanup(func() { _ = mcpClient.Close() })
+		broker.setFailing(true)
+		_, err = mcpClient.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "whoami"}})
+		var elicitation mcp.URLElicitationRequiredError
+		Expect(errors.As(err, &elicitation)).To(BeTrue(), "CallTool should expose the typed URL elicitation error")
+		Expect(elicitation.Elicitations).To(HaveLen(1))
+		Expect(elicitation.Elicitations[0].URL).To(Equal(agentgwRecoveryURL))
+	})
 
-		// Decode the JSON-RPC error response.
-		var envelope struct {
-			JSONRPC string `json:"jsonrpc"`
-			ID      any    `json:"id"`
-			Error   struct {
-				Code    int    `json:"code"`
-				Message string `json:"message"`
-				Data    struct {
-					Elicitations []struct {
-						Mode          string `json:"mode"`
-						ElicitationID string `json:"elicitationId"`
-						URL           string `json:"url"`
-						Message       string `json:"message"`
-					} `json:"elicitations"`
-				} `json:"data"`
-			} `json:"error"`
+	// Feature 023 2026-10-26 Amendment, User Story 3 Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Step-up authorization and retry
+	It("lets a go-sdk client step up through the advertised authorization server and retry successfully", NodeTimeout(2*time.Minute), func(ctx SpecContext) {
+		initial, err := jwtFixture.MintToken("agentgateway-stepup-user", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		browser := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+		fetcher := func(ctx context.Context, args *sdkauth.AuthorizationArgs) (*sdkauth.AuthorizationResult, error) {
+			authURL, err := url.Parse(args.URL)
+			if err != nil || authURL.Scheme+"://"+authURL.Host != authServer.URL() || authURL.Path != "/authorize" {
+				return nil, fmt.Errorf("unexpected authorization endpoint: %q", args.URL)
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, args.URL, nil)
+			if err != nil {
+				return nil, err
+			}
+			resp, err := browser.Do(req)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode != http.StatusFound {
+				return nil, fmt.Errorf("authorization endpoint returned HTTP %d", resp.StatusCode)
+			}
+			redirect, err := url.Parse(resp.Header.Get("Location"))
+			if err != nil || redirect.Scheme+"://"+redirect.Host+redirect.Path != agentgwStepUpRedirectURL {
+				return nil, fmt.Errorf("unexpected authorization redirect: %q", resp.Header.Get("Location"))
+			}
+			return &sdkauth.AuthorizationResult{Code: redirect.Query().Get("code"), State: redirect.Query().Get("state")}, nil
 		}
-		Expect(json.NewDecoder(resp.Body).Decode(&envelope)).To(Succeed())
+		handler, err := sdkauth.NewAuthorizationCodeHandler(&sdkauth.AuthorizationCodeHandlerConfig{
+			PreregisteredClient:      &oauthex.ClientCredentials{ClientID: agentgwStepUpClientID},
+			RedirectURL:              agentgwStepUpRedirectURL,
+			InitialTokenSource:       oauth2.StaticTokenSource(&oauth2.Token{AccessToken: initial, TokenType: "Bearer"}),
+			AuthorizationCodeFetcher: fetcher,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		sdkClient := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "e2e-go-sdk-client", Version: "1.0.0"}, nil)
+		session, err := sdkClient.Connect(ctx, &sdkmcp.StreamableClientTransport{
+			Endpoint: agentgatewayURL + "/mcp", OAuthHandler: handler, DisableStandaloneSSE: true,
+		}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(session.Close()).To(Succeed()) })
 
-		Expect(envelope.JSONRPC).To(Equal("2.0"))
-		// id is null because ExtProc responds from the headers phase, before the
-		// request body (which contains the JSON-RPC id) is available (JSON-RPC 2.0 §5).
-		Expect(envelope.ID).To(BeNil(), "id must be JSON null")
-		Expect(envelope.Error.Code).To(Equal(mcp.URL_ELICITATION_REQUIRED),
-			"must use JSON-RPC error code -32042")
+		broker.setFailing(true)
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		result, err := session.CallTool(callCtx, &sdkmcp.CallToolParams{Name: "whoami"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).NotTo(BeNil())
+		Expect(result.IsError).To(BeFalse())
+		var text strings.Builder
+		for _, content := range result.Content {
+			if c, ok := content.(*sdkmcp.TextContent); ok {
+				text.WriteString(c.Text)
+			}
+		}
+		Expect(text.String()).To(ContainSubstring("auth_scheme=Bearer"))
+		Expect(text.String()).To(ContainSubstring("token_digest=" + agentgwTokenDigest(agentgwUpstreamToken)))
 
-		Expect(envelope.Error.Data.Elicitations).To(HaveLen(1))
-		Expect(envelope.Error.Data.Elicitations[0].Mode).To(Equal(mcp.ElicitationModeURL))
-		Expect(envelope.Error.Data.Elicitations[0].URL).To(Equal(agentgwElicitationReAuthURL),
-			"elicitation URL must match the error_uri from the broker")
-		Expect(envelope.Error.Data.Elicitations[0].ElicitationID).NotTo(BeEmpty(),
-			"elicitationId must be set")
+		requests, forms, issued := authServer.recorded()
+		Expect(requests).To(HaveLen(1), "step-up must issue exactly one authorization request")
+		Expect(requests[0].Get("response_type")).To(Equal("code"))
+		Expect(requests[0].Get("client_id")).To(Equal(agentgwStepUpClientID))
+		Expect(requests[0].Get("code_challenge_method")).To(Equal("S256"))
+		Expect(requests[0].Get("code_challenge")).NotTo(BeEmpty())
+		Expect(requests[0].Get("resource")).To(Equal(agentgatewayURL + "/mcp"))
+		Expect(forms).To(HaveLen(1), "step-up must exchange exactly one authorization code")
+		Expect(forms[0].Get("grant_type")).To(Equal("authorization_code"))
+		Expect(forms[0].Get("code_verifier")).NotTo(BeEmpty())
+		Expect(issued).NotTo(BeEmpty())
+		subjects := broker.exchangedSubjects()
+		Expect(subjects).To(ContainElement(initial))
+		Expect(subjects).NotTo(BeEmpty())
+		Expect(subjects[len(subjects)-1]).To(Equal(issued), "the retried tool call must exchange the newly issued token")
 	})
 })

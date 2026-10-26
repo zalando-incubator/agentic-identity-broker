@@ -1096,7 +1096,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. Agentgateway first validates the inbound JWT and sends its raw token and configured resource URI as trusted `aib.tokenexchange` metadata. ExtProc exchanges those values with the broker and replaces the downstream `Authorization` header on success. Exchanged tokens use an in-memory cache with singleflight deduplication.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -1149,28 +1149,21 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
-- **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
+- **RequestHeaders Phase**: Validates exchange metadata and exchanges tokens before the request body is available
+- **Other Phases**: Pass-through responses with phase-specific response types; OPA evaluates buffered request bodies after a successful headers-phase exchange
+- **ImmediateResponse**: A non-transient broker exchange error with `error_uri` returns HTTP 403. The response has `WWW-Authenticate: Bearer error="insufficient_scope"` and the existing JSON-RPC `-32042` URL elicitation body (`id: null`). All protocols and OPA modes use this response. The challenge includes `error_description` and `error_uri` only when their bytes match RFC 6750 §3. Other exchange failures return 500, except expired assertions and open circuits, which return 503. Missing or invalid exchange metadata also returns 503. No failure mutates downstream `Authorization`.
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
-2. Extract resource URI from `:path` pseudo-header
-3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
-4. Call `Exchanger.Exchange()` with (token, uri)
-5. On success: replace Authorization header with `"Bearer " + exchangedToken`
-6. On failure: return 500 ImmediateResponse, reject request, log failure
+1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata. Reject missing or invalid values without raw-header fallback.
+2. With OPA enabled, validate protocol metadata and MCP transport. For body-bearing requests, exchange before buffering the body. For header-only requests, allow OPA to decide before exchange.
+3. Call `Exchanger.Exchange()` with the validated metadata values.
+4. On success, replace `Authorization` with `Bearer <exchanged token>`.
+5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-**Helper Functions**:
-
-- `extractBearerToken()`: Parse "Bearer <token>" format
-- `extractHeader()`: Case-insensitive header lookup
-- `validateResourceURI()`: URI parsing and scheme validation
-- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
-- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
+See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
 #### 3.2.4. Configuration
 

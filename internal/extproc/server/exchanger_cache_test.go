@@ -964,7 +964,7 @@ func TestTokenExchanger_ExpiredCache_AuthoritativeError_PropagatesError(t *testi
 
 // Spec: A 5xx response that carries error_uri must NOT overwrite the success cache with
 // a reAuthErr entry. 5xx is always transient; the stale cached token must be served
-// and the re-auth elicitation URL must not be surfaced for transient server errors.
+// and the re-auth recovery URL must not be surfaced for transient server errors.
 func TestTokenExchanger_5xxWithErrorURI_DoesNotOverwriteSuccessCache(t *testing.T) {
 	mocks := newMockServers()
 	defer mocks.Close()
@@ -1133,7 +1133,7 @@ func TestTokenExchanger_StaleWindow_TtlCappedAtMaxTTL_NoExtensionBeyondCap(t *te
 
 // Spec: isTransientBrokerError must treat 429 as transient only when ErrorURI is absent.
 // A 429 with error_uri carries an explicit re-auth signal and must be treated as
-// authoritative so the caller can surface the elicitation URL rather than masking
+// authoritative so the caller can surface the recovery URL rather than masking
 // it with a stale cached token.
 func TestIsTransientBrokerError(t *testing.T) {
 	tests := []struct {

@@ -409,6 +409,7 @@ func TestServer_Process_CircuitOpen_Returns503(t *testing.T) {
 	assert.Equal(t, `{"error":"service_unavailable","error_description":"circuit breaker is open"}`, string(immResp.ImmediateResponse.Body))
 	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
 	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "open circuit must not mutate authorization")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
 // ---------------------------------------------------------------------------

@@ -230,7 +230,7 @@ func TestNetworkExchangeAndAssertionTelemetryContainsNoSecrets(t *testing.T) {
 	request := safetyRequest(subject, resource, headers)
 	response := server.processRequestHeaders(context.Background(), request, headers)
 	require.NotNil(t, response.GetImmediateResponse())
-	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), recoveryURL, "elicitation URL remains in direct protocol response")
+	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), recoveryURL, "recovery URL remains in direct protocol response")
 	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), description)
 	refreshErr := exchanger.refreshClientAssertion()
 	require.Error(t, refreshErr)

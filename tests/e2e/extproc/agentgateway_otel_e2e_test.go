@@ -217,7 +217,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		// 5. agentgateway Docker container — reuse from agentgateway_e2e_test.go.
 		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer setupCancel()
-		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
+		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, 0, jwtFixture)
 		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 		agentgwLogger.Info("OTel agentgateway accessible", "url", agentgatewayURL)
 	})
