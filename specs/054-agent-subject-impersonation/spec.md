@@ -26,9 +26,19 @@
 > # Assumptions
 > * We can accept for now that this token cannot be exchanged for a third-party service token. It is future work to determine the service identity in third-parties.
 
+## Clarifications
+
+### Session 2026-10-26
+
+- Q: How should the broker distinguish human subjects from agent subjects, especially when one rule permits both? → A: During token exchange, allow skipping consent if the audience-provided agent ID matches the subject claim `sub` exactly. This applies only with explicit agent eligibility and successful credential validation and rule authorization; no separate category claim or request parameter is required.
+- Q: Must the subject identify the same agent as the audience-selected target, and which subject identifiers should be accepted? → A: Self-agent only, with the subject identifying the target's exact broker UUID (Q2 option A). The signed `sub` must equal the UUID of the registered audience-selected target; display names, routing aliases, alternate UUID spellings, and different agents do not qualify for agent issuance.
+- Q: Must every agent-subject token be rejected for third-party service exchange even when its UUID text matches a human principal with an active grant and service session? → A: Yes, categorical rejection (Q3 option A). Existing human grants and sessions must not make an agent-subject token exchangeable.
+
+The authorized answer is comment `6418744033`, supplied through this session's `context.answer`. Q1's custom answer replaces the earlier proposal that equality could never select agent issuance. One compatibility decision remains: on a human-only rule (including an omitted category setting), whether exact equality retains legacy human delegation handling or is rejected as an ineligible agent request (Q4). No choice is assumed here.
+
 ## User Scenarios & Testing *(mandatory)*
 
-Acceptance identifiers below are stable references for subsequent 1:1 E2E coverage. This phase defines scenarios only; it does not implement tests or authorize contract changes. Scenarios that depend on Q1 or Q2 remain provisional until clarification.
+Acceptance identifiers below are stable references for subsequent 1:1 E2E coverage. This phase defines scenarios only; it does not implement tests or authorize contract changes. Only human-only exact-equality behavior remains provisional pending Q4.
 
 ### User Story 1 - Obtain a token for an agent acting for itself (Priority: P1)
 
@@ -40,7 +50,7 @@ A privileged client with an external machine identity obtains a broker token rep
 
 **Acceptance Scenarios**:
 
-1. **US1.1** — **Given** a registered agent, valid signed credentials, an agent-permitting rule, a policy authorizing that subject, and no human grants or sessions, **When** the privileged client requests a token for that agent acting for itself, **Then** issuance succeeds with `sub` equal to the agent's broker UUID, without a consent interaction or creation of a user grant.
+1. **US1.1** — **Given** a registered agent, valid signed credentials whose subject `sub` exactly equals the audience-selected target's broker UUID, an agent-permitting rule, a policy authorizing that subject, and no human grants or sessions, **When** the privileged client requests a token for that agent acting for itself, **Then** issuance succeeds with `sub == agent_id` equal to that UUID, without a consent interaction or creation of a user grant.
 2. **US1.2** — **Given** the same authorized request with distinct privileged-client and actor identities, **When** a token is issued, **Then** `act.sub` is the extracted actor identity and `act.iss` is the verified actor issuer, not an inferred human identity or an overwritten privileged-client identity.
 3. **US1.3** — **Given** an otherwise eligible agent request with an invalid signature on the client assertion or actor credential, **When** exchange is attempted, **Then** no token is issued and no consent-free fallback weakens credential validation.
 
@@ -48,7 +58,7 @@ A privileged client with an external machine identity obtains a broker token rep
 
 ### User Story 2 - Control subject eligibility without weakening human consent (Priority: P1)
 
-An operator permits humans, agents, or both on each impersonation rule. Existing human-only deployments retain their current behavior unless an operator explicitly enables agent subjects.
+An operator permits humans, agents, or both on each impersonation rule. Existing human-only deployments never gain consent-free issuance implicitly. Nonmatching human subjects retain their current behavior; exact-equality behavior on human-only rules awaits Q4.
 
 **Why this priority**: Consent-free machine issuance must not become a way to relabel a human and evade delegation.
 
@@ -56,10 +66,10 @@ An operator permits humans, agents, or both on each impersonation rule. Existing
 
 **Acceptance Scenarios**:
 
-1. **US2.1** — **Given** a human-only rule and an otherwise valid agent-subject request, **When** no other eligible rule authorizes it, **Then** no token is issued; an agent-only rule likewise cannot authorize a human-subject request.
+1. **US2.1** — **Given** an agent-only rule and a signed subject `sub` that does not exactly equal the audience-selected target UUID, **When** no other eligible rule authorizes it, **Then** no token is issued. A human-only rule never permits consent-free agent issuance; its treatment of an exact-equality request with an active human delegation awaits Q4.
 2. **US2.2** — **Given** a rule allowing both categories and an authorized agent request, **When** the request is processed, **Then** it succeeds without human consent; **Given** a separate authorized human request with an active delegation, **When** it is processed under that rule, **Then** the existing human issuance behavior succeeds.
-3. **US2.3** — **Given** a human request without an active delegation and a rule allowing both categories, **When** exchange is attempted, **Then** it receives the existing consent-required denial and cannot automatically retry as an agent; the same protection applies if the human subject string happens to look like an agent UUID.
-4. **US2.4** — **Given** existing impersonation configuration that omits the new subject-category setting, **When** existing human requests are processed, **Then** human-only behavior, including missing/expired-delegation denials and consent links, is unchanged and agent subjects have not been implicitly enabled.
+3. **US2.3** — **Given** a human request whose `sub` does not exactly equal the target UUID, without an active delegation and with a rule allowing both categories, **When** exchange is attempted, **Then** it receives the existing consent-required denial and cannot automatically retry as an agent; UUID shape alone, including a different agent's UUID or an alternate spelling, does not qualify for consent-free issuance.
+4. **US2.4** — **Given** existing impersonation configuration that omits the new subject-category setting, **When** existing human requests whose `sub` does not exactly equal the target UUID are processed, **Then** human-only behavior, including missing/expired-delegation denials and consent links, is unchanged and consent-free agent issuance has not been implicitly enabled. Exact-equality requests under that configuration await Q4.
 5. **US2.5** — **Given** a configured category setting with an empty selection or unknown category, **When** configuration is validated, **Then** the broker rejects it before accepting traffic rather than widening eligibility.
 
 ---
@@ -75,18 +85,18 @@ An operator restricts which agent subjects a privileged client may represent thr
 **Acceptance Scenarios**:
 
 1. **US3.1** — **Given** valid credentials for an agent subject outside the rule's CEL authorization, and no other eligible authorizing rule, **When** exchange is attempted, **Then** no token is issued even if an upstream proxy allowed the request.
-2. **US3.2** — **Given** a request whose agent subject is empty, invalid, or does not resolve to an existing agent, **When** exchange is attempted, **Then** no token is minted for an arbitrary principal string. Exact resolution rules depend on Q2.
+2. **US3.2** — **Given** an agent-only rule and a signed subject whose `sub` is empty, invalid, a routing alias, an alternate UUID spelling, or a different agent's UUID, or whose audience target does not resolve to an existing agent, **When** exchange is attempted, **Then** no token is minted. Only exact equality with the registered target's broker UUID qualifies; no alias resolution or cross-agent representation is permitted for the subject.
 3. **US3.3** — **Given** an agent-subject request whose authorization cannot be evaluated successfully, **When** exchange is attempted, **Then** no token is issued and the failure is not converted into consent bypass or human issuance.
-4. **US3.4** — **Given** a valid broker-issued agent-subject token and no human delegation or third-party session for that subject, **When** a privileged client attempts to exchange it for a third-party service token, **Then** the broker returns no third-party token and does not infer or use a human's service identity.
+4. **US3.4** — **Given** a valid broker-issued agent-subject token, **When** a privileged client attempts to exchange it for a third-party service token, **Then** the broker categorically rejects it and returns no third-party token, both without human state and when a human principal with identical UUID text has an active grant and valid service session. The broker never uses that human's credentials.
 
 ### Edge Cases
 
-- A human principal and a registered agent have identical text identifiers: string shape or equality alone must not select the consent-free path.
-- A dual-category rule must distinguish categories before applying their different delegation requirements; category ambiguity must not grant access.
+- On an agent-permitting rule, a validated signed subject `sub` exactly equal to the registered audience target UUID selects agent issuance, even if a human principal has identical text. Equality is necessary but not sufficient: explicit eligibility, credential verification, and CEL authorization remain mandatory. The human-only collision case awaits Q4.
+- A dual-category rule treats exact signed `sub`/target-UUID equality as agent and nonmatching subjects as human; missing delegation never triggers reclassification. Unsigned subjects remain human-only under ADR 031.
 - No eligible rule authorizes the selected category: issue no token, preserving ordered rule evaluation rather than broadening a rule's category set.
 - A first-authorized human request fails delegation: preserve the existing terminal denial rather than falling through to an agent-capable rule.
 - Agent lookup or policy evaluation fails: fail closed; do not treat an unavailable dependency as an absent consent requirement.
-- Agent subject differs from the audience-selected target: Q2 determines whether this is valid; do not silently implement cross-agent representation.
+- A different registered agent's UUID, a display name, a canonical routing alias, or an alternate UUID spelling in `sub` does not qualify for agent issuance. On a dual-category rule, a nonmatching subject can succeed only through the existing human flow with active delegation and policy authorization.
 - Actor and subject identities happen to be equal: retain `act` and its validated issuer rather than omitting attribution.
 - Unsigned subject credentials remain limited to the existing human profile; this draft does not extend ADR 031 to agent subjects.
 - Proxy and hybrid deployments retain their current rejection of impersonation. Enabling agent subjects does not enable other modes.
@@ -94,15 +104,15 @@ An operator restricts which agent subjects a privileged client may represent thr
 
 ## Concrete Example Journeys *(mandatory)*
 
-All identities, timestamps, credential markers, and key identifiers below are synthetic. These journeys describe intended behavior, not a confirmed API extension. Existing HTTP fields and configuration keys come from `api/enduser/openapi.yaml` and `examples/config/impersonation.yaml`. The new category setting and any category-selection input must be made concrete after Q1; no invented key is presented as supported configuration.
+All identities, timestamps, credential markers, and key identifiers below are synthetic. These journeys describe clarified intended behavior, not an approved OpenAPI change. Existing HTTP fields and configuration keys come from `api/enduser/openapi.yaml` and `examples/config/impersonation.yaml`. Category selection uses exact signed `sub`/target-UUID equality, not a new request input. The new eligibility setting's serialization and complete enablement snippets remain design work; no invented key is presented as supported configuration.
 
 ### Journey 1 — A gateway obtains a token for an agent acting for itself (User Story 1, Scenarios US1.1–US1.3)
 
-**Cast**: Broker `https://broker.example.com`; registered agent `research-agent`, UUID `550e8400-e29b-41d4-a716-446655440000`; privileged client `gateway-prod`; actor `research-runner`; external issuer `https://idp.example.com`. Time starts at `2026-10-26T09:00:00Z`. No human grants or sessions exist. The subject and target are the same agent, which is valid under either proposed Q2 answer.
+**Cast**: Broker `https://broker.example.com`; registered agent `research-agent`, UUID `550e8400-e29b-41d4-a716-446655440000`; privileged client `gateway-prod`; actor `research-runner`; external issuer `https://idp.example.com`. Time starts at `2026-10-26T09:00:00Z`. No human grants or sessions exist. The signed subject `sub` and resolved audience target UUID match exactly, as required by Q1 and Q2.
 
 **Step 1 — Operator establishes local issuance and trusted credentials**
 
-This is a configuration excerpt, not a complete bootable configuration. Existing required signing-key and deployment settings are supplied by the deployment. The complete existing rule below still has human-only semantics today; the operator must additionally enable agent subjects using the new setting whose contract awaits Q1. The example is not an instruction to bypass the current delegation check.
+This is a configuration excerpt, not a complete bootable configuration. Existing required signing-key and deployment settings are supplied by the deployment. The complete existing rule below still has human-only semantics today; the operator must additionally enable agent subjects using the new eligibility setting whose serialization will be defined during design. The example is not an instruction to bypass the current delegation check.
 
 ```yaml
 oauth2_authorization_server:
@@ -142,13 +152,13 @@ oauth2_authorization_server:
             evaluation_timeout: 100ms
 ```
 
-Effect after explicit agent enablement: only the named gateway, actor, subject, and routing target combination is authorized by this rule. This predicate is not itself the unresolved subject-category selector.
+Effect after explicit agent enablement: only the named gateway, actor, subject, and routing target combination is authorized by this rule. The broker separately compares the verified signed `sub` with the registered target UUID exactly; CEL authorization does not replace this binding.
 
 **Step 2 — 09:00:00: Gateway presents three signed credentials**
 
 The symbolic values `SYNTHETIC_CLIENT_JWS`, `SYNTHETIC_ACTOR_JWS`, and `SYNTHETIC_AGENT_JWS` stand for distinct externally signed ES256 JWTs, not literal valid credentials. Each has issuer `https://idp.example.com`, audience `https://broker.example.com/impersonation`, `iat: 1793005200`, and `exp: 1793005500`. Their respective subjects are `gateway-prod`, `research-runner`, and `550e8400-e29b-41d4-a716-446655440000`. Their signatures and these claims are verified before authorization.
 
-The following uses the existing request shape. It is provisional: Q1 may require an additional explicit category input, which must be documented and confirmed before implementation. Line breaks in the form body are for display only.
+The following uses the existing request shape with no additional category input. The audience routing alias resolves to UUID `550e8400-e29b-41d4-a716-446655440000`, which exactly matches the signed subject's `sub`. Line breaks in the form body are for display only; the clarified behavior still requires OpenAPI design and confirmation before implementation.
 
 ```http
 POST /oauth2/token HTTP/1.1
@@ -213,11 +223,11 @@ The displayed claims are the authorization-relevant excerpt, not a ban on normal
 
 | Rule selection | Human request | Agent request |
 | --- | --- | --- |
-| Setting omitted or humans only | Requires active user delegation | Ineligible |
+| Setting omitted or humans only | Requires active user delegation | Never consent-free; legacy human handling versus rejection awaits Q4 |
 | Agents only | Ineligible | No human delegation required |
 | Both | Requires active user delegation | No human delegation required |
 
-The setting's exact key and values await Q1. No configuration with an empty or unknown selection may start successfully. The rule's existing CEL predicate must separately authorize Alice for this journey; Journey 1's machine-only predicate would deny her earlier.
+For signed subjects on agent-permitting rules, the agent column means `sub` exactly equals the resolved target UUID; the human column means it does not. A UUID-shaped value or a different registered agent's UUID is not an exact match. Unsigned subjects remain restricted to the existing human profile. No new request parameter or category claim is required. The setting's exact key and values are deferred to configuration design. No configuration with an empty or unknown selection may start successfully. The rule's existing CEL predicate must separately authorize Alice for this journey; Journey 1's machine-only predicate would deny her earlier.
 
 **Step 2 — 09:05:00: Human request without delegation is denied**
 
@@ -252,13 +262,13 @@ The response uses the existing contract; error descriptions are illustrative, no
 
 **Step 3 — Operator compares outcomes**
 
-An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has an active delegation through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. A human-only or agent-only rule excludes the other category; exclusion is not a relabeling operation.
+An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has an active delegation through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. An agent-only rule rejects nonmatching subjects. Human-only rules never skip delegation, but the exact-equality case with an active human delegation remains pending Q4.
 
-**Observable result**: An operator can enable agent issuance without removing any human consent boundary. Exact category-selection inputs in both HTTP journeys remain subject to Q1.
+**Observable result**: Explicit agent enablement permits consent-free issuance only for the exact signed target UUID. Nonmatching human subjects retain consent requirements. There is no new category-selection input in either HTTP journey.
 
 ### Journey 3 — Deny unauthorized representation and third-party credential access (User Story 3, Scenarios US3.1–US3.4)
 
-**Cast**: Same deployment and identities as Journey 1. A second registered agent, `billing-agent`, has UUID `660e8400-e29b-41d4-a716-446655440001`. No rule authorizes the gateway to represent it. Service resource `https://api.thirdparty.example.com` exists; no human delegation or service session exists for the research agent.
+**Cast**: Same deployment and identities as Journey 1. A second registered agent, `billing-agent`, has UUID `660e8400-e29b-41d4-a716-446655440001`. No rule authorizes the gateway to represent it. Service resource `https://api.thirdparty.example.com` exists. Exercise two fixture states: no human delegation or service session for the research UUID, and an identically named human principal with an active delegation and valid service session. Neither state may make the agent token exchangeable.
 
 **Step 1 — 09:10:00: Gateway attempts an unauthorized agent identity**
 
@@ -284,7 +294,7 @@ token_exchange:
     agent_id_expression: subject_token.agent_id # Resolves the existing target registration.
 ```
 
-These settings ensure the example reaches the existing grant check rather than failing an unrelated claim mapping.
+These settings deliberately expose the identifier collision: both extraction results equal the research UUID. The broker must reject the agent-subject token regardless of whether matching human grants and sessions exist; relying on their absence is insufficient.
 
 ```http
 POST /oauth2/token HTTP/1.1
@@ -304,12 +314,11 @@ Content-Type: application/json
 
 {
   "error": "access_denied",
-  "error_description": "user has not granted permission for this agent to access the requested service",
-  "error_uri": "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+  "error_description": "agent-subject tokens cannot be exchanged for third-party service tokens"
 }
 ```
 
-This denial illustrates the existing no-delegation contract for the stated fixture, not a new universal error mapping for all third-party failures. Its existing consent link does not establish an agent's service identity or authorize manufacturing a human delegation. No third-party access token is returned, and the broker does not substitute Alice's identity or use her session.
+This is the proposed categorical-denial example for API review, not an approved error mapping. The final mapping must be documented and confirmed before implementation. No human-consent recovery is offered for an agent token: even granting consent cannot make it exchangeable. Repeat the same exchange after adding an active human grant and valid service session under the exact same UUID text; it must still return no service token and must not use that session. Design must preserve the distinction between agent and human tokens without inferring category solely from subject identifier text; this phase does not prescribe the token representation.
 
 **Observable result**: Valid external machine authentication does not authorize every agent, and successful broker agent issuance does not provide a third-party service identity.
 
@@ -319,15 +328,15 @@ This denial illustrates the existing no-delegation contract for the stated fixtu
 
 - **FR-001**: The existing impersonation capability MUST allow an explicitly enabled agent subject to obtain a locally issued broker token through a privileged client authenticated with external machine identity.
 - **FR-002**: Each rule MUST permit humans only, agents only, or both. Omission MUST preserve human-only behavior; empty or unknown category selections MUST fail startup validation.
-- **FR-003**: The broker MUST unambiguously determine the requested subject category, enforce rule eligibility, and prevent a human request from becoming consent-free merely through identifier shape, missing delegation, or rule fallback. [NEEDS CLARIFICATION: Q1 — How is the subject category selected and bound to the authorized identity, especially for a rule permitting both: an explicit request input, a trusted subject claim interpreted by configured policy, or another mechanism? The exact configuration and request contract are not yet agreed.]
-- **FR-004**: The issued agent token's `sub` MUST be the resolved subject agent's broker UUID, not its display name, external machine principal, or routing alias. It MUST represent an existing registered agent. [NEEDS CLARIFICATION: Q2 — Is this feature restricted to an agent acting for itself, with subject UUID equal to the audience-selected target's issued agent_id, or may a different registered agent be the subject? Which subject identifiers are accepted and how are they resolved to that UUID?]
+- **FR-003**: On an agent-permitting rule, the broker MUST select agent issuance only when the verified signed subject claim `sub` exactly equals the registered audience-selected target's broker UUID. A dual-category rule MUST treat nonmatching subjects as human; an agent-only rule MUST reject them. No separate request category or issuer category claim is required. Identifier shape, normalized or aliased equality, missing delegation, and rule fallback MUST NOT qualify for consent bypass. [NEEDS CLARIFICATION: Q4 — On a human-only rule, including an omitted category setting, must an exact-equality subject retain legacy human handling with mandatory delegation, or be rejected as an ineligible agent request even when active human delegation exists? Neither outcome permits consent bypass.]
+- **FR-004**: Agent issuance MUST be self-agent only: the issued `sub` and target-derived `agent_id` MUST both equal the registered audience-selected target's broker UUID. The signed subject `sub` MUST match that UUID exactly, without subject alias resolution or normalization. Different agents, display names, external machine principals, and routing aliases MUST NOT qualify.
 - **FR-005**: Authorized agent-subject issuance MUST NOT require a human consent interaction, `UserGrant`, or human `UserSession`, and MUST NOT create synthetic human grants or sessions.
-- **FR-006**: Human-subject issuance MUST retain its active-delegation requirement, existing missing/expired-denial response and consent URL, and terminal denial on delegation failure, including on rules that permit both categories.
+- **FR-006**: Human-subject issuance MUST retain its active-delegation requirement, existing missing/expired-denial response and consent URL, and terminal denial on delegation failure, including nonmatching subjects on rules that permit both categories. Exact-equality subjects on agent-permitting rules follow FR-003, not the human flow; human-only exact-equality behavior awaits Q4.
 - **FR-007**: Every issued agent-subject token MUST retain the existing `act` object: its subject is the extracted actor identity and its issuer is the verified actor-token issuer. Equality between actor and subject MUST NOT remove attribution.
 - **FR-008**: The rule's CEL policy MUST be able to authorize the agent identity being represented using credential identity and target context. A policy denial, error, timeout, failed extraction, or unresolved identity MUST NOT yield a token. Upstream authorization MUST NOT replace broker-side validation and rule authorization.
 - **FR-009**: Existing ordered rule evaluation MUST remain applicable, restricted by category eligibility. Failure of a human delegation check MUST NOT be retried as agent issuance.
 - **FR-010**: Existing local issuer, signing, token lifetime, target-derived `agent_id`, scope restrictions, and policy-owned output `aud` semantics MUST remain applicable. Proxy/hybrid support, new grant types, and new credential roles are outside scope.
-- **FR-011**: Agent-subject tokens MUST NOT enable third-party service-token exchange in this feature. No human identity, delegation, or service session may be inferred from an agent UUID. Determining agent identities in third parties is deferred.
+- **FR-011**: Every agent-subject token MUST be categorically rejected for third-party service-token exchange, even when a human principal with identical UUID text has an active grant and valid service session. Rejection MUST NOT depend on missing human state or use a matching human's credentials. Determining agent identities in third parties is deferred.
 - **FR-012**: Operator documentation MUST explain category eligibility, safe defaults, signed machine identity, actor attribution, CEL restrictions, unchanged human consent, and the third-party limitation, with concrete examples after clarification.
 
 ### Domain Model
@@ -351,7 +360,7 @@ erDiagram
     Agent ||--o{ ImpersonationSubject : represents
 ```
 
-The Agent relationship applies only to agent-category subjects; human subjects retain their existing principal/delegation relationship. Cardinality and membership do not authorize cross-agent representation; Q2 remains open.
+The Agent relationship applies only to agent-category subjects; human subjects retain their existing principal/delegation relationship. Only self-agent representation is allowed: an agent-category subject is exactly the registered audience-selected target UUID, without subject alias resolution.
 
 ```mermaid
 sequenceDiagram
@@ -385,17 +394,17 @@ This diagram expresses business boundaries, not an implementation sequence manda
 **Aggregates**: Reuse existing Agent registration and human delegation consistency boundaries. No new persisted aggregate is required by these requirements.
 
 **Value Objects**:
-- **Subject Category**: Human or agent, independent of identifier text and subject-credential verification mode.
+- **Subject Category**: Human or agent. On agent-permitting rules, an agent subject requires a verified signed `sub` exactly equal to the registered audience target UUID; nonmatching subjects are human on dual-category rules. Unsigned subjects remain human-only. Human-only exact-equality classification awaits Q4.
 - **Resolved Impersonation Subject**: Authorized category and resolved identity; an agent identity is a registered broker UUID.
 - **Actor Attribution**: Existing verified issuer and extracted actor identity emitted in `act`.
 
 **Domain Events**: Reuse the existing credential-free impersonation decision event for successful issuance and denial; distinguish subject category and resolved subject from target and actor. No new durable event stream is required.
 
-These proposed terms must be reconciled with the architecture glossary during later approved design; this specify-only change does not edit it.
+These clarified terms must be reconciled with the architecture glossary during later approved design; this clarification-only change does not edit it.
 
 ### Configuration Requirements
 
-- **CFG-001**: Extend `oauth2_authorization_server.impersonation.rules[]` with category eligibility. The exact key and representation await Q1; do not present a provisional key as an existing runtime option.
+- **CFG-001**: Extend `oauth2_authorization_server.impersonation.rules[]` with human-only, agent-only, or dual-category eligibility. Category selection follows FR-003 without another request input. Define the exact configuration key and serialization during design; do not present a provisional key as an existing runtime option.
 - **CFG-002**: Preserve existing rule configuration, trusted issuer roles, CEL policy, and validation. Missing category configuration means humans only, not both.
 - **CFG-003**: Document the confirmed setting and complete human-only, agent-only, and dual-category examples in `docs/configuration.md` and `examples/config/`, and update the broker Helm deployment contract before implementation is complete.
 - **CFG-004**: The existing-key configuration in Journey 1 is the baseline. Its missing new category selection is an explicit draft gap, not a complete enablement example.
@@ -403,13 +412,13 @@ These proposed terms must be reconciled with the architecture glossary during la
 ### API Requirements
 
 - **API-001**: Extend the existing local impersonation behavior of `POST /oauth2/token`; preserve its established credential roles, routing target, success envelope, and actor attribution. Do not change an approved API contract in this phase.
-- **API-002**: Resolve Q1 and Q2, document all proposed category inputs, identity semantics, validation errors, and examples in `api/enduser/openapi.yaml`, and obtain explicit stakeholder confirmation before implementation. The journeys are draft review aids, not that confirmation.
+- **API-002**: Resolve Q4, document the clarified exact signed-`sub`/target-UUID comparison, self-agent-only identity semantics, categorical third-party denial, validation errors, and examples in `api/enduser/openapi.yaml`, and obtain explicit stakeholder confirmation before implementation. No new category-selection request parameter is required. The clarification answers settle product semantics, not the full OpenAPI contract or final error mapping.
 - **API-003**: Preserve established human responses. New agent-category or resolution errors must have a confirmed mapping in the API design rather than relying on prose error descriptions as stable identifiers.
 - **API-004**: No new administrative endpoint, consent endpoint, frontend flow, or third-party identity API is requested.
 
 ### Security Requirements *(mandatory for security-critical features)*
 
-- **SR-001**: Agent support MUST be explicitly enabled per rule; existing human flows MUST fail closed on delegation failures and MUST NOT be silently reclassified.
+- **SR-001**: Agent support MUST be explicitly enabled per rule; category selection MUST follow FR-003 before delegation handling. Human flows MUST fail closed on delegation failures and MUST NOT then be reclassified to bypass consent.
 - **SR-002**: Client assertions and actor credentials MUST remain signature-verified, with existing issuer, algorithm, audience, expiry, and not-before controls. Machine subject credentials in this draft are signed and retain those controls as well.
 - **SR-003**: This feature MUST NOT widen the ADR 031 unsigned-subject exception. Existing human unsigned-subject rules retain all of that ADR's compensating controls, including subject binding and email restrictions.
 - **SR-004**: Every decision MUST emit a credential-free structured audit event that allows subject category, represented identity, actor, privileged client, selected rule, target, and outcome to be distinguished. Never log credentials or wholesale claims.
@@ -430,15 +439,15 @@ These proposed terms must be reconciled with the architecture glossary during la
 - **SC-001**: In every authorized self-agent acceptance case, a privileged client obtains one attributable agent identity in a single exchange, with zero human logins, consent interactions, grants, or sessions required or created.
 - **SC-002**: Every tested issuance identifies the represented agent by its broker UUID and preserves the verified actor issuer and extracted actor identity, including when actor and subject text are equal.
 - **SC-003**: All six human/agent eligibility combinations across human-only, agent-only, and dual-category rules behave according to Journey 2's matrix; no tested ineligible category obtains a token.
-- **SC-004**: Every existing human consent-required case remains denied without an active delegation after this feature is enabled, including dual-category and UUID-shaped human identity cases.
-- **SC-005**: Every tested unauthorized, unresolved, invalid-credential, and policy-failure case issues zero tokens; every tested third-party attempt in the defined agent-only fixture returns zero service tokens and uses zero human sessions.
-- **SC-006**: An operator can review documented examples for all three rule selections and predict the correct human-consent and agent-issuance outcome for each, without changing an existing human-only rule. Verification awaits the confirmed configuration examples after Q1.
+- **SC-004**: Every tested nonmatching human subject remains denied without an active delegation after this feature is enabled, including dual-category and UUID-shaped cases. Exact signed equality selects agent issuance only on explicitly agent-permitting rules; human-only exact-equality behavior awaits Q4.
+- **SC-005**: Every tested unauthorized, unresolved, invalid-credential, and policy-failure case issues zero tokens; every tested third-party exchange of an agent token returns zero service tokens and uses zero human sessions, including when matching human grants and sessions exist.
+- **SC-006**: An operator can review documented examples for all three rule selections and predict the correct human-consent and agent-issuance outcome for each. Complete configuration examples await design; human-only exact-equality outcomes await Q4.
 
 ## Assumptions
 
 - “No consent” applies to agent-category subjects only. Human consent is not removed.
-- The primary use case is an agent acting for itself. Broader cross-agent representation and identifier input forms are not silently assumed; Q2 must settle them.
+- The scope is an agent acting for itself. Cross-agent representation and subject alias resolution are excluded by the accepted Q2 answer; the routing audience may still use its existing alias resolution.
 - Machine subject credentials are signed in this draft. Supporting unsigned machine subjects would be a separate security/governance decision, not an inference from existing human support.
 - Existing Agent registration, ordered rules, local token issuance, and operator-managed external issuer trust are reused. No new database schema, frontend screens, or third-party identity provisioning is required by the stated scope.
 - The caller or reverse proxy may apply deeper authorization, but the broker still validates credentials, category eligibility, registered identity, and its CEL policy.
-- The issue title and body are the sole feature-request input. Existing source, contracts, ADRs, and constitution constrain the draft; issue comments and unrecorded stakeholder decisions are not inputs.
+- The recorded issue title/body and the authorized answers supplied in `context.answer` are the feature inputs. Existing source, contracts, ADRs, and constitution constrain the draft; arbitrary issue or PR comments and unrecorded stakeholder decisions are not inputs.
