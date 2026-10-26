@@ -625,6 +625,36 @@ else
 fi
 echo ""
 
+if [ -n "$PS_IDENTITY_ID" ] && [ -n "$MOCK_SERVICE_ID" ]; then
+	echo "Registering Visual Studio Code CIMD Agent..."
+	AGENT_RESPONSE=$(curl -s -X POST "${ADMIN_API}/agents" \
+		-H "Content-Type: application/json" \
+		-w "\n%{http_code}" \
+		-d "{
+    \"display_name\": \"Visual Studio Code\",
+    \"description\": \"Visual Studio Code CIMD client for the local MCP gateway.\",
+    \"client_uris\": [\"https://vscode.dev/oauth/client-metadata.json\"],
+    \"permission_sets\": [{\"permission_set_id\": \"${PS_IDENTITY_ID}\", \"requirement_type\": \"optional\"}],
+    \"service_requirements\": [{\"service_id\": \"${MOCK_SERVICE_ID}\", \"requirement_type\": \"optional\", \"required_scopes\": [\"profile\", \"email\"]}]
+  }")
+
+	HTTP_CODE=$(echo "$AGENT_RESPONSE" | tail -n1)
+	RESPONSE_BODY=$(echo "$AGENT_RESPONSE" | sed '$d')
+	if [ "$HTTP_CODE" = "201" ]; then
+		echo -e "${GREEN}✓ Visual Studio Code CIMD Agent created${NC}"
+	elif [ "$HTTP_CODE" = "409" ]; then
+		echo -e "${YELLOW}✓ Visual Studio Code CIMD URL already registered${NC}"
+	else
+		echo -e "${RED}✗ Failed to create Visual Studio Code CIMD Agent (HTTP $HTTP_CODE)${NC}"
+		echo "  Response: $RESPONSE_BODY"
+		exit 1
+	fi
+	echo "  Permission set: Identity Access (optional)"
+else
+	echo -e "${YELLOW}Skipping Visual Studio Code CIMD Agent: Identity Access or Mock OAuth2 Service is unavailable${NC}"
+fi
+echo ""
+
 echo "========================================="
 echo "Development Environment Setup Complete"
 echo "========================================="
@@ -642,6 +672,9 @@ else
 fi
 echo "    - Local Research Agent   (no client_id, local token issuance)"
 echo "    - CIMD Demo Agent        (client_uris: https://${CIMD_SERVER_HOST}/oauth/client-metadata.json)"
+if [ -n "$PS_IDENTITY_ID" ] && [ -n "$MOCK_SERVICE_ID" ]; then
+	echo "    - Visual Studio Code      (client_uris: https://vscode.dev/oauth/client-metadata.json)"
+fi
 echo ""
 echo "  Services:"
 echo "    - Mock OAuth2 Service    (mock-oauth2-client-dev)"

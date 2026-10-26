@@ -60,7 +60,8 @@ oauth2_authorization_server:
   # Local path: agents without a ClientID are issued tokens locally.
   local:
     token_ttl: 1h
-    token_claims_expression: '{"aud": "token-exchange-broker"}'
+    # Preserve the CIMD client URL in agent_id while also signing the registered agent UUID.
+    token_claims_expression: '{"aud": "token-exchange-broker", "agent_uuid": agent.id}'
 
 
   # CIMD: resolve agents via Client ID Metadata Document URLs.
@@ -108,8 +109,8 @@ token_exchange:
   claim_extraction:
     # Extract user principal from the subject_token's sub claim
     principal_expression: "subject_token.sub"
-    # Local tokens carry agent_id. Upstream tokens use azp and resolve it to an agent ID.
-    agent_id_expression: "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
+    # Trust agent_uuid only in broker-issued tokens. Keep the existing local and upstream paths.
+    agent_id_expression: 'has(subject_token.agent_uuid) && subject_token.iss == "http://localhost:3000" ? subject_token.agent_uuid : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
   authorization:
     type: "cel"
     cel:
