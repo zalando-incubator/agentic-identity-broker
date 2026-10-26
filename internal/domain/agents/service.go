@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -14,6 +15,9 @@ import (
 
 // ErrAmbiguousClientID means more than one agent matches a client ID.
 var ErrAmbiguousClientID = errors.New("client ID resolves to multiple agents")
+
+// ErrInvalidExternalID marks an unusable agent-list filter.
+var ErrInvalidExternalID = errors.New("invalid external_id")
 
 // Service encapsulates agent business logic: client ID generation, uniqueness enforcement,
 // and unambiguous client ID resolution. It sits between the HTTP handler and the repository,
@@ -200,6 +204,34 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 // List retrieves all agents.
 func (s *Service) List(ctx context.Context) ([]*storage.Agent, error) {
 	return s.repo.List(ctx)
+}
+
+// ListByExternalID rejects unusable filters before querying storage.
+func (s *Service) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	value := string(externalID)
+	count := 0
+	for len(value) > 0 {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 1 {
+			return nil, invalidExternalID("external_id must be valid UTF-8 text")
+		}
+		if r == 0 {
+			return nil, invalidExternalID("external_id must not contain a NUL character")
+		}
+		count++
+		if count > 255 {
+			return nil, invalidExternalID("external_id must be 1 to 255 characters")
+		}
+		value = value[size:]
+	}
+	if count == 0 {
+		return nil, invalidExternalID("external_id must be 1 to 255 characters")
+	}
+	return s.repo.ListByExternalID(ctx, externalID)
+}
+
+func invalidExternalID(message string) error {
+	return storage.NewStorageError("ValidateExternalID", storage.ErrorKindValidation, ErrInvalidExternalID, message)
 }
 
 // checkClientIDUniqueness returns an error if another agent already uses the given client_id.

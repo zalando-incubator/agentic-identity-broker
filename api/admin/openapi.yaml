@@ -231,16 +231,37 @@ paths:
 
   /api/agents:
     get:
-      summary: List all agents
+      summary: List agents, optionally filtered by external ID
       description: |
-        Retrieve a list of all registered agents in the system.
+        Retrieve registered agents. Without `external_id`, return all agents.
+        With one `external_id`, return every exact, case-sensitive match.
+        The value is not unique, so the array can contain zero, one, or several agents.
+        Do not trim, normalize, or interpret the value as a pattern. The filter
+        does not match agent IDs, canonical IDs, or client IDs.
 
-        Returns a direct array of agent objects (no envelope).
-        Agents are returned in no guaranteed order.
+        Percent-encode reserved characters in the value, such as `&`, `+`, and `;`.
+        For example, send `urn:example:ai-registry:agent:7f3a9c` as
+        `urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c`.
+        Invalid filters return `400` with `error: invalid external_id`.
+        This includes empty or repeated values, invalid UTF-8, NUL, more than
+        255 Unicode code points, malformed percent-encoding, and an unencoded `;`.
+        Unknown parameters and malformed query parts outside `external_id`
+        retain their existing handling.
+
+        Returns a direct array of agent objects (no envelope), in no guaranteed order.
       operationId: listAgents
       tags:
         - Agents
       parameters:
+        - name: external_id
+          in: query
+          required: false
+          description: Exact, case-sensitive external governance ID. Percent-encode reserved characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+          example: urn:example:ai-registry:agent:7f3a9c
         - $ref: '#/components/parameters/PreferCanonicalReferences'
       responses:
         '200':
@@ -282,8 +303,30 @@ paths:
                       created_at: '2025-12-05T14:30:00Z'
                       updated_at: '2025-12-10T09:15:00Z'
                 empty_list:
-                  summary: No agents configured
+                  summary: No agents match the filter or none are registered
                   value: []
+        '400':
+          description: Invalid external_id filter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty_external_id:
+                  summary: Empty external ID
+                  value:
+                    error: invalid external_id
+                    message: external_id must be 1 to 255 characters
+                repeated_external_id:
+                  summary: Repeated external ID parameter
+                  value:
+                    error: invalid external_id
+                    message: external_id must appear at most once
+                malformed_external_id:
+                  summary: Malformed percent-encoding
+                  value:
+                    error: invalid external_id
+                    message: external_id contains malformed percent-encoding
         '500':
           $ref: '#/components/responses/InternalServerError'
 

@@ -550,6 +550,16 @@ func (r *inMemoryAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) 
 	return agents, nil
 }
 
+func (r *inMemoryAgentRepo) ListByExternalID(_ context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	agents := make([]*storage.Agent, 0)
+	for _, agent := range r.agents {
+		if agent.ExternalID != nil && *agent.ExternalID == externalID {
+			agents = append(agents, agent.Copy())
+		}
+	}
+	return agents, nil
+}
+
 func (r *inMemoryAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
 	for _, agent := range r.agents {
 		if agent.ClientID != nil && *agent.ClientID == clientID {

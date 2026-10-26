@@ -689,6 +689,7 @@ The fields:
   [delegation and consent](/docs/concepts/delegation-and-consent#mandatory-vs-optional-requirements).
 - `client_id` — Optional. Use it only for an agent that uses an upstream OAuth2 client ID.
   Omit it for agents identified in another way.
+- `external_id` — Optional external governance identifier, such as a URN. Several agents can share one external ID.
 - `redirect_uris` — Optional. Register HTTPS, loopback HTTP (`localhost`, `127.0.0.1`, or `[::1]`), or native-app private-use callbacks such as `com.example.app:/oauth2redirect/example-provider` and `github-app://oauth/callback`. The broker stores accepted entries unchanged and in order. Private-use entries must be canonical, lowercase, unencoded, and free of fragments.
 - `governance_url`, `user_documentation_url`, and `agent_interface_url` — Optional URLs for
   the consent interface.
@@ -699,6 +700,7 @@ curl -X POST http://localhost:14000/api/agents \
   -H "Content-Type: application/json" \
   -d '{
     "display_name": "Research Assistant",
+    "external_id": "urn:example:ai-registry:agent:7f3a9c",
     "description": "AI assistant that reads repositories and datasets on your behalf",
     "governance_url": "https://example.com/agents/research-assistant/governance",
     "user_documentation_url": "https://example.com/docs/research-assistant",
@@ -715,6 +717,21 @@ The response contains an agent with a system-generated `id` (a UUID). This `id` 
 agent canonical identifier. Use it as `client_id` on the broker `/oauth2/authorize`
 endpoint. Do not use the optional upstream `client_id` field. The broker does not generate
 an upstream `client_id`.
+
+### Find agents by external ID
+
+Filter the admin agent list by an external governance ID:
+
+```bash
+curl 'http://localhost:14000/api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c' \
+  -H 'X-Remote-User: admin@example.com'
+```
+
+The response is an array with zero, one, or several agents. External IDs are not unique.
+The filter matches the complete value exactly and respects case. It does not search agent UUIDs or canonical IDs.
+Percent-encode reserved characters such as `&`, `+`, and `;` in the value. An unencoded semicolon is invalid.
+If `external_id` is empty, repeated, undecodable, or longer than 255 Unicode code points, the broker returns `400` with `error: invalid external_id`.
+Omit the parameter to list every agent. Filtered responses also accept `Prefer: reference-id=canonical` for nested references.
 
 ### Allow a native-app callback for a CIMD agent
 

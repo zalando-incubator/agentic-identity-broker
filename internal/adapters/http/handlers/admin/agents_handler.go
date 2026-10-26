@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -379,16 +381,33 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Prefer")
 	ctx := r.Context()
 
-	agents, err := h.agentService.List(ctx)
+	externalID, filtered, validationMessage := externalIDFromQuery(r.URL.RawQuery)
+	if validationMessage != "" {
+		h.writeError(w, http.StatusBadRequest, "invalid external_id", validationMessage)
+		return
+	}
+
+	var listedAgents []*storage.Agent
+	var err error
+	if filtered {
+		listedAgents, err = h.agentService.ListByExternalID(ctx, externalID)
+	} else {
+		listedAgents, err = h.agentService.List(ctx)
+	}
 	if err != nil {
+		var validation *storage.StorageError
+		if filtered && errors.Is(err, agents.ErrInvalidExternalID) && errors.As(err, &validation) {
+			h.writeError(w, http.StatusBadRequest, "invalid external_id", validation.Message)
+			return
+		}
 		h.handleDomainError(w, r, "ListAgents", err)
 		return
 	}
 
-	serviceMap := h.batchLoadServices(ctx, agents)
+	serviceMap := h.batchLoadServices(ctx, listedAgents)
 
-	responses := make([]AgentResponse, len(agents))
-	for i, agent := range agents {
+	responses := make([]AgentResponse, len(listedAgents))
+	for i, agent := range listedAgents {
 		resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 		if err != nil {
 			h.logger.Error("failed to convert agent to response", "agent_id", agent.ID, "error", err)
@@ -409,13 +428,38 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		for i := range responses {
 			responsePointers[i] = &responses[i]
 		}
-		if err := h.applyCanonicalReferences(ctx, agents, responsePointers); err != nil {
+		if err := h.applyCanonicalReferences(ctx, listedAgents, responsePointers); err != nil {
 			h.handleDomainError(w, r, "ListAgents", err)
 			return
 		}
 		w.Header().Set("Preference-Applied", "reference-id=canonical")
 	}
 	h.writeJSON(w, http.StatusOK, responses)
+}
+
+func externalIDFromQuery(rawQuery string) (id.ExternalID, bool, string) {
+	var externalID id.ExternalID
+	found := false
+	for pair := range strings.SplitSeq(rawQuery, "&") {
+		rawKey, rawValue, _ := strings.Cut(pair, "=")
+		key, err := url.QueryUnescape(rawKey)
+		if err != nil || key != "external_id" {
+			continue
+		}
+		if found {
+			return "", true, "external_id must appear at most once"
+		}
+		found = true
+		if strings.ContainsRune(rawValue, ';') {
+			return "", true, "external_id must percent-encode semicolons"
+		}
+		value, err := url.QueryUnescape(rawValue)
+		if err != nil {
+			return "", true, "external_id contains malformed percent-encoding"
+		}
+		externalID = id.ExternalID(value)
+	}
+	return externalID, found, ""
 }
 
 // batchLoadServices loads all unique services referenced by agents in a single batch.

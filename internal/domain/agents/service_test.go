@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,14 +24,15 @@ type mockAgentRepo struct {
 	ports.AgentRepository
 	agents map[id.AgentID]*storage.Agent
 
-	createFn         func(ctx context.Context, agent *storage.Agent) error
-	getFn            func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
-	updateFn         func(ctx context.Context, agent *storage.Agent) error
-	deleteFn         func(ctx context.Context, id id.AgentID) (bool, error)
-	listFn           func(ctx context.Context) ([]*storage.Agent, error)
-	getByClientIDFn  func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
-	existsOtherFn    func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
-	getByClientURIFn func(ctx context.Context, uri string) (*storage.Agent, error)
+	createFn           func(ctx context.Context, agent *storage.Agent) error
+	getFn              func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	updateFn           func(ctx context.Context, agent *storage.Agent) error
+	deleteFn           func(ctx context.Context, id id.AgentID) (bool, error)
+	listFn             func(ctx context.Context) ([]*storage.Agent, error)
+	listByExternalIDFn func(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error)
+	getByClientIDFn    func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
+	existsOtherFn      func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
+	getByClientURIFn   func(ctx context.Context, uri string) (*storage.Agent, error)
 }
 
 func newMockAgentRepo() *mockAgentRepo {
@@ -78,6 +80,13 @@ func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
 		return m.listFn(ctx)
 	}
 	return nil, nil
+}
+
+func (m *mockAgentRepo) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	if m.listByExternalIDFn != nil {
+		return m.listByExternalIDFn(ctx, externalID)
+	}
+	return []*storage.Agent{}, nil
 }
 
 func (m *mockAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
@@ -401,6 +410,36 @@ func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
 	}
 	_, err := service.ResolveID(context.Background(), "unknown-agent")
 	require.Error(t, err)
+}
+
+func TestListByExternalIDRejectsInvalidValuesBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   id.ExternalID
+		message string
+	}{
+		{name: "empty", value: "", message: "1 to 255 characters"},
+		{name: "too many ASCII code points", value: id.ExternalID(strings.Repeat("x", 256)), message: "1 to 255 characters"},
+		{name: "too many Unicode code points", value: id.ExternalID(strings.Repeat("é", 256)), message: "1 to 255 characters"},
+		{name: "invalid UTF-8", value: id.ExternalID(string([]byte{0xff})), message: "UTF-8"},
+		{name: "NUL", value: "a\x00b", message: "NUL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockAgentRepo()
+			called := false
+			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
+				called = true
+				return []*storage.Agent{}, nil
+			}
+			agents, err := newTestService(repo, false).ListByExternalID(context.Background(), tc.value)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+			assert.Contains(t, storageErr.Message, tc.message)
+			assert.Nil(t, agents)
+			assert.False(t, called, "invalid filter must not reach storage")
+		})
+	}
 }
 
 func TestDeleteLogsOnlyActualDeletion(t *testing.T) {

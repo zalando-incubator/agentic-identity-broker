@@ -548,6 +548,126 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 }
 
+func TestAgentRepository_ListByExternalID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("exact matches only, including shared and literal identifiers", func(t *testing.T) {
+		repo := NewAgentRepository()
+		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
+		other := id.ExternalID("urn:example:ai-registry:agent:other")
+		canonical := "canonical-only"
+		clientID := id.ClientID("client-only")
+		agents := []*storage.Agent{
+			{ExternalID: &shared, DisplayName: "Research Assistant", Description: "First deployment", PermissionSets: testPermissionSets()},
+			{ExternalID: &shared, DisplayName: "Research Assistant EU", Description: "Second deployment", PermissionSets: testPermissionSets()},
+			{ExternalID: &other, DisplayName: "Other", Description: "Different external ID", PermissionSets: testPermissionSets()},
+			{CanonicalID: &canonical, ClientID: &clientID, DisplayName: "No external ID", Description: "Other identifiers", PermissionSets: testPermissionSets()},
+		}
+		for _, agent := range agents {
+			require.NoError(t, repo.Create(ctx, agent))
+		}
+
+		check := func(value id.ExternalID, expected ...id.AgentID) {
+			t.Helper()
+			found, err := repo.ListByExternalID(ctx, value)
+			require.NoError(t, err)
+			require.NotNil(t, found)
+			ids := make([]id.AgentID, 0, len(found))
+			for _, agent := range found {
+				require.NotNil(t, agent)
+				require.NotNil(t, agent.ExternalID)
+				assert.Equal(t, value, *agent.ExternalID)
+				ids = append(ids, agent.ID)
+			}
+			assert.ElementsMatch(t, expected, ids)
+		}
+		check(shared, agents[0].ID, agents[1].ID)
+		check(other, agents[2].ID)
+		check(id.ExternalID("urn:example:ai-registry:agent:missing"))
+		check(id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))
+		check(id.ExternalID(" " + string(shared)))
+		check(id.ExternalID(canonical))
+		check(id.ExternalID(clientID))
+		check(id.ExternalID(agents[0].ID.String()))
+		accented := id.ExternalID("urn:example:café")
+		accentedAgent := &storage.Agent{ExternalID: &accented, DisplayName: "Accented", Description: "Unicode identifier", PermissionSets: testPermissionSets()}
+		require.NoError(t, repo.Create(ctx, accentedAgent))
+		check(accented, accentedAgent.ID)
+		check(id.ExternalID("urn:example:cafe\u0301"))
+	})
+
+	t.Run("wildcards are ordinary characters", func(t *testing.T) {
+		repo := NewAgentRepository()
+		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
+			agent := &storage.Agent{ExternalID: &value, DisplayName: string(value), Description: "Literal identifier", PermissionSets: testPermissionSets()}
+			require.NoError(t, repo.Create(ctx, agent))
+			found, err := repo.ListByExternalID(ctx, value)
+			require.NoError(t, err)
+			require.Len(t, found, 1)
+			assert.Equal(t, agent.ID, found[0].ID)
+		}
+	})
+
+	t.Run("reads full independent copies and observes lifecycle", func(t *testing.T) {
+		repo := NewAgentRepository()
+		oldID := id.ExternalID("urn:example:old")
+		newID := id.ExternalID("urn:example:new")
+		canonical := "research-assistant"
+		uri := "https://example.com/agent/client.json"
+		agent := &storage.Agent{
+			ExternalID: &oldID, CanonicalID: &canonical, DisplayName: "Original", Description: "Lookup copy",
+			ClientURIs: []string{uri}, PermissionSets: testPermissionSets(),
+		}
+		before, err := repo.ListByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		assert.Empty(t, before)
+		require.NoError(t, repo.Create(ctx, agent))
+		found, err := repo.ListByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		require.Len(t, found, 1)
+		require.NotNil(t, found[0].ExternalID)
+		require.NotNil(t, found[0].CanonicalID)
+		require.Len(t, found[0].ClientURIs, 1)
+		require.Len(t, found[0].PermissionSets, 1)
+		assert.Equal(t, agent.ClientURIs, found[0].ClientURIs)
+		assert.Equal(t, agent.PermissionSets, found[0].PermissionSets)
+		found[0].DisplayName = "Changed"
+		*found[0].ExternalID = id.ExternalID("modified")
+		*found[0].CanonicalID = "modified"
+		found[0].ClientURIs[0] = "https://example.com/changed.json"
+		found[0].PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
+
+		again, err := repo.ListByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		require.NotNil(t, again[0].ExternalID)
+		require.NotNil(t, again[0].CanonicalID)
+		assert.Equal(t, agent.ID, again[0].ID)
+		assert.Equal(t, "Original", again[0].DisplayName)
+		assert.Equal(t, oldID, *again[0].ExternalID)
+		assert.Equal(t, canonical, *again[0].CanonicalID)
+		assert.Equal(t, agent.ClientURIs, again[0].ClientURIs)
+		assert.Equal(t, agent.PermissionSets, again[0].PermissionSets)
+
+		agent.ExternalID = &newID
+		require.NoError(t, repo.Update(ctx, agent))
+		oldMatches, err := repo.ListByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		assert.Empty(t, oldMatches)
+		newMatches, err := repo.ListByExternalID(ctx, newID)
+		require.NoError(t, err)
+		require.Len(t, newMatches, 1)
+		assert.Equal(t, agent.ID, newMatches[0].ID)
+
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		require.True(t, deleted)
+		newMatches, err = repo.ListByExternalID(ctx, newID)
+		require.NoError(t, err)
+		assert.Empty(t, newMatches)
+	})
+}
+
 // T026b: Storage-layer mutual exclusivity — agent cannot have both ClientID and ClientURIs set.
 func TestAgentRepository_Create_MutualExclusivity(t *testing.T) {
 	ctx := context.Background()

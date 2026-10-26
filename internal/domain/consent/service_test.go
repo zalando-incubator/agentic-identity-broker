@@ -141,6 +141,19 @@ func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
 	return result, nil
 }
 
+func (m *mockAgentRepo) ListByExternalID(_ context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	result := make([]*storage.Agent, 0)
+	for _, agent := range m.agents {
+		if agent.ExternalID != nil && *agent.ExternalID == externalID {
+			result = append(result, agent.Copy())
+		}
+	}
+	return result, nil
+}
+
 func (m *mockAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
 	if m.err != nil {
 		return nil, m.err

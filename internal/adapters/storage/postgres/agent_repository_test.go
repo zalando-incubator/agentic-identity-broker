@@ -804,6 +804,104 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 }
 
+func TestAgentRepository_ListByExternalID(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewAgentRepository(adapter)
+
+	newAgent := func(t *testing.T, name string, externalID *id.ExternalID) *storage.Agent {
+		t.Helper()
+		agent := &storage.Agent{
+			ExternalID: externalID, DisplayName: name, Description: "External ID lookup test",
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		attachTestPermissionSet(t, adapter, agent)
+		require.NoError(t, repo.Create(ctx, agent))
+		return agent
+	}
+	check := func(t *testing.T, value id.ExternalID, expected ...id.AgentID) []*storage.Agent {
+		t.Helper()
+		found, err := repo.ListByExternalID(ctx, value)
+		require.NoError(t, err)
+		require.NotNil(t, found)
+		ids := make([]id.AgentID, 0, len(found))
+		for _, agent := range found {
+			require.NotNil(t, agent)
+			require.NotNil(t, agent.ExternalID)
+			assert.Equal(t, value, *agent.ExternalID)
+			ids = append(ids, agent.ID)
+		}
+		assert.ElementsMatch(t, expected, ids)
+		return found
+	}
+
+	t.Run("zero, one and every shared exact match with full representation", func(t *testing.T) {
+		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
+		other := id.ExternalID("urn:example:ai-registry:agent:other")
+		first := newAgent(t, "Research Assistant", &shared)
+		first.ClientURIs = []string{"https://example.com/research/client.json"}
+		require.NoError(t, repo.Update(ctx, first))
+		second := newAgent(t, "Research Assistant EU", &shared)
+		different := newAgent(t, "Other", &other)
+		canonical := "canonical-only"
+		clientID := id.ClientID("client-only")
+		withoutExternalID := &storage.Agent{
+			CanonicalID: &canonical, ClientID: &clientID, DisplayName: "No external ID", Description: "Other identifiers",
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		attachTestPermissionSet(t, adapter, withoutExternalID)
+		require.NoError(t, repo.Create(ctx, withoutExternalID))
+
+		found := check(t, shared, first.ID, second.ID)
+		for _, agent := range found {
+			switch agent.ID {
+			case first.ID:
+				assert.Equal(t, first.ClientURIs, agent.ClientURIs)
+				assert.Equal(t, first.PermissionSets, agent.PermissionSets)
+			case second.ID:
+				assert.Empty(t, agent.ClientURIs)
+				assert.Equal(t, second.PermissionSets, agent.PermissionSets)
+			}
+		}
+		check(t, other, different.ID)
+		check(t, id.ExternalID("urn:example:ai-registry:agent:missing"))
+		check(t, id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))
+		check(t, id.ExternalID(" "+string(shared)))
+		check(t, id.ExternalID(canonical))
+		check(t, id.ExternalID(clientID))
+		check(t, id.ExternalID(first.ID.String()))
+		accented := id.ExternalID("urn:example:café")
+		accentedAgent := newAgent(t, "Accented", &accented)
+		check(t, accented, accentedAgent.ID)
+		check(t, id.ExternalID("urn:example:cafe\u0301"))
+	})
+
+	t.Run("wildcards and regular-expression metacharacters remain literal", func(t *testing.T) {
+		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
+			agent := newAgent(t, string(value), &value)
+			check(t, value, agent.ID)
+		}
+	})
+
+	t.Run("created, updated and deleted state is visible on the next lookup", func(t *testing.T) {
+		oldID := id.ExternalID("urn:example:old")
+		newID := id.ExternalID("urn:example:new")
+		check(t, oldID)
+		agent := newAgent(t, "Lifecycle", &oldID)
+		check(t, oldID, agent.ID)
+		agent.ExternalID = &newID
+		agent.UpdatedAt = time.Now().UTC()
+		require.NoError(t, repo.Update(ctx, agent))
+		check(t, oldID)
+		check(t, newID, agent.ID)
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		require.True(t, deleted)
+		check(t, newID)
+	})
+}
+
 // TestAgentRepository_PermissionSets_RoundTrip verifies that permission_sets
 // are persisted and retrieved correctly through Create, Update, Get, List,
 // and GetByClientID. Create/Update call verifyPermissionSetExistenceInTx, so

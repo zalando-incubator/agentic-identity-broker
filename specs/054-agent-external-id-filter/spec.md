@@ -14,6 +14,7 @@
 
 - Q: Can an agent's `canonical_id` hold a URN? → A: No. A canonical ID uses only letters, digits, `.`, `_`, and `-`, so the `:` in a URN is invalid. An identifier from an external governance system belongs in `external_id`, which this feature makes searchable.
 - Q: Should `external_id` become unique, or should a lookup return zero or more agents? → A: Keep `external_id` non-unique. A lookup filters the agent collection and returns zero, one, or several agents.
+- Q: Is the API contract approved for implementation? → A: Yes. The requesting stakeholder approved the API changes on 2026-10-26, before implementation began (API-005).
 
 ## User Scenarios & Testing *(mandatory)*
 
