@@ -9,7 +9,32 @@ binds:
 - port: 4000
   listeners:
   - routes:
-    - policies:
+    - name: protected-resource-metadata
+      matches:
+      - path:
+          exact: /.well-known/oauth-protected-resource/mcp
+      policies:
+        mcpAuthentication:
+          mode: strict
+          issuer: http://localhost:3000
+          audiences:
+          - token-exchange-broker
+          jwks:
+            url: http://identity-broker:8000/oauth2/jwks.json
+          resourceMetadata:
+            resource: http://localhost:4000/mcp
+            bearerMethodsSupported:
+            - header
+      backends:
+      - mcp:
+          targets:
+          - name: tools
+            mcp:
+              host: http://mcp-server-mock:9003/mcp
+    - matches:
+      - path:
+          exact: /mcp
+      policies:
         cors:
           allowOrigins:
             - "*"
@@ -19,6 +44,7 @@ binds:
             - "*"
           exposeHeaders:
             - "Mcp-Session-Id"
+            - "WWW-Authenticate"
         jwtAuth:
           mode: strict
           preserveToken: false

@@ -122,6 +122,12 @@ An mcp-go client can read the URL from a tool-call error after initialization, b
 
 For automatic step-up, an MCP client must discover RFC 9728 protected-resource metadata for the gateway's MCP URL. This `jwtAuth` route does not provide metadata by itself. Add a separate gateway route for `/.well-known/oauth-protected-resource/mcp`. It must return the MCP resource URL and its authorization server. Match the MCP route on `/mcp`, so route order does not affect dispatch. [Feature 023's example journey](../../specs/023-extproc-mcp-elicitation/spec.md) shows the route and authorization-code retry.
 
+The Compose gateway includes this public metadata route. It advertises `http://localhost:4000/mcp` as the resource and `http://localhost:3000` as the authorization server. Vite proxies the broker's authorization-server metadata and OAuth2 endpoints on port 3000. The `/mcp` route still applies strict JWT validation and ExtProc exchange. Compose also exposes `WWW-Authenticate` to browser clients through CORS.
+
+The existing JWT 401 response has no `resource_metadata` link. Clients must try the well-known URL when that link is absent.
+
+The broker does not advertise a dynamic client registration endpoint in its Compose metadata. A client needs a broker-registered identity and an allowed redirect URI, or a supported Client ID Metadata Document. URL-only discovery does not register an arbitrary agent.
+
 ### Diagnostic telemetry
 
 Exchange logs, spans, and metrics use the bounded `token_exchange.*` classification contract in the [token-exchange reference](../reference/token-exchange.md#diagnostic-attributes).
