@@ -9,7 +9,8 @@ gating with this policy so the sample agent can exercise the complete approval j
 
 | Input                                                                                          | Decision |
 |------------------------------------------------------------------------------------------------|----------|
-| MCP lifecycle methods (`initialize`, `ping`, `notifications/initialized`)                      | allow    |
+| MCP lifecycle methods and `tools/list`                                                        | allow    |
+| MCP header-only `GET /mcp` session stream                                                      | allow    |
 | MCP tool call in allowlist (`whoami`, `list_repositories`, `get_file_contents`, `search_code`) | allow    |
 | MCP tool call `create_issue`                                                                   | approval_required |
 | MCP tool call in denylist (`delete_repository`, `force_push`)                                  | deny     |
