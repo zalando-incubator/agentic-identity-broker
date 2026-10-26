@@ -11,6 +11,9 @@ on:
       pr:
         type: number
         required: true
+      comment:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md

@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const phases = ["clarify", "plan", "tasks", "analyze", "remediate", "reanalyze", "implement"];
+const commands = ["specify", "clarify", "plan", "implement"];
 const documents = ["spec.md", "plan.md", "tasks.md"];
 const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
@@ -56,6 +57,11 @@ function actionsBot(user) {
   return user?.login === "github-actions[bot]" && user?.type === "Bot";
 }
 
+function parseCommand(body) {
+  const match = typeof body === "string" && body.match(/^\/speckit-([a-z]+)(?=\s|$)([\s\S]*)$/);
+  return match ? { phase: match[1], argument: match[2].trim() } : null;
+}
+
 function parseResult(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/\d+$/);
@@ -93,6 +99,16 @@ function requireResult(result, required, hashes, { clean = false, run } = {}) {
 async function maintainer(github, repo, login) {
   const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ ...repo, username: login });
   return ["admin", "maintain", "write"].includes(data.permission);
+}
+
+async function maintainerCommand(github, repo, id, number, phase) {
+  const { data } = await github.rest.issues.getComment({ ...repo, comment_id: id });
+  const command = parseCommand(data.body);
+  if (!data.issue_url?.endsWith(`/issues/${number}`) || data.user?.type !== "User" ||
+      command?.phase !== phase || !await maintainer(github, repo, data.user.login)) {
+    throw new Error("Comment is not an eligible maintainer command");
+  }
+  return { id: data.id, author: data.user.login, argument: command.argument };
 }
 
 function managedPR(pr, repo, state = "open") {
@@ -159,6 +175,30 @@ function latest(entries, allowed) {
   return entries.filter(({ result }) => allowed.includes(result.phase)).sort((a, b) => b.comment.id - a.comment.id)[0];
 }
 
+async function routeIssue(github, repo, issue, comment) {
+  if (issue.state !== "open") return { action: "noop" };
+  const branch = `speckit/issue-${issue.number}`;
+  const existing = await github.paginate(github.rest.pulls.list, {
+    ...repo, state: "all", head: `${repo.owner}:${branch}`, per_page: 100,
+  });
+  if (existing.length) {
+    const managed = existing.find((pr) => managedPR(pr, repo) === issue.number);
+    if (managed) {
+      if (latest(await reports(github, repo, managed.number), ["clarify"])) return { action: "noop" };
+      return { action: "clarify", issue: issue.number, pr: managed.number, comment: 0 };
+    }
+    if (existing.some((pr) => pr.merged_at ||
+        managedPR(pr, repo, "closed") !== issue.number)) return { action: "noop" };
+  }
+  try {
+    await github.rest.repos.getBranch({ ...repo, branch });
+    return { action: "noop" };
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
+  return { action: "specify", issue: issue.number, pr: 0, comment };
+}
+
 async function route({ github, context }) {
   const { payload, repo, eventName } = context;
   const label = payload.label?.name;
@@ -166,53 +206,45 @@ async function route({ github, context }) {
     label === "speckit:specify" && !payload.issue?.pull_request;
   const isLabel = eventName === "pull_request_target" && payload.action === "labeled" &&
     ["speckit:plan-execution", "speckit:implement"].includes(label);
-  const isAnswer = eventName === "issue_comment" && payload.action === "created" &&
-    payload.issue?.pull_request && payload.comment?.user?.type === "User";
-  if ((!isIssue && !isLabel && !isAnswer) ||
+  const command = eventName === "issue_comment" && payload.action === "created" &&
+    payload.comment?.user?.type === "User" && payload.comment.user.login === context.actor &&
+    parseCommand(payload.comment.body);
+  if ((!isIssue && !isLabel && !command) ||
       !await maintainer(github, repo, context.actor)) return { action: "noop" };
-  if (isIssue) {
-    if (payload.issue.state !== "open") return { action: "noop" };
-    const branch = `speckit/issue-${payload.issue.number}`;
-    const existing = await github.paginate(github.rest.pulls.list, {
-      ...repo, state: "all", head: `${repo.owner}:${branch}`, per_page: 100,
-    });
-    if (existing.length) {
-      const managed = existing.find((pr) => managedPR(pr, repo) === payload.issue.number);
-      if (managed) {
-        if (latest(await reports(github, repo, managed.number), ["clarify"])) return { action: "noop" };
-        return { action: "clarify", issue: payload.issue.number, pr: managed.number, comment: 0 };
-      }
-      if (existing.some((pr) => pr.merged_at ||
-          managedPR(pr, repo, "closed") !== payload.issue.number)) return { action: "noop" };
+  if (isIssue) return routeIssue(github, repo, payload.issue, 0);
+  if (command) {
+    if (!commands.includes(command.phase)) throw new Error(`Unsupported Spec Kit command: /speckit-${command.phase}`);
+    const onPR = Boolean(payload.issue.pull_request);
+    if (command.phase === "specify") {
+      if (onPR) throw new Error("/speckit-specify runs on an issue, not a pull request");
+      if (command.argument) throw new Error("/speckit-specify takes no argument; edit the issue instead");
+      return routeIssue(github, repo, payload.issue, payload.comment.id);
     }
-    try {
-      await github.rest.repos.getBranch({ ...repo, branch });
-      return { action: "noop" };
-    } catch (error) {
-      if (error.status !== 404) throw error;
-    }
-    return { action: "specify", issue: payload.issue.number, pr: 0, comment: 0 };
+    if (!onPR) throw new Error(`/speckit-${command.phase} runs on a Spec Kit pull request`);
   }
-  const number = isAnswer ? payload.issue.number : payload.pull_request.number;
+  const number = command ? payload.issue.number : payload.pull_request.number;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
   const issue = managedPR(pr, repo);
   if (!issue) return { action: "noop" };
   const entries = await reports(github, repo, number);
-  if (isAnswer) {
+  const comment = command ? payload.comment.id : 0;
+  if (command?.phase === "clarify") {
     const pending = latest(entries, ["clarify"]);
-    if (!pending || pending.result.status !== "waiting" ||
-        payload.comment.id <= (pending.result.answer_id || pending.comment.id) ||
-        !payload.comment.body?.trim() || payload.comment.user.login !== context.actor) return { action: "noop" };
-    return { action: "clarify", issue, pr: number, comment: payload.comment.id };
+    if (pending?.result.status === "waiting") {
+      if (!command.argument) throw new Error("Answer the pending questions with /speckit-clarify followed by your answers");
+      if (comment <= (pending.result.answer_id || pending.comment.id)) return { action: "noop" };
+    }
+    return { action: "clarify", issue, pr: number, comment };
   }
+  const action = command?.phase ?? (label === "speckit:implement" ? "implement" : "plan");
   const current = await artifacts(github, repo, pr);
   requireResult(latest(entries, ["clarify"])?.result, ["spec.md"], current.hashes);
-  if (label === "speckit:implement") {
+  if (action === "implement") {
     const analysis = latest(entries, ["analyze", "reanalyze"])?.result;
     if (analysis?.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
     requireResult(analysis, documents, current.hashes, { clean: true });
   }
-  return { action: label === "speckit:implement" ? "implement" : "plan", issue, pr: number, comment: 0 };
+  return { action, issue, pr: number, comment };
 }
 
 async function prepare({ github, context, inputs }) {
@@ -220,9 +252,14 @@ async function prepare({ github, context, inputs }) {
   const run = `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`;
   const data = { phase: inputs.phase, run, repository: `${context.repo.owner}/${context.repo.repo}` };
   if (inputs.phase === "specify") {
+    const command = Number(inputs.comment)
+      ? await maintainerCommand(github, context.repo, Number(inputs.comment), Number(inputs.issue), "specify") : null;
+    if (command?.argument) throw new Error("/speckit-specify takes no argument; edit the issue instead");
     const { data: issue } = await github.rest.issues.get({ ...context.repo, issue_number: Number(inputs.issue) });
     if (issue.pull_request || issue.state !== "open" ||
-        !issue.labels.some((label) => label.name === "speckit:specify")) throw new Error("Issue is not eligible for specification");
+        (!command && !issue.labels.some((label) => label.name === "speckit:specify"))) {
+      throw new Error("Issue is not eligible for specification");
+    }
     Object.assign(data, { issue: issue.number, title: issue.title, body: issue.body || "", branch: `speckit/issue-${issue.number}` });
   } else {
     if (!phases.includes(inputs.phase)) throw new Error("Unsupported Spec Kit phase");
@@ -247,16 +284,17 @@ async function prepare({ github, context, inputs }) {
     }
     Object.assign(data, { pr: pr.number, head: pr.head.sha, branch: pr.head.ref, feature: current.feature });
     if (Number(inputs.comment)) {
-      if (inputs.phase !== "clarify") throw new Error("Only clarification accepts comment answers");
-      const { data: answer } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(inputs.comment) });
-      const pending = latest(entries, ["clarify"]);
-      if (!answer.issue_url.endsWith(`/issues/${pr.number}`) || answer.user.type !== "User" ||
-          !await maintainer(github, context.repo, answer.user.login) ||
-          !pending || pending.result.status !== "waiting" ||
-          answer.id <= (pending.result.answer_id || pending.comment.id)) {
-        throw new Error("Comment is not an eligible maintainer clarification answer");
+      if (!commands.includes(inputs.phase)) throw new Error("Only command entry phases accept a maintainer command");
+      const command = await maintainerCommand(github, context.repo, Number(inputs.comment), pr.number, inputs.phase);
+      const pending = inputs.phase === "clarify" ? latest(entries, ["clarify"]) : undefined;
+      if (pending?.result.status === "waiting") {
+        if (!command.argument || command.id <= (pending.result.answer_id || pending.comment.id)) {
+          throw new Error("Comment is not an eligible maintainer clarification answer");
+        }
+        Object.assign(data, { answer: { id: command.id, body: command.argument, author: command.author }, previous: pending.result });
+      } else {
+        data.command = command;
       }
-      Object.assign(data, { answer: { id: answer.id, body: answer.body, author: answer.user.login }, previous: pending.result });
     }
   }
   fs.mkdirSync(directory, { recursive: true });
@@ -351,7 +389,7 @@ function selectFeature() {
   }
 }
 
-module.exports = { artifactHashes, parseResult, route, requireResult, prepare, verify };
+module.exports = { artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify };
 
 if (require.main === module) {
   if (process.argv[2] === "select-feature") {

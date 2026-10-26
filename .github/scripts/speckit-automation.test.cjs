@@ -6,6 +6,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 const {
   artifactHashes,
+  parseCommand,
   parseResult,
   route,
   requireResult,
@@ -41,6 +42,17 @@ function comment(data, overrides = {}) {
   };
 }
 
+function command(body, overrides = {}) {
+  return {
+    id: 20, body, issue_url: "https://api.github.com/repos/example/broker/issues/42",
+    user: { login: "maintainer", type: "User" }, ...overrides,
+  };
+}
+
+function commandEvent(entry, issue = { number: 42, pull_request: {} }) {
+  return { action: "created", issue, comment: entry };
+}
+
 function fixture(eventName, payload, options = {}) {
   const calls = [];
   const pr = {
@@ -57,7 +69,7 @@ function fixture(eventName, payload, options = {}) {
       repos: {
         getCollaboratorPermissionLevel: async (args) => {
           calls.push(args);
-          return { data: { permission: options.permission || "write" } };
+          return { data: { permission: options.permissions?.[args.username] || options.permission || "write" } };
         },
         getBranch: async ({ owner, repo: name, branch }) => {
           assert.equal(`${owner}/${name}`, `${repo.owner}/${repo.repo}`);
@@ -211,20 +223,96 @@ test("only Specify-created PRs are managed, whatever their body claims", async (
   }
 });
 
-test("only maintainer comments posted after pending questions become answers", async () => {
-  const payload = {
-    action: "created", issue: { number: 42, pull_request: {} },
-    comment: { id: 20, body: "1. Option A", user: { login: "maintainer", type: "User" } },
-  };
+test("slash commands must start the comment and keep their multi-line parameter", () => {
+  assert.deepEqual(parseCommand("/speckit-plan"), { phase: "plan", argument: "" });
+  assert.deepEqual(parseCommand("/speckit-plan\nUse pgx"), { phase: "plan", argument: "Use pgx" });
+  assert.deepEqual(parseCommand("/speckit-clarify Q1: A\nQ2: B\n"), { phase: "clarify", argument: "Q1: A\nQ2: B" });
+  assert.deepEqual(parseCommand("/speckit-tasks"), { phase: "tasks", argument: "" });
+  for (const body of [" /speckit-plan", "> /speckit-plan", "Please /speckit-plan", "/speckit-plan2",
+    "/speckit-plan: now", "/speckit-", "/speckit-PLAN", "", undefined]) {
+    assert.equal(parseCommand(body), null);
+  }
+});
+
+test("plain comments never answer pending clarification questions", async () => {
   const pending = comment(result("clarify", { status: "waiting", questions: ["Which users can access the feature?"] }));
-  const f = fixture("issue_comment", payload, { comments: [pending] });
-  assert.deepEqual(await route(f), { action: "clarify", issue: 7, pr: 42, comment: 20 });
-  const old = fixture("issue_comment", { ...payload, comment: { ...payload.comment, id: 10 } }, { comments: [pending] });
-  assert.equal((await route(old)).action, "noop");
-  const read = fixture("issue_comment", payload, { permission: "read", comments: [pending] });
+  const plain = commandEvent(command("1. Option A"));
+  assert.equal((await route(fixture("issue_comment", plain, { comments: [pending] }))).action, "noop");
+  const read = fixture("issue_comment", commandEvent(command("/speckit-clarify 1. Option A")), { permission: "read", comments: [pending] });
   assert.equal((await route(read)).action, "noop");
-  const complete = fixture("issue_comment", payload, { comments: [comment(result("clarify"))] });
-  assert.equal((await route(complete)).action, "noop");
+});
+
+test("/speckit-clarify answers pending questions or starts a fresh clarification", async () => {
+  const pending = comment(result("clarify", { status: "waiting", questions: ["Which users can access the feature?"] }));
+  const answer = commandEvent(command("/speckit-clarify 1. Option A"));
+  assert.deepEqual(await route(fixture("issue_comment", answer, { comments: [pending] })),
+    { action: "clarify", issue: 7, pr: 42, comment: 20 });
+  await assert.rejects(route(fixture("issue_comment", commandEvent(command("/speckit-clarify")), { comments: [pending] })), /answers/);
+  const old = commandEvent(command("/speckit-clarify 1. Option A", { id: 10 }));
+  assert.equal((await route(fixture("issue_comment", old, { comments: [pending] }))).action, "noop");
+  const focus = commandEvent(command("/speckit-clarify Focus on authorization"));
+  for (const comments of [[], [comment(result("clarify"))], [comment(result("clarify", { status: "blocked" }))]]) {
+    assert.deepEqual(await route(fixture("issue_comment", focus, { comments })),
+      { action: "clarify", issue: 7, pr: 42, comment: 20 });
+  }
+});
+
+test("/speckit-specify on an issue uses the command as authorization", async () => {
+  const issue = { number: 7, state: "open" };
+  const specify = commandEvent(command("/speckit-specify"), issue);
+  assert.deepEqual(await route(fixture("issue_comment", specify, { branchMissing: true })),
+    { action: "specify", issue: 7, pr: 0, comment: 20 });
+  const existing = {
+    number: 42, state: "open", draft: true,
+    user: { login: "github-actions[bot]", type: "Bot" },
+    body: "<!-- speckit-issue: 7 -->",
+    head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } },
+    base: { repo: { full_name: "example/broker" } },
+  };
+  assert.deepEqual(await route(fixture("issue_comment", specify, { existing: [existing] })),
+    { action: "clarify", issue: 7, pr: 42, comment: 0 });
+  assert.equal((await route(fixture("issue_comment", commandEvent(command("/speckit-specify"), { number: 7, state: "closed" })))).action, "noop");
+  await assert.rejects(route(fixture("issue_comment", commandEvent(command("/speckit-specify Also add SSO"), issue), { branchMissing: true })), /no argument/);
+});
+
+test("commands in the wrong place or with unknown names fail visibly for maintainers", async () => {
+  const issue = { number: 7, state: "open" };
+  await assert.rejects(route(fixture("issue_comment", commandEvent(command("/speckit-plan"), issue))), /runs on a Spec Kit pull request/);
+  await assert.rejects(route(fixture("issue_comment", commandEvent(command("/speckit-specify")))), /runs on an issue/);
+  for (const name of ["tasks", "analyze", "remediate", "reanalyze", "planx"]) {
+    await assert.rejects(route(fixture("issue_comment", commandEvent(command(`/speckit-${name}`)))), /Unsupported Spec Kit command/);
+  }
+});
+
+test("commands from read-only users, bots, other authors, or edited comments do not execute", async () => {
+  const cases = [
+    fixture("issue_comment", commandEvent(command("/speckit-plan")), { permission: "read" }),
+    fixture("issue_comment", commandEvent(command("/speckit-tasks")), { permission: "read" }),
+    fixture("issue_comment", commandEvent(command("/speckit-plan", { user: { login: "github-actions[bot]", type: "Bot" } }))),
+    fixture("issue_comment", commandEvent(command("/speckit-plan", { user: { login: "contributor", type: "User" } }))),
+    fixture("issue_comment", { ...commandEvent(command("/speckit-plan")), action: "edited" }),
+    fixture("issue_comment", commandEvent(command("Looks good, /speckit-plan later"))),
+  ];
+  for (const f of cases) assert.equal((await route(f)).action, "noop");
+});
+
+test("/speckit-plan and /speckit-implement enforce the same gates as their labels", async () => {
+  const plan = commandEvent(command("/speckit-plan Prefer the existing sqlx repositories"));
+  await assert.rejects(route(fixture("issue_comment", plan)), /clarification/i);
+  const clarified = [comment(result("clarify"))];
+  assert.deepEqual(await route(fixture("issue_comment", plan, { comments: clarified })),
+    { action: "plan", issue: 7, pr: 42, comment: 20 });
+  const implement = commandEvent(command("/speckit-implement"));
+  await assert.rejects(route(fixture("issue_comment", implement, {
+    comments: [...clarified, comment(result("analyze"), { id: 12 })],
+  })), /reanaly/i);
+  assert.deepEqual(await route(fixture("issue_comment", implement, {
+    comments: [...clarified, comment(result("reanalyze"), { id: 13 })],
+  })), { action: "implement", issue: 7, pr: 42, comment: 20 });
+  for (const pr of [
+    { head: { ref: "speckit/issue-7", repo: { full_name: "outsider/broker" } } },
+    { user: { login: "contributor", type: "User" } },
+  ]) assert.equal((await route(fixture("issue_comment", plan, { pr, comments: clarified }))).action, "noop");
 });
 
 test("invalid historical results do not hide later clarification questions", async () => {
@@ -233,7 +321,7 @@ test("invalid historical results do not hide later clarification questions", asy
   const pending = comment(result("clarify", {
     status: "waiting", questions: ["Which command is supported?"],
   }));
-  const answer = { id: 20, body: "Q1: A", user: { login: "maintainer", type: "User" } };
+  const answer = { id: 20, body: "/speckit-clarify Q1: A", user: { login: "maintainer", type: "User" } };
   const f = fixture("issue_comment", {
     action: "created", issue: { number: 42, pull_request: {} }, comment: answer,
   }, { comments: [invalid, pending] });
@@ -243,7 +331,7 @@ test("invalid historical results do not hide later clarification questions", asy
 test("a published waiting clarification can receive a maintainer answer without permitting planning", async (t) => {
   preparationIO(t);
   const pending = comment(result("clarify", { status: "waiting", questions: ["Which command is supported?"] }));
-  const answer = { id: 20, issue_url: pending.issue_url, body: "Q1: A", user: { login: "maintainer", type: "User" } };
+  const answer = { id: 20, issue_url: pending.issue_url, body: "/speckit-clarify Q1: A", user: { login: "maintainer", type: "User" } };
   const f = fixture("issue_comment", {
     action: "created", issue: { number: 42, pull_request: {} }, comment: answer,
   }, { comments: [pending, answer] });
@@ -502,7 +590,7 @@ test("a clean initial analysis cannot bypass the independent reanalysis", async 
 test("queued maintainer replies are accepted once even if the next questions were posted later", async () => {
   const payload = {
     action: "created", issue: { number: 42, pull_request: {} },
-    comment: { id: 25, body: "The remaining answer is B", user: { login: "maintainer", type: "User" } },
+    comment: { id: 25, body: "/speckit-clarify The remaining answer is B", user: { login: "maintainer", type: "User" } },
   };
   const pending = comment(result("clarify", {
     status: "waiting", answer_id: 20, questions: ["Which policy applies?"],
@@ -536,6 +624,65 @@ test("specification context preserves only the issue title and body, not comment
   assert.equal(data.branch, "speckit/issue-7");
   assert.equal(data.answer, undefined);
   assert.deepEqual(JSON.parse(saved[0].body), data);
+});
+
+test("a /speckit-specify command authorizes specification without the label or its comment text", async (t) => {
+  preparationIO(t);
+  const issue = { number: 7, state: "open", labels: [], title: "Feature", body: "Original issue body" };
+  const trigger = command("/speckit-specify", { issue_url: "https://api.github.com/repos/example/broker/issues/7" });
+  const f = fixture("issue_comment", {}, { issue, comments: [trigger] });
+  f.github.rest.issues.listComments = async () => assert.fail("Specification must not fetch comments");
+  const data = await prepare({ ...f, inputs: { phase: "specify", issue: 7, comment: 20 } });
+  assert.equal(data.body, issue.body);
+  assert.equal(data.command, undefined);
+  await assert.rejects(prepare({ ...f, inputs: { phase: "specify", issue: 7 } }), /not eligible/);
+  trigger.body = "/speckit-specify Also add SSO";
+  await assert.rejects(prepare({ ...f, inputs: { phase: "specify", issue: 7, comment: 20 } }), /no argument/);
+  trigger.body = "/speckit-plan";
+  await assert.rejects(prepare({ ...f, inputs: { phase: "specify", issue: 7, comment: 20 } }), /eligible maintainer command/);
+});
+
+test("workers re-validate the command comment before using its parameter", async (t) => {
+  preparationIO(t);
+  const clarified = comment(result("clarify"));
+  const guidance = command("/speckit-plan Prefer the existing sqlx repositories");
+  const f = fixture("issue_comment", {}, { comments: [clarified, guidance] });
+  const data = await prepare({ ...f, inputs: { phase: "plan", pr: 42, comment: 20 } });
+  assert.deepEqual(data.command, { id: 20, author: "maintainer", argument: "Prefer the existing sqlx repositories" });
+  assert.equal(data.previous.phase, "clarify");
+  assert.equal(data.answer, undefined);
+  for (const overrides of [
+    { body: "/speckit-implement Prefer the existing sqlx repositories" },
+    { body: "Prefer the existing sqlx repositories" },
+    { issue_url: "https://api.github.com/repos/example/broker/issues/43" },
+    { user: { login: "github-actions[bot]", type: "Bot" } },
+    { user: { login: "contributor", type: "User" } },
+  ]) {
+    const forged = fixture("issue_comment", {}, {
+      comments: [clarified, { ...guidance, ...overrides }], permissions: { contributor: "read" },
+    });
+    await assert.rejects(prepare({ ...forged, inputs: { phase: "plan", pr: 42, comment: 20 } }), /eligible maintainer command/);
+  }
+  const tasks = fixture("issue_comment", {}, { comments: [comment(result("plan")), command("/speckit-tasks")] });
+  await assert.rejects(prepare({ ...tasks, inputs: { phase: "tasks", pr: 42, comment: 20 } }), /command/);
+
+  const implement = fixture("issue_comment", {}, {
+    comments: [comment(result("reanalyze")), command("/speckit-implement Start with the storage adapters")],
+  });
+  const implementation = await prepare({ ...implement, inputs: { phase: "implement", pr: 42, comment: 20 } });
+  assert.equal(implementation.command.argument, "Start with the storage adapters");
+});
+
+test("clarification commands become answers only while questions are pending", async (t) => {
+  preparationIO(t);
+  const focus = command("/speckit-clarify Focus on authorization");
+  const fresh = await prepare({ ...fixture("issue_comment", {}, { comments: [focus] }), inputs: { phase: "clarify", pr: 42, comment: 20 } });
+  assert.deepEqual(fresh.command, { id: 20, author: "maintainer", argument: "Focus on authorization" });
+  assert.equal(fresh.answer, undefined);
+
+  const pending = comment(result("clarify", { status: "waiting", questions: ["Which policy applies?"] }));
+  const empty = fixture("issue_comment", {}, { comments: [pending, command("/speckit-clarify")] });
+  await assert.rejects(prepare({ ...empty, inputs: { phase: "clarify", pr: 42, comment: 20 } }), /clarification answer/);
 });
 
 test("tasks consume only a current successful plan from the same pipeline run", async (t) => {

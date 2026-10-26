@@ -11,6 +11,9 @@ on:
       issue:
         type: number
         required: true
+      comment:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
 timeout-minutes: 40
@@ -63,6 +66,12 @@ of the feature to be built, not a summary of the automation. Include:
 - The exact tracking marker `<!-- speckit-issue: N -->`, where N is the issue number.
 - The exact feature marker `<!-- speckit-feature: specs/NNN-feature-name -->`,
   using the new feature's actual relative directory.
+- A short "Maintainer commands" section. List these commands, each with its
+  one-line usage. A command must start a new PR comment.
+  - `/speckit-clarify <answers>` answers the pending questions.
+    `/speckit-clarify [focus]` starts a new clarification.
+  - `/speckit-plan [technical guidance]` plans, creates tasks, and analyzes.
+  - `/speckit-implement [guidance]` implements after a clean reanalysis.
 
 If an earlier draft PR for this issue was closed without merging and its
 branch deleted, create a fresh draft PR on `context.branch` from the current
