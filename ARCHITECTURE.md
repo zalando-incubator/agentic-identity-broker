@@ -346,6 +346,8 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
+**Service-specific session recovery (End-User API 2.0.0, [ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -832,7 +834,7 @@ Legacy missing identity remains usable only for stored services whose transition
 
 Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
 
-RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the sessions landing page as `error_uri` before provider authentication. Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 044). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
 
 Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
 
@@ -1362,6 +1364,8 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from the broker release tag. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. End-User API `2.0.0` replaces the `1.0.0` RFC 8693 recoverable-session `error_uri` target; Admin API versioning is separate. The [End-User API migration guide](docs/api/enduser-api.md#end-user-api-200-reconnect-a-third-party-session) and [ADR 044](adrs/044-service-specific-session-recovery-url.md) record the change.
+
 (List any third-party services or external APIs the system interacts with.)
 
 Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
@@ -1430,6 +1434,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
 - [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
 
 ### Security & Encryption
 
@@ -1704,6 +1709,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
+
+**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and encoded `/sessions` return URI. The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 

@@ -2133,7 +2133,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			assert.Equal(t, tt.wantCode, tokenErr.Code())
 			if tt.wantReauthURI {
 				assert.Equal(t, 400, tokenErr.HTTPStatus())
-				assert.Equal(t, "https://broker.example.com/sessions", tokenErr.ErrorURI())
+				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
 			} else {
 				assert.Equal(t, 500, tokenErr.HTTPStatus())
 				assert.Empty(t, tokenErr.ErrorURI())
@@ -2572,6 +2572,9 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				assert.Equal(t, tc.wantCode, tokenErr.Code())
 				assert.Equal(t, tc.wantStatus, tokenErr.HTTPStatus())
 				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+				if tc.wantCode == "invalid_grant" {
+					assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+				}
 				if tc.wantCause != nil {
 					assert.ErrorIs(t, err, tc.wantCause)
 				}

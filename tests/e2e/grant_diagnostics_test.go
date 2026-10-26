@@ -645,7 +645,9 @@ var _ = Describe("Grant Observation Context", func() {
 				Expect(len(body)).To(Equal(3), "missing-session JSON must retain only the established OAuth fields")
 				Expect(body["error"]).To(Equal("invalid_grant"))
 				Expect(body["error_description"]).To(Equal("User session is unavailable. Please re-authenticate."))
-				Expect(body["error_uri"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/sessions"))
+				publicURL := fixture.Config.Server.EndUser.PublicURL
+				recoveryURI := publicURL + "/api/third-party/" + fixture.S1.ID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+				Expect(body["error_uri"]).To(Equal(recoveryURI))
 			case http.StatusInternalServerError:
 				outcome = "configuration_error"
 				Expect(len(body)).To(Equal(2), "an unregistered candidate must not add identity or recovery fields to the OAuth error")

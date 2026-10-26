@@ -106,14 +106,14 @@ The response is a 503 JSON immediate response. Diagnostics never contain the sub
 
 If exchange fails, the sidecar does not forward the original credential. Generic errors, broker 4xx responses without `error_uri` (including 429), 5xx errors, network errors, and timeouts return HTTP 500. The body is `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
 
-If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It adds an RFC 6750 challenge and keeps the JSON-RPC `-32042` URL elicitation body with `id: null`. For provider-session recovery, the URL opens `/sessions`. It does not start provider login automatically.
+If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It forwards the broker URI unchanged in the RFC 6750 challenge and JSON-RPC `-32042` URL elicitation body (`id: null`). For provider-session recovery, the broker URI starts that service's third-party OAuth2 authorization with PKCE and returns to `/sessions` after the provider callback.
 
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 
-{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions","message":"User session is unavailable. Please re-authenticate."}]}}}
 ```
 
 The challenge always has `error="insufficient_scope"`. It adds `error_description` and `error_uri` only when each value uses its RFC 6750 §3 character set. It does not provide `scope`, `resource_metadata`, or `realm`. Generic failures have no `WWW-Authenticate` header. Expired assertions and open circuits also have no challenge and keep their 503 responses.

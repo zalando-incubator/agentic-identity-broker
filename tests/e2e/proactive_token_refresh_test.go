@@ -312,6 +312,11 @@ var _ = Describe("Proactive Token Refresh", func() {
 
 	Describe("User Story 2: when an agent exchanges an expired session token", func() {
 		var principal string
+		recoveryURI := func() string {
+			publicURL := config.Server.EndUser.PublicURL
+			return publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+		}
+
 		BeforeEach(func() {
 			principal = fixtures.DefaultPrincipal().String()
 			Expect(fixtures.SeedPlaceholderGrantData(ctx, store, serviceID)).To(Succeed())
@@ -354,7 +359,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				oldRefresh := bytes.Clone(before.EncryptedRefreshToken)
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusBadRequest)
 				Expect(body).To(HaveKeyWithValue("error", "invalid_grant"))
-				Expect(body).To(HaveKeyWithValue("error_uri", config.Server.EndUser.PublicURL+"/sessions"))
+				Expect(body).To(HaveKeyWithValue("error_uri", recoveryURI()))
 				Expect(body).NotTo(HaveKey("access_token"))
 				Expect(upstream.GetTokenRequests()).To(BeEmpty())
 				Expect(storedSession(principal).EncryptedAccessToken).To(Equal(oldAccess))
@@ -381,7 +386,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				expiry := *before.AccessTokenExpiresAt
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusBadRequest)
 				Expect(body).To(HaveKeyWithValue("error", "invalid_grant"))
-				Expect(body).To(HaveKeyWithValue("error_uri", config.Server.EndUser.PublicURL+"/sessions"))
+				Expect(body).To(HaveKeyWithValue("error_uri", recoveryURI()))
 				Expect(body).NotTo(HaveKey("access_token"))
 				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
 				after := storedSession(principal)

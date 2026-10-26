@@ -178,6 +178,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				sessionRepo.session.UpstreamClientID = nil
 			}
 			config := oauth2session.DefaultConfig()
+			config.CallbackBaseURL = "https://broker.example.com"
 			config.MaxRetries = 1
 			config.CredentialFiles = map[string]ports.CredentialFileBinding{canonicalID: binding}
 			if tc.sourceReason == model.CredentialSourceReasonMissingBinding {
@@ -229,7 +230,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 					assert.Empty(t, tokenErr.ErrorURI())
 				} else {
 					assert.Equal(t, http.StatusBadRequest, tokenErr.HTTPStatus())
-					assert.Equal(t, sessionService.SessionRecoveryURL(), tokenErr.ErrorURI())
+					assert.Equal(t, "https://broker.example.com/api/third-party/"+svcID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
 				}
 				wantDetail := tc.detail
 				if tc.sourceReason != "" && tc.detail == "" {

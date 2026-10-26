@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.0.0
+  version: 2.0.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -777,17 +777,16 @@ paths:
       operationId: initiateOAuth2Flow
       summary: Initiate OAuth2 authorization flow
       description: |
-        Initiates an OAuth2 authorization code flow with PKCE for the specified third-party service. Redirects the user to the third-party's authorization endpoint.
+        Starts third-party OAuth2 authorization for the specified service with PKCE.
+        It redirects the browser to that service's provider, not the broker's
+        `/oauth2/authorize` endpoint. A successful provider callback returns
+        to the validated `redirect_uri`. RFC 8693 recoverable session errors
+        link to this GET with `redirect_uri` set to the configured public URL's
+        `/sessions` page. For example:
+        `https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
 
-        PKCE applies to every service; the authorization-code exchange presents a client credential only for confidential services.
-
-        The flow:
-
-        1. Generates PKCE code verifier and challenge
-        2. Creates JWE state token containing principal, PKCE verifier, service ID, redirect_uri
-        3. Redirects user to third-party authorization endpoint
-
-        The redirect_uri parameter must match the host of the incoming request (same-origin validation).
+        The broker seals the principal, PKCE verifier, service ID, and return URI
+        in JWE state. The return URI must have the configured public origin.
       tags:
         - Third-Party Sessions
       security:
@@ -821,7 +820,7 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: invalid_redirect_uri
-                message: redirect_uri must match the host of the request
+                message: redirect_uri must be on the same origin as the configured public URL
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1496,15 +1495,16 @@ paths:
 
         **Session Recovery:**
         - A missing session, or an expired session without a usable refresh token, returns
-          400 `invalid_grant` with `error_uri` set to the sessions landing page
-          (`<public URL>/sessions`). This is a browser landing page, not an automatic login redirect.
+          400 `invalid_grant`. Its `error_uri` starts authorization for the resolved service
+          at `<public URL>/api/third-party/{service-id}/oauth2/authorize` with an encoded
+          `<public URL>/sessions` return URI.
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
-          `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
-          landing-page `error_uri`. The stored tokens are left unchanged, and the refresh token
-          is recorded as expired. Later exchanges return the same error without contacting the
-          provider until the user reconnects the service.
+          `invalid_grant`, the broker returns 400 `invalid_grant` with the same service-specific
+          `error_uri`. The stored tokens are left unchanged, and the refresh token is recorded
+          as expired. Later exchanges return the same error without contacting the provider
+          until the user reconnects the service.
         - A missing required client-identity association or a mismatch with the selected client ID
-          returns 400 `invalid_grant` with the same sessions landing-page `error_uri`.
+          returns 400 `invalid_grant` with the same service-specific `error_uri`.
           The broker stops before provider authentication and leaves the established session unchanged.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
@@ -1696,13 +1696,13 @@ paths:
                   value:
                     error: "invalid_grant"
                     error_description: "User session is unavailable. Please re-authenticate."
-                    error_uri: "https://broker.example.com/sessions"
+                    error_uri: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
                 refresh_rejected:
                   summary: Provider rejected the stored refresh token
                   value:
                     error: "invalid_grant"
                     error_description: "User session is unavailable. Please re-authenticate."
-                    error_uri: "https://broker.example.com/sessions"
+                    error_uri: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
                 missing_upstream_client_id:
                   summary: Agent has no upstream client_id (proxy mode)
                   value:
@@ -4076,8 +4076,8 @@ components:
         error_uri:
           type: string
           format: uri
-          description: URI directing a user to required broker action, such as re-authentication or the target-agent consent-management page for an impersonation request.
-          example: "https://docs.example.com/errors/access_denied"
+          description: URI for broker action. Recoverable third-party sessions link to the resolved service's OAuth2 initiation GET with an encoded same-origin `/sessions` return URI. Grant failures link to the agent's consent page.
+          example: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 
     # ---- Tool Approval Schemas ----
     ApprovalError:

@@ -137,8 +137,10 @@ var _ = Describe("Third-Party Session Reliability", func() {
 
 		resp, body := exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-		Expect(body["access_token"]).To(Equal("recovered-after-outage"))
-		Expect(body).NotTo(HaveKey("error_uri"))
+		recoveredToken, ok := body["access_token"].(string)
+		Expect(ok && recoveredToken == "recovered-after-outage").To(BeTrue())
+		_, hasErrorURI := body["error_uri"]
+		Expect(hasErrorURI).To(BeFalse())
 	})
 
 	// US2-S10 from specs/008-thirdparty-oauth2-sessions/spec.md
@@ -161,14 +163,17 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(session.RefreshTokenExpiresAt).To(BeNil())
 		resp, body := exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-		Expect(body["access_token"]).To(Equal("account-b-access"))
+		connectedToken, ok := body["access_token"].(string)
+		Expect(ok && connectedToken == "account-b-access").To(BeTrue())
 		expired := time.Now().Add(-time.Minute)
 		session.AccessTokenExpiresAt = &expired
 		Expect(testStorage.UserSessions().Create(ctx, session)).To(Succeed())
 		resp, body = exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 		Expect(body["error"]).To(Equal("invalid_grant"))
-		Expect(body["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+		recoveryURI := config.Server.EndUser.PublicURL + "/api/third-party/" + githubID.String() + "/oauth2/authorize?redirect_uri=" +
+			url.QueryEscape(config.Server.EndUser.PublicURL+"/sessions")
+		Expect(body["error_uri"]).To(Equal(recoveryURI))
 
 		mockUpstream.WithRefreshToken("account-b-refresh")
 		Expect(completeConnect().Query().Get("success")).To(Equal("true"))
@@ -179,10 +184,11 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		mockUpstream.WithAccessToken("account-b-refreshed")
 		resp, body = exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-		Expect(body["access_token"]).To(Equal("account-b-refreshed"))
+		refreshedToken, ok := body["access_token"].(string)
+		Expect(ok && refreshedToken == "account-b-refreshed").To(BeTrue())
 		form, err := url.ParseQuery(mockUpstream.GetLastBody())
 		Expect(err).NotTo(HaveOccurred())
-		Expect(form.Get("refresh_token")).To(Equal("account-b-refresh"))
+		Expect(form.Get("refresh_token") == "account-b-refresh").To(BeTrue())
 	})
 
 	// US2-S11 from specs/008-thirdparty-oauth2-sessions/spec.md

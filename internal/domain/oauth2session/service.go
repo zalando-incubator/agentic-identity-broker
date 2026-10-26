@@ -347,9 +347,11 @@ func (s *OAuth2SessionService) GetCallbackBaseURL() string {
 	return s.config.CallbackBaseURL
 }
 
-// SessionRecoveryURL returns a browser entry point without OAuth2 redirect parameters.
-func (s *OAuth2SessionService) SessionRecoveryURL() string {
-	return strings.TrimRight(s.config.CallbackBaseURL, "/") + "/sessions"
+// ServiceAuthorizeURL starts provider authentication for a resolved service and
+// returns the browser to session management after the callback.
+func (s *OAuth2SessionService) ServiceAuthorizeURL(serviceID id.ServiceID) string {
+	base := strings.TrimRight(s.config.CallbackBaseURL, "/")
+	return base + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(base+"/sessions")
 }
 
 // InitiateFlowResult contains the data needed to redirect user to authorization.

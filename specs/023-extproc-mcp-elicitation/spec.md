@@ -9,7 +9,7 @@
 
 When an AI agent's delegated session has expired, the ExtProc token exchange service must signal that the user must re-authenticate — not silently fail. This feature closes two gaps:
 
-1. The identity broker includes a re-auth URL (`error_uri`) in its RFC 6749 error responses when a session is missing or expired.
+1. The identity broker includes a service-specific third-party OAuth2 authorization URL (`error_uri`) in its RFC 6749 error response for recoverable session failures.
 2. ExtProc translates that `error_uri` into a JSON-RPC `-32042` `URLElicitationRequiredError` returned directly to the calling agent, following the MCP 2025-11-05 specification.
 
 As a prerequisite improvement, JWT validation error messages are also made more informative for operators by including expected `iss`/`aud` values.
@@ -36,16 +36,16 @@ An AI agent makes an MCP tool call via agentgateway. The user's delegated OAuth2
 
 ### User Story 1 Amendment - HTTP 403 Re-authentication Challenge (2026-10-26)
 
-This amendment supersedes only the HTTP status of the re-authentication response (Scenario 3 and FR-002's HTTP 200) and the non-MCP 503 in Feature 043's `exchangeErrorResponse` matrix. The JSON-RPC body (FR-002–FR-004), headers-phase delivery (FR-006), and the broker's `error_uri` (FR-001) remain authoritative. The stakeholder requested and confirmed this API change on 2026-10-26 (Principle X).
+This amendment changes only the ExtProc HTTP status (Scenario 3 and FR-002's former HTTP 200) and Feature 043's former non-MCP 503. The JSON-RPC body (FR-002–FR-004) and headers-phase delivery (FR-006) remain authoritative. Feature 013's 2026-10-26 User Story 5 Amendment defines the broker `error_uri` target. The stakeholder confirmed both changes on 2026-10-26.
 
 For a non-transient broker exchange error with `error_uri`, ExtProc returns HTTP 403 for every protocol and processing mode. It sets `Content-Type: application/json` and exactly one `www-authenticate` mutation. The challenge attributes occur in this order: `error`, `error_description`, `error_uri`. The `error` value is `insufficient_scope`. ExtProc includes a nonempty description only when every byte matches RFC 6750 §3 `%x20-21 / %x23-5B / %x5D-7E`. It includes the URI only when every byte matches `%x21 / %x23-5B / %x5D-7E`. Invalid attributes are omitted, not escaped. The challenge never includes `scope`, `resource_metadata`, or `realm`. The body remains the existing URL-elicitation JSON-RPC error with `id: null` and a fresh UUID v4 `elicitationId`. ExtProc does not mutate `Authorization` on failure.
 
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 
-{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions","message":"User session is unavailable. Please re-authenticate."}]}}}
 ```
 
 **Acceptance Scenarios**:
@@ -104,7 +104,7 @@ A step-up-capable MCP client uses the gateway's protected-resource metadata to r
 
 ## Concrete Example Journeys
 
-**Cast**: Alice (`alice@example.com`) uses the Research Assistant (agent ID `a1b2c3d4-e5f6-7890-abcd-ef1234567890`) at `https://gw.example.com/mcp`. The broker is `https://broker.example.com`; its recovery URL is `https://broker.example.com/sessions`.
+**Cast**: Alice (`alice@example.com`) uses the Research Assistant (agent ID `a1b2c3d4-e5f6-7890-abcd-ef1234567890`) at `https://gw.example.com/mcp`. The broker is `https://broker.example.com`. The resolved third-party service is `550e8400-e29b-41d4-a716-446655440000`. Its recovery URL is `https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
 
 ### Journey 1 — A provider session expires mid-session (User Story 1 Amendment, Scenarios 1–3)
 
@@ -133,7 +133,7 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token=<agent-
 HTTP/1.1 400 Bad Request
 Content-Type: application/json
 
-{"error":"invalid_grant","error_description":"User session is unavailable. Please re-authenticate.","error_uri":"https://broker.example.com/sessions"}
+{"error":"invalid_grant","error_description":"User session is unavailable. Please re-authenticate.","error_uri":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"}
 ```
 
 The broker response matches `OAuth2Error` in `api/enduser/openapi.yaml`.
@@ -143,20 +143,22 @@ The broker response matches `OAuth2Error` in `api/enduser/openapi.yaml`.
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/sessions"
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 
-{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/sessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions","message":"User session is unavailable. Please re-authenticate."}]}}}
 ```
 
 **Step 4 — 10:02:00Z: Alice reconnects the service**
 
-After initialize, mcp-go returns `URLElicitationRequiredError` for the failed tool call. Alice opens `/sessions` and reconnects. The next tool call succeeds.
+After initialize, mcp-go returns `URLElicitationRequiredError` for the failed tool call. Alice opens the service-specific `error_uri`. The broker starts provider OAuth with PKCE. The provider callback returns Alice to `/sessions`, and the next tool call succeeds.
 
 ### Journey 2 — A step-up-capable client re-authorizes and retries (User Story 3, Scenario 1)
 
 **Step 1 — 11:00:00Z: The client receives a challenge**
 
 The gateway returns the 403 from Journey 1, step 3, for a tool call made with the initial token.
+
+This client starts a separate broker authorization-code step-up through `/oauth2/authorize`. A user who follows the broker-provided `error_uri` instead starts OAuth for the resolved third-party service; that link never targets broker `/oauth2/authorize`.
 
 **Step 2 — 11:00:01Z: The client discovers protected-resource metadata**
 
@@ -251,7 +253,7 @@ User Story 2 (JWT diagnostics) is unchanged by the 2026-10-26 amendment.
 
 ### Functional Requirements
 
-- **FR-001**: The identity broker token exchange endpoint MUST include `error_uri` in RFC 6749 §5.2 error responses when a user session is not found or has expired, pointing to the service-specific re-authorisation URL.
+- **FR-001**: For a recoverable session failure, the broker token exchange endpoint MUST set `error_uri` to `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. It MUST use the configured public URL and resolved service UUID. This supersedes the earlier direct sessions-page target (Feature 013 User Story 5 Amendment, 2026-10-26).
 
 - **FR-002**: ExtProc MUST parse the `error_uri` field from non-2xx token exchange responses. When present on a non-transient error, it MUST return HTTP 403 with a `WWW-Authenticate: Bearer error="insufficient_scope"` challenge and a JSON-RPC `-32042` error body. The body contains an `elicitations` array with one entry of `mode="url"` and `url` set to the `error_uri` value (amended 2026-10-26; formerly HTTP 200).
 
@@ -274,7 +276,7 @@ User Story 2 (JWT diagnostics) is unchanged by the 2026-10-26 amendment.
 - **SR-001**: The `error_uri` value MUST be sourced from the broker response and must not be constructed from user-supplied input.
 - **SR-002**: JWT validation MUST use typed error matching against the JWT library's error hierarchy — `strings.Contains` on error messages is prohibited as a validation mechanism.
 - **SR-003**: Token values (subject tokens, access tokens) MUST NOT appear in client-facing error messages.
-- **SR-004**: The `error_uri` re-auth URL MUST use the broker's configured `PublicURL` as the base, ensuring it resolves to the correct public endpoint.
+- **SR-004**: The broker MUST construct the `error_uri` authorization URL from its configured `PublicURL` and the resolved service UUID. It MUST encode the fixed same-origin `/sessions` return URI, not use a caller-supplied URL.
 - **SR-005**: Each challenge attribute value MUST consist only of its RFC 6750 §3 characters (`error_description`: %x20-21 / %x23-5B / %x5D-7E; `error_uri`: %x21 / %x23-5B / %x5D-7E). A value outside its set omits the attribute; it is never escaped.
 
 ---
@@ -295,7 +297,7 @@ User Story 2 (JWT diagnostics) is unchanged by the 2026-10-26 amendment.
 
 - agentgateway version is 0.12.0. Future versions may process body-phase `ImmediateResponse` correctly; this spec is valid for 0.12.0 behaviour.
 - The MCP `URLElicitationRequiredError` (-32042) is as defined in the MCP specification 2025-11-05.
-- The broker's public base URL for re-auth links is already configured via `ServerInstanceConfig.PublicURL` — no new configuration field is needed.
+- The broker's configured `ServerInstanceConfig.PublicURL` supplies both the authorization URL origin and the fixed `/sessions` return origin. The service-specific GET starts provider OAuth with PKCE; the callback returns to `/sessions`. No new configuration field is needed.
 - RFC 6749 §5.2 `error_uri` is an optional extension field; existing clients that do not inspect it are unaffected.
 - (2026-10-26) The E2E gateway is agentgateway v1.5.0 (`cr.agentgateway.dev/agentgateway:v1.5.0`). It copies ImmediateResponse status, headers, and body into its direct response.
 - The challenge follows MCP 2025-11-25 Authorization, Scope Challenge Handling.

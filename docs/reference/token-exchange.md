@@ -214,15 +214,17 @@ No service has the requested URI in its `protected_resources`.
 ```json
 {
   "error": "invalid_grant",
-  "error_description": "User has no active session with the requested service"
+  "error_description": "User session is unavailable. Please re-authenticate.",
+  "error_uri": "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 }
 ```
 
-Rejected subject credentials do not require provider-session recovery.
-A missing, expired, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
-This URI opens the existing session-management page. It does not automatically start provider login.
-The page's Refresh action uses an existing refresh token. It cannot replace a missing or rejected token.
-Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
+Rejected subject credentials do not require provider-session recovery and have no recovery URI.
+A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
+The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
+The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`.
+Opening the link starts third-party OAuth with PKCE. The provider callback returns to `/sessions`.
+The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
@@ -296,13 +298,13 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
+Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
 Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
 Credential-file availability failures use `credential_source_unavailable` with outcome `infrastructure_error` at the affected session stage.
 They return `server_error` without a recovery URI. Missing or mismatched established client identity instead uses `credential_identity_changed`, `reauth_required`, and `reauthenticate` targeting `provider_session`.
-Identity failures return `invalid_grant` with the sessions landing page as `error_uri`, before provider authentication.
+Identity failures return `invalid_grant` with the same service-specific `error_uri` before provider authentication.
 
 Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
 Origin metadata maps to exchange diagnostics without inspecting error text.

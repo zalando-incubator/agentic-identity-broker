@@ -808,8 +808,9 @@ Google requires two `authorization_params` to support token refresh:
   token.
 
 If either parameter is absent, the broker stores no refresh token. After the access token expires, token exchange returns `invalid_grant`.
-The response’s `error_uri` points to the broker sessions page at the public URL’s `/sessions` path.
-There, the user can authenticate again with the provider.
+Its `error_uri` starts third-party OAuth for the resolved service, for example:
+`https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
+The broker uses its configured public URL and encodes the `/sessions` return URI. The provider callback returns the user to `/sessions`.
 
 :::tip
 After you add or change `authorization_params`, existing sessions do not change. A user
