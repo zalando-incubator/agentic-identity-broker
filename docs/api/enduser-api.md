@@ -17,7 +17,7 @@ Content-Type: application/json
 
 Open this URI in the authenticated user's browser. The GET starts third-party authorization with PKCE. The provider callback returns to `/sessions`. The `redirect_uri` value is the percent-encoded, fixed same-origin return URI. The broker uses its configured public URL and the resolved service UUID, not a client-supplied origin or service ID. Do not replace the link with broker `/oauth2/authorize` or a raw provider URL.
 
-Missing, expired, scope-deficient, provider-rejected, and client-identity-mismatched sessions use this link. Grant errors keep their `/agents/{agent-id}` link. Other failures have no `error_uri`. The broker token endpoint sends no `WWW-Authenticate` for these errors. ExtProc forwards the broker URI unchanged in its HTTP 403 challenge and URL elicitation. See [the token exchange reference](../reference/token-exchange.md#400-invalid_grant) and [ADR 044](../../adrs/044-service-specific-session-recovery-url.md).
+Missing, expired, scope-deficient, provider-rejected, and client-identity-mismatched sessions use this link. Grant errors keep their `/agents/{agent-id}` link. Other failures have no `error_uri`. The broker token endpoint sends no `WWW-Authenticate` for these errors. ExtProc forwards the broker URI unchanged in its HTTP 403 challenge and URL elicitation. See [the token exchange reference](../reference/token-exchange.md#400-invalid_grant) and [ADR 044](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/044-service-specific-session-recovery-url.md).
 
 ## CIMD Client Authentication
 
