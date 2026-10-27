@@ -250,9 +250,9 @@ The Compose gateway trusts upstream JWTs from `http://upstream-oauth2:9001` and 
 
 An upstream JWT must contain `token-exchange-broker` in `aud` and identify a registered agent in `azp`. A local JWT must contain the same audience and its broker-issued `agent_id` claim.
 
-A broker-issued CIMD token keeps the metadata URL in `agent_id`. The Compose broker also signs its registered agent UUID in `agent_uuid`. Token exchange uses that UUID only for tokens issued by `http://localhost:3000`. Upstream tokens retain `azp` resolution. Tokens issued before this configuration change lack `agent_uuid` and need a new authorization flow.
+A broker-issued CIMD token keeps its metadata URL in `agent_id`. Compose also signs the registered agent UUID as `azp`. The issuer-gated exchange policy uses that UUID only for broker-issued tokens. When upstream tokens do not carry an `agent_id`, token exchange resolves their `azp` through the client ID registry. Tokens issued before this policy change may lack `azp` and require a new authorization flow.
 
-Compose uses in-memory broker storage. A restart discards grants, provider sessions, signing keys, and manually registered agents. The startup script re-registers Visual Studio Code with a new agent UUID. Obtain a new token, approve delegation, and reconnect the provider after a restart.
+Compose uses in-memory broker storage. A restart discards grants, provider sessions, signing keys, and manually registered agents. The startup script re-registers Visual Studio Code and Claude Code with new agent UUIDs. Obtain a new token, approve delegation, and reconnect the provider after a restart.
 
 ### Use a sample-client token
 

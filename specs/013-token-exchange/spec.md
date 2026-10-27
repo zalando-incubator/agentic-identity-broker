@@ -291,6 +291,28 @@ The broker can issue local subject tokens while still requiring privileged-clien
 1. **Given** local mode has an external client-assertion trust anchor and a valid locally issued subject_token, **When** a privileged client sends a token-exchange request with a valid externally issued client_assertion, **Then** the system processes the exchange.
 2. **Given** local mode has an external client-assertion trust anchor, **When** a privileged client sends a token-exchange request with a broker-issued client_assertion, **Then** the system returns 401 Unauthorized with error=invalid_client.
 3. **Given** hybrid mode configures a client-assertion JWKS URI distinct from the upstream JWKS, **When** a client_assertion is issued by the configured issuer and signed by the configured JWKS, **Then** the system validates the assertion using the configured JWKS and processes the exchange.
+4. **Given** a CIMD agent has an active grant and provider session, and local token policy signs its registered UUID in `azp`,
+   **When** the user completes CIMD authorization and a privileged client exchanges the broker-issued JWT with a valid external assertion,
+   **Then** token exchange uses `azp` only for the broker issuer, finds the grant by UUID, and returns the provider token. The JWT's `agent_id` remains the CIMD metadata URL.
+
+**Concrete example journey (Scenario 4)**: Alice approves a grant for the Agent registered with `client_id=https://claude.ai/oauth/claude-code-client-metadata`. Its broker UUID is `550e8400-e29b-41d4-a716-446655440000`. The broker uses this local token policy:
+
+```yaml
+oauth2_authorization_server:
+  local:
+    token_claims_expression: '{"aud": "token-exchange-broker", "azp": agent.id}'
+token_exchange:
+  claim_extraction:
+    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "https://broker.example.com" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
+```
+
+At 10:00, Alice completes authorize → consent → grant → re-authorize with S256 PKCE. The Agent exchanges the code. The resulting broker-signed JWT contains these decoded claims:
+
+```json
+{"iss":"https://broker.example.com","sub":"alice@example.com","agent_id":"https://claude.ai/oauth/claude-code-client-metadata","azp":"550e8400-e29b-41d4-a716-446655440000","aud":"token-exchange-broker"}
+```
+
+At 10:01, a gateway presents this token as `subject_token`, its externally signed `client_assertion`, and the registered resource to `POST /oauth2/token`. The broker validates both signatures, uses the signed `azp` UUID to find Alice's grant, and returns the stored provider access token. For an upstream-issued subject token, the CEL expression instead resolves the upstream `azp` through the client ID registry.
 
 ---
 

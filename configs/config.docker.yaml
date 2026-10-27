@@ -61,8 +61,8 @@ oauth2_authorization_server:
   local:
     token_ttl: 1h
     # For CIMD clients, agent_id is the metadata URL; agent.id is the registered UUID.
-    # Sign the UUID separately so token exchange can look up the stored grant.
-    token_claims_expression: '{"aud": "token-exchange-broker", "agent_uuid": agent.id}'
+    # Sign the registered agent UUID in azp so token exchange can find its grant.
+    token_claims_expression: '{"aud": "token-exchange-broker", "azp": agent.id}'
 
 
   # CIMD: resolve agents via Client ID Metadata Document URLs.
@@ -110,8 +110,8 @@ token_exchange:
   claim_extraction:
     # Extract user principal from the subject_token's sub claim
     principal_expression: "subject_token.sub"
-    # Trust the signed agent_uuid only for broker-issued tokens; upstream tokens still resolve azp.
-    agent_id_expression: 'has(subject_token.agent_uuid) && subject_token.iss == "http://localhost:3000" ? subject_token.agent_uuid : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
+    # Trust local azp as an agent UUID only for broker-issued tokens.
+    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "http://localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
   authorization:
     type: "cel"
     cel:

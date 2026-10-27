@@ -75,7 +75,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		config.TokenExchange = ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{
 				PrincipalExpression: "subject_token.sub",
-				AgentIDExpression:   "subject_token.azp",
+				AgentIDExpression:   fmt.Sprintf(`has(subject_token.azp) && subject_token.iss == %q ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))`, config.Server.EndUser.PublicURL),
 			},
 			Authorization: ports.AuthorizationConfig{
 				Type: "cel",
