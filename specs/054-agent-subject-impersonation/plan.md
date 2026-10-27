@@ -26,7 +26,7 @@ The technical approach:
 - Two port DTOs change: `ImpersonationRuleConfig` and `ImpersonationMintInput`. No port interface changes.
 - The reserved claim is minted in `oauth2server` and rejected in `tokenexchange`.
 - Presence-sensitive YAML shape checks run in the config loader.
-- A narrowly superseding ADR (044, **Proposed**) covers the deviation from ADR 032.
+- A narrowly superseding ADR (044, **Proposed**) covers ADR 032 decisions 1 and 2 for agents only: delegation is skipped and minted `sub` is target-derived, not necessarily the successfully extracted principal. Human invariants remain intact.
 
 Decisions are in [research.md](research.md) R1–R11.
 
@@ -70,7 +70,7 @@ No new module.
 **Scale/Scope**:
 - About 9 production Go files: `ports/config.go`, `ports/oauth2.go`, `domain/impersonation/{rule,service,subject_category}.go`, `domain/oauth2server/strategies.go`, `domain/tokenexchange/{service,diagnostic,constants}.go`, `config/{loader,validator}.go`, and the token handler audit.
 - 1 new E2E file with 12 scenarios.
-- Docs: OpenAPI, configuration, reference, concepts, examples, Helm chart (3 files), `ARCHITECTURE.md`.
+- Docs: OpenAPI, `docs/api/enduser-api.md`, configuration, reference, concepts, examples, Helm chart (3 files), `ARCHITECTURE.md`.
 
 ## Constitution Check
 
@@ -87,7 +87,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Config Examples**: The plan adds `examples/config/impersonation-agent-subject.yaml` (agent-only, human-only, and dual alternatives), updates `examples/config/impersonation.yaml` to show the explicit `[human]` setting and the omission note, and references both from `examples/config/README.md`.
 - [x] **Helm Deployment Contract**: The broker is chart-managed. Updates: `values.schema.json` (the strict rule schema gains `allowed_subject_categories`), the `values.yaml` comment example, and `README.md`. `templates/configmap.yaml` already renders the impersonation subtree verbatim; the plan verifies this with a render check.
 - [x] **API Design First**: The OpenAPI delta is drafted in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml). It adds no new path, parameter, or error code: only description text, examples, and the reserved token claim.
-- [x] **API Documentation**: The delta targets `api/enduser/openapi.yaml`. `docs/api/` has no token-endpoint page, and the plan adds none (scope). `docs/concepts/token-exchange.md` and `docs/reference/token-exchange.md` are updated.
+- [x] **API Documentation**: The delta targets `api/enduser/openapi.yaml`. Extend the existing token-endpoint documentation in `docs/api/enduser-api.md` with agent-subject requests, decoded claims, eligibility and denial examples, aligned with the confirmed OpenAPI. Retain the `docs/concepts/token-exchange.md` and `docs/reference/token-exchange.md` updates and cross-link the guides (Principle IV).
 - [ ] **API Changes**: **Pending stakeholder confirmation** of C1 (the `subject_category` claim), C2 (the category-ineligible mapping), and C3 (the third-party rejection mapping). These must be confirmed on PR #293 before implementation. This is a pre-implementation gate, not a planning violation.
 - [x] **Database Design**: No schema change (spec Assumptions; data-model).
 - [x] **E2E Acceptance Tests**: All 12 scenarios are mapped below. They are written in Phase 2f before implementation.
@@ -100,7 +100,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 
 - [x] **Security-First**: Agent issuance is off by default (omission means `[human]`). It requires signed and verified credentials and exact UUID equality. CEL still decides. Agent tokens are categorically rejected for third-party exchange. ADR 031 is not widened, and the unsigned-subject guard is added. Audit events are credential-free.
 - [x] **Architecture Docs**: `ARCHITECTURE.md` §3.1.y (the user-delegation sentence, category gating, and the reserved claim), the token-exchange flow description, and the glossary.
-- [ ] **ADRs**: [ADR 044](adr-044-draft.md) is drafted with **Status: Proposed**. It narrowly supersedes ADR 032 decision 1 for agent-category requests. **Stakeholder acceptance is required before implementation** (Principle II). This plan does not accept it.
+- [ ] **ADRs**: [ADR 044](adr-044-draft.md) is drafted with **Status: Proposed**. It narrowly supersedes ADR 032 decisions 1 and 2 for agent-category requests: the delegation exception and target-derived minted subject despite a potentially different extracted principal. All principal extractions remain mandatory; eligible human requests retain decisions 1–6. **Stakeholder acceptance is required before implementation** (Principle II). This plan does not accept it.
 - [x] **Library-First Security**: Verification and signing stay in `jwx`. Classification is a string comparison of an already-verified claim. There is no custom cryptography.
 - [x] **Zalando Guidelines**: No new resource or field naming beyond the snake_case claim and config key.
 - [x] **End-User Docs**: `docs/configuration.md` (the key, defaults, examples, the human-only collision rejection, and the reserved-claim consequence) and `docs/concepts/token-exchange.md` (the third-party limitation). This satisfies FR-012.
@@ -116,8 +116,8 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 
 **Post-Design Re-check**: PASS.
 - The design adds no persistence, no port interface, and no request input.
-- The design does not change established human responses: the existing E2E suites must pass unchanged.
-- Deviations from binding decisions are limited to ADR 032 decision 1, routed through the Proposed ADR 044.
+- The design preserves established human delegation and responses except for the confirmed human-only signed exact-equality rejection; the existing E2E suites must pass unchanged.
+- Deviations from binding decisions are limited to ADR 032 decisions 1 and 2 for agents only, routed through the Proposed ADR 044. T003 must obtain acceptance of both precise exceptions before implementation.
 - Principle XIV journeys in the spec match the contracts. The proposed claim appears in the OpenAPI example, and the spec's Journey 1 claim excerpt explicitly allows additional local claims.
 
 ## Spec Alignment
@@ -183,7 +183,7 @@ tests/e2e/fixtures/impersonation_rules.go             # new, agent/human/dual ru
 tests/integration/helm_chart_test.go                  # schema + render check for the new key
 
 api/enduser/openapi.yaml                              # after confirmation
-docs/configuration.md, docs/reference/token-exchange.md, docs/concepts/token-exchange.md
+docs/api/enduser-api.md, docs/configuration.md, docs/reference/token-exchange.md, docs/concepts/token-exchange.md
 examples/config/impersonation.yaml, examples/config/impersonation-agent-subject.yaml, examples/config/README.md
 charts/agentic-identity-broker/{values.yaml,values.schema.json,README.md}
 ARCHITECTURE.md, AGENTS.md (glossary + ADR index once ADR 044 is accepted)
@@ -287,6 +287,6 @@ ARCHITECTURE.md, AGENTS.md (glossary + ADR index once ADR 044 is accepted)
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Deviation from Accepted ADR 032 decision 1, through the Proposed superseding ADR 044 | FR-005 requires consent-free agent issuance. ADR 032 forbids it with no opt-out. | A synthetic delegation violates FR-005. Amending ADR 032 in place is forbidden (Principle II). |
+| Agent-only deviation from Accepted ADR 032 decisions 1 and 2, through the Proposed superseding ADR 044 | FR-005 requires consent-free agent issuance; FR-004 and R2/R7 require target-derived minted `sub`, not necessarily the successfully extracted principal. ADR 032 requires delegation and extracted-principal-as-minted-`sub`. | A synthetic delegation violates FR-005. Restricting extraction to equal the raw `sub` would silently add a constraint. Amending ADR 032 in place is forbidden (Principle II); acceptance of both precise exceptions is required at T003. |
 | New reserved token claim `subject_category` | FR-011 and the spec forbid inferring the category from the subject text alone. | `sub == agent_id` inference misclassifies human tokens with colliding text and tokens issued before the feature. |
 | YAML shape check in addition to struct validation | CFG-001 requires rejecting `null` and scalars, while omission defaults to `[human]`. Viper's weak decoding erases that difference. | Struct-only validation would silently accept `null` as human-only and a scalar `agent` as `[agent]`. |

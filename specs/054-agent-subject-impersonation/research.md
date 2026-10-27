@@ -6,17 +6,17 @@ Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5) and 
 
 ## R1 — Governance: narrow superseding ADR for consent-free agent issuance
 
-**Decision**: Draft [ADR 044](adr-044-draft.md) with **Status: Proposed**. It supersedes only decision 1 of [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md). The delegation check is no longer required for an **agent-category** request: a request whose verified signed `sub` exactly equals the target UUID, on a rule that explicitly allows `agent`. Decisions 2–6 of ADR 032 stay in force for every human-category request. ADR 031 and ADR 034 are unchanged.
+**Decision**: Draft [ADR 044](adr-044-draft.md) with **Status: Proposed**. It supersedes decisions 1 and 2 of [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md) for agent-category requests only. Classification depends solely on verified signed raw `sub`/target-UUID equality, independently of rule eligibility. For eligible, CEL-authorized agents, delegation is skipped and the minted subject is the target UUID rather than necessarily the extracted subject principal. All principal extractions must still succeed; no new extraction-equality restriction is introduced. ADR 032 decisions 1–6 stay in force for eligible human-category requests; signed equality on human-only rules is intentionally ineligible even with active human delegation. ADR 031 and ADR 034 are unchanged.
 
 The draft lives in the feature directory because the planning phase may only write feature artifacts. After acceptance, the Phase 2 governance task moves it to `adrs/044-agent-subject-impersonation.md` (or the next free number) and adds it to the AGENTS.md ADR index.
 
-**Rationale**: ADR 032 is Accepted and merged. It requires delegation for every subject and has no opt-out. Under Principle II, deviating from it needs an Accepted superseding ADR. This phase drafts that ADR but does not accept it. A stakeholder must accept it before any task that changes the delegation path.
+**Rationale**: ADR 032 is Accepted and merged. It requires delegation for every subject and has no opt-out. Under Principle II, deviating from it needs an Accepted superseding ADR. This phase drafts that ADR but does not accept it. A stakeholder must accept the precise agent-only supersession of both decisions 1 and 2 before any task that changes the delegation or minted-subject path.
 
 **Alternatives considered**:
 - *Amend ADR 032 in place*: forbidden for a merged Accepted ADR.
 - *Satisfy ADR 032 with a synthetic grant for the agent*: violates FR-005 (no synthetic human grants or sessions).
 
-**Needs confirmation**: Stakeholder acceptance of ADR 044.
+**Needs confirmation**: Stakeholder acceptance of ADR 044's explicit agent-only supersession of ADR 032 decisions 1 and 2.
 
 ## R2 — Category classification: exact comparison of the verified `sub` claim
 
@@ -84,7 +84,7 @@ The constants `tokenexchange.SubjectCategoryClaim = "subject_category"` and `tok
 ## R7 — Agent token content: subject, email, and audit identity
 
 **Decision**:
-- `sub` and `agent_id` are both the target UUID (FR-004). The minted subject is `target.Agent.ID.String()`. This equals the verified `sub` by construction.
+- `sub` and `agent_id` are both the target UUID (FR-004). The minted subject is `target.Agent.ID.String()`. This equals the raw verified `sub` by construction, but need not equal the successfully extracted subject principal. That agent-only departure from ADR 032 decision 2 requires the Proposed ADR 044's acceptance; humans retain the extracted-principal invariant.
 - `act` is unchanged: the extracted actor and the verified actor issuer. The broker keeps it even when the actor and subject strings are equal (FR-007).
 - `email_expression` is **not evaluated** for an agent-category request, and no `email` reaches local token CEL. An agent token is not a token for a human (Journey 1 shows no email).
 - `AuditRecord` gains `SubjectCategory` (`human` | `agent`). `SubjectIdentity` holds the represented identity: the minted `sub` for both categories. The handler logs `subject_category`, plus the existing rule, target, client, and actor fields (SR-004).
@@ -128,10 +128,11 @@ The constants `tokenexchange.SubjectCategoryClaim = "subject_category"` and `tok
 - `api/enduser/openapi.yaml`, from [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml).
 - `docs/configuration.md` and `docs/reference/token-exchange.md` (new diagnostic details).
 - `docs/concepts/token-exchange.md` (third-party limitation).
+- `docs/api/enduser-api.md`: extend its existing `POST /oauth2/token` documentation with agent-subject requests, decoded token claims, the eligibility matrix and human-only signed collision rejection, and category/third-party denial examples. Keep these aligned with the confirmed OpenAPI contract and link the concept/reference/configuration guides.
 - `examples/config/impersonation.yaml`, plus `examples/config/impersonation-agent-subject.yaml`, referenced from `examples/config/README.md`.
 - The Helm chart files listed in R8.
 
-No `docs/api/` page covers the token endpoint today, so none is added (scope discipline).
+The existing `docs/api/enduser-api.md` token-endpoint page is extended rather than exempted: rendered end-user API examples are required by Constitution IV.
 
 ## Resolved unknowns
 

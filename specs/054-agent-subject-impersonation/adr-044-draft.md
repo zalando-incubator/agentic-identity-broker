@@ -4,7 +4,7 @@
 **Status**: Proposed
 **Feature**: 054-agent-subject-impersonation
 **Location**: Draft kept in the feature directory during planning. On acceptance it moves to `adrs/044-agent-subject-impersonation.md`.
-**Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decision 1, for agent-category requests only
+**Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
 ## Context
 
@@ -20,14 +20,11 @@ The clarified specification limits the extension:
 
 ## Decision
 
-1. **Narrow supersession.** Decision 1 of ADR 032 no longer applies to an **agent-category** request: one where all of the following hold:
-   - The matched rule lists `agent` in `allowed_subject_categories`.
-   - The rule's subject role is signed (`verification: jwks`) and the subject credential verified.
-   - The verified `sub` claim is a string exactly equal to the target agent's canonical UUID.
+1. **Classification and narrow supersession.** An **agent-category** request is one where the rule's subject role is signed (`verification: jwks`), the subject credential verified, and its raw verified `sub` claim is a string exactly equal to the target agent's canonical UUID. Classification is independent of `allowed_subject_categories`; that list is a separate eligibility gate (decision 3).
 
-   For such a request, the broker issues the token after rule authorization without calling `UserDelegationVerifier`, and creates no grant or session.
-2. **Human requests are unchanged.** For every other request, ADR 032 decisions 1–6 continue to apply in full. That covers every unsigned subject and every subject whose `sub` does not exactly equal the target UUID.
-3. **Category gating precedes delegation.** A rule that does not allow the classified category falls through, like a policy denial. A human delegation failure stays terminal and is never retried as an agent request. An agent-category request on a human-only rule is never retried as a human request.
+   For an eligible, CEL-authorized agent-category request, this ADR supersedes ADR 032 decision 1's mandatory delegation check and decision 2's extracted-principal-as-minted-`sub` invariant. All configured principal extractions must still succeed, but the minted `sub` is the target UUID (equal to the raw verified `sub`), not necessarily the extracted subject principal. No additional equality restriction is imposed on `principal_expression`. The broker does not call `UserDelegationVerifier` and creates no grant or session.
+2. **Human invariants are preserved.** Every unsigned subject and every signed subject whose raw verified `sub` does not exactly equal the target UUID is human-category. For eligible human requests, ADR 032 decisions 1–6 continue to apply in full: the extracted principal remains both the byte-for-byte minted `sub` and the delegation principal. Signed exact equality is never human-category, including on human-only rules.
+3. **Category gating precedes delegation.** A rule that does not allow the classified category falls through, like a policy denial. A human delegation failure stays terminal and is never retried as an agent request. Signed exact equality on a human-only rule (including the omitted setting) is ineligible even when an identically named human has active delegation, and is never retried as human on that rule. Ordered evaluation may consider later rules only under their own eligibility and authorization constraints.
 4. **Default is human only.** When `allowed_subject_categories` is omitted, the rule allows `[human]`. Empty, unknown, duplicate, or non-list values fail startup. A rule with an unsigned subject cannot allow `agent`.
 5. **Distinguishable tokens.** An agent-subject token carries the reserved claim `subject_category: "agent"`. Local token-claims policy cannot set or remove this claim. Human tokens do not carry it.
 6. **No third-party exchange.** RFC 8693 third-party exchange rejects any validated subject token whose `subject_category` is `agent`, with `403 access_denied`. The check runs before any grant or session lookup, so a human principal with the same identifier text cannot lend credentials to the request.
@@ -38,7 +35,7 @@ The clarified specification limits the extension:
 ### Positive
 
 - Unattended agent workloads obtain attributable broker tokens without fabricated human identities or consent records.
-- Existing configurations keep exactly their current human behavior, and agent issuance is explicit and limited to a single target.
+- Existing human delegation and response invariants are preserved, except for the intentional human-only signed exact-equality rejection described below. Agent issuance is explicit and limited to a single target.
 - Third-party credentials remain bound to human delegation. Agent tokens cannot reach them through an identifier collision.
 
 ### Negative

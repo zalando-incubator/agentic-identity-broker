@@ -9,7 +9,7 @@ There is no new persisted entity, no new UUID-keyed type, and no migration. The 
 | Entity | Location | Role in this feature |
 | --- | --- | --- |
 | `storage.Agent` | `internal/domain/storage` | The audience-selected target. `ID.String()` is the only value an agent-category `sub` may equal. Its `CanonicalID` remains a routing alias only. |
-| `UserGrant` | `internal/domain/storage` | Required for human-category requests only (ADR 032 decisions 2–6). Never read for agent-category requests or for third-party exchange of agent tokens before rejection. |
+| `UserGrant` | `internal/domain/storage` | Required for eligible human-category requests only (ADR 032 decisions 1–6). Never read for agent-category requests or for third-party exchange of agent tokens before rejection. |
 | `UserSession` | `internal/domain/storage` | Never read for an agent-subject token (FR-011, SR-005). |
 
 ## Configuration: `ImpersonationRuleConfig` (extended)
@@ -65,6 +65,8 @@ This is not a new type. It is held on `ruleResult`:
 | `subject` (represented identity and minted `sub`) | Extracted subject principal | `target.Agent.ID.String()` |
 | email | From `email_expression`, per the existing rules | Not evaluated, not minted |
 | delegation | `UserDelegationVerifier` required | Skipped |
+
+All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception require acceptance of the Proposed ADR 044's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
 
 ## Port change: `ports.ImpersonationMintInput`
 
