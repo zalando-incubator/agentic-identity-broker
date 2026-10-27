@@ -1,0 +1,92 @@
+# Configuration Contract: Agent-Subject Impersonation
+#
+# Feature: 054-agent-subject-impersonation (spec CFG-001..CFG-004, research R8)
+# Extends the 037 contract (specs/037-oauth2-user-impersonation/contracts/impersonation-config.yaml)
+# with one per-rule attribute. Every other key, default, and validation is unchanged.
+#
+# SCOPE: This is a configuration overlay, not a bootable configuration. A complete local-mode base
+# (log, server, storage, encryption, signing key) is supplied by the deployment. The bootable
+# example is delivered during implementation as examples/config/impersonation-agent-subject.yaml.
+# Rule lists are YAML-only (no environment variable or CLI flag), as for all other rule keys.
+#
+# ATTRIBUTE
+#   oauth2_authorization_server.impersonation.rules[].allowed_subject_categories
+#     type:     list of string
+#     enum:     human | agent   (case-sensitive)
+#     length:   1..2, entries distinct; order is not significant
+#     default:  omitted  => [human]   (existing rules keep human-only behavior)
+#     category: agent  <=> the verified signed subject `sub` is byte-for-byte equal to the
+#                         audience-selected target agent's UUID; otherwise human. There is no
+#                         new request input.
+#
+# STARTUP OUTCOMES (fail closed, before traffic)
+#   key omitted                              -> valid, human-only
+#   [human]                                  -> valid, human-only
+#   [agent]                                  -> valid, agent-only
+#   [human, agent] / [agent, human]          -> valid, both
+#   []                                       -> invalid: empty selection
+#   [machine] / [Human]                      -> invalid: unknown category
+#   null                                     -> invalid: an explicit value must be a list (YAML shape check)
+#   human (scalar) / {human: true} (mapping) -> invalid: must be a list (YAML shape check)
+#   [human, human]                           -> invalid: duplicate entry
+#   [agent, 1] / [null]                      -> invalid: entries must be strings (YAML shape check)
+#   [agent] or [human, agent] with roles.subject.verification: none
+#                                            -> invalid: unsigned subjects are human-only (SR-003)
+#                                               [design proposal, research R8; needs confirmation]
+#
+# Error messages name the field path, for example
+#   oauth2_authorization_server.impersonation.rules[0].allowed_subject_categories
+
+oauth2_authorization_server:
+  mode: local
+  local:
+    issuer_uri: "https://broker.example.com"
+    token_ttl: "1h"
+    token_claims_expression: '{"aud": "https://policy.example.com"}'
+
+  impersonation:
+    audience_prefix: "https://broker.example.com/impersonation"
+    rules:
+      # Agent-only (Journey 1). Consent-free issuance for the exact target UUID only.
+      - name: research-machine
+        allowed_subject_categories: [agent]
+        roles:
+          client_assertion:
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: client_assertion.sub
+          actor:
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: actor_token.sub
+          subject:
+            verification: jwks            # Required for agent eligibility.
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: subject_token.sub
+        trusted_issuers:
+          - issuer_uri: "https://idp.example.com"
+            jwks_uri: "https://idp.example.com/jwks.json"
+            allowed_algorithms: [ES256]
+            signs_roles: [client_assertion, actor, subject]
+        authorization:
+          type: cel
+          cel:
+            # Bind the represented agent explicitly. The broker separately enforces
+            # subject_token.sub == target UUID; this predicate does not replace that check.
+            expression: >-
+              client_assertion.sub == 'gateway-prod' &&
+              actor_token.sub == 'research-runner' &&
+              subject_token.sub == '550e8400-e29b-41d4-a716-446655440000' &&
+              request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
+            evaluation_timeout: 100ms
+
+# Alternatives (Journey 2). Each replaces the rule above; they are not installed together:
+#   allowed_subject_categories: [human]          # explicit human-only
+#   (key removed)                                # omitted => human-only
+#   allowed_subject_categories: [human, agent]   # both; non-matching subjects still need delegation
+#
+# HELM (charts/agentic-identity-broker)
+#   values.schema.json rules[].properties.allowed_subject_categories:
+#     {"type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+#      "items": {"type": "string", "enum": ["human", "agent"]}}
+#   values.yaml: commented example under broker.oauth2AuthorizationServer.impersonation.rules[]
+#   README.md:   documents the key, default, and enum
+#   templates/configmap.yaml: unchanged (the impersonation subtree is rendered verbatim)
