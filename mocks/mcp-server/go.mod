@@ -3,7 +3,7 @@ module github.com/agentic-identity-broker/mock-mcp-server
 go 1.27.3
 
 require (
-	github.com/mark3labs/mcp-go v1.0.0
+	github.com/mark3labs/mcp-go v1.3.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
