@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
@@ -86,9 +86,9 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req CreatePermissionSetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 
@@ -244,20 +244,20 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := requestbody.Read(w, r, 64<<10)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 	var req CreatePermissionSetRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := requestbody.Unmarshal(body, &req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 	var rawFields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawFields); err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+	if err := requestbody.Unmarshal(body, &rawFields); err != nil {
+		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
 	_, canonicalIDPresent := rawFields["canonical_id"]

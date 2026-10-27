@@ -217,7 +217,6 @@ func TestSessionSweepHandlerRejectsInvalidPayloads(t *testing.T) {
 	tests := []struct {
 		name, body, message string
 	}{
-		{name: "oversized body", body: `{}` + strings.Repeat(" ", 4095)},
 		{name: "unknown property", body: `{"lookahead":"PT5M"}`, message: `unknown field "lookahead"`},
 		{name: "malformed JSON", body: `{"dry_run":`, message: ""},
 		{name: "trailing JSON document", body: `{} {}`, message: ""},

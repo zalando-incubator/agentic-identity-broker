@@ -21,9 +21,14 @@ import (
 
 func newApprovePatternHandler(t *testing.T) (*ApproveHandler, *memory.ToolApprovalRepository, *storage.ToolApproval) {
 	t.Helper()
+	return newApprovePatternHandlerWithArguments(t, map[string]any{"repo": "acme/app", "title": "Fix bug"})
+}
+
+func newApprovePatternHandlerWithArguments(t *testing.T, arguments map[string]any) (*ApproveHandler, *memory.ToolApprovalRepository, *storage.ToolApproval) {
+	t.Helper()
 	repo := memory.NewToolApprovalRepository()
 	svc := domainapproval.NewService(repo, repo, repo, memory.NewApprovalSyncStateRepository(), nil, domainapproval.NewApprovalRateLimiter(50, 10), domainapproval.NewApprovalSyncBroadcaster(0), time.Minute, "https://broker.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: id.Principal("user@example.com"), AgentID: id.NewAgentID(), ToolName: "create_pull_request", Arguments: map[string]any{"repo": "acme/app", "title": "Fix bug"}, ArgumentsHash: "hash", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", ExpiresAt: time.Now().Add(time.Minute)}
+	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: id.Principal("user@example.com"), AgentID: id.NewAgentID(), ToolName: "create_pull_request", Arguments: arguments, ArgumentsHash: "hash", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", ExpiresAt: time.Now().Add(time.Minute)}
 	if err := domainapproval.ApplyExactPatterns(approval); err != nil {
 		t.Fatal(err)
 	}

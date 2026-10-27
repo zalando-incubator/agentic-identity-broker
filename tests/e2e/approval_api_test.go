@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -227,6 +228,42 @@ var _ = Describe("Tool Approval API", func() {
 			}))
 			Expect(detail.Data.Arguments).To(HaveKeyWithValue("repo", "acme/app"))
 			Expect(detail.Data.Arguments).To(HaveKeyWithValue("title", "Fix bug"))
+		})
+
+		// US3-S1 from specs/024-approval-api-ui/spec.md, with ADR 042 boundary coverage.
+		It("creates an approval at exactly 1 MiB and rejects one extra byte without mutation", func() {
+			const limit = 1048576
+			arguments := map[string]any{"repo": "acme/app", "title": "Fix bug"}
+			body, err := json.Marshal(helpers.CreateApprovalRequest{
+				Metadata:  helpers.CreateApprovalMetadata{Description: "Create a pull request"},
+				ToolName:  "create_pull_request",
+				Arguments: arguments,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			body = append(body, strings.Repeat(" ", limit-len(body))...)
+			Expect(body).To(HaveLen(limit))
+			headers := helpers.ApprovalCreateHeaders(subjectTokenFor(machineAuth, alicePrincipal), machineAuth.ClientAssertion, machineAuth.AgentID)
+			headers["Content-Type"] = "application/json"
+
+			resp, err := server.DirectRequest(http.MethodPost, "/api/approvals", "", headers, bytes.NewReader(append(body, ' ')))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusRequestEntityTooLarge))
+			Expect(resp.Body.Close()).To(Succeed())
+			resp, err = server.AuthenticatedGET("/api/approvals/pending", alicePrincipal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			Expect(decodeJSON[helpers.ApprovalListResponse](resp).Data).To(BeEmpty())
+
+			resp, err = server.DirectRequest(http.MethodPost, "/api/approvals", "", headers, bytes.NewReader(body))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+			created := decodeJSON[helpers.CreateApprovalResponse](resp)
+			resp, err = server.AuthenticatedGET("/api/approvals/"+created.Data.ID, alicePrincipal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+			Expect(detail.Data.Arguments).To(Equal(arguments))
 		})
 
 		// Coverage extension: GET /api/approvals/pending returns the same enriched detail DTO shape as GET /api/approvals/{id}.

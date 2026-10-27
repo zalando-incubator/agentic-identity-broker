@@ -546,7 +546,7 @@ paths:
             type: string
       requestBody:
         required: true
-        description: Grant request with delegated services and optional expiration
+        description: Grant request with delegated services and optional expiration. Maximum body size is 64 KiB (65536 bytes). Exactly one JSON value is required; unknown struct fields and trailing data are rejected. Permission-set map keys remain open.
         content:
           application/json:
             schema:
@@ -619,7 +619,7 @@ paths:
         "204":
           description: Grant revoked successfully (empty granted_permission_sets)
         "400":
-          description: Bad Request - Expired or invalid session token, or invalid grant data.
+          description: Bad Request - Malformed JSON, trailing data, unknown fields, body read failure, expired or invalid session token, or invalid grant data.
           content:
             application/json:
               schema:
@@ -635,6 +635,12 @@ paths:
                   value:
                     error: invalid request
                     message: "grant validation failed: permission set <permission_set_id> is not declared by the agent"
+        "413":
+          description: Request body exceeds 64 KiB (65536 bytes).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1805,6 +1811,7 @@ paths:
         - $ref: "#/components/parameters/TraceparentHeader"
       requestBody:
         required: true
+        description: Maximum body size is 7 MiB (7340032 bytes), allowing sixfold JSON re-encoding expansion of the ExtProc authorization.max_body_size default of 1 MiB plus 1 MiB of envelope headroom. Go's JSON encoder can expand characters such as '<' to six bytes. Exactly one JSON value is required. Unknown request and metadata fields are rejected; arguments allows arbitrary keys and nested values.
         content:
           application/json:
             schema:
@@ -1822,6 +1829,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateApprovalResponse"
+        "400":
+          description: Malformed JSON, trailing data, unknown fields, body read failure, or invalid request data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "413":
+          description: Request body exceeds 7 MiB (7340032 bytes).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "401":
           description: Missing or invalid subject token or client assertion
           content:
@@ -2026,6 +2045,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: Maximum body size is 512 KiB (524288 bytes), which covers the largest stored parameter pattern including six-byte JSON escaping of keys and values. Exactly one JSON value is required; unknown fields and trailing data are rejected. Parameter-pattern map keys remain open.
         content:
           application/json:
             schema:
@@ -2039,8 +2059,15 @@ paths:
                 $ref: "#/components/schemas/ApproveResponse"
         "400":
           description: >-
+            Malformed JSON, trailing data, unknown fields, or body read failure.
             Invalid UUID, missing persistence, or supplied `tool_pattern`.
             Supplied `tool_pattern` returns `invalid_request`: `tool_pattern is not allowed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "413":
+          description: Request body exceeds 512 KiB (524288 bytes).
           content:
             application/json:
               schema:
@@ -2098,6 +2125,7 @@ paths:
             format: uuid
       requestBody:
         required: true
+        description: Maximum body size is 512 KiB (524288 bytes), which covers the largest stored parameter pattern including six-byte JSON escaping of keys and values. Exactly one JSON value is required; unknown fields and trailing data are rejected. Parameter-pattern map keys remain open.
         content:
           application/json:
             schema:
@@ -2111,8 +2139,15 @@ paths:
                 $ref: "#/components/schemas/ScopePreviewResponse"
         "400":
           description: >-
+            Malformed JSON, trailing data, unknown fields, or body read failure.
             Invalid UUID, invalid `params_pattern` JSON type, or supplied `tool_pattern`.
             Supplied `tool_pattern` returns `invalid_request`: `tool_pattern is not allowed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "413":
+          description: Request body exceeds 512 KiB (524288 bytes).
           content:
             application/json:
               schema:
@@ -2165,6 +2200,7 @@ paths:
             format: uuid
       requestBody:
         required: false
+        description: An empty body is allowed. Nonempty bodies must contain exactly one JSON value with no unknown fields or trailing data. Maximum body size is 4 KiB (4096 bytes); body read failures are rejected.
         content:
           application/json:
             schema:
@@ -2177,7 +2213,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/DenyResponse"
         "400":
-          description: Invalid UUID
+          description: Invalid UUID, malformed JSON, trailing data, unknown fields, or body read failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "413":
+          description: Request body exceeds 4 KiB (4096 bytes).
           content:
             application/json:
               schema:
@@ -3200,6 +3242,7 @@ components:
             Empty array if no grants exist.
     CreateOrUpdateGrantRequest:
       type: object
+      additionalProperties: false
       required:
         - granted_permission_sets
       properties:
@@ -4090,6 +4133,7 @@ components:
 
     CreateApprovalRequest:
       type: object
+      additionalProperties: false
       required:
         - metadata
         - tool_name
@@ -4097,6 +4141,7 @@ components:
       properties:
         metadata:
           type: object
+          additionalProperties: false
           required:
             - description
           properties:
@@ -4201,6 +4246,7 @@ components:
 
     ApproveRequest:
       type: object
+      additionalProperties: false
       required:
         - persistence
       properties:
@@ -4219,6 +4265,7 @@ components:
 
     ScopePreviewRequest:
       type: object
+      additionalProperties: false
       properties:
         params_pattern:
           type: object
@@ -4272,6 +4319,7 @@ components:
 
     DenyRequest:
       type: object
+      additionalProperties: false
       properties:
         persistence:
           type: string
