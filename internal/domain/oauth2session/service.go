@@ -1777,15 +1777,15 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		refreshed = true
 		return true, nil
 	})
-	if rejected != nil {
-		return nil, false, provider, rejected
-	}
 	if err != nil {
 		detail := DetailRepositoryUnavailable
-		if refreshed {
+		if refreshed || rejected != nil {
 			detail = DetailPersistenceFailed
 		}
 		return nil, false, provider, sessionRepositoryError(ctx, detail, err)
+	}
+	if rejected != nil {
+		return nil, false, provider, rejected
 	}
 	if current == nil {
 		return nil, false, provider, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)

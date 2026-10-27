@@ -3,6 +3,7 @@ package oauth2session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -216,6 +217,50 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			assert.NotContains(t, err.Error(), cause.Error())
 			assert.NotContains(t, logs.String(), cause.Error())
 		})
+	}
+}
+
+func TestRefreshRejectionMarkerPersistence(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		for _, commitFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("force=%t/commitFails=%t", force, commitFails), func(t *testing.T) {
+				service, provider, session := newOperationTestService(t, io.Discard)
+				cause := errors.New("expiry marker commit failed")
+				service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+					return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+				})
+				service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+					current := *session
+					changed, err := refresh(ctx, &current)
+					require.NoError(t, err)
+					require.True(t, changed)
+					require.NotNil(t, current.RefreshTokenExpiresAt)
+					assert.False(t, current.CanRefresh())
+					if commitFails {
+						return nil, cause
+					}
+					*session = current
+					return &current, nil
+				})
+				var err error
+				if force {
+					_, err = service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
+				} else {
+					_, _, err = service.GetValidAccessToken(context.Background(), session.Principal, provider.ID)
+				}
+				if commitFails {
+					metadata := requireOperationError(t, err, OperationRefresh, DetailPersistenceFailed)
+					assert.Equal(t, DependencySessionRepository, metadata.Dependency())
+					assert.ErrorIs(t, err, cause)
+					assert.NotErrorIs(t, err, ErrRefreshRejected)
+					assert.Nil(t, session.RefreshTokenExpiresAt)
+				} else {
+					requireOperationError(t, err, OperationRefresh, DetailRefreshRejected)
+					assert.ErrorIs(t, err, ErrRefreshRejected)
+					assert.False(t, session.CanRefresh())
+				}
+			})
+		}
 	}
 }
 

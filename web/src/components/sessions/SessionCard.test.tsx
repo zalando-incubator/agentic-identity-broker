@@ -309,6 +309,61 @@ describe('SessionCard', () => {
   });
 
   describe('Login button', () => {
+    it.each([
+      ['missing', false, undefined],
+      ['expired', true, new Date(Date.now() - 60_000).toISOString()],
+    ])(
+      'offers Login when the refresh token is %s and access is valid',
+      async (_, hasRefreshToken, refreshTokenExpiresAt) => {
+        const user = userEvent.setup();
+        const session = createMockSession({
+          has_refresh_token: hasRefreshToken,
+          refresh_token_expires_at: refreshTokenExpiresAt,
+        });
+        const onLogin = vi.fn();
+
+        render(
+          <SessionCard
+            session={session}
+            onTerminate={vi.fn()}
+            onRefresh={vi.fn()}
+            onLogin={onLogin}
+          />,
+        );
+
+        expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+        expect(
+          screen.getByRole('button', { name: /terminate/i }),
+        ).toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /login/i }));
+        expect(onLogin).toHaveBeenCalledWith(session.service_id);
+      },
+    );
+
+    it.each([false, true])(
+      'offers Refresh with unknown refresh expiry and access_token_expired=%s',
+      (accessTokenExpired) => {
+        const session = createMockSession({
+          access_token_expired: accessTokenExpired,
+          refresh_token_expires_at: undefined,
+        });
+
+        render(
+          <SessionCard
+            session={session}
+            onTerminate={vi.fn()}
+            onRefresh={vi.fn()}
+            onLogin={vi.fn()}
+          />,
+        );
+
+        expect(
+          screen.getByRole('button', { name: /refresh/i }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /login/i })).toBeNull();
+      },
+    );
+
     it('calls onLogin with service id for an expired session', async () => {
       const user = userEvent.setup();
       const session = createMockSession({ is_expired: true });

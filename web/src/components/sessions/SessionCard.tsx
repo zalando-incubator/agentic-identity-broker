@@ -106,6 +106,11 @@ export const SessionCard: React.FC<SessionCardProps> = ({
     }).format(new Date(session.refresh_token_expires_at));
   }, [session.refresh_token_expires_at]);
 
+  const canRefresh =
+    session.has_refresh_token &&
+    (!session.refresh_token_expires_at ||
+      new Date(session.refresh_token_expires_at).getTime() > Date.now());
+
   return (
     <Card padding="default" border="subtle" hover="lift">
       {/* Header: Service name and Terminate button */}
@@ -127,7 +132,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               View Details
             </Button>
           )}
-          {onRefresh && session.has_refresh_token && !session.is_expired && (
+          {onRefresh && canRefresh && !session.is_expired && (
             <Button
               variant="secondary"
               size="sm"
@@ -139,7 +144,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               Refresh
             </Button>
           )}
-          {onLogin && session.is_expired && (
+          {onLogin && (session.is_expired || !canRefresh) && (
             <Button
               variant="primary"
               size="sm"
