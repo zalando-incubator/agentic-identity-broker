@@ -14,6 +14,9 @@ on:
       comment:
         type: number
         default: 0
+      review:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md

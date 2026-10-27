@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const phases = ["clarify", "plan", "tasks", "analyze", "remediate", "reanalyze", "implement"];
 const commands = ["specify", "clarify", "plan", "implement"];
+const reviewCommands = ["clarify", "plan"];
 const documents = ["spec.md", "plan.md", "tasks.md"];
 const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
@@ -111,6 +112,34 @@ async function maintainerCommand(github, repo, id, number, phase) {
   return { id: data.id, author: data.user.login, argument: command.argument };
 }
 
+async function reviewCommand(github, repo, id, pr, phase) {
+  const { data: review } = await github.rest.pulls.getReview({ ...repo, pull_number: pr, review_id: id });
+  const command = parseCommand(review.body);
+  if (!review.pull_request_url?.endsWith(`/pulls/${pr}`) || review.user?.type !== "User" ||
+      command?.phase !== phase || !await maintainer(github, repo, review.user.login)) {
+    throw new Error("Review is not an eligible maintainer review command");
+  }
+  const all = await github.paginate(github.rest.pulls.listReviewComments, { ...repo, pull_number: pr, per_page: 100 });
+  const submitted = Date.parse(review.submitted_at);
+  const comments = all.filter((entry) => entry.pull_request_review_id === review.id).sort((a, b) => a.id - b.id);
+  return {
+    id: review.id, author: review.user.login, argument: command.argument,
+    comments: comments.map((entry) => {
+      const root = entry.in_reply_to_id;
+      const context = root ? all.filter((other) => other.pull_request_review_id !== review.id && other.id < entry.id &&
+        (other.id === root || other.in_reply_to_id === root)).sort((a, b) => a.id - b.id) : [];
+      if (context.some((other) => Date.parse(other.updated_at) > submitted)) {
+        throw new Error("Review thread context changed after the review was submitted");
+      }
+      return {
+        path: entry.path, line: entry.line ?? entry.original_line,
+        start_line: entry.start_line ?? entry.original_start_line ?? null, body: entry.body,
+        context: context.map((other) => ({ author: other.user?.login, body: other.body })),
+      };
+    }),
+  };
+}
+
 function managedPR(pr, repo, state = "open") {
   const relatedPrefix = `Related issue: https://github.com/${repo.owner}/${repo.repo}/issues/`;
   const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
@@ -206,15 +235,19 @@ async function route({ github, context }) {
     label === "speckit:specify" && !payload.issue?.pull_request;
   const isLabel = eventName === "pull_request_target" && payload.action === "labeled" &&
     ["speckit:plan-execution", "speckit:implement"].includes(label);
-  const command = eventName === "issue_comment" && payload.action === "created" &&
-    payload.comment?.user?.type === "User" && payload.comment.user.login === context.actor &&
-    parseCommand(payload.comment.body);
+  const isReview = eventName === "pull_request_review" && payload.action === "submitted";
+  const source = isReview ? payload.review :
+    eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
+  const command = source?.user?.type === "User" && source.user.login === context.actor && parseCommand(source.body);
   if ((!isIssue && !isLabel && !command) ||
       !await maintainer(github, repo, context.actor)) return { action: "noop" };
   if (isIssue) return routeIssue(github, repo, payload.issue, 0);
   if (command) {
     if (!commands.includes(command.phase)) throw new Error(`Unsupported Spec Kit command: /speckit-${command.phase}`);
-    const onPR = Boolean(payload.issue.pull_request);
+    if (isReview && !reviewCommands.includes(command.phase)) {
+      throw new Error(`/speckit-${command.phase} runs in a pull request comment, not a review`);
+    }
+    const onPR = isReview || Boolean(payload.issue.pull_request);
     if (command.phase === "specify") {
       if (onPR) throw new Error("/speckit-specify runs on an issue, not a pull request");
       if (command.argument) throw new Error("/speckit-specify takes no argument; edit the issue instead");
@@ -222,19 +255,20 @@ async function route({ github, context }) {
     }
     if (!onPR) throw new Error(`/speckit-${command.phase} runs on a Spec Kit pull request`);
   }
-  const number = command ? payload.issue.number : payload.pull_request.number;
+  const number = command && !isReview ? payload.issue.number : payload.pull_request.number;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
   const issue = managedPR(pr, repo);
   if (!issue) return { action: "noop" };
   const entries = await reports(github, repo, number);
-  const comment = command ? payload.comment.id : 0;
+  const comment = command && !isReview ? payload.comment.id : 0;
+  const routed = (action) => ({ action, issue, pr: number, comment, ...(isReview ? { review: payload.review.id } : {}) });
   if (command?.phase === "clarify") {
     const pending = latest(entries, ["clarify"]);
-    if (pending?.result.status === "waiting") {
+    if (!isReview && pending?.result.status === "waiting") {
       if (!command.argument) throw new Error("Answer the pending questions with /speckit-clarify followed by your answers");
       if (comment <= (pending.result.answer_id || pending.comment.id)) return { action: "noop" };
     }
-    return { action: "clarify", issue, pr: number, comment };
+    return routed("clarify");
   }
   const action = command?.phase ?? (label === "speckit:implement" ? "implement" : "plan");
   const current = await artifacts(github, repo, pr);
@@ -244,7 +278,7 @@ async function route({ github, context }) {
     if (analysis?.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
     requireResult(analysis, documents, current.hashes, { clean: true });
   }
-  return { action, issue, pr: number, comment };
+  return routed(action);
 }
 
 async function prepare({ github, context, inputs }) {
@@ -283,7 +317,13 @@ async function prepare({ github, context, inputs }) {
       });
     }
     Object.assign(data, { pr: pr.number, head: pr.head.sha, branch: pr.head.ref, feature: current.feature });
-    if (Number(inputs.comment)) {
+    if (Number(inputs.comment) && Number(inputs.review)) throw new Error("A phase accepts one maintainer command");
+    if (Number(inputs.review)) {
+      if (!reviewCommands.includes(inputs.phase)) throw new Error("Only clarify and plan accept a review command");
+      data.command = await reviewCommand(github, context.repo, Number(inputs.review), pr.number, inputs.phase);
+      const pending = inputs.phase === "clarify" ? latest(entries, ["clarify"]) : undefined;
+      if (pending?.result.status === "waiting") data.pending_questions = pending.result.questions;
+    } else if (Number(inputs.comment)) {
       if (!commands.includes(inputs.phase)) throw new Error("Only command entry phases accept a maintainer command");
       const command = await maintainerCommand(github, context.repo, Number(inputs.comment), pr.number, inputs.phase);
       const pending = inputs.phase === "clarify" ? latest(entries, ["clarify"]) : undefined;

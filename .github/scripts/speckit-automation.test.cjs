@@ -53,6 +53,26 @@ function commandEvent(entry, issue = { number: 42, pull_request: {} }) {
   return { action: "created", issue, comment: entry };
 }
 
+function review(body, overrides = {}) {
+  return {
+    id: 40, body, state: "commented", submitted_at: "2026-10-27T10:00:00Z",
+    pull_request_url: "https://api.github.com/repos/example/broker/pulls/42",
+    user: { login: "maintainer", type: "User" }, ...overrides,
+  };
+}
+
+function reviewEvent(entry) {
+  return { action: "submitted", pull_request: { number: 42 }, review: entry };
+}
+
+function reviewComment(id, body, overrides = {}) {
+  return {
+    id, body, pull_request_review_id: 40, in_reply_to_id: undefined, path: `${spec}/plan.md`,
+    line: 12, start_line: null, original_line: 12, updated_at: "2026-10-27T09:59:00Z",
+    user: { login: "maintainer", type: "User" }, ...overrides,
+  };
+}
+
 function fixture(eventName, payload, options = {}) {
   const calls = [];
   const pr = {
@@ -100,6 +120,8 @@ function fixture(eventName, payload, options = {}) {
       pulls: {
         get: async () => ({ data: pr }),
         list: async () => ({ data: options.existing || [] }),
+        getReview: async ({ review_id }) => ({ data: options.reviews.find((entry) => entry.id === review_id) }),
+        listReviewComments: async () => ({ data: options.reviewComments || [] }),
       },
       issues: {
         listComments: async () => ({ data: options.comments || [] }),
@@ -313,6 +335,35 @@ test("/speckit-plan and /speckit-implement enforce the same gates as their label
     { head: { ref: "speckit/issue-7", repo: { full_name: "outsider/broker" } } },
     { user: { login: "contributor", type: "User" } },
   ]) assert.equal((await route(fixture("issue_comment", plan, { pr, comments: clarified }))).action, "noop");
+});
+
+test("a review summary command runs clarify or plan with the review id", async () => {
+  const plan = reviewEvent(review("/speckit-plan Prefer the existing sqlx repositories"));
+  await assert.rejects(route(fixture("pull_request_review", plan)), /clarification/i);
+  assert.deepEqual(await route(fixture("pull_request_review", plan, { comments: [comment(result("clarify"))] })),
+    { action: "plan", issue: 7, pr: 42, comment: 0, review: 40 });
+  const pending = comment(result("clarify", { status: "waiting", questions: ["Which policy applies?"] }));
+  assert.deepEqual(await route(fixture("pull_request_review", reviewEvent(review("/speckit-clarify")), { comments: [pending] })),
+    { action: "clarify", issue: 7, pr: 42, comment: 0, review: 40 });
+  for (const name of ["specify", "implement"]) {
+    await assert.rejects(route(fixture("pull_request_review", reviewEvent(review(`/speckit-${name}`)))), /not a review/);
+  }
+  assert.equal((await route(fixture("pull_request_review", plan, {
+    pr: { head: { ref: "speckit/issue-7", repo: { full_name: "outsider/broker" } } },
+    comments: [comment(result("clarify"))],
+  }))).action, "noop");
+});
+
+test("review summaries from read-only users, bots, other authors, or without a command do not execute", async () => {
+  const cases = [
+    fixture("pull_request_review", reviewEvent(review("/speckit-plan")), { permission: "read" }),
+    fixture("pull_request_review", reviewEvent(review("/speckit-plan", { user: { login: "coderabbitai[bot]", type: "Bot" } }))),
+    fixture("pull_request_review", reviewEvent(review("/speckit-plan", { user: { login: "contributor", type: "User" } }))),
+    fixture("pull_request_review", reviewEvent(review("Looks good, run /speckit-plan later"))),
+    fixture("pull_request_review", reviewEvent(review(null))),
+    fixture("pull_request_review", { ...reviewEvent(review("/speckit-plan")), action: "edited" }),
+  ];
+  for (const f of cases) assert.equal((await route(f)).action, "noop");
 });
 
 test("invalid historical results do not hide later clarification questions", async () => {
@@ -683,6 +734,88 @@ test("clarification commands become answers only while questions are pending", a
   const pending = comment(result("clarify", { status: "waiting", questions: ["Which policy applies?"] }));
   const empty = fixture("issue_comment", {}, { comments: [pending, command("/speckit-clarify")] });
   await assert.rejects(prepare({ ...empty, inputs: { phase: "clarify", pr: 42, comment: 20 } }), /clarification answer/);
+});
+
+function reviewThreads() {
+  return [
+    reviewComment(25, "Missing retry policy for token refresh", {
+      pull_request_review_id: 10, user: { login: "coderabbitai[bot]", type: "Bot" },
+    }),
+    reviewComment(26, "Use the shared HTTP client", { start_line: 10 }),
+    reviewComment(27, "Agreed, add exponential backoff", { in_reply_to_id: 25, line: null, original_line: 8 }),
+    reviewComment(28, "Unrelated feedback from another review", { pull_request_review_id: 11 }),
+    reviewComment(29, "A later reply in the same thread", { pull_request_review_id: 12, in_reply_to_id: 25 }),
+  ];
+}
+
+test("workers rebuild review commands from the review's own inline comments", async (t) => {
+  preparationIO(t);
+  const f = fixture("pull_request_review", {}, {
+    comments: [comment(result("clarify"))],
+    reviews: [review("/speckit-plan Keep the existing adapters")],
+    reviewComments: reviewThreads(),
+  });
+  const data = await prepare({ ...f, inputs: { phase: "plan", pr: 42, review: 40 } });
+  assert.deepEqual(data.command, {
+    id: 40, author: "maintainer", argument: "Keep the existing adapters",
+    comments: [
+      { path: `${spec}/plan.md`, line: 12, start_line: 10, body: "Use the shared HTTP client", context: [] },
+      {
+        path: `${spec}/plan.md`, line: 8, start_line: null, body: "Agreed, add exponential backoff",
+        context: [{ author: "coderabbitai[bot]", body: "Missing retry policy for token refresh" }],
+      },
+    ],
+  });
+  assert.equal(data.previous.phase, "clarify");
+});
+
+test("review commands fail closed for forged reviews or context edited after submission", async (t) => {
+  preparationIO(t);
+  for (const overrides of [
+    { pull_request_url: "https://api.github.com/repos/example/broker/pulls/43" },
+    { body: "/speckit-clarify Keep the existing adapters" },
+    { body: "Keep the existing adapters" },
+    { user: { login: "coderabbitai[bot]", type: "Bot" } },
+    { user: { login: "contributor", type: "User" } },
+  ]) {
+    const forged = fixture("pull_request_review", {}, {
+      comments: [comment(result("clarify"))], reviews: [review("/speckit-plan", overrides)],
+      reviewComments: reviewThreads(), permissions: { contributor: "read" },
+    });
+    await assert.rejects(prepare({ ...forged, inputs: { phase: "plan", pr: 42, review: 40 } }), /eligible maintainer review/);
+  }
+  const edited = reviewThreads();
+  edited[0].updated_at = "2026-10-27T10:05:00Z";
+  const f = fixture("pull_request_review", {}, {
+    comments: [comment(result("clarify"))], reviews: [review("/speckit-plan")], reviewComments: edited,
+  });
+  await assert.rejects(prepare({ ...f, inputs: { phase: "plan", pr: 42, review: 40 } }), /changed after the review/);
+});
+
+test("a review clarification supersedes pending questions without consuming an answer", async (t) => {
+  preparationIO(t);
+  const pending = comment(result("clarify", { status: "waiting", answer_id: 20, questions: ["Which policy applies?"] }));
+  const f = fixture("pull_request_review", {}, {
+    comments: [pending], reviews: [review("/speckit-clarify")], reviewComments: reviewThreads(),
+  });
+  const data = await prepare({ ...f, inputs: { phase: "clarify", pr: 42, review: 40 } });
+  assert.deepEqual(data.pending_questions, ["Which policy applies?"]);
+  assert.equal(data.answer, undefined);
+  assert.equal(data.previous, undefined);
+  assert.equal(data.command.comments.length, 2);
+});
+
+test("only clarify and plan accept one review command", async (t) => {
+  preparationIO(t);
+  const tasks = fixture("pull_request_review", {}, {
+    comments: [comment(result("plan"))], reviews: [review("/speckit-tasks")], reviewComments: [],
+  });
+  await assert.rejects(prepare({ ...tasks, inputs: { phase: "tasks", pr: 42, review: 40 } }), /review/);
+  const both = fixture("pull_request_review", {}, {
+    comments: [comment(result("clarify")), command("/speckit-plan")],
+    reviews: [review("/speckit-plan")], reviewComments: [],
+  });
+  await assert.rejects(prepare({ ...both, inputs: { phase: "plan", pr: 42, comment: 20, review: 40 } }), /one maintainer command/);
 });
 
 test("tasks consume only a current successful plan from the same pipeline run", async (t) => {

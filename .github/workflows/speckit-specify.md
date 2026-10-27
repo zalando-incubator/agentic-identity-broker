@@ -72,6 +72,8 @@ of the feature to be built, not a summary of the automation. Include:
     `/speckit-clarify [focus]` starts a new clarification.
   - `/speckit-plan [technical guidance]` plans, creates tasks, and analyzes.
   - `/speckit-implement [guidance]` implements after a clean reanalysis.
+  - Submit a review whose summary starts with `/speckit-clarify [focus]` or
+    `/speckit-plan [guidance]` to apply its inline comments in that phase.
 
 If an earlier draft PR for this issue was closed without merging and its
 branch deleted, create a fresh draft PR on `context.branch` from the current
