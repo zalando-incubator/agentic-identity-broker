@@ -256,7 +256,7 @@ Content-Type: application/json
 
 At 10:01, Alice opens `error_uri` in her authenticated browser. The broker starts that service's PKCE authorization and redirects her to its provider. At 10:02, the provider returns a code to `/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/callback`. The broker stores the new session and redirects Alice to `/sessions?success=true&service_id=550e8400-e29b-41d4-a716-446655440000`.
 
-**API version**: This recovery-link change breaks the End-User API `1.0.0` token response contract. End-User API `2.0.0` replaces it on the existing routes; broker release tags are independent. See [ADR 044](../../adrs/044-service-specific-session-recovery-url.md).
+**Contract note**: `error_uri` remains a broker-selected action URI in End-User API `1.0.0`. This amendment changes the recovery target, not the response shape, route, or status. See [ADR 044](../../adrs/044-service-specific-session-recovery-url.md).
 
 ---
 
