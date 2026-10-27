@@ -2,7 +2,48 @@
 
 Rendered with `just render-wireframes specs/055-incremental-authorization/wireframes.md`. The sequence diagram source is `wireframes/sequence.mmd`; `wireframes/sequence.svg` was rendered with Mermaid 11.
 
-State A: session page, no session
+## Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as MCP client (agent)
+    participant G as agentgateway + ExtProc
+    participant B as Broker
+    participant U as Alice's browser (SPA)
+    participant P as GitHub (third-party AS)
+
+    C->>G: tools/call with broker Bearer token
+    G->>B: POST /oauth2/token (token-exchange, resource=https://agentgateway.example.com/mcp)
+    B-->>G: 400 invalid_grant + error_uri + scope=https://broker.example.com/sessions/github
+    G-->>C: 403, WWW-Authenticate: Bearer error="insufficient_scope", scope="…/sessions/github", error_uri="…"
+    C->>B: POST /oauth2/token (refresh_token, scope now includes …/sessions/github)
+    B-->>C: 400 invalid_scope (needs interactive authorization)
+    C->>U: open /oauth2/authorize?scope=openid offline_access …/sessions/github
+    U->>B: GET /oauth2/authorize (X-Remote-User: alice)
+    Note over B: GitHub session: refresh attempt rejected → requested service unusable
+    B-->>U: 302 /agents/{agent}?session_token=… (requested: github)
+    U->>B: GET /api/consent/agents/{agent} → requested_service_ids: [github]
+    U->>B: Connect → GET /api/third-party/{github}/oauth2/authorize?redirect_uri=<consent URL>
+    B-->>U: 302 GitHub authorize (PKCE)
+    U->>P: sign in and approve
+    P-->>U: 302 /api/third-party/{github}/oauth2/callback?code&state
+    U->>B: callback
+    B->>P: code → tokens (stored encrypted)
+    B-->>U: 302 back to the consent screen
+    U->>B: POST /api/consent/agents/{agent}/grants
+    B-->>U: 201 + redirect_url (the original authorize URL)
+    U->>B: GET /oauth2/authorize (same query)
+    B-->>U: 302 agent callback?code (proxy mode: upstream URL without the virtual scope)
+    C->>B: POST /oauth2/token (authorization_code)
+    B-->>C: tokens, local mode echoes …/sessions/github in scope
+    C->>G: tools/call retry
+    G->>B: POST /oauth2/token (token-exchange)
+    B-->>G: 200 GitHub access token
+    G-->>C: tool result
+```
+
+## State A: session page, no session
 
 ![State A](wireframes/journey-1-a-session-none.svg)
 
@@ -38,7 +79,7 @@ annotation "GET /api/third-party/{serviceId}/oauth2/authorize\n?redirect_uri=/se
 
 </details>
 
-State B: session page, active session
+## State B: session page, active session
 
 ![State B](wireframes/journey-1-b-session-active.svg)
 
@@ -77,7 +118,7 @@ annotation "Existing session actions,\nunchanged from /sessions" target="termina
 
 </details>
 
-State C: consent screen with the requested service not yet connected
+## State C: consent screen, requested service not connected
 
 ![State C](wireframes/journey-1-c-consent-requested.svg)
 
@@ -122,7 +163,7 @@ annotation "Disabled until every requested\nservice has an active session" targe
 
 </details>
 
-State D: consent screen after connecting
+## State D: consent screen after connecting
 
 ![State D](wireframes/journey-1-d-consent-ready.svg)
 
