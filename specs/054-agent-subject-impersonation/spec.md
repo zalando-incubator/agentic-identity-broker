@@ -34,11 +34,17 @@
 - Q: Must the subject identify the same agent as the audience-selected target, and which subject identifiers should be accepted? → A: Self-agent only, with the subject identifying the target's exact broker UUID (Q2 option A). The signed `sub` must equal the UUID of the registered audience-selected target; display names, routing aliases, alternate UUID spellings, and different agents do not qualify for agent issuance.
 - Q: Must every agent-subject token be rejected for third-party service exchange even when its UUID text matches a human principal with an active grant and service session? → A: Yes, categorical rejection (Q3 option A). Existing human grants and sessions must not make an agent-subject token exchangeable.
 
-The authorized answer is comment `6418744033`, supplied through this session's `context.answer`. Q1's custom answer replaces the earlier proposal that equality could never select agent issuance. One compatibility decision remains: on a human-only rule (including an omitted category setting), whether exact equality retains legacy human delegation handling or is rejected as an ineligible agent request (Q4). No choice is assumed here.
+The identity and exchange answers above came from authorized comment `6418744033`, recorded by the preceding clarification session. Q1's custom answer replaces the earlier proposal that equality could never select agent issuance. One compatibility decision remains: on a human-only rule (including an omitted category setting), whether exact equality retains legacy human delegation handling or is rejected as an ineligible agent request (Q4). No choice is assumed here.
+
+### Session 2026-10-27
+
+- Q: Must the new configuration attributes and their shapes be included in this specification so the journeys can be understood in detail? → A: Yes. Authorized maintainer comment `6438216582` requires concrete configuration attributes and shapes in this spec rather than deferring them to design.
+
+The proposed setting is `oauth2_authorization_server.impersonation.rules[].allowed_subject_categories`, a list containing `human`, `agent`, or both. Its exact serialization and validation below are proposed for confirmation in Q5, not a claimed stakeholder choice or an existing runtime capability. This answer does not resolve Q4; the maintainer did not choose either human-only exact-equality outcome.
 
 ## User Scenarios & Testing *(mandatory)*
 
-Acceptance identifiers below are stable references for subsequent 1:1 E2E coverage. This phase defines scenarios only; it does not implement tests or authorize contract changes. Only human-only exact-equality behavior remains provisional pending Q4.
+Acceptance identifiers below are stable references for subsequent 1:1 E2E coverage. This phase defines scenarios only; it does not implement tests or authorize contract changes. Human-only exact-equality behavior remains provisional pending Q4. The concrete configuration proposal and its validation fixtures await Q5 confirmation.
 
 ### User Story 1 - Obtain a token for an agent acting for itself (Priority: P1)
 
@@ -70,7 +76,7 @@ An operator permits humans, agents, or both on each impersonation rule. Existing
 2. **US2.2** — **Given** a rule allowing both categories and an authorized agent request, **When** the request is processed, **Then** it succeeds without human consent; **Given** a separate authorized human request with an active delegation, **When** it is processed under that rule, **Then** the existing human issuance behavior succeeds.
 3. **US2.3** — **Given** a human request whose `sub` does not exactly equal the target UUID, without an active delegation and with a rule allowing both categories, **When** exchange is attempted, **Then** it receives the existing consent-required denial and cannot automatically retry as an agent; UUID shape alone, including a different agent's UUID or an alternate spelling, does not qualify for consent-free issuance.
 4. **US2.4** — **Given** existing impersonation configuration that omits the new subject-category setting, **When** existing human requests whose `sub` does not exactly equal the target UUID are processed, **Then** human-only behavior, including missing/expired-delegation denials and consent links, is unchanged and consent-free agent issuance has not been implicitly enabled. Exact-equality requests under that configuration await Q4.
-5. **US2.5** — **Given** a configured category setting with an empty selection or unknown category, **When** configuration is validated, **Then** the broker rejects it before accepting traffic rather than widening eligibility.
+5. **US2.5** — **Given** `allowed_subject_categories: []` or `allowed_subject_categories: [machine]` on a rule, **When** configuration is validated, **Then** the broker rejects it before accepting traffic rather than widening eligibility. The proposed Q5 contract also rejects explicit null, scalar or mapping values, non-string entries, and duplicates; omission alone defaults to `[human]`.
 
 ---
 
@@ -104,7 +110,7 @@ An operator restricts which agent subjects a privileged client may represent thr
 
 ## Concrete Example Journeys *(mandatory)*
 
-All identities, timestamps, credential markers, and key identifiers below are synthetic. These journeys describe clarified intended behavior, not an approved OpenAPI change. Existing HTTP fields and configuration keys come from `api/enduser/openapi.yaml` and `examples/config/impersonation.yaml`. Category selection uses exact signed `sub`/target-UUID equality, not a new request input. The new eligibility setting's serialization and complete enablement snippets remain design work; no invented key is presented as supported configuration.
+All identities, timestamps, credential markers, and key identifiers below are synthetic. These journeys describe clarified intended behavior, not an approved OpenAPI change. Existing HTTP fields and configuration keys come from `api/enduser/openapi.yaml` and `examples/config/impersonation.yaml`. Category selection uses exact signed `sub`/target-UUID equality, not a new request input. The snippets include the proposed new per-rule `allowed_subject_categories` setting so the intended configuration is reviewable now. That setting is not supported by the current runtime and awaits Q5 confirmation; the remaining keys are existing settings. No snippet authorizes implementation or overrides ADR 032.
 
 ### Journey 1 — A gateway obtains a token for an agent acting for itself (User Story 1, Scenarios US1.1–US1.3)
 
@@ -112,7 +118,7 @@ All identities, timestamps, credential markers, and key identifiers below are sy
 
 **Step 1 — Operator establishes local issuance and trusted credentials**
 
-This is a configuration excerpt, not a complete bootable configuration. Existing required signing-key and deployment settings are supplied by the deployment. The complete existing rule below still has human-only semantics today; the operator must additionally enable agent subjects using the new eligibility setting whose serialization will be defined during design. The example is not an instruction to bypass the current delegation check.
+This is a configuration excerpt, not a complete bootable configuration. Existing required signing-key and deployment settings are supplied by the deployment. The complete rule below proposes explicit agent-only enablement with `allowed_subject_categories: [agent]`. It describes the intended future behavior after approval and implementation, not a configuration that the current broker supports or an instruction to bypass its mandatory delegation check.
 
 ```yaml
 oauth2_authorization_server:
@@ -125,6 +131,7 @@ oauth2_authorization_server:
     audience_prefix: https://broker.example.com/impersonation # Routes to a registered target, not output aud.
     rules:
       - name: research-machine
+        allowed_subject_categories: [agent] # Proposed new setting, pending Q5.
         roles:
           client_assertion:
             expected_audience: https://broker.example.com/impersonation
@@ -152,7 +159,7 @@ oauth2_authorization_server:
             evaluation_timeout: 100ms
 ```
 
-Effect after explicit agent enablement: only the named gateway, actor, subject, and routing target combination is authorized by this rule. The broker separately compares the verified signed `sub` with the registered target UUID exactly; CEL authorization does not replace this binding.
+Effect with the proposed `[agent]` setting after approval and implementation: only the named gateway, actor, subject, and routing target combination is authorized by this rule. The broker separately compares the verified signed `sub` with the registered target UUID exactly; CEL authorization does not replace this binding.
 
 **Step 2 — 09:00:00: Gateway presents three signed credentials**
 
@@ -227,7 +234,81 @@ The displayed claims are the authorization-relevant excerpt, not a ban on normal
 | Agents only | Ineligible | No human delegation required |
 | Both | Requires active user delegation | No human delegation required |
 
-For signed subjects on agent-permitting rules, the agent column means `sub` exactly equals the resolved target UUID; the human column means it does not. A UUID-shaped value or a different registered agent's UUID is not an exact match. Unsigned subjects remain restricted to the existing human profile. No new request parameter or category claim is required. The setting's exact key and values are deferred to configuration design. No configuration with an empty or unknown selection may start successfully. The rule's existing CEL predicate must separately authorize Alice for this journey; Journey 1's machine-only predicate would deny her earlier.
+For signed subjects on agent-permitting rules, the agent column means `sub` exactly equals the resolved target UUID; the human column means it does not. A UUID-shaped value or a different registered agent's UUID is not an exact match. Unsigned subjects remain restricted to the existing human profile. No new request parameter or category claim is required. The proposed concrete selections are `allowed_subject_categories: [human]`, `[agent]`, and `[human, agent]`; omission means `[human]`. No configuration with an empty or unknown selection may start successfully. For this journey, use one of the following complete rule excerpts under `oauth2_authorization_server.impersonation.rules`, retaining Journey 1's local issuer, audience prefix, and deployment settings. Each alternative deliberately authorizes Alice as well as the exact agent UUID at the CEL layer, so category eligibility and human delegation determine the demonstrated outcomes; Journey 1's machine-only predicate would deny Alice earlier.
+
+**Human-only alternative (proposed explicit setting)**:
+
+```yaml
+oauth2_authorization_server:
+  impersonation:
+    rules:
+      - name: research-human
+        allowed_subject_categories: [human]
+        roles:
+          client_assertion:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: client_assertion.sub
+          actor:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: actor_token.sub
+          subject:
+            verification: jwks
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: subject_token.sub
+        trusted_issuers:
+          - issuer_uri: https://idp.example.com
+            jwks_uri: https://idp.example.com/jwks.json
+            allowed_algorithms: [ES256]
+            signs_roles: [client_assertion, actor, subject]
+        authorization:
+          type: cel
+          cel:
+            expression: >-
+              client_assertion.sub == 'gateway-prod' &&
+              actor_token.sub == 'research-runner' &&
+              subject_token.sub in ['alice@example.com', '550e8400-e29b-41d4-a716-446655440000'] &&
+              request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
+            evaluation_timeout: 100ms
+```
+
+Remove only the `allowed_subject_categories` line to exercise the omitted-setting case. Both variants require Alice's active delegation, and neither permits consent-free issuance. The exact-equality UUID request with active human delegation remains Q4, not an assumed outcome of this example.
+
+**Dual-category alternative (proposed explicit setting)**:
+
+```yaml
+oauth2_authorization_server:
+  impersonation:
+    rules:
+      - name: research-human-and-machine
+        allowed_subject_categories: [human, agent]
+        roles:
+          client_assertion:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: client_assertion.sub
+          actor:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: actor_token.sub
+          subject:
+            verification: jwks
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: subject_token.sub
+        trusted_issuers:
+          - issuer_uri: https://idp.example.com
+            jwks_uri: https://idp.example.com/jwks.json
+            allowed_algorithms: [ES256]
+            signs_roles: [client_assertion, actor, subject]
+        authorization:
+          type: cel
+          cel:
+            expression: >-
+              client_assertion.sub == 'gateway-prod' &&
+              actor_token.sub == 'research-runner' &&
+              subject_token.sub in ['alice@example.com', '550e8400-e29b-41d4-a716-446655440000'] &&
+              request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
+            evaluation_timeout: 100ms
+```
+
+These are alternatives, not three simultaneously installed rules. With the dual-category alternative, Alice follows the existing delegation path and the exact signed agent UUID follows Journey 1 without human state. With Journey 1's agent-only alternative, Alice is ineligible. Category eligibility never replaces the credential or CEL checks.
 
 **Step 2 — 09:05:00: Human request without delegation is denied**
 
@@ -327,7 +408,7 @@ This is the proposed categorical-denial example for API review, not an approved 
 ### Functional Requirements
 
 - **FR-001**: The existing impersonation capability MUST allow an explicitly enabled agent subject to obtain a locally issued broker token through a privileged client authenticated with external machine identity.
-- **FR-002**: Each rule MUST permit humans only, agents only, or both. Omission MUST preserve human-only behavior; empty or unknown category selections MUST fail startup validation.
+- **FR-002**: Each rule MUST permit humans only, agents only, or both. The proposed `allowed_subject_categories` list expresses those selections as `[human]`, `[agent]`, and `[human, agent]` respectively (pending Q5). Omission MUST preserve human-only behavior; empty or unknown category selections MUST fail startup validation.
 - **FR-003**: On an agent-permitting rule, the broker MUST select agent issuance only when the verified signed subject claim `sub` exactly equals the registered audience-selected target's broker UUID. A dual-category rule MUST treat nonmatching subjects as human; an agent-only rule MUST reject them. No separate request category or issuer category claim is required. Identifier shape, normalized or aliased equality, missing delegation, and rule fallback MUST NOT qualify for consent bypass. [NEEDS CLARIFICATION: Q4 — On a human-only rule, including an omitted category setting, must an exact-equality subject retain legacy human handling with mandatory delegation, or be rejected as an ineligible agent request even when active human delegation exists? Neither outcome permits consent bypass.]
 - **FR-004**: Agent issuance MUST be self-agent only: the issued `sub` and target-derived `agent_id` MUST both equal the registered audience-selected target's broker UUID. The signed subject `sub` MUST match that UUID exactly, without subject alias resolution or normalization. Different agents, display names, external machine principals, and routing aliases MUST NOT qualify.
 - **FR-005**: Authorized agent-subject issuance MUST NOT require a human consent interaction, `UserGrant`, or human `UserSession`, and MUST NOT create synthetic human grants or sessions.
@@ -345,7 +426,7 @@ This is the proposed categorical-denial example for API review, not an approved 
 erDiagram
     ImpersonationRule {
         string name
-        string allowedSubjectCategories
+        string[] allowed_subject_categories
         string authorizationPolicy
     }
     Agent {
@@ -404,10 +485,22 @@ These clarified terms must be reconciled with the architecture glossary during l
 
 ### Configuration Requirements
 
-- **CFG-001**: Extend `oauth2_authorization_server.impersonation.rules[]` with human-only, agent-only, or dual-category eligibility. Category selection follows FR-003 without another request input. Define the exact configuration key and serialization during design; do not present a provisional key as an existing runtime option.
+- **CFG-001**: Extend `oauth2_authorization_server.impersonation.rules[]` with proposed `allowed_subject_categories`, a list of distinct, case-sensitive strings from the enum `human`, `agent`, with one or two entries. `[human]` permits humans only, `[agent]` agents only, and `[human, agent]` both; list order does not change eligibility. Omission defaults to `[human]`. Category selection follows FR-003 without another request input. This is the concrete specification proposal awaiting Q5, not an existing runtime option.
+
+  | Proposed input | Startup / eligibility outcome |
+  | --- | --- |
+  | Key omitted | Valid; human-only default |
+  | `[human]` | Valid; human-only |
+  | `[agent]` | Valid; agent-only |
+  | `[human, agent]` or `[agent, human]` | Valid; both categories |
+  | `[]`, `[machine]`, `[Human]` | Invalid; empty or unknown category |
+  | `null`, scalar `human`, or a mapping | Invalid; an explicit value must be a list, not omission |
+  | `[human, human]`, `[agent, 1]`, or `[null]` | Invalid; entries must be distinct recognized strings |
+
+  [NEEDS CLARIFICATION: Q5 — Confirm the proposed `allowed_subject_categories` key, list serialization, default, and validation contract, or provide the desired alternative.]
 - **CFG-002**: Preserve existing rule configuration, trusted issuer roles, CEL policy, and validation. Missing category configuration means humans only, not both.
-- **CFG-003**: Document the confirmed setting and complete human-only, agent-only, and dual-category examples in `docs/configuration.md` and `examples/config/`, and update the broker Helm deployment contract before implementation is complete.
-- **CFG-004**: The existing-key configuration in Journey 1 is the baseline. Its missing new category selection is an explicit draft gap, not a complete enablement example.
+- **CFG-003**: After confirmation, document the setting and complete human-only, agent-only, and dual-category examples in `docs/configuration.md` and `examples/config/`, and update the broker Helm deployment contract before implementation is complete. Configuration must use the existing broker configuration system and its file, environment, and CLI precedence, not an ad-hoc loader.
+- **CFG-004**: Journey 1 includes the complete proposed agent-only rule; Journey 2 includes complete proposed human-only and dual-category alternatives and the omitted-setting variation. Examples MUST retain the same key, enum values, validation, and identity semantics as CFG-001 after confirmation.
 
 ### API Requirements
 
@@ -441,7 +534,7 @@ These clarified terms must be reconciled with the architecture glossary during l
 - **SC-003**: All six human/agent eligibility combinations across human-only, agent-only, and dual-category rules behave according to Journey 2's matrix; no tested ineligible category obtains a token.
 - **SC-004**: Every tested nonmatching human subject remains denied without an active delegation after this feature is enabled, including dual-category and UUID-shaped cases. Exact signed equality selects agent issuance only on explicitly agent-permitting rules; human-only exact-equality behavior awaits Q4.
 - **SC-005**: Every tested unauthorized, unresolved, invalid-credential, and policy-failure case issues zero tokens; every tested third-party exchange of an agent token returns zero service tokens and uses zero human sessions, including when matching human grants and sessions exist.
-- **SC-006**: An operator can review documented examples for all three rule selections and predict the correct human-consent and agent-issuance outcome for each. Complete configuration examples await design; human-only exact-equality outcomes await Q4.
+- **SC-006**: An operator can review documented examples for all three rule selections and predict the correct human-consent and agent-issuance outcome for each. Concrete proposed configuration examples are included in Journeys 1 and 2, pending Q5 confirmation; human-only exact-equality outcomes await Q4.
 
 ## Assumptions
 
