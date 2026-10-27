@@ -267,7 +267,15 @@ proxy must also route the standard discovery URL. The docs will state this.
   returns 404 instead of SPA HTML or a 405 from the SPA catch-all.
 - The evaluation route uses `OAuth2AuditMiddleware` and no principal middleware. It is a
   machine-facing endpoint like `/oauth2/token`. The server-wide `SecurityContextMiddleware`
-  already supplies the ADR 033 capture holder that the resolver finalizes.
+  currently defers finalization **only** for `POST /oauth2/token`; evaluation does not yet
+  receive a capture holder. The proposed design must extend the shared deferred-route matcher
+  to `POST /access/v1/evaluation`, so the resolver finalizes verified Actor and distinct
+  CallingPeer before caller-policy authorization. Early decode/authentication errors must
+  finalize the request-principal/anonymous fallback before in-handler audit, using the existing
+  idempotent helper; the perimeter net remains a last resort. Preserve ordinary-request and
+  token-route behavior. This extension requires the R16 approval gate, §3.1.4.2 documentation,
+  and T044/T047 test-first coverage; it is not existing functionality (HIGH I2 in
+  [remediation.md](./remediation.md)).
 
 ## R10. Request body bounds and strictness
 
@@ -323,6 +331,11 @@ deferral of removal to a separately approved 2.0.0 change.
 
 ## R13. ExtProc resolver boundary
 
+**Blocked freshness decision**: The missing/invalid `max-age` error below contradicts ExtProc
+contract §2 and T049. The relative lifetime also omits end-to-end age accounting. Neither
+interpretation is approved by this remediation; do not implement it until HIGH I1/U1 in
+[remediation.md](./remediation.md) are answered and the affected artifacts reconciled.
+
 **Decision**: Add a new package, `internal/extproc/delegation/`, with no broker imports (ADR 011
 and the AGENTS invariant). It contains:
 
@@ -357,6 +370,11 @@ and `ApprovalGate`.
 - *Reuse `approval.Client`*. Rejected because it is a different bounded concern.
 
 ## R14. ExtProc request-path ordering
+
+**Blocked policy-use decision**: The stored context below has no deadline check at later body
+or batch policy use. A header-time permit cannot authorize stale-context policy input. The
+stakeholder must confirm rejection versus bounded re-resolution before this path is
+implemented; see HIGH U2 in [remediation.md](./remediation.md).
 
 **Decision** (when `delegation_context.enabled`):
 
@@ -433,6 +451,9 @@ rechecked when the ADR is drafted. The ADR records these decisions:
 - the relation to ADR 012: a separate permit cache, with the exchange cache's stale fallback
   never applied to delegation;
 - the ADR 036 metadata-only input boundary, unchanged;
+- extension of ADR 033's token-only deferred-finalization seam to evaluation (R9), with
+  verified Actor/CallingPeer before caller authorization, early-error fallback and unchanged
+  ordinary/token request semantics; reconcile `ARCHITECTURE.md` §3.1.4.2 after approval;
 - the opt-in default, reconciled with Principle I in the same way as ADR 028's Security-First
   reconciliation;
 - the deprecation of the `granted_permission_sets` exchange field and its removal timing (R12).

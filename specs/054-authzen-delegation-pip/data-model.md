@@ -137,6 +137,11 @@ never from the body.
 
 ## 3. ExtProc value objects (`internal/extproc/delegation`, no broker imports)
 
+**Blocked design:** §§3.3–3.4 below omit an end-to-end freshness deadline and conflict with
+research R13 on malformed/missing freshness. Stored permits also need a confirmed expiry-at-
+policy-use rule. HIGH I1/U1/U2 in [remediation.md](./remediation.md) require stakeholder
+decisions and coordinated updates before implementation; relative TTL alone is insufficient.
+
 ### 3.1 `DelegationContextConfig` (`internal/extproc/config`)
 
 | Field | Key | Type | Default | Validation (when `enabled`) |
