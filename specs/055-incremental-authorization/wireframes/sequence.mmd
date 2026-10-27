@@ -17,7 +17,7 @@ sequenceDiagram
     Note over B: GitHub session: refresh attempt rejected → requested service unusable
     B-->>U: 302 /agents/{agent}?session_token=… (requested: github)
     U->>B: GET /api/consent/agents/{agent} → requested_service_ids: [github]
-    U->>B: Connect → GET /api/third-party/{github}/oauth2/authorize?redirect_uri=<consent URL>
+    U->>B: Login → GET /api/third-party/{github}/oauth2/authorize?redirect_uri=<consent URL>
     B-->>U: 302 GitHub authorize (PKCE)
     U->>P: sign in and approve
     P-->>U: 302 /api/third-party/{github}/oauth2/callback?code&state

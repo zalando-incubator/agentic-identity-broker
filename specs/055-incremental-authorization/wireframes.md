@@ -24,7 +24,7 @@ sequenceDiagram
     Note over B: GitHub session: refresh attempt rejected → requested service unusable
     B-->>U: 302 /agents/{agent}?session_token=… (requested: github)
     U->>B: GET /api/consent/agents/{agent} → requested_service_ids: [github]
-    U->>B: Connect → GET /api/third-party/{github}/oauth2/authorize?redirect_uri=<consent URL>
+    U->>B: Login → GET /api/third-party/{github}/oauth2/authorize?redirect_uri=<consent URL>
     B-->>U: 302 GitHub authorize (PKCE)
     U->>P: sign in and approve
     P-->>U: 302 /api/third-party/{github}/oauth2/callback?code&state
@@ -50,31 +50,28 @@ sequenceDiagram
 <details><summary>Wireloom source</summary>
 
 ```wireloom
-window "Session: GitHub Production":
+window "Third-Party Sessions":
   header:
     row:
       text "Agentic Identity Broker" bold
       spacer
-      text "alice@example.com" muted
-  row:
-    backbutton "Sessions"
+      text "Agent Delegations" muted
+      text "Third-Party Sessions" bold
+  breadcrumb:
+    crumb "Third-Party Sessions"
+    crumb "GitHub Production"
   panel:
-    text "GitHub Production" bold size=large
-    text "https://broker.example.com/sessions/github" muted size=small id="scope-url"
     row:
-      status "No active session" kind=warning
-  section "What this service is used for":
-    text "Agents you delegated to can call GitHub on your behalf once you connect." size=small
-    row:
-      text "Agents waiting for this service:" size=small
-      chip "Data Analysis Assistant" accent=warning
-  section "Connect":
-    text "Connecting opens GitHub Production's sign-in. You return to this page afterwards." size=small
-    row align=right:
-      button "Connect GitHub Production" primary id="connect"
+      col:
+        text "GitHub Production" bold size=large
+        text "https://broker.example.com/sessions/github" muted size=small id="scope-url"
+        status "No active session" kind=warning
+        text "1 agent is waiting for this service: Data Analysis Assistant" size=small
+      spacer
+      button "Login" primary id="login"
 
 annotation "This page is the scope value.\nResolves for signed-in users only." target="scope-url" position=right
-annotation "GET /api/third-party/{serviceId}/oauth2/authorize\n?redirect_uri=/sessions/github" target="connect" position=right
+annotation "Same Login flow as the consent screen:\nGET /api/third-party/{serviceId}/oauth2/authorize\n?redirect_uri=/sessions/github" target="login" position=right
 ```
 
 </details>
@@ -86,34 +83,38 @@ annotation "GET /api/third-party/{serviceId}/oauth2/authorize\n?redirect_uri=/se
 <details><summary>Wireloom source</summary>
 
 ```wireloom
-window "Session: GitHub Production":
+window "Third-Party Sessions":
   header:
     row:
       text "Agentic Identity Broker" bold
       spacer
-      text "alice@example.com" muted
-  row:
-    backbutton "Sessions"
+      text "Agent Delegations" muted
+      text "Third-Party Sessions" bold
+  breadcrumb:
+    crumb "Third-Party Sessions"
+    crumb "GitHub Production"
   panel:
-    text "GitHub Production" bold size=large
-    text "https://broker.example.com/sessions/github" muted size=small
     row:
-      status "Active" kind=success
-      chip "repo"
-      chip "user:email"
-  section "Session":
-    kv "Connected" "October 27, 2026 09:31 UTC"
-    kv "Access token expires" "October 27, 2026 10:31 UTC"
-    kv "Refresh token expires" "November 26, 2026 09:31 UTC"
-    kv "Agents using this session" "1"
-  section "Agents using this session":
-    list:
-      item "Data Analysis Assistant"
-  row align=right:
-    button "Refresh" id="refresh"
-    button "Terminate" accent=danger id="terminate"
+      col:
+        text "GitHub Production" bold size=large
+        text "https://broker.example.com/sessions/github" muted size=small
+        status "Active" kind=success
+        row:
+          chip "Encrypted"
+          chip "1 agent"
+          chip "Established: Oct 27, 2026"
+        row:
+          text "Refresh token expires Nov 26, 2026" size=small
+        text "Scopes" muted size=small
+        row:
+          chip "repo"
+          chip "user:email"
+      spacer
+      col 150:
+        button "Refresh"
+        button "Terminate" accent=danger id="terminate"
 
-annotation "Existing session actions,\nunchanged from /sessions" target="terminate" position=right
+annotation "Existing SessionCard content and actions,\nunchanged from /sessions" target="terminate" position=right
 ```
 
 </details>
@@ -130,40 +131,64 @@ window "Consent Management":
     row:
       text "Agentic Identity Broker" bold
       spacer
-      text "alice@example.com" muted
+      text "Agent Delegations" bold
+      text "Third-Party Sessions" muted
+  breadcrumb:
+    crumb "Delegations"
+    crumb "Data Analysis Assistant"
   panel:
-    text "Data Analysis Assistant" bold size=large
-    text "Analyzes datasets and generates insights" muted
     row:
-      status "Needs one more service to continue" kind=warning id="banner"
+      avatar "DA" size=large
+      col:
+        text "Data Analysis Assistant" bold size=large
+        text "Analyzes datasets and generates insights" muted
+  section "End Date":
+    text "Today: October 27, 2026" muted size=small
+    checkbox "Specific end date" label-right
+    text "After saving, the agent can use your permissions until revoked" muted size=small
   section "Agent Permissions":
-    slot "Identity Access" active:
-      text "Sign in as you" muted
+    text "Review the permissions this agent is requesting. Required permissions are always granted. Toggle optional permissions on or off based on your preference." size=small
+    slot "Identity Access":
       row:
         chip "Required"
-        status "Connected" kind=success
-    slot "GitHub Read Access" active accent=warning id="github-set":
-      text "Read repository contents and user profile" muted
+      text "Sign in as you" muted size=small
+      text "SERVICES" muted size=small
+      chip "Corporate Identity · required"
+    slot "GitHub Read Access" accent=warning id="github-set":
       row:
         chip "Optional"
-        chip "Requested now" accent=warning id="requested-chip"
-      row:
-        text "GitHub Production" size=small
+        chip "Requested by agent" accent=warning id="requested-chip"
         spacer
-        status "Not connected" kind=warning
-        button "Connect" primary id="connect-github"
-  row align=right:
-    button "Approve & Delegate" disabled id="approve"
+        toggle "" on disabled id="ps-toggle"
+      text "Read repository contents and user profile" muted size=small
+      text "SERVICES" muted size=small
+      chip "GitHub Production · requested" accent=warning
+  section "Connect Your Accounts" badge="1":
+    text "Data Analysis Assistant needs access to the following services. Click Login to authorize each one before saving." size=small
+    slot "GitHub Production":
+      row:
+        chip "Optional"
+        chip "Requested by agent" accent=warning
+        spacer
+        button "Login" primary id="login"
+      text "PERMISSIONS" muted size=small
+      row:
+        chip "repo"
+        chip "user:email"
+  row:
+    button "Revoke All Access"
+    spacer
+    button "Save" disabled id="save"
 
-annotation "Derived from the virtual scope\nin the authorize request" target="requested-chip" position=right
-annotation "Locked on like a mandatory set" target="github-set" position=left
-annotation "Starts the GitHub sign-in and returns here\n(ADR 037 keeps the selection)" target="connect-github" position=right
-annotation "Disabled until every requested\nservice has an active session" target="approve" position=right
+annotation "New: marks the service named by the\nvirtual scope in the authorize request" target="requested-chip" position=right
+annotation "New: set and service toggles locked on\nwhile the service is requested" target="ps-toggle" position=right
+annotation "Unchanged: Login starts the GitHub sign-in\nand returns here (ADR 037 keeps the selection)" target="login" position=right
+annotation "Unchanged FR-020 rule: disabled until every\nincluded service has an active session" target="save" position=right
 ```
 
 </details>
 
-## State D: consent screen after connecting
+## State D: consent screen after login
 
 ![State D](wireframes/journey-1-d-consent-ready.svg)
 
@@ -175,29 +200,45 @@ window "Consent Management":
     row:
       text "Agentic Identity Broker" bold
       spacer
-      text "alice@example.com" muted
+      text "Agent Delegations" bold
+      text "Third-Party Sessions" muted
+  breadcrumb:
+    crumb "Delegations"
+    crumb "Data Analysis Assistant"
   panel:
-    text "Data Analysis Assistant" bold size=large
-    text "Analyzes datasets and generates insights" muted
+    row:
+      avatar "DA" size=large
+      col:
+        text "Data Analysis Assistant" bold size=large
+        text "Analyzes datasets and generates insights" muted
+  section "End Date":
+    text "Today: October 27, 2026" muted size=small
+    checkbox "Specific end date" label-right
+    text "After saving, the agent can use your permissions until revoked" muted size=small
   section "Agent Permissions":
-    slot "Identity Access" active:
-      text "Sign in as you" muted
+    text "Review the permissions this agent is requesting. Required permissions are always granted. Toggle optional permissions on or off based on your preference." size=small
+    slot "Identity Access":
       row:
         chip "Required"
-        status "Connected" kind=success
-    slot "GitHub Read Access" active:
-      text "Read repository contents and user profile" muted
+      text "Sign in as you" muted size=small
+      text "SERVICES" muted size=small
+      chip "Corporate Identity · required"
+    slot "GitHub Read Access":
       row:
         chip "Optional"
-        chip "Requested now" accent=warning
-      row:
-        text "GitHub Production" size=small
+        chip "Requested by agent" accent=warning
         spacer
-        status "Connected" kind=success
-  row align=right:
-    button "Approve & Delegate" primary id="approve"
+        toggle "" on disabled
+      text "Read repository contents and user profile" muted size=small
+      text "SERVICES" muted size=small
+      chip "GitHub Production · requested" accent=warning
+  row:
+    button "Revoke All Access"
+    spacer
+    button "Save" primary id="save"
 
-annotation "Step 8: Alice clicks" target="approve" position=right
+annotation "Connect Your Accounts disappears once\nevery listed service has a session (as today)" target="save" position=right
+annotation "Step 8: Alice clicks" target="save" position=left
 ```
 
 </details>
