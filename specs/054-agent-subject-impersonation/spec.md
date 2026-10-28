@@ -32,7 +32,7 @@
 
 - Q: How should the broker distinguish human subjects from agent subjects, especially when one rule permits both? → A: During token exchange, allow skipping consent if the audience-provided agent ID matches the subject claim `sub` exactly. This applies only with explicit agent eligibility and successful credential validation and rule authorization; no separate category claim or request parameter is required.
 - Q: Must the subject identify the same agent as the audience-selected target, and which subject identifiers should be accepted? → A: Self-agent only, with the subject identifying the target's exact broker UUID (Q2 option A). The signed `sub` must equal the UUID of the registered audience-selected target; display names, routing aliases, alternate UUID spellings, and different agents do not qualify for agent issuance.
-- Q: Must every agent-subject token be rejected for third-party service exchange even when its UUID text matches a human principal with an active grant and service session? → A: Yes, categorical rejection (Q3 option A). Existing human grants and sessions must not make an agent-subject token exchangeable.
+- Q: Must every agent-subject token be rejected for third-party service exchange even when its UUID text matches a human principal with an active grant and service session? → A: Yes, categorical rejection (Q3 option A). Existing human grants and sessions must not make an agent-subject token exchangeable. The 2026-10-28 clarification below refines this guarantee for the subsequently accepted C4 detector replacement semantics.
 
 The identity and exchange answers above came from authorized comment `6418744033`, recorded by the preceding clarification session. Q1's custom answer replaces the earlier proposal that equality could never select agent issuance. The human-only compatibility decision (Q4) is resolved in the following session: exact signed equality is ineligible even with active human delegation.
 
@@ -44,6 +44,10 @@ The identity and exchange answers above came from authorized comment `6418744033
 - Q: Should the per-rule category setting use the `allowed_subject_categories` string list, `human`/`agent` enum, human-only omission default, and fail-closed validation in CFG-001? → A: Yes (Q5 option A), as answered in authorized maintainer comment `6439904155`; the key, list serialization, default, and validation contract in CFG-001 are confirmed.
 
 These answers settle specification behavior and configuration, not an existing runtime capability, ADR acceptance, or approval of the full OpenAPI contract. Q4 intentionally tightens legacy handling for the exact signed subject/target-UUID collision; nonmatching human subjects retain their existing delegation flow.
+
+### Session 2026-10-28
+
+- Q: How should FR-011 and SR-005 be aligned with the accepted C4 detector replacement semantics? → A: Authorized maintainer command `6480240156` requests alignment with C4, already accepted in comment `6477637352`. With the default `token_exchange.claim_extraction.agent_subject_expression`, every broker-issued agent-subject token is categorically rejected before human-state access. A configured expression replaces the default entirely, with no additional built-in check. Operators are responsible for keeping overrides matching broker agent-subject tokens; a non-matching override such as `false` lets them continue through existing exchange checks and removes that guarantee. Documentation and acceptance coverage must distinguish the default, a compliant override, and a non-matching override. This refines Q3's unconditional wording without approving a new API contract or accepting an ADR in this session.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -89,14 +93,14 @@ An operator restricts which agent subjects a privileged client may represent thr
 
 **Why this priority**: Bounds the feature to broker identity issuance and prevents accidental access to third-party credentials.
 
-**Independent Test**: Allow one agent subject and deny another, try an unresolved subject, then attempt a third-party exchange with a successfully issued agent token.
+**Independent Test**: Allow one agent subject and deny another, try an unresolved subject, then attempt a third-party exchange with a successfully issued agent token under the default detector, a compliant replacing override, and a non-matching replacing override.
 
 **Acceptance Scenarios**:
 
 1. **US3.1** — **Given** valid credentials for an agent subject outside the rule's CEL authorization, and no other eligible authorizing rule, **When** exchange is attempted, **Then** no token is issued even if an upstream proxy allowed the request.
 2. **US3.2** — **Given** an agent-only rule and a signed subject whose `sub` is empty, invalid, a routing alias, an alternate UUID spelling, or a different agent's UUID, or whose audience target does not resolve to an existing agent, **When** exchange is attempted, **Then** no token is minted. Only exact equality with the registered target's broker UUID qualifies; no alias resolution or cross-agent representation is permitted for the subject.
 3. **US3.3** — **Given** an agent-subject request whose authorization cannot be evaluated successfully, **When** exchange is attempted, **Then** no token is issued and the failure is not converted into consent bypass or human issuance.
-4. **US3.4** — **Given** a valid broker-issued agent-subject token, **When** a privileged client attempts to exchange it for a third-party service token, **Then** the broker categorically rejects it and returns no third-party token, both without human state and when a human principal with identical UUID text has an active grant and valid service session. The broker never uses that human's credentials.
+4. **US3.4** — **Given** a valid broker-issued agent-subject token and the default `agent_subject_expression`, **When** a privileged client attempts to exchange it for a third-party service token, **Then** the broker categorically rejects it before any human grant, session, or provider access, both without human state and when a human principal with identical UUID text has an active grant and valid service session. Repeat with a compliant replacing override that still matches broker agent-subject tokens: the same rejection holds. Repeat with a non-matching override such as `false`: the default is not additionally evaluated, the request continues through existing exchange checks, and categorical rejection and isolation from matching human state are no longer guaranteed. This last fixture verifies operator-owned replacement, not supported third-party agent identity or automatic exchange success. Detection errors, timeouts, and non-boolean results instead deny exchange without human-state access.
 
 ### Edge Cases
 
@@ -110,6 +114,7 @@ An operator restricts which agent subjects a privileged client may represent thr
 - Unsigned subject credentials remain limited to the existing human profile; this draft does not extend ADR 031 to agent subjects.
 - Proxy and hybrid deployments retain their current rejection of impersonation. Enabling agent subjects does not enable other modes.
 - Existing scope restrictions, routing audience semantics, token lifetime, and policy-owned output audience remain applicable.
+- Third-party detection evaluates validated subject-token claims. With the default detector, equal `sub` and `agent_id` are rejected even for a human token or trusted external issuer token. Detection errors, timeouts, or non-boolean results fail closed without human-state access; they MUST NOT become a `false` result. A configured non-matching boolean expression is different: it replaces the default and allows the existing exchange flow to continue under operator responsibility.
 
 ## Concrete Example Journeys *(mandatory)*
 
@@ -352,7 +357,7 @@ An otherwise authorized agent request on the dual-category rule follows Journey 
 
 ### Journey 3 — Deny unauthorized representation and third-party credential access (User Story 3, Scenarios US3.1–US3.4)
 
-**Cast**: Same deployment and identities as Journey 1. A second registered agent, `billing-agent`, has UUID `660e8400-e29b-41d4-a716-446655440001`. No rule authorizes the gateway to represent it. Service resource `https://api.thirdparty.example.com` exists. Exercise two fixture states: no human delegation or service session for the research UUID, and an identically named human principal with an active delegation and valid service session. Neither state may make the agent token exchangeable.
+**Cast**: Same deployment and identities as Journey 1. A second registered agent, `billing-agent`, has UUID `660e8400-e29b-41d4-a716-446655440001`. No rule authorizes the gateway to represent it. Service resource `https://api.thirdparty.example.com` exists. Exercise two fixture states: no human delegation or service session for the research UUID, and an identically named human principal with an active delegation and valid service session. With the default detector or a compliant override, neither state may make the agent token exchangeable. Step 3 separately demonstrates how a non-matching override removes that guarantee.
 
 **Step 1 — 09:10:00: Gateway attempts an unauthorized agent identity**
 
@@ -376,9 +381,10 @@ token_exchange:
   claim_extraction:
     principal_expression: subject_token.sub # Resolves to the research-agent UUID, not Alice.
     agent_id_expression: subject_token.agent_id # Resolves the existing target registration.
+    # agent_subject_expression omitted: the default detects equal sub and agent_id.
 ```
 
-These settings deliberately expose the identifier collision: both extraction results equal the research UUID. The broker must reject the agent-subject token regardless of whether matching human grants and sessions exist; relying on their absence is insufficient.
+These settings deliberately expose the identifier collision: both extraction results equal the research UUID. With the omitted detector setting, the default `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id` matches. The broker must reject the agent-subject token before human-state access regardless of whether matching human grants and sessions exist; relying on their absence is insufficient.
 
 ```http
 POST /oauth2/token HTTP/1.1
@@ -402,9 +408,28 @@ Content-Type: application/json
 }
 ```
 
-This is the proposed categorical-denial example for API review, not an approved error mapping. The final mapping must be documented and confirmed before implementation. No human-consent recovery is offered for an agent token: even granting consent cannot make it exchangeable. Repeat the same exchange after adding an active human grant and valid service session under the exact same UUID text; it must still return no service token and must not use that session. Design must preserve the distinction between agent and human tokens without inferring category solely from subject identifier text; this phase does not prescribe the token representation.
+This is the categorical-denial mapping recorded in the feature's confirmed C3 design contract; this clarification does not change `api/enduser/openapi.yaml`. No human-consent recovery is offered when detection matches: even granting consent cannot make that request exchangeable. Repeat the same exchange after adding an active human grant and valid service session under the exact same UUID text; with the default detector it must still return no service token and must not use that session. Detection compares validated claims, not subject identifier text alone, and requires no new category claim.
 
-**Observable result**: Valid external machine authentication does not authorize every agent, and successful broker agent issuance does not provide a third-party service identity.
+**Step 3 — Operator reviews replacement behavior (US3.4 variants)**
+
+Retain Step 2's principal/agent extraction and request, but set this compliant override:
+
+```yaml
+token_exchange:
+  claim_extraction:
+    principal_expression: subject_token.sub
+    agent_id_expression: subject_token.agent_id
+    agent_subject_expression: >-
+      (has(subject_token.sub) && has(subject_token.agent_id) &&
+       subject_token.sub == subject_token.agent_id) ||
+      (has(subject_token.token_use) && subject_token.token_use == 'machine')
+```
+
+The override replaces the default, but keeps its comparison as a disjunct and adds an external machine-token form. The same broker token still matches and receives Step 2's `403 access_denied` without human-state access in both fixture states.
+
+Now replace only `agent_subject_expression` with the string `'false'`. This is a valid boolean CEL expression, not a detection error. Repeating Step 2's request no longer triggers agent-subject rejection: no additional default comparison runs. The request instead proceeds through the existing authorization, agent, delegation, session, and provider checks. Without the required human state, existing exchange denials apply; with same-text human state, that state may be consulted and used if all existing checks pass. No successful exchange is promised, and no new third-party identity mapping is introduced. This deliberately non-compliant operator override demonstrates loss of the default protection, not an approved production configuration.
+
+**Observable result**: Valid external machine authentication does not authorize every agent. The default and compliant overrides prevent agent tokens from reaching third-party credentials. Operators who replace the detector own its correctness; a non-matching override removes that protection.
 
 ## Requirements *(mandatory)*
 
@@ -420,8 +445,8 @@ This is the proposed categorical-denial example for API review, not an approved 
 - **FR-008**: The rule's CEL policy MUST be able to authorize the agent identity being represented using credential identity and target context. A policy denial, error, timeout, failed extraction, or unresolved identity MUST NOT yield a token. Upstream authorization MUST NOT replace broker-side validation and rule authorization.
 - **FR-009**: Existing ordered rule evaluation MUST remain applicable, restricted by category eligibility. Failure of a human delegation check MUST NOT be retried as agent issuance.
 - **FR-010**: Existing local issuer, signing, token lifetime, target-derived `agent_id`, scope restrictions, and policy-owned output `aud` semantics MUST remain applicable. Proxy/hybrid support, new grant types, and new credential roles are outside scope.
-- **FR-011**: Every agent-subject token MUST be categorically rejected for third-party service-token exchange, even when a human principal with identical UUID text has an active grant and valid service session. Rejection MUST NOT depend on missing human state or use a matching human's credentials. Determining agent identities in third parties is deferred.
-- **FR-012**: Operator documentation MUST explain category eligibility, safe defaults, signed machine identity, actor attribution, CEL restrictions, retained human consent requirements, the intentional human-only signed exact-equality rejection, and the third-party limitation, with concrete examples.
+- **FR-011**: With the default `token_exchange.claim_extraction.agent_subject_expression`, every broker-issued agent-subject token MUST be categorically rejected for third-party service-token exchange before human grant, session, or provider access, even when a human principal with identical UUID text has an active grant and valid service session. Rejection MUST NOT depend on missing human state. A configured expression replaces the default entirely, with no additional built-in check; operators are responsible for keeping it matching broker agent-subject tokens. A compliant override retains the rejection guarantee; a non-matching override such as `false` lets the token continue through existing exchange checks and removes that guarantee. Determining agent identities in third parties remains deferred.
+- **FR-012**: Operator documentation MUST explain category eligibility, safe defaults, signed machine identity, actor attribution, CEL restrictions, retained human consent requirements, the intentional human-only signed exact-equality rejection, and the third-party limitation, with concrete examples. It MUST document the detector default, full replacement semantics, fail-closed detection failures, and the operator's responsibility to keep overrides matching broker agent-subject tokens, for example by keeping the default as a disjunct. It MUST warn that non-matching overrides remove categorical rejection and protection against same-text human credential access.
 
 ### Domain Model
 
@@ -503,11 +528,12 @@ These clarified terms must be reconciled with the architecture glossary during l
 - **CFG-002**: Preserve existing rule configuration, trusted issuer roles, CEL policy, and validation. Missing category configuration means humans only, not both.
 - **CFG-003**: Document the setting and complete human-only, agent-only, and dual-category examples in `docs/configuration.md` and `examples/config/`, and update the broker Helm deployment contract before implementation is complete. Configuration must use the existing broker configuration system and its file, environment, and CLI precedence, not an ad-hoc loader.
 - **CFG-004**: Journey 1 includes the complete confirmed agent-only rule; Journey 2 includes complete confirmed human-only and dual-category alternatives and the omitted-setting variation. Examples MUST retain the same key, enum values, validation, and identity semantics as CFG-001.
+- **CFG-005**: The optional string `token_exchange.claim_extraction.agent_subject_expression` evaluates validated `subject_token` claims to a boolean. Omission or an empty string MUST use `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. A non-empty configured expression MUST replace that default, not supplement it. A `true` result MUST reject third-party exchange before human-state access; `false` MUST continue the existing flow. Invalid syntax, undeclared variables, and statically non-boolean expressions MUST fail startup; evaluation errors, timeouts, and non-boolean runtime results MUST fail closed. Documentation, examples, and the broker Helm deployment contract MUST state the default, replacement semantics, collision behavior, and override responsibility in FR-011/FR-012. This records accepted C4 semantics, not an existing runtime capability.
 
 ### API Requirements
 
 - **API-001**: Extend the existing local impersonation behavior of `POST /oauth2/token`; preserve its established credential roles, routing target, success envelope, and actor attribution. Do not change an approved API contract in this phase.
-- **API-002**: Document the confirmed human-only signed exact-equality rejection (Q4), the clarified exact signed-`sub`/target-UUID comparison, self-agent-only identity semantics, categorical third-party denial, validation errors, and examples in `api/enduser/openapi.yaml`, and obtain explicit stakeholder confirmation before implementation. No new category-selection request parameter is required. The clarification answers settle product semantics, not the full OpenAPI contract or final error mapping.
+- **API-002**: Document the confirmed human-only signed exact-equality rejection (Q4), the clarified exact signed-`sub`/target-UUID comparison, self-agent-only identity semantics, third-party denial when the configured detector matches (defaulting to categorical rejection of broker agent-subject tokens), validation errors, and examples in `api/enduser/openapi.yaml`, and obtain explicit stakeholder confirmation before implementation. No new category-selection request parameter is required. The clarification answers settle product semantics, not the full OpenAPI contract or final error mapping.
 - **API-003**: Preserve established human responses. New agent-category or resolution errors must have a confirmed mapping in the API design rather than relying on prose error descriptions as stable identifiers.
 - **API-004**: No new administrative endpoint, consent endpoint, frontend flow, or third-party identity API is requested.
 
@@ -517,7 +543,7 @@ These clarified terms must be reconciled with the architecture glossary during l
 - **SR-002**: Client assertions and actor credentials MUST remain signature-verified, with existing issuer, algorithm, audience, expiry, and not-before controls. Machine subject credentials in this draft are signed and retain those controls as well.
 - **SR-003**: This feature MUST NOT widen the ADR 031 unsigned-subject exception. Existing human unsigned-subject rules retain all of that ADR's compensating controls, including subject binding and email restrictions.
 - **SR-004**: Every decision MUST emit a credential-free structured audit event that allows subject category, represented identity, actor, privileged client, selected rule, target, and outcome to be distinguished. Never log credentials or wholesale claims.
-- **SR-005**: Agent-subject requests MUST NOT obtain a human's third-party credentials through identifier collision, fallback, or manufactured delegation.
+- **SR-005**: With the default detector or an override that matches broker agent-subject tokens, those tokens MUST NOT obtain a human's third-party credentials through identifier collision, fallback, or manufactured delegation; rejection MUST precede human grant, session, or provider access. Detection failures MUST fail closed. Under accepted C4 replacement semantics, a non-matching override removes this protection and may allow access to matching human state through the existing exchange flow. Operators MUST keep overrides matching broker agent-subject tokens; documentation MUST state that responsibility and risk. Agent-subject issuance MUST NOT manufacture human delegation.
 - **SR-006**: Credential verification and token signing MUST continue to use vetted security libraries; subject-category policy is not a substitute for signature validation.
 
 ### Binding Design Dependencies
@@ -535,12 +561,13 @@ These clarified terms must be reconciled with the architecture glossary during l
 - **SC-002**: Every tested issuance identifies the represented agent by its broker UUID and preserves the verified actor issuer and extracted actor identity, including when actor and subject text are equal.
 - **SC-003**: All six human/agent eligibility combinations across human-only, agent-only, and dual-category rules behave according to Journey 2's matrix; no tested ineligible category obtains a token.
 - **SC-004**: Every tested nonmatching human subject remains denied without an active delegation after this feature is enabled, including dual-category and UUID-shaped cases. Exact signed equality selects agent issuance only on explicitly agent-permitting rules; human-only rules reject signed exact-equality requests as ineligible even with active human delegation.
-- **SC-005**: Every tested unauthorized, unresolved, invalid-credential, and policy-failure case issues zero tokens; every tested third-party exchange of an agent token returns zero service tokens and uses zero human sessions, including when matching human grants and sessions exist.
+- **SC-005**: Every tested unauthorized, unresolved, invalid-credential, and policy-failure case issues zero tokens. Every tested third-party exchange of a broker agent-subject token with the default detector or a compliant replacing override returns zero service tokens and accesses zero human grants, sessions, or providers, including when matching human state exists. US3.4 also verifies that a non-matching override such as `false` replaces the default and continues through existing exchange checks, without asserting categorical rejection or automatic success. Detection-error cases deny exchange without human-state access.
 - **SC-006**: An operator can review documented examples for all three rule selections and predict the correct human-consent and agent-issuance outcome for each. Concrete confirmed configuration examples are included in Journeys 1 and 2; signed exact-equality requests on human-only rules are ineligible even with active human delegation.
 
 ## Assumptions
 
 - “No consent” applies to agent-category subjects only. Human consent is not removed.
+- The third-party rejection guarantee assumes the default detector or a compliant override. Operators own the correctness of a replacement expression; a non-matching override is not protected by an additional built-in detector and does not establish support for third-party agent identities.
 - The scope is an agent acting for itself. Cross-agent representation and subject alias resolution are excluded by the accepted Q2 answer; the routing audience may still use its existing alias resolution.
 - Machine subject credentials are signed in this draft. Supporting unsigned machine subjects would be a separate security/governance decision, not an inference from existing human support.
 - Existing Agent registration, ordered rules, local token issuance, and operator-managed external issuer trust are reused. No new database schema, frontend screens, or third-party identity provisioning is required by the stated scope.
