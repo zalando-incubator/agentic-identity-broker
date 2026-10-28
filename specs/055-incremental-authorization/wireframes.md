@@ -148,21 +148,35 @@ window "Consent Management":
     text "After saving, the agent can use your permissions until revoked" muted size=small
   section "Agent Permissions":
     text "Review the permissions this agent is requesting. Required permissions are always granted. Toggle optional permissions on or off based on your preference." size=small
+    slot "Action required" accent=warning id="banner":
+      text "Data Analysis Assistant needs GitHub Production for the action it is performing." bold size=small
+      text "Keep or select at least one permission set that covers it: GitHub Read Access, GitHub Issue Triage. Then log in to GitHub Production below." size=small
     slot "Identity Access":
       row:
         chip "Required"
       text "Sign in as you" muted size=small
       text "SERVICES" muted size=small
       chip "Corporate Identity · required"
-    slot "GitHub Read Access" accent=warning id="github-set":
+    slot "GitHub Read Access" id="github-read":
       row:
         chip "Optional"
-        chip "Requested by agent" accent=warning id="requested-chip"
+        chip "Covers requested service" accent=warning id="covers-chip"
         spacer
-        toggle "" on disabled id="ps-toggle"
+        toggle "" on
       text "Read repository contents and user profile" muted size=small
       text "SERVICES" muted size=small
-      chip "GitHub Production · requested" accent=warning
+      row:
+        chip "GitHub Production · requested" accent=warning
+        toggle "" on
+    slot "GitHub Issue Triage":
+      row:
+        chip "Optional"
+        chip "Covers requested service" accent=warning
+        spacer
+        toggle "" off id="triage-toggle"
+      text "Read and label issues" muted size=small
+      text "SERVICES" muted size=small
+      chip "GitHub Production"
   section "Connect Your Accounts" badge="1":
     text "Data Analysis Assistant needs access to the following services. Click Login to authorize each one before saving." size=small
     slot "GitHub Production":
@@ -180,10 +194,11 @@ window "Consent Management":
     spacer
     button "Save" disabled id="save"
 
-annotation "New: marks the service named by the\nvirtual scope in the authorize request" target="requested-chip" position=right
-annotation "New: set and service toggles locked on\nwhile the service is requested" target="ps-toggle" position=right
+annotation "New: names the service from the virtual scope\nand lists every permission set that covers it" target="banner" position=right
+annotation "New marker on each covering set.\nToggles stay editable: the user picks the set" target="covers-chip" position=right
+annotation "Unchanged: a set the user leaves off\nstays off" target="triage-toggle" position=right
 annotation "Unchanged: Login starts the GitHub sign-in\nand returns here (ADR 037 keeps the selection)" target="login" position=right
-annotation "Unchanged FR-020 rule: disabled until every\nincluded service has an active session" target="save" position=right
+annotation "Disabled until a selected set includes GitHub Production\n(new) and it has an active session (FR-020, unchanged)" target="save" position=right
 ```
 
 </details>
@@ -217,6 +232,8 @@ window "Consent Management":
     text "After saving, the agent can use your permissions until revoked" muted size=small
   section "Agent Permissions":
     text "Review the permissions this agent is requesting. Required permissions are always granted. Toggle optional permissions on or off based on your preference." size=small
+    slot "Ready to save" accent=success id="banner":
+      text "GitHub Production is covered by GitHub Read Access and logged in. Save to continue." size=small
     slot "Identity Access":
       row:
         chip "Required"
@@ -226,12 +243,23 @@ window "Consent Management":
     slot "GitHub Read Access":
       row:
         chip "Optional"
-        chip "Requested by agent" accent=warning
+        chip "Covers requested service" accent=warning
         spacer
-        toggle "" on disabled
+        toggle "" on
       text "Read repository contents and user profile" muted size=small
       text "SERVICES" muted size=small
-      chip "GitHub Production · requested" accent=warning
+      row:
+        chip "GitHub Production · requested" accent=warning
+        toggle "" on
+    slot "GitHub Issue Triage":
+      row:
+        chip "Optional"
+        chip "Covers requested service" accent=warning
+        spacer
+        toggle "" off
+      text "Read and label issues" muted size=small
+      text "SERVICES" muted size=small
+      chip "GitHub Production"
   row:
     button "Revoke All Access"
     spacer
