@@ -94,6 +94,23 @@ func sweepSkippedTotal(reader *sdkmetric.ManualReader) int64 {
 	return total
 }
 
+// refreshCounts returns a refresh counter's values keyed by "service_id/failure_detail".
+func refreshCounts(reader *sdkmetric.ManualReader, name string) map[string]int64 {
+	counts := map[string]int64{}
+	metric, ok := collectNamedMetric(reader, name)
+	if !ok {
+		return counts
+	}
+	sum, ok := metric.Data.(metricdata.Sum[int64])
+	ExpectWithOffset(1, ok).To(BeTrue(), "%s is %T, want Sum[int64]", name, metric.Data)
+	for _, point := range sum.DataPoints {
+		service, _ := point.Attributes.Value("service_id")
+		detail, _ := point.Attributes.Value("failure_detail")
+		counts[service.AsString()+"/"+detail.AsString()] += point.Value
+	}
+	return counts
+}
+
 // healthSeries returns the eight zero-filled oauth2_sessions series of one service with overrides.
 func healthSeries(overrides map[string]int64) map[string]int64 {
 	series := map[string]int64{}
@@ -364,6 +381,61 @@ var _ = Describe("Session Metrics", func() {
 				Expect(result.body).To(HaveKeyWithValue("refreshed", BeNumerically("==", 1)))
 				Expect(result.body).To(HaveKeyWithValue("skipped", BeNumerically("==", 2)))
 				Expect(sweepSkippedTotal(reader)).To(Equal(int64(2)))
+			})
+		})
+
+		Describe("User Story 4: refresh outcomes per service", func() {
+			// US4-S1 from specs/053-session-auto-refresh/spec.md
+			It("counts sweep refreshes and failures under their service and failure detail", func() {
+				now := time.Now()
+				due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
+				soon := now.Add(2 * time.Minute)
+				due.AccessTokenExpiresAt = &soon
+				seed(due, fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", tickets, now))
+				boot()
+				Expect(sweepStatus(admin, fixtures.AdminPrincipal().String(), `{"lookahead_duration":"PT10M"}`)).To(Equal(http.StatusOK))
+				Expect(refreshCounts(reader, "session_sweep_refreshed_total")).To(Equal(map[string]int64{calendar.String() + "/": 1}))
+				Expect(refreshCounts(reader, "session_sweep_failed_total")).To(Equal(map[string]int64{tickets.String() + "/access_token_expired": 1}))
+			})
+
+			Context("when a token exchange starts a background refresh that the provider rejects", func() {
+				var (
+					principal string
+					agent     *storagedomain.Agent
+					enduser   *bootstrap.TestServer
+				)
+
+				BeforeEach(func() {
+					principal = fixtures.DefaultPrincipal().String()
+					Expect(fixtures.SeedPlaceholderGrantData(ctx, store, calendar)).To(Succeed())
+					agent = fixtures.ValidAgent()
+					Expect(store.Agents().Create(ctx, agent)).To(Succeed())
+					Expect(store.UserGrants().Create(ctx, fixtures.ActiveGrant(principal, agent.ID.String(), calendar.String(), []string{"repo", "user"}))).To(Succeed())
+					due := fixtures.GitHubSessionForPrincipal(principal)
+					soon := time.Now().Add(2 * time.Minute)
+					due.AccessTokenExpiresAt = &soon
+					seed(due)
+					upstream.WithErrorResponse("invalid_grant")
+					app, err := bootstrap.NewServerFactory(config, logger).BuildApp(store)
+					Expect(err).NotTo(HaveOccurred())
+					enduser, err = bootstrap.NewEndUserTestServer(app, logger)
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				AfterEach(func() {
+					if enduser != nil {
+						enduser.Close()
+					}
+				})
+
+				// US4-S2 from specs/053-session-auto-refresh/spec.md
+				It("counts the background refresh under its service and the failure with its detail", func() {
+					body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusOK)
+					Expect(body).To(HaveKey("access_token"))
+					Eventually(func() map[string]int64 { return refreshCounts(reader, "proactive_refresh_failed_total") }).
+						Should(Equal(map[string]int64{calendar.String() + "/refresh_rejected": 1}))
+					Expect(refreshCounts(reader, "proactive_refresh_triggered_total")).To(Equal(map[string]int64{calendar.String() + "/": 1}))
+				})
 			})
 		})
 	})

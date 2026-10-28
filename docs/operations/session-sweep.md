@@ -159,12 +159,12 @@ If metrics are enabled, use the exported OpenTelemetry instruments. The broker d
 |---|---|---|
 | `oauth2_sessions{service_id, expiry, refreshable}` | Gauge | Stored sessions per service, access-token expiry class (`valid`, `expiring`, `expired`, or `unknown`), and whether a usable refresh token exists (`true` or `false`). Every combination is reported for a service with sessions, with zero when empty. |
 | `session_sweep_duration_seconds{outcome, dry_run}` | Histogram | Duration of each sweep request with an operator principal. `outcome` is `completed`, `rejected`, `aborted`, or `canceled`. Its count series counts runs. |
-| `session_sweep_refreshed_total` | Counter | Sessions refreshed by real sweeps. |
+| `session_sweep_refreshed_total{service_id}` | Counter | Sessions refreshed by real sweeps. |
 | `session_sweep_skipped_total` | Counter | Candidates a real sweep skipped because another refresh renewed them or they were deleted. |
-| `session_sweep_failed_total` | Counter | Candidates that failed during real sweeps. |
-| `proactive_refresh_triggered_total` | Counter | Background refresh attempts accepted during token exchange. |
+| `session_sweep_failed_total{service_id, failure_detail}` | Counter | Candidates that failed during real sweeps. `failure_detail` is the detail code that `session.oauth2.refresh_failed` logs, for example `refresh_rejected` or `access_token_expired`. |
+| `proactive_refresh_triggered_total{service_id}` | Counter | Background refresh attempts accepted during token exchange. |
 | `proactive_refresh_dropped_total` | Counter | Background refresh attempts dropped under load. |
-| `proactive_refresh_failed_total` | Counter | Accepted background refresh attempts that failed. |
+| `proactive_refresh_failed_total{service_id, failure_detail}` | Counter | Accepted background refresh attempts that failed, with the same `failure_detail` codes. |
 
 `expiry` is `valid` when the access token expires after now plus `token_refresh.lookahead_duration`, `expiring` when it expires within that window, `expired` when it has already expired, and `unknown` when no expiry is recorded. `refreshable` is `true` when a refresh token is present and not expired. The series to watch is `expiry="expired",refreshable="true"`: these sessions the sweep could renew but has not, and inactive users accumulate there when no sweep runs. `expiry="expired",refreshable="false"` counts users who must reconnect. The sweep never reaches `unknown` sessions.
 
@@ -197,6 +197,11 @@ absent_over_time(oauth2_sessions[15m])
 
 # Sweep failures over a day
 sum(increase(session_sweep_failed_total[1d])) > 0
+
+# Refresh failures per service and reason over the last hour
+sum by (service_id, failure_detail) (
+  increase(session_sweep_failed_total[1h]) or increase(proactive_refresh_failed_total[1h])
+)
 ```
 
 If your cluster runs kube-state-metrics, the CronJob status gives a second signal that does not depend on the broker:

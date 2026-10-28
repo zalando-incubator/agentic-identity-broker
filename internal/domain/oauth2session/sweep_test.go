@@ -642,12 +642,18 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				require.NoError(t, err)
 				assert.Equal(t, "old-access-1", plain, "failed candidates never persist partial tokens")
 				assertSweepLogMetadata(t, f.logs.String(), "session.oauth2.refresh_failed", tc.wantLevel, tc.wantDetail, tc.wantKind, tc.wantDependency)
+				assert.Equal(t, map[string]int64{f.serviceID.String() + "/" + string(tc.wantDetail): 1}, sweepFailures(t, reader))
 			}
 		})
 	}
 }
 
 func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderLookup(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
 	f := newSweepFixture(t)
 	providerRepo := &countingSweepProviderRepository{
 		ThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
@@ -680,6 +686,12 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	}
 	assert.Equal(t, 1, providerRepo.gets[validServiceID])
 	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.refresh_failed"`))
+	refreshed := sweepCounterPoints(t, reader)["session_sweep_refreshed_total"]
+	require.Len(t, refreshed, 1)
+	service, _ := refreshed[0].Attributes.Value("service_id")
+	assert.Equal(t, validServiceID.String(), service.AsString())
+	assert.Equal(t, map[string]int64{failedServiceID.String() + "/" + string(oauth2session.DetailRefreshTokenExpired): 2}, sweepFailures(t, reader),
+		"failures without a provider lookup still name their service")
 }
 
 func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
@@ -953,11 +965,41 @@ func assertSweepLogMetadata(t *testing.T, logs, event, level string, detail oaut
 	t.Errorf("missing %s log at %s level with classified metadata: %s", event, level, logs)
 }
 
+// sweepMetricKeys lists the only attributes each sweep counter may carry (FR-027 to FR-029).
+var sweepMetricKeys = map[string][]string{
+	"session_sweep_refreshed_total": {"triggered_by", "service_id"},
+	"session_sweep_failed_total":    {"triggered_by", "service_id", "failure_detail"},
+	"session_sweep_skipped_total":   {"triggered_by"},
+}
+
 func sweepMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	counts := make(map[string]int64)
+	for name, points := range sweepCounterPoints(t, reader) {
+		for _, point := range points {
+			counts[name] += point.Value
+		}
+	}
+	return counts
+}
+
+// sweepFailures returns session_sweep_failed_total keyed by "service_id/failure_detail".
+func sweepFailures(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	failures := make(map[string]int64)
+	for _, point := range sweepCounterPoints(t, reader)["session_sweep_failed_total"] {
+		service, _ := point.Attributes.Value("service_id")
+		detail, _ := point.Attributes.Value("failure_detail")
+		failures[service.AsString()+"/"+detail.AsString()] += point.Value
+	}
+	return failures
+}
+
+func sweepCounterPoints(t *testing.T, reader *sdkmetric.ManualReader) map[string][]metricdata.DataPoint[int64] {
 	t.Helper()
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
-	counts := make(map[string]int64)
+	points := make(map[string][]metricdata.DataPoint[int64])
 	for _, scope := range collected.ScopeMetrics {
 		for _, measurement := range scope.Metrics {
 			if !strings.HasPrefix(measurement.Name, "session_sweep_") {
@@ -966,14 +1008,16 @@ func sweepMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64
 			sum, ok := measurement.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "sweep instruments must be Int64 counters")
 			for _, point := range sum.DataPoints {
-				assert.Len(t, point.Attributes.ToSlice(), 1, "only the bounded trigger label is permitted")
+				var keys []string
 				for _, attr := range point.Attributes.ToSlice() {
-					assert.Equal(t, "triggered_by", string(attr.Key))
-					assert.Equal(t, "sweep", attr.Value.AsString())
+					keys = append(keys, string(attr.Key))
 				}
-				counts[measurement.Name] += point.Value
+				assert.ElementsMatch(t, sweepMetricKeys[measurement.Name], keys, "%s must not carry a principal or session ID", measurement.Name)
+				trigger, _ := point.Attributes.Value("triggered_by")
+				assert.Equal(t, "sweep", trigger.AsString())
+				points[measurement.Name] = append(points[measurement.Name], point)
 			}
 		}
 	}
-	return counts
+	return points
 }
