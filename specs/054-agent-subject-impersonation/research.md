@@ -77,7 +77,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - **Startup**: the expression is compiled with the other token-exchange expressions in `NewCELEvaluator` (FR-017 precedent). A syntax error, an undeclared variable, or a static output type other than `bool` or `dyn` fails startup.
 - **Runtime**: evaluation uses the existing token-exchange evaluation timeout. It follows `ExtractPrincipal`'s error semantics: an evaluation error or timeout is a terminal `server_error` through `celEvaluationError` (`identity_resolution / cel_evaluation_failed`), and a non-boolean result is a terminal `server_error` with `identity_resolution / cel_configuration`. The broker never treats a failed detection as "not an agent" (Principle I).
 - **Helm and examples**: `tokenExchange.claimExtraction.agentSubjectExpression` is an optional string in `values.schema.json` (the `claimExtraction` object is strict). `templates/configmap.yaml` renders `agent_subject_expression` only when the value is set, so the broker default applies otherwise. `values.yaml`, the chart `README.md`, and `examples/config/token-exchange.yaml` document the default and the override requirement.
-- **Override semantics (Needs confirmation, C4)**: a configured expression **replaces** the default, as the review describes ("can default to"). The broker cannot statically prove that an arbitrary expression still matches its own agent-subject tokens. Documentation therefore requires every override to keep the `sub == agent_id` comparison as a disjunct, so that FR-011 remains guaranteed. The alternative is to always OR the configured expression with the built-in default, so that operators could only widen detection. The plan proposes replacement and asks for confirmation.
+- **Override semantics (BLOCKED, C4; analysis I1)**: replacement remains an unapproved proposal, not an interpretation of the review's phrase "can default to". A valid configured expression such as `false` can suppress the default and let broker agent-subject tokens continue to human grant/session lookups. Documentation requiring a default disjunct does not enforce unconditional FR-011/SR-005. Stakeholder resolution is required; the recommended option is a non-removable built-in rejection check plus configurable widening. No option is accepted by this remediation. Any requirement weakening requires `/speckit-clarify`, not automatic remediation. After the decision, reconcile all dependent artifacts and require regression tests proving broker-token rejection with false, external-only, and compliant widening expressions, both without human state and with a same-text human grant/session.
 
 `ports.ImpersonationMintInput` is unchanged. The impersonation service passes `Subject = target UUID` and `Email = nil` for an agent-category request (R7). `baseClaims` is unchanged: `sub` and `agent_id` are already reserved, so `token_claims_expression` cannot break the `sub == agent_id` equality on an agent-subject token or create it on a human token.
 
@@ -94,7 +94,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - *Emit `subject_category: human` on every token*: changes every existing token.
 - *An RFC 9493 `sub_id` object*: too complex for a single flag, and no consumer uses it.
 
-**Consequence**: Deployments that override `agent_subject_expression` own its correctness. `docs/configuration.md` and `docs/reference/token-exchange.md` document the default, the fail-closed collision cases, and the override requirement.
+**Consequence (unresolved)**: FR-011/SR-005 cannot be delegated to operator documentation. The replacement proposal and its dependent contracts/draft ADR/tasks are not implementation-ready. T003 must remain blocking until C4 preserves categorical rejection and the artifacts are reconciled to the actual authorized decision.
 
 ## R6 — Third-party exchange rejection (FR-011)
 
@@ -160,6 +160,6 @@ The existing `docs/api/enduser-api.md` token-endpoint page is extended rather th
 
 ## Resolved unknowns
 
-The spec contains no `NEEDS CLARIFICATION` markers. The technical unknowns (classification input, order, agent-token detection, YAML presence detection, error mapping, and E2E harness) are resolved above.
+The spec contains no `NEEDS CLARIFICATION` markers, but that does not establish design approval. Classification input, order, YAML presence detection, error mapping, and the E2E harness are described above. Agent-token detector override semantics remain blocked by I1: the proposed replacement cannot guarantee FR-011/SR-005. G1 also remains blocked on explicit ADR 044 acceptance and R8 confirmation; see the approval record in `plan.md`.
 
 The PR #293 review confirmed R4 (C2) and R6 (C3), and replaced the reserved-claim proposal with the configurable detection expression in R5. Three items still need stakeholder confirmation before implementation: R1 (ADR 044 acceptance), the R5 override semantics (C4), and the R8 unsigned-subject guard.

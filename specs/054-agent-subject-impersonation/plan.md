@@ -38,7 +38,17 @@ Decisions are in [research.md](research.md) R1–R11.
 | `research.md` R6 (third-party rejection): "confirmed" | C3 recorded as confirmed in research R6. The detection input now comes from the R5 expression instead of a claim. |
 | `research.md` R5 (reserved claim): follow the spec's "no separate category claim", and add a CEL expression in the token-exchange config that defaults to `sub == agent_id` | The claim (C1) is withdrawn. Research R5 adds `token_exchange.claim_extraction.agent_subject_expression` with the guarded default. The new [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml) defines it. The data model, internal contracts, OpenAPI delta, ADR 044 draft, quickstart, and dependent `tasks.md` entries are aligned. `spec.md` is unchanged: its requirements already state that no category claim is required and leave the token representation to design. |
 
-The override semantics of the new expression (C4: a configured expression replaces the default) are a design proposal that needs confirmation. The alternative is to always OR the configured expression with the default.
+The override semantics of the new expression (C4) are **blocked pending a stakeholder decision**. Replacement is not implementation-ready: a valid expression such as `false` removes broker-agent detection, contradicting unconditional FR-011 and SR-005. Requiring operators to retain the default as a disjunct does not enforce those requirements. The recommended option is a non-removable built-in rejection check plus configurable widening, but this remediation does not approve that option or change requirements.
+
+### Remediation approval record — analysis run `40707318996/2`
+
+| Finding / gate | Evidence available in this session | Required resolution |
+| --- | --- | --- |
+| I1 / C4: categorical rejection under overrides | No authorized C4 decision supplied. Existing replacement semantics cannot guarantee FR-011/SR-005. | Obtain a stakeholder decision preserving categorical broker-agent rejection; reconcile research R5/R6, contracts, draft ADR, data model, quickstart, and dependent tasks. Require regression coverage with a detector configured as `false`, an external-only detector, and a compliant widening detector, with and without same-text human grants/sessions; broker agent tokens must never reach human-state or provider lookups. If requirements must change, use `/speckit-clarify` first. |
+| G1 / ADR 044 | Proposed draft only; no authorized acceptance reference supplied. | Record explicit acceptance of the agent-only supersession of ADR 032 decisions 1 and 2. Until then ADR 032 remains binding. |
+| G1 / R8 unsigned-subject guard | Proposal only; no authorized confirmation reference supplied. | Obtain and record the stakeholder decision on rejecting agent-capable unsigned-subject rules at startup. |
+
+C2/C3 confirmations recorded above do not settle C4, accept ADR 044, or confirm R8. T003 remains unchecked and blocks Phase 2a–2f and all implementation. No approval is inferred from this remediation run. Dependent artifacts retain unapproved proposals pending these decisions; the findings are not fully resolved.
 
 ## Technical Context
 
@@ -98,7 +108,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Helm Deployment Contract**: The broker is chart-managed. Updates: `values.schema.json` (the strict rule schema gains `allowed_subject_categories`), the `values.yaml` comment example, and `README.md`. `templates/configmap.yaml` already renders the impersonation subtree verbatim; the plan verifies this with a render check. The strict `tokenExchange.claimExtraction` schema gains the optional `agentSubjectExpression` string, and `templates/configmap.yaml` renders `agent_subject_expression` only when it is set.
 - [x] **API Design First**: The OpenAPI delta is drafted in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml). It adds no new path, parameter, token claim, or error code: only description text and examples.
 - [x] **API Documentation**: The delta targets `api/enduser/openapi.yaml`. Extend the existing token-endpoint documentation in `docs/api/enduser-api.md` with agent-subject requests, decoded claims, eligibility and denial examples, aligned with the confirmed OpenAPI. Retain the `docs/concepts/token-exchange.md` and `docs/reference/token-exchange.md` updates and cross-link the guides (Principle IV).
-- [ ] **API Changes**: C2 (the category-ineligible mapping) and C3 (the third-party rejection mapping) were **confirmed** in the PR #293 review. C1 (the `subject_category` claim) was **withdrawn** by that review. C4 (a configured `agent_subject_expression` replaces the default) is **pending stakeholder confirmation** on PR #293 before implementation. This is a pre-implementation gate, not a planning violation.
+- [ ] **API Changes**: C2 (the category-ineligible mapping) and C3 (the third-party rejection mapping) were **confirmed** in the PR #293 review. C1 (the `subject_category` claim) was **withdrawn** by that review. C4 (a configured `agent_subject_expression` replaces the default) is **pending stakeholder confirmation** on PR #293 before implementation. This gate is unresolved; replacement alone also conflicts with FR-011/SR-005, so the current design is not ready for implementation.
 - [x] **Database Design**: No schema change (spec Assumptions; data-model).
 - [x] **E2E Acceptance Tests**: All 12 scenarios are mapped below. They are written in Phase 2f before implementation.
 - [x] **E2E Test Mapping**: Each scenario maps 1:1 to one `It()` (table below).
@@ -108,7 +118,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 
 **Implementation Considerations**:
 
-- [x] **Security-First**: Agent issuance is off by default (omission means `[human]`). It requires signed and verified credentials and exact UUID equality. CEL still decides. Agent tokens are categorically rejected for third-party exchange by the default `sub == agent_id` detection, and a detection failure is a terminal `server_error`. ADR 031 is not widened, and the unsigned-subject guard is added. Audit events are credential-free.
+- [ ] **Security-First**: Agent issuance is off by default (omission means `[human]`) and requires signed, verified credentials, exact UUID equality, and CEL authorization. However, the proposed replacement detector does not enforce FR-011/SR-005 under every valid configuration. Documentation and compliant-override tests cannot establish categorical rejection. C4 must resolve this invariant before the design can pass; the R8 unsigned-subject guard also remains unconfirmed. ADR 031 must not be widened, and audit events must remain credential-free.
 - [x] **Architecture Docs**: `ARCHITECTURE.md` §3.1.y (the user-delegation sentence, category gating, and `sub == agent_id` identification), the token-exchange flow description (the `agent_subject_expression` step), and the glossary.
 - [ ] **ADRs**: [ADR 044](adr-044-draft.md) is drafted with **Status: Proposed**. It narrowly supersedes ADR 032 decisions 1 and 2 for agent-category requests: the delegation exception and target-derived minted subject despite a potentially different extracted principal. All principal extractions remain mandatory; eligible human requests retain decisions 1–6. **Stakeholder acceptance is required before implementation** (Principle II). This plan does not accept it.
 - [x] **Library-First Security**: Verification and signing stay in `jwx`. Classification is a string comparison of an already-verified claim, and detection uses `cel-go` (ADR 009). There is no custom cryptography.
@@ -122,9 +132,9 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   - No new cross-context dependency: detection lives entirely in `tokenexchange`, and `oauth2server` is unchanged.
 - [x] **Persistence Patterns**: N/A (no persistence).
 
-**Gate status**: PASS for planning. There is no unjustified violation. Two **pre-implementation gates** stay open by design: ADR 044 acceptance, and confirmation of C4 plus the R8 unsigned-subject guard (C2 and C3 are confirmed; C1 is withdrawn). `/speckit-implement` must stop at the first task that depends on either gate until both are recorded on PR #293.
+**Gate status**: BLOCKED. Design artifacts are available, but design availability is not approval or constitutional compliance. I1 requires a C4 decision that preserves FR-011/SR-005; G1 requires explicit ADR 044 acceptance and R8 confirmation. C2/C3 are recorded as confirmed and C1 is withdrawn. T003 is a hard stop until all required decisions and approval references are recorded on PR #293 and dependent artifacts are reconciled.
 
-**Post-Design Re-check**: PASS.
+**Post-Design Re-check**: BLOCKED on I1 and G1. The following structural observations do not override the open gates.
 - The design adds no persistence, no port interface, no request input, and no token claim.
 - The design preserves established human delegation and responses except for the confirmed human-only signed exact-equality rejection; the existing E2E suites must pass unchanged.
 - Deviations from binding decisions are limited to ADR 032 decisions 1 and 2 for agents only, routed through the Proposed ADR 044. T003 must obtain acceptance of both precise exceptions before implementation.
