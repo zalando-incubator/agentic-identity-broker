@@ -84,17 +84,30 @@ function parseResult(comment) {
   return footer[3] === workflow ? result : null;
 }
 
-function requireResult(result, required, hashes, { clean = false, run } = {}) {
-  if (!result) throw new Error("Required Spec Kit result is missing (clarification or previous phase)");
-  if (result.status !== "complete") throw new Error(`Spec Kit ${result.phase} is ${result.status}`);
-  if (run && result.run.split("/")[0] !== run.split("/")[0]) throw new Error("Previous phase result belongs to a different run");
+function requireUnchanged(result, required, hashes) {
   for (const name of required) {
     const file = `${result.feature}/${name}`;
     if (!hashes[file] || result.files[file] !== hashes[file]) throw new Error(`${file} changed after ${result.phase}`);
   }
+}
+
+function requireResult(result, required, hashes, { clean = false, run } = {}) {
+  if (!result) throw new Error("Required Spec Kit result is missing (clarification or previous phase)");
+  if (result.status !== "complete") throw new Error(`Spec Kit ${result.phase} is ${result.status}`);
+  if (run && result.run.split("/")[0] !== run.split("/")[0]) throw new Error("Previous phase result belongs to a different run");
+  requireUnchanged(result, required, hashes);
   if (clean && result.findings.some((finding) => ["CRITICAL", "HIGH"].includes(finding.severity))) {
     throw new Error("Unresolved CRITICAL/HIGH findings block implementation");
   }
+}
+
+// Later phases (plan, remediate) may revise the specification and record its hash,
+// so the specification is compared with the latest result rather than the clarification.
+function requireSpecification(entries, hashes) {
+  const clarified = latest(entries, ["clarify"])?.result;
+  requireResult(clarified, [], hashes);
+  requireUnchanged(latest(entries, phases).result, ["spec.md"], hashes);
+  return clarified;
 }
 
 async function maintainer(github, repo, login) {
@@ -272,7 +285,7 @@ async function route({ github, context }) {
   }
   const action = command?.phase ?? (label === "speckit:implement" ? "implement" : "plan");
   const current = await artifacts(github, repo, pr);
-  requireResult(latest(entries, ["clarify"])?.result, ["spec.md"], current.hashes);
+  requireSpecification(entries, current.hashes);
   if (action === "implement") {
     const analysis = latest(entries, ["analyze", "reanalyze"])?.result;
     if (analysis?.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
@@ -302,15 +315,17 @@ async function prepare({ github, context, inputs }) {
     const current = await artifacts(github, context.repo, pr);
     const entries = await reports(github, context.repo, pr.number);
     const previous = {
-      plan: ["clarify"], tasks: ["plan"], analyze: ["tasks"],
+      tasks: ["plan"], analyze: ["tasks"],
       remediate: ["analyze"], reanalyze: ["remediate"], implement: ["analyze", "reanalyze"],
     }[inputs.phase];
-    if (previous) {
+    if (inputs.phase === "plan") {
+      data.previous = requireSpecification(entries, current.hashes);
+    } else if (previous) {
       data.previous = latest(entries, previous)?.result;
       if (inputs.phase === "implement" && data.previous?.phase !== "reanalyze") {
         throw new Error("Independent reanalysis is required before implementation");
       }
-      const required = inputs.phase === "plan" ? ["spec.md"] : inputs.phase === "tasks" ? ["spec.md", "plan.md"] : documents;
+      const required = inputs.phase === "tasks" ? ["spec.md", "plan.md"] : documents;
       requireResult(data.previous, required, current.hashes, {
         clean: inputs.phase === "implement",
         run: ["tasks", "analyze", "remediate", "reanalyze"].includes(inputs.phase) ? run : undefined,
