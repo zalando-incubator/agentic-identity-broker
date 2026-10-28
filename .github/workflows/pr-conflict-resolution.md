@@ -74,7 +74,7 @@ steps:
 safe-outputs:
   github-app:
     client-id: ${{ vars.PR_CONFLICT_APP_CLIENT_ID }}
-    private-key: ${{ secrets.PR_CONFLICT_APP_PRIVATE_KEY }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
     owner: zalando-incubator
     repositories: [agentic-identity-broker]
   threat-detection:
