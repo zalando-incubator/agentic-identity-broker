@@ -273,9 +273,9 @@ proxy must also route the standard discovery URL. The docs will state this.
   CallingPeer before caller-policy authorization. Early decode/authentication errors must
   finalize the request-principal/anonymous fallback before in-handler audit, using the existing
   idempotent helper; the perimeter net remains a last resort. Preserve ordinary-request and
-  token-route behavior. This extension requires the R16 approval gate, §3.1.4.2 documentation,
-  and T044/T047 test-first coverage; it is not existing functionality (HIGH I2 in
-  [remediation.md](./remediation.md)).
+  token-route behavior. The maintainer accepted this extension with the R16 decision set
+  (2026-10-28). It still needs the §3.1.4.2 documentation and T044/T047 test-first coverage;
+  it is not existing functionality (HIGH I2 in [remediation.md](./remediation.md)).
 
 ## R10. Request body bounds and strictness
 
@@ -291,8 +291,8 @@ proxy must also route the standard discovery URL. The docs will state this.
 caller believe it was evaluated (SR-002).
 
 **Stakeholder (contract review)**: AuthZEN permits extensible `properties`. Strict rejection is
-a proposed choice, recorded in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
-and it is reversible before the contract is frozen.
+recorded in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md). The
+maintainer accepted that contract on 2026-10-28, including this strictness.
 
 ## R11. Denial representation
 
@@ -310,6 +310,11 @@ one of these forms:
 The contract file presents both forms. Implementation tasks depend only on the domain outcome
 (`Deny{Detail, ConsentURL}`), so the choice affects serialization only.
 
+**Contract acceptance (2026-10-28)**: The maintainer accepted the contract, whose
+`AccessEvaluationDenial` schema uses form (a). The API-003 check against the final AuthZEN 1.0
+text still runs before the OpenAPI is frozen. If that check finds a conflict with form (a), it
+goes back to the stakeholder. It is not resolved silently.
+
 ## R12. Exchange-response deprecation and release timing
 
 **Decision**:
@@ -326,15 +331,24 @@ end-user API `2.0.0`, following the feature-051 precedent. It is **not** an impl
 of this feature, because it must ship in a later release. It needs a separately confirmed
 contract change (spec API-006 and Principles IV and X). The plan records it as follow-up work.
 
-**Stakeholder**: Confirm both the 1.1.0 additive bump with the deprecation marker and the
-deferral of removal to a separately approved 2.0.0 change.
+**Stakeholder**: The accepted contract (2026-10-28) covers the 1.1.0 additive bump and the
+deprecation marker with its removal note (contract §3). The removal itself still needs a
+separately confirmed 2.0.0 contract change in a later release.
 
 ## R13. ExtProc resolver boundary
 
-**Blocked freshness decision**: The missing/invalid `max-age` error below contradicts ExtProc
-contract §2 and T049. The relative lifetime also omits end-to-end age accounting. Neither
-interpretation is approved by this remediation; do not implement it until HIGH I1/U1 in
-[remediation.md](./remediation.md) are answered and the affected artifacts reconciled.
+**Freshness decisions (2026-10-28, maintainer review on HIGH I1/U1 in [remediation.md](./remediation.md))**:
+
+- **Fail closed on unusable freshness (I1)**: A permit needs exactly one positive integer
+  `max-age` directive. A missing, zero, malformed, duplicate, or non-integer value is an
+  `invalid_response` error. The result is 503 for this request, and nothing is cached. No
+  permit is ever used "for this request only".
+- **One deadline, computed once (U1)**: `deadline = requestStart + min(max-age, max_staleness)`.
+  `requestStart` is read from the clock just before the POST is sent. The `Result` carries
+  the deadline. The cache, the singleflight followers, and `requestState` reuse it unchanged.
+  ExtProc does no `Age` or transit accounting and applies no separate `grant.valid_until` cap.
+  The broker already caps `max-age` by the grant expiry, and the maintainer accepted the
+  remaining skew.
 
 **Decision**: Add a new package, `internal/extproc/delegation/`, with no broker imports (ADR 011
 and the AGENTS invariant). It contains:
@@ -350,13 +364,16 @@ and the AGENTS invariant). It contains:
   (`TokenExchanger.ClientAssertion`, which the approval client already uses). It omits
   `context.agent`, because ExtProc has no verified agent before resolution and omission is
   allowed by FR-005. It parses `Cache-Control` `max-age`. It accepts only HTTP 200 with a
-  boolean `decision`. Every other status, a malformed body, a missing or invalid `max-age` on
-  a permit, or a timeout is an error.
+  boolean `decision`. Every other status, a malformed body, an unusable `max-age` on a
+  permit (missing, zero, malformed, or duplicate), or a timeout is an error. A permit
+  `Result` carries the absolute `Deadline` described above.
 - `resolver.go`: `Resolver` with a permit-only cache keyed by the struct
   `cacheKey{subjectToken, resourceURI}` (the same separator-safe pattern as ADR 012), a
   `sync.RWMutex`, `singleflight`, and eviction.
-  - Entry lifetime is `min(max-age, max_staleness)`. A missing or invalid `max-age` is not
-    cached (FR-015).
+  - An entry stays until the result's `Deadline`. The client already rejected an unusable
+    `max-age`, so every permit that reaches the cache has a future deadline (FR-015).
+  - A lookup returns an entry only while `now < Deadline`. A hit returns the stored
+    deadline unchanged.
   - Denials and errors are never cached.
   - There is no stale-on-error fallback.
 
@@ -371,10 +388,13 @@ and `ApprovalGate`.
 
 ## R14. ExtProc request-path ordering
 
-**Blocked policy-use decision**: The stored context below has no deadline check at later body
-or batch policy use. A header-time permit cannot authorize stale-context policy input. The
-stakeholder must confirm rejection versus bounded re-resolution before this path is
-implemented; see HIGH U2 in [remediation.md](./remediation.md).
+**Expiry before policy use (2026-10-28, maintainer review on HIGH U2 in [remediation.md](./remediation.md))**:
+Reject with 503. `requestState` stores the permit's `Deadline` together with the context.
+Immediately before every OPA evaluation that receives delegation input, ExtProc checks
+`now < Deadline`. This covers the header-only policy call, the body policy call, and each
+decision in a batch. If the check fails, ExtProc returns 503 `service_unavailable` with
+`"delegation context unavailable"`, does not evaluate policy, and forwards nothing. It does not
+re-resolve or retry.
 
 **Decision** (when `delegation_context.enabled`):
 
@@ -390,12 +410,14 @@ implemented; see HIGH U2 in [remediation.md](./remediation.md).
       Consent recovery precedes session recovery, matching grant-before-session ordering (SR-004).
    2. A resolution error returns 503 `service_unavailable` with `"delegation context unavailable"`.
    3. An exchange error uses the existing `exchangeErrorResponse`.
-   4. Otherwise, buffer the body with the Authorization mutation and store the context in `requestState`.
+   4. Otherwise, buffer the body with the Authorization mutation and store the context and its
+      `Deadline` in `requestState`. The deadline is checked again before each body policy
+      evaluation (503 if it has passed).
 
 **Header-only path** (`processHeadersOnlyOPA`):
 
 1. Resolve the delegation. Apply the same denial and error responses as the body path.
-2. Build the input with the context and evaluate policy.
+2. Check the deadline (503 if it has passed), build the input with the context, and evaluate policy.
 3. On allow, call `Exchange`.
 
 Policy denial never calls exchange (US3.9).
@@ -419,7 +441,38 @@ The administrative code is a bounded enum from the broker. The resolver allowlis
 
 ## R15. OPA input changes
 
-**Decision**: Extend `authorization.ContextInput` with two members:
+**Blocked: spec revision required (maintainer review, 2026-10-28)**: The maintainer commented
+on this section: "This means that the technical choice of how the context is obtained now bleeds
+into the OPA policies. Let's sensibly extend the context object and repopulate existing
+attributes where possible." The decision below follows FR-017, which requires
+`input.context.delegation` verbatim and `input.context.delegation_available: true`. The
+maintainer's direction changes that requirement. It also affects FR-018 (canonical-ID fixture),
+US3.1, US3.8, Journey 4 steps 3 and 5, and SC-005. The planning phase cannot change
+requirements, so `/speckit-clarify` must revise the spec first. The text below is superseded
+when that revision lands. It must not be implemented in its current form.
+
+**Proposed direction for the clarify review (not a decision)**:
+
+- Add the delegation members directly to `ContextInput`, next to the existing members. Use no
+  `delegation` wrapper and no `delegation_available` flag. For example: `principal`, `agent`
+  (`id`, `canonical_id`), `resource` (`id`, `canonical_id`, `resource_uri`, `scopes`), `grant`
+  (`id`, `updated_at`, `valid_until`), and `permission_sets[]`.
+- Fill the existing `granted_permission_sets` and `granted_permission_sets_available: true`
+  from the permit on both paths. The header-only path then reports `true` when the feature is
+  enabled.
+- When the feature is disabled, the new members are omitted. The existing members stay
+  exactly as they are today.
+
+Open questions for the spec revision:
+
+1. What are the member names and nesting, and must the members equal the broker context
+   verbatim?
+2. Do the OPA-side `granted_permission_sets*` attributes stay permanently, or only for the
+   deprecation window that FR-017 describes? The exchange-response deprecation (FR-019) is a
+   separate question.
+3. Is `granted_permission_sets_available` enough as the availability signal?
+
+**Decision (pre-review, superseded on spec revision)**: Extend `authorization.ContextInput` with two members:
 
 - `delegation_available *bool` (`json:",omitempty"`)
 - `delegation map[string]any` (`json:",omitempty"`), decoded with `UseNumber` from the permit's
@@ -444,10 +497,14 @@ rechecked when the ADR is drafted. The ADR records these decisions:
 - the AuthZEN Access Evaluation information boundary on the end-user server, enabled by token
   exchange, with no new broker flag;
 - reuse of the ADR 009 caller CEL policy with the token-exchange grant type (R3);
-- independent permit freshness, a fixed 60 s cap, and no negative or stale caching;
+- independent permit freshness, a fixed 60 s cap, and no negative or stale caching. The ADR
+  also records the 2026-10-28 freshness decisions: an unusable `max-age` fails closed (I1), a
+  single deadline based on request start with accepted skew (U1), and a 503 rejection when the
+  context expires before policy use (U2);
 - the ExtProc `DelegationResolver` as a fourth port, with concurrent body-path ordering (R14);
-- the superseded parts of ADR 028: the input schema (R15) and the header-only and body-bearing
-  ordering when enabled. The rest of ADR 028 stays in force;
+- the superseded parts of ADR 028: the input schema (R15, final shape pending the spec
+  revision) and the header-only and body-bearing ordering when enabled. The rest of ADR 028
+  stays in force;
 - the relation to ADR 012: a separate permit cache, with the exchange cache's stale fallback
   never applied to delegation;
 - the ADR 036 metadata-only input boundary, unchanged;
@@ -458,7 +515,12 @@ rechecked when the ADR is drafted. The ADR records these decisions:
   reconciliation;
 - the deprecation of the `granted_permission_sets` exchange field and its removal timing (R12).
 
-**Stakeholder**: Accepting the ADR is a precondition for implementation. This plan accepts nothing.
+**Stakeholder**: Maintainer `mjungsbluth` accepted this ADR decision set in the 2026-10-28
+review ("ADR accepted"). T008 drafts the ADR file at the next unused number with status
+**Accepted** and records this approval. The OPA input schema bullet must follow the revised
+R15 after the spec revision. Under Principle II, the ADR may be revised in this PR before it
+merges, and the final ADR and the code must agree. The planning session itself accepts
+nothing.
 
 ## R17. ExtProc configuration
 
@@ -503,7 +565,8 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
 - **Startup-only scenarios** (US4.1–US4.4) go in the ExtProc suite `tests/e2e/extproc/`. A new
   `MockAuthZENBroker` in `tests/e2e/extproc/bootstrap/` counts discovery and evaluation requests,
   and can serve a mismatched identifier or fail discovery.
-- **Canonical-ID policy fixture**: add `tests/e2e/fixtures/policies/delegation_canonical.rego`.
+- **Canonical-ID policy fixture** (the input paths below follow the pre-review R15 shape and
+  change with the spec revision): add `tests/e2e/fixtures/policies/delegation_canonical.rego`.
   It allows when the input satisfies all of these conditions:
   - `input.context.delegation.agent.canonical_id == "data-assistant"`
   - some permission set has `canonical_id == "repo-reader"`

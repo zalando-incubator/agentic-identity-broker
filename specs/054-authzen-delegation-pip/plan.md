@@ -21,10 +21,12 @@ Evaluation reuses the unchanged caller CEL policy with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`.
 
 The standalone ExtProc gains an opt-in `DelegationResolver`, its fourth port. At startup it
-discovers and verifies the PDP. It caches only permits, for at most
-`min(max-age, max_staleness)`. It supplies `input.context.delegation` to OPA before every policy
+discovers and verifies the PDP. It caches only permits, until a deadline of
+`requestStart + min(max-age, max_staleness)` that is computed once. A permit without a usable
+positive `max-age` fails closed. ExtProc supplies the delegation to OPA before every policy
 decision: concurrently with exchange on the body path, and before policy and exchange on the
-header-only path. Every failure is closed.
+header-only path. Context that expires before policy use is rejected with 503. Every failure is
+closed. The shape of the OPA input is blocked on a spec revision (research R15).
 
 The `granted_permission_sets` field of the exchange response is marked deprecated. Its removal
 is a later, separately approved 2.0.0 contract change.
@@ -88,13 +90,17 @@ consumer. No React UI change.
 - 1 new proposed ADR
 - 44 acceptance scenarios (US1.1–US1.8, US2.1–US2.20, US3.1–US3.10, and US4.1–US4.6)
 
-**NEEDS CLARIFICATION — BLOCKED**: Analysis run 40520766996/1 found unresolved freshness
-behavior: missing/invalid/zero/excessive `max-age` (I1), end-to-end expiry/age accounting (U1),
-and expiry between headers and policy use (U2). [remediation.md](./remediation.md) records the
-required stakeholder decisions, affected artifacts and tests. Existing relative-TTL/current-
-request-use statements are not implementation authorization. The I2 audit-seam design is
-corrected below but remains subject to architectural approval. See also
-[Stakeholder decisions before implementation](#stakeholder-decisions-before-implementation).
+**Review decisions (2026-10-28)**: The maintainer review submitted with `/speckit-plan`
+answered I1 (an unusable `max-age` fails closed), U1 (one simple deadline with accepted skew),
+and U2 (expiry before policy use returns 503). It accepted the AuthZEN contract and the R16 ADR
+decision set, which includes the I2 audit-seam extension. [remediation.md](./remediation.md)
+records the answers and where they apply.
+
+**BLOCKED, spec revision required**: The review also asked to extend the existing OPA context
+attributes instead of adding `input.context.delegation` and `delegation_available`. FR-017,
+FR-018, US3.1, US3.8, and Journey 4 require those members, so the change needs a
+`/speckit-clarify` spec revision before R15, data model §3.5, and ExtProc contract §4 can be
+finalized (research R15).
 
 ## Constitution Check
 
@@ -112,7 +118,7 @@ corrected below but remains subject to architectural approval. See also
 | Helm deployment contract | Pass (boundary) | The broker chart gets no change: the broker has no new keys, and ExtProc is not deployed by `charts/agentic-identity-broker/`. ExtProc keys go to its own config path (ADR 011): `docs/configuration.md`, `configs/config.extproc.docker.yaml` (commented), and `docs/docker-compose-setup.md`. |
 | API design first | Pass with precondition | [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) is the proposed OpenAPI delta. `api/enduser/openapi.yaml` is edited only after confirmation. |
 | API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.0.0` → `1.1.0`) and `docs/api/authzen-evaluation.md`. No admin change. |
-| API changes confirmed | **Pending** | Stakeholder confirmation is required for the new endpoints, the R10 strictness, the R11 denial envelope (API-003), and the deprecation marker (R12). |
+| API changes confirmed | Pass with verification | The maintainer accepted [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) on 2026-10-28: the endpoints, the R10 strictness, denial form (a), and the deprecation marker (R12). The API-003 check against the final AuthZEN text runs before the OpenAPI is frozen. Any conflict goes back to the stakeholder. |
 | Database design | Not applicable | No schema change and no migration. |
 | E2E acceptance tests | Pass | 44 `It()` blocks, written in Phase 2f before implementation (table below). |
 | E2E test mapping | Pass | 1:1 mapping per scenario. The denial-matrix rows are separate `It()` blocks. |
@@ -127,7 +133,7 @@ corrected below but remains subject to architectural approval. See also
 |---|---|---|
 | Security-first | Pass with rationale | Broker evaluation is on whenever exchange is on, and it is always authenticated and authorized. ExtProc's opt-in default follows ADR 028's Security-First reconciliation: an additive consumer whose absence leaves today's controls in force. The ADR records this (R16). Every enabled-mode failure is closed. |
 | Architecture docs | Pass | Update `ARCHITECTURE.md` §3.1.4 (routes), §3.2.1 (resolver port and permit cache), §3.2.3 (enabled-mode ordering), the policy-gates table, the glossary, and the ADR index. Update `internal/extproc/AGENTS.md`, `internal/AGENTS.md` (tokenexchange description), and the root `AGENTS.md` ADR table. |
-| ADRs | **Pending** | The new ADR (planned 045, research R16) supersedes ADR 028's input schema and enabled-mode ordering. It must be Accepted before implementation. |
+| ADRs | Pass with revision | The maintainer accepted the R16 decision set on 2026-10-28. The new ADR (planned 045) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. T008 drafts it as Accepted. Its input-schema section must follow the R15 spec revision (Principle II allows same-PR revision before merge). |
 | Library-first security | Pass | No new cryptography. JWTs are verified by the existing jwx-based `JWTValidator`. TLS uses the existing ExtProc HTTP client. |
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
@@ -140,40 +146,42 @@ corrected below but remains subject to architectural approval. See also
 
 ### Post-design re-check
 
-The post-design gate is **blocked**, not passed: the freshness findings in
-[remediation.md](./remediation.md) require stakeholder decisions and synchronized artifact
-updates, in addition to the preconditions below.
+The post-design gate is **blocked**, not passed. The OPA input shape needs a spec revision
+(research R15). The freshness findings are answered and applied, as recorded in
+[remediation.md](./remediation.md).
 
 - No new bounded context is invented. The resolver stays in `tokenexchange`, which owns every
   invariant (R1).
 - Port changes: one new ExtProc port. Broker ports are unchanged.
 - The resolver depends on no session service, so FR-013 holds by construction.
-- ADR 028's enabled-mode input and ordering need a new superseding ADR. The same approval
-  gate must also cover extending ADR 033's described token-only finalization seam to
-  evaluation. Do not amend either existing ADR in this remediation.
-- Freshness findings I1/U1/U2 remain unresolved security questions; the I2 perimeter extension
-  has explicit design/test work but no claimed architectural approval or implementation.
+- ADR 028's enabled-mode input and ordering need a new superseding ADR. That ADR also extends
+  ADR 033's token-only finalization seam to evaluation. The maintainer accepted the decision
+  set, and neither existing ADR is amended in place.
+- The freshness rules (I1/U1/U2) are decided. The I2 perimeter extension is accepted, and it
+  still needs its test-first design and implementation work.
 
 ## Stakeholder decisions before implementation
 
-**Additional blocking gate:** Confirm the three freshness decisions I1/U1/U2 in
-[remediation.md](./remediation.md), then reconcile the spec, research, model, contract and tasks
-before implementation. Include I2's evaluation audit-perimeter extension in item 3's proposed
-architectural decision and acceptance; existing approvals do not cover it implicitly.
+Decided in the 2026-10-28 review:
 
-1. **Confirm the AuthZEN contract** in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md).
-   This includes the endpoint shapes, the error mapping (R6), strict member rejection (R10), and
-   the plain-UUID anchor (Principles IV and X, API-002).
-2. **Resolve the API-003 Verify items** against the final AuthZEN 1.0 text:
-   - the discovery member names and the path-insertion rule (R8)
-   - the denial envelope: form (a) or (b) (R11)
+- **Freshness** (I1/U1/U2): see [remediation.md](./remediation.md).
+- **AuthZEN contract**: Accepted. This covers the endpoint shapes, the error mapping (R6),
+  strict member rejection (R10), the plain-UUID anchor, denial form (a) (R11), and the `1.1.0`
+  deprecation marker (R12).
+- **New ADR**: the R16 decision set is Accepted, including the I2 audit-perimeter extension.
 
-   This session could not fetch the standard because TLS verification failed.
-3. **Accept the new ADR** after it is drafted in Phase 2a (R16, Principle II).
-4. **Confirm the release and versioning plan** (R12, API-006):
-   - end-user API `1.1.0` with the `granted_permission_sets` deprecation marker
-   - removal deferred to a separately approved `2.0.0` change, one release after the resolver ships
-5. **Decide whether to file GitHub issues** for the three deferred findings in [research.md](./research.md).
+Still open:
+
+1. **Revise the spec for the OPA input shape** through `/speckit-clarify` (research R15). This
+   blocks finalizing R15, data model §3.5, ExtProc contract §4, the ADR's input-schema section,
+   and the regenerated `tasks.md`.
+2. **Run the API-003 Verify checks** against the final AuthZEN 1.0 text before the OpenAPI is
+   frozen: the discovery member names, the path-insertion rule (R8), and the denial envelope
+   (R11). Any conflict with the accepted contract goes back to the stakeholder. This session
+   could not fetch the standard because TLS verification failed.
+3. **Remove `granted_permission_sets` later**: the removal needs a separately approved `2.0.0`
+   contract change, one release after the resolver ships (R12, API-006).
+4. **Decide whether to file GitHub issues** for the three deferred findings in [research.md](./research.md).
 
 ## Project Structure
 
@@ -189,14 +197,15 @@ specs/054-authzen-delegation-pip/
 ├── contracts/
 │   ├── authzen-evaluation-api.md            # proposed end-user OpenAPI delta (pending confirmation)
 │   └── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
+├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
-└── tasks.md                                 # /speckit-tasks (not created here)
+└── tasks.md                                 # /speckit-tasks; regenerate after the R15 spec revision
 ```
 
 ### Source code and documentation affected
 
 ```text
-adrs/045-authzen-delegation-pip.md                       # New, Proposed; number rechecked at drafting
+adrs/045-authzen-delegation-pip.md                       # New, Accepted (2026-10-28 review); number rechecked at drafting
 
 api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, 1.1.0
 
@@ -218,10 +227,10 @@ internal/
     ├── config/{config.go,loader.go,validate.go}          # DelegationContextConfig, defaults, flags, validation
     ├── delegation/                                       # New package (no broker imports)
     │   ├── discovery.go                                  # Discover + PDP verification
-    │   ├── client.go                                     # AuthZEN POST, response parsing, max-age
+    │   ├── client.go                                     # AuthZEN POST, response parsing, max-age, deadline
     │   └── resolver.go                                   # permit-only cache, singleflight, eviction
-    ├── authorization/input.go, input_builder.go          # ContextInput.delegation / delegation_available; header-only input
-    └── server/server.go                                  # DelegationResolver port; body concurrency; header-only ordering; responses
+    ├── authorization/input.go, input_builder.go          # ContextInput delegation members (shape pending R15); header-only input
+    └── server/server.go                                  # DelegationResolver port; body concurrency; header-only ordering; deadline check; responses
 
 cmd/extproc-token-exchange/root.go                        # Discovery at startup; resolver wiring; shutdown
 
@@ -316,14 +325,19 @@ feature is enabled:
 
 ### 6. ExtProc request path
 
-- **Blocked by I1/U1/U2:** do not implement R14 until the stakeholder freshness decisions in
-  [remediation.md](./remediation.md) are recorded and all affected artifacts agree. The
-  confirmed deadline must propagate through Client/Result/Resolver/requestState without
-  renewal, and be checked at each policy-use seam, including delayed body/batch decisions.
-  T049/T050/T052/T057/T058 must cover the approved freshness and recovery semantics before
-  implementing the ordering in `processRequestHeadersOPA` and `processHeadersOnlyOPA`.
-- Extend `ContextInput` and `BuildOPAInputHeadersOnly` with the delegation members and the
-  derived legacy map (R15).
+- Implement the R14 ordering in `processRequestHeadersOPA` and `processHeadersOnlyOPA`.
+- Freshness follows the decisions in [remediation.md](./remediation.md):
+  - The client rejects a permit with a missing, zero, malformed, or duplicate `max-age` (503,
+    not used, not cached).
+  - The client computes `Deadline = requestStart + min(max-age, max_staleness)` once.
+    `Result`, the cache, the singleflight followers, and `requestState` carry it unchanged.
+  - Before every OPA evaluation that receives delegation input (header-only, body, and each
+    batch decision), ExtProc checks `now < Deadline`. If the check fails, it returns 503
+    `service_unavailable` with no policy call, no forwarding, and no re-resolution.
+  - T049/T050/T052/T057/T058 cover these rules test-first.
+- Extend `ContextInput` and `BuildOPAInputHeadersOnly` with the delegation members (R15). The
+  member shape is **blocked** until the spec revision decides how the existing attributes are
+  extended and filled.
 - Disabled mode keeps the existing code path.
 - The approval gate keeps using the exchange-derived `principal` and `agent_id`.
 
@@ -363,7 +377,8 @@ After stakeholder confirmation:
 ### Phase 2: Design preconditions
 
 - **2a Domain model and ADR**:
-  - Draft the new ADR (Proposed) and obtain acceptance.
+  - Draft the new ADR as Accepted, recording the 2026-10-28 acceptance of the R16 decision set
+    and the freshness decisions. Align its input-schema section with the revised R15.
   - Add the glossary entries and the policy-gates row to `ARCHITECTURE.md`.
   - Update the ADR index and the root `AGENTS.md` ADR table.
 - **2b Configuration design**:
@@ -530,9 +545,9 @@ because the stub handlers return 501 and the stub resolver returns an error. No 
 | `internal/adapters/http/routing` | Routes are absent when the handlers are nil. `/access` is reserved with a 404. The SPA does not shadow the routes. |
 | `internal/app` | Handlers are wired only when `tokenExchangeEnabled`. One resolver instance is shared by exchange and evaluation. |
 | `internal/extproc/config` | Defaults, env and flag precedence, each validation rule and message, the origin derivation, and that disabled mode skips validation. |
-| `internal/extproc/delegation` | Discovery: exact PDP match, path-preserving mismatch, invalid endpoint, http without `allow_http`, and no credentials sent. Client: request body, bearer assertion, decision parsing, `max-age` parsing (missing, invalid, 0, >60), deny parsing and code allowlist, non-200 and timeout errors. Resolver: permit caching ≤ `min(max-age, max_staleness)`, no denial or error caching, no stale use, key isolation, singleflight, eviction, and shutdown. Run with `-race`. |
+| `internal/extproc/delegation` | Discovery: exact PDP match, path-preserving mismatch, invalid endpoint, http without `allow_http`, and no credentials sent. Client: request body, bearer assertion, decision parsing, deny parsing and code allowlist, non-200 and timeout errors. `max-age` handling: missing, `0`, malformed, duplicate, and non-integer values are errors and not usable; positive values; values above 60 and above `max_staleness`; `Deadline = requestStart + min(max-age, max_staleness)` taken from the clock read before the send, so a delayed response does not extend it. Resolver: cache until `Deadline`, hits and singleflight followers get the original deadline, no hit at or after the deadline, no denial or error caching, no stale use, key isolation, eviction, and shutdown. Run with `-race`. |
 | `internal/extproc/authorization` | `ContextInput` members omitted when disabled. The legacy projection is derived from the context. The header-only input carries the delegation when enabled. |
-| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Disabled mode makes no resolver calls. The response bodies are covered. |
+| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Deadline check: the deadline passes while ExtProc waits for exchange, while it buffers the body, and between batch decisions, and the header-only path is covered too. Each case returns 503 with no policy call and no forwarding. The tests use synchronization barriers and an unexported clock that `export_test.go` sets, as in R5. Disabled mode makes no resolver calls. The response bodies are covered. |
 
 ### Integration tests
 

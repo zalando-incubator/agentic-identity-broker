@@ -137,10 +137,8 @@ never from the body.
 
 ## 3. ExtProc value objects (`internal/extproc/delegation`, no broker imports)
 
-**Blocked design:** §§3.3–3.4 below omit an end-to-end freshness deadline and conflict with
-research R13 on malformed/missing freshness. Stored permits also need a confirmed expiry-at-
-policy-use rule. HIGH I1/U1/U2 in [remediation.md](./remediation.md) require stakeholder
-decisions and coordinated updates before implementation; relative TTL alone is insufficient.
+The freshness rules below apply the maintainer decisions of 2026-10-28 (HIGH I1/U1/U2 in
+[remediation.md](./remediation.md)). §3.5 is blocked on a spec revision (research R15).
 
 ### 3.1 `DelegationContextConfig` (`internal/extproc/config`)
 
@@ -160,17 +158,19 @@ startup. It is immutable afterwards.
 
 | Type | Fields | Meaning |
 |---|---|---|
-| `Result` (permit) | `Context map[string]any` (decoded with `UseNumber`, verbatim), `GrantedPermissionSets map[string][]string` (derived projection) | `decision: true` |
+| `Result` (permit) | `Context map[string]any` (decoded with `UseNumber`, verbatim), `GrantedPermissionSets map[string][]string` (derived projection), `Deadline time.Time` (`requestStart + min(max-age, max_staleness)`, computed once) | `decision: true` with exactly one positive integer `max-age` |
 | `*DeniedError` | `Code string` (allowlisted `grant_*` value or `delegation_denied`), `ConsentURL string` | `decision: false` |
-| other `error` | Category: `timeout`, `unavailable`, `rejected` (non-200), or `invalid_response` | Fail closed with 503 |
+| other `error` | Category: `timeout`, `unavailable`, `rejected` (non-200), or `invalid_response` (including a missing, zero, malformed, or duplicate `max-age` on a permit) | Fail closed with 503. The response is not used and not cached. |
 
 ### 3.4 Permit cache
 
 | Element | Definition |
 |---|---|
 | Key | `cacheKey{subjectToken string; resourceURI string}`. A struct key prevents separator injection. |
-| Entry | `{result Result; expiresAt time.Time}` |
-| Lifetime | `min(max-age, max_staleness)`. No entry when `max-age` is missing, invalid, or `0`. |
+| Entry | `{result Result}`. The entry expires at `result.Deadline`. |
+| Lifetime | Until `Deadline`. An insertion, a hit, or a singleflight delivery never extends it. An unusable `max-age` never produces a `Result`. |
+| Lookup | A hit only while `now < Deadline`. The hit returns the stored deadline. |
+| Policy use | `requestState` keeps `Deadline`. Every OPA evaluation that receives delegation input first checks `now < Deadline`. If it fails, ExtProc returns 503, does not evaluate policy, forwards nothing, and does not re-resolve. |
 | Never cached | Denials, errors, and non-200 responses |
 | Concurrency | `sync.RWMutex` plus `singleflight` keyed by the struct |
 | Eviction | Background sweep every `max(max_staleness/2, 1s)`. Stopped by `Shutdown`. |
@@ -178,14 +178,21 @@ startup. It is immutable afterwards.
 **Freshness state machine (per key)**:
 
 ```text
-            Resolve (miss) ──200 permit, max-age>0──▶ CACHED(expiresAt)
+            Resolve (miss) ──200 permit, max-age>0──▶ CACHED(Deadline)
                  │                                         │
-                 ├──deny / error──▶ (nothing stored)       │ now ≥ expiresAt
+                 ├──deny / error──▶ (nothing stored)       │ now ≥ Deadline
                  ▼                                         ▼
               ABSENT ◀──────────── evict ─────────────── EXPIRED ──Resolve──▶ (same as miss; no stale use)
 ```
 
+An unusable `max-age` counts as an error.
+
 ### 3.5 OPA `ContextInput` (changes)
+
+**Blocked: spec revision required (research R15).** The maintainer asked to extend the
+existing context attributes and fill them from the delegation, instead of adding the
+`delegation` and `delegation_available` members. The table below shows the pre-review shape
+that FR-017 requires today.
 
 | Member | Disabled mode | Enabled mode |
 |---|---|---|
@@ -208,5 +215,5 @@ erDiagram
     Delegation }o--|| Agent : "resolved from subject token"
     Delegation }o--|| ThirdpartyOAuth2Provider : "resolved from resource URI"
     DelegationDecision ||--o| DelegationContext : "Permit carries"
-    DelegationContext ||--o{ ExtProcPermitCacheEntry : "cached ≤ min(max-age, max_staleness)"
+    DelegationContext ||--o{ ExtProcPermitCacheEntry : "cached until requestStart + min(max-age, max_staleness)"
 ```
