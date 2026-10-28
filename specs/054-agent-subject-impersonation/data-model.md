@@ -10,7 +10,7 @@ There is no new persisted entity, no new UUID-keyed type, and no migration. The 
 | --- | --- | --- |
 | `storage.Agent` | `internal/domain/storage` | The audience-selected target. `ID.String()` is the only value an agent-category `sub` may equal. Its `CanonicalID` remains a routing alias only. |
 | `UserGrant` | `internal/domain/storage` | Required for eligible human-category requests only (ADR 032 decisions 1–6). Never read for agent-category requests or for third-party exchange of agent tokens before rejection. |
-| `UserSession` | `internal/domain/storage` | Never read for an agent-subject token (FR-011, SR-005). |
+| `UserSession` | `internal/domain/storage` | Never read for an agent-subject token matched by the default or a compliant `agent_subject_expression` (FR-011, SR-005). A non-matching override removes this guarantee (C4). |
 
 ## Configuration: `ImpersonationRuleConfig` (extended)
 

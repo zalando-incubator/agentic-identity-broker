@@ -10,7 +10,7 @@ This guide shows how to prove the feature works after implementation. It does no
   - [ADR 044](adr-044-draft.md) is **Accepted** (maintainer comment `6477637352`).
   - The OpenAPI delta in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml): C2 and C3 confirmed in the PR #293 review, C1 withdrawn, and C4 (a configured `agent_subject_expression` replaces the default, research R5) accepted in comment `6477637352`.
   - No unsigned-subject startup guard (research R8, comment `6477637352`): an unsigned rule listing `agent` starts, and the setting has no effect.
-- Before implementation, FR-011/SR-005 in `spec.md` are aligned with the accepted C4 replacement semantics through `/speckit-clarify` (research R5 *Consequence*).
+- FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the accepted C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
 - Go toolchain and `just`, per the repository README. Run `just install-tools` once.
 - The default E2E tests use in-memory storage, so no Docker is needed.
 
@@ -35,7 +35,7 @@ Expected: 12 passing specs, one per scenario US1.1–US3.4 (mapping in [plan.md]
 | --- | --- |
 | 1 (US1.1–1.3) | `200`. The decoded token has `sub == agent_id ==` the target UUID, no `subject_category` claim, and `act` with the actor issuer and identity. No `UserGrant` exists before or after. An invalid client or actor signature produces no token. |
 | 2 (US2.1–2.5) | The Journey 2 matrix holds. A human without delegation gets `403` with `error_uri`. Exact equality on a human-only rule (explicit or omitted) gets `403` with no `error_uri`, with or without a delegation for the same text. Invalid `allowed_subject_categories` shapes and values fail startup. |
-| 3 (US3.1–3.4) | An unauthorized or unresolved agent gets no token. With `agent_subject_expression` left at its default, the third-party exchange of the agent token gets `403` with the agent-subject description, with and without a human grant and session for the same UUID text. The session's provider is never called. |
+| 3 (US3.1–3.4) | An unauthorized or unresolved agent gets no token. With `agent_subject_expression` at its default, and again with Journey 3 Step 3's compliant override, the third-party exchange of the agent token gets `403` with the agent-subject description, with and without a human grant and session for the same UUID text. The session's provider is never called. With the non-matching override `false`, the agent-subject rejection is absent and the request follows the existing checks. With the detection-error override `subject_token.sub`, the response is `500 server_error` and no human state is consulted. |
 
 ## 3. Human-behavior regression
 
@@ -55,7 +55,7 @@ IDENTITY_BROKER_CONFIG_PATH=/tmp/gh-aw/agent/agent-subject.yaml ./bin/agentic-id
 
 Expected: the process exits before listening. The error names `oauth2_authorization_server.impersonation.rules[0].allowed_subject_categories`. Removing the key starts the broker human-only.
 
-Repeat with an invalid `token_exchange.claim_extraction.agent_subject_expression` from [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml), such as a syntax error or `subject_token.sub`, which returns a string. Expected: startup fails. Removing the key starts the broker with the default `sub == agent_id` detection.
+Repeat with an invalid `token_exchange.claim_extraction.agent_subject_expression` from [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml), such as a syntax error or `'agent'`, whose static type is a string. Expected: startup fails. `subject_token.sub` is statically `dyn`, so it starts but fails closed with `500 server_error` at exchange time. Removing the key starts the broker with the default `sub == agent_id` detection.
 
 ## 5. Helm contract
 

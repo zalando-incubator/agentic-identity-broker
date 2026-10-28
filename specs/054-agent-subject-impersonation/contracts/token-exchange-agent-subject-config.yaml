@@ -1,6 +1,6 @@
 # Configuration Contract: Agent-Subject Detection on Third-Party Token Exchange
 #
-# Feature: 054-agent-subject-impersonation (spec FR-011, SR-005, CFG-003; research R5, R6)
+# Feature: 054-agent-subject-impersonation (spec FR-011, FR-012, SR-005, CFG-003, CFG-005; research R5, R6)
 # Source: PR #293 maintainer review. The spec requires no separate category claim, so the broker
 # detects agent-subject tokens with a configurable CEL expression that defaults to `sub == agent_id`.
 #
@@ -23,13 +23,17 @@
 #               6477637352). There is no additional built-in check. The operator MUST keep it
 #               matching broker-issued agent-subject tokens, for example by keeping the default as a
 #               disjunct. A non-matching override (for example `false`) lets broker agent-subject
-#               tokens continue to the existing exchange flow; documentation states this.
+#               tokens continue to the existing exchange flow and removes the categorical
+#               rejection and same-text human-credential protection (clarified FR-011/SR-005,
+#               spec session 2026-10-28); documentation warns about this.
 #
 # STARTUP OUTCOMES (fail closed, before traffic)
 #   key omitted or empty                      -> valid, default expression
 #   valid boolean expression                  -> valid
 #   syntax error / undeclared variable        -> invalid: startup fails (FR-017 precedent)
-#   static non-boolean output (e.g. a string) -> invalid: startup fails
+#   static non-boolean output (e.g. 'agent')  -> invalid: startup fails
+#   statically dyn (e.g. subject_token.sub)   -> valid at startup; a non-boolean runtime result
+#                                                fails closed (see RUNTIME OUTCOMES)
 #
 # RUNTIME OUTCOMES (third-party exchange, after principal extraction, before agent-ID extraction)
 #   true                    -> 403 access_denied, no error_uri,

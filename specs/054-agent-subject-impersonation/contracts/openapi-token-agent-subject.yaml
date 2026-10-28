@@ -4,8 +4,8 @@
 # Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
 #
 # STATUS: C2-C4 CONFIRMED in writing on PR #293, C1 WITHDRAWN (Constitution Principles IV and X).
-# The delta is applied to api/enduser/openapi.yaml only after the FR-011/SR-005 specification
-# alignment for C4 (research R5) is resolved by /speckit-clarify. It adds no path, parameter, request field, response field, token claim, or OAuth2
+# FR-011/SR-005 were aligned with C4 in spec clarification session 2026-10-28, so implementation
+# Phase 2 applies the delta to api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim, or OAuth2
 # error code. It changes the operation description and adds examples.
 #
 # Items:
@@ -54,7 +54,10 @@ paths:
         matches `token_exchange.claim_extraction.agent_subject_expression` is always rejected
         with `403 access_denied`. The default expression matches when the token's `sub` and
         `agent_id` claims are both present and equal, which holds for every agent-subject token
-        that the broker issues. The response has no `error_uri`. No grant or stored provider
+        that the broker issues. A configured expression replaces the default, with no
+        additional built-in check; operators must keep it matching broker agent-subject tokens.
+        A non-matching override lets such tokens continue through the existing exchange checks.
+        The response has no `error_uri`. No grant or stored provider
         session is consulted, even if a human principal with the same identifier text has both.
         A detection evaluation failure returns `500 server_error` and is never treated as a
         non-agent token.

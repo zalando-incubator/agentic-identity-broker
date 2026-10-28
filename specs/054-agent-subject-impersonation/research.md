@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Date**: 2026-10-27 | **Plan**: [plan.md](plan.md)
 
-Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5), the PR #293 review, and the current code. The maintainer's `/speckit-plan` command (authorized comment `6477637352`, 2026-10-28) recorded three decisions: ADR 044 is accepted, C4 replacement semantics are accepted, and the R8 unsigned-subject startup guard is not adopted. R1, R5, and R8 below reflect them.
+Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5), the PR #293 review, and the current code. The maintainer's `/speckit-plan` command (authorized comment `6477637352`, 2026-10-28) recorded three decisions: ADR 044 is accepted, C4 replacement semantics are accepted, and the R8 unsigned-subject startup guard is not adopted. R1, R5, and R8 below reflect them. The subsequent clarification session (2026-10-28, maintainer command `6480240156`) aligned FR-011, FR-012, SR-005, SC-005, US3.4, and the new CFG-005 with C4; R5 *Consequence* and R10 reflect it.
 
 ## R1 — Governance: narrow superseding ADR for consent-free agent issuance
 
@@ -94,7 +94,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - *Emit `subject_category: human` on every token*: changes every existing token.
 - *An RFC 9493 `sub_id` object*: too complex for a single flag, and no consumer uses it.
 
-**Consequence (spec alignment required)**: With the default expression, FR-011 and SR-005 hold for every broker agent-subject token. Under the accepted replacement semantics, an operator override can stop detecting broker agent-subject tokens. FR-011 ("Every agent-subject token MUST be categorically rejected") and SR-005 do not currently allow for that configuration-dependent outcome. The planning phase must not change `spec.md` requirements, so a `/speckit-clarify` review must align FR-011/SR-005 (and, where affected, FR-012 and SC-005) with the accepted C4 decision before the plan gate can pass. Suggested wording: "With the default `agent_subject_expression`, every broker-issued agent-subject token MUST be categorically rejected … A configured expression replaces the default; the operator is responsible for keeping it matching broker-issued agent-subject tokens, and documentation MUST state this." Tests then cover the default (US3.4), replacement by a compliant override, and replacement by a non-matching override.
+**Consequence (spec aligned, session 2026-10-28)**: With the default expression, or an override that still matches broker agent-subject tokens, FR-011 and SR-005 hold for every broker agent-subject token: rejection precedes any grant, session, or provider access. A non-matching override, such as `false`, removes that guarantee; the token continues through the existing exchange checks, and same-text human state may be consulted. The clarified FR-011, SR-005, FR-012, SC-005, and CFG-005 state exactly this, and FR-012/CFG-005 require documentation to warn about it. Detection errors, timeouts, and non-boolean results are never treated as `false`. US3.4 covers the default, a compliant replacing override, a non-matching replacing override, and a detection error (R10). No design change was needed.
 
 ## R6 — Third-party exchange rejection (FR-011)
 
@@ -139,7 +139,11 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 
 **Decision**:
 - **E2E**: Add `tests/e2e/agent_subject_impersonation_test.go` with one `It()` per scenario: 12 in total, mapped in [plan.md](plan.md). It reuses `helpers.MockJWKSServer`, `fixtures.LocalConfig()`, and `fixtures.ActiveGrant`. The agent-only, human-only, and dual-category rule configurations come from a new fixture, `tests/e2e/fixtures/impersonation_rules.go`.
-- **US3.4**: Boots one local-mode broker with both impersonation and `token_exchange` configured, as in `tests/e2e/local_token_exchange_e2e_test.go`. The subject-token trust is the broker's local issuer. The test exchanges the minted agent token, first without and then with a human `UserGrant` and a stored session for the identical UUID text. It leaves `agent_subject_expression` unset, so it proves that the default detects broker agent-subject tokens.
+- **US3.4**: Boots one local-mode broker with both impersonation and `token_exchange` configured, as in `tests/e2e/local_token_exchange_e2e_test.go`. The subject-token trust is the broker's local issuer. The test exchanges the minted agent token, first without and then with a human `UserGrant` and a stored session for the identical UUID text. It runs four detector variants in one `It` (spec US3.4, Journey 3 Step 3):
+  - **Default** (key unset): rejection in both fixture states, with no grant, session, or provider access.
+  - **Compliant override** (Journey 3 Step 3, default kept as a disjunct): the same rejection.
+  - **Non-matching override** `false`: the agent-subject rejection does not occur, and the request proceeds through the existing checks. The test asserts only the absence of the agent-subject description and diagnostic, not a specific success or denial.
+  - **Detection error**: `subject_token.sub` is statically `dyn`, so startup accepts it, but at runtime it yields a string. The response is `500 server_error` with no human-state access.
 - **US2.5**: Covers direct-construction failures through `BuildApp`. It covers YAML-shape failures through the production loader: `bootstrap.LoadCredentialConfiguration` with a temporary YAML file.
 - **Unit**: Table-driven tests for `classifySubject` (an unsigned subject on an agent-capable rule stays human), category eligibility, rule invariants (an unsigned rule listing `agent` is accepted), YAML shape validation, `validator.go`, the mint strategy (agent input yields `sub == agent_id` with no category claim; CEL cannot override either), `CELEvaluator.IsAgentSubject` (default and replacing override expressions, missing claims, type mismatch, non-boolean result, evaluation error, startup compile failure), the token-exchange rejection, and handler audit fields.
 - **Regression**: The existing `tests/e2e/impersonation_test.go` and `tests/e2e/local_token_exchange_e2e_test.go` must pass unchanged. This proves the human behavior is preserved (US2.4).
@@ -175,4 +179,6 @@ Stakeholder decisions recorded on PR #293:
 | R6 / C3 | Confirmed | PR #293 review inline comment |
 | R8 / unsigned guard | Not adopted; startup must not fail | Maintainer comment `6477637352` |
 
-One item remains open. It is a specification item, not a design unknown: FR-011/SR-005 require rejecting every agent-subject token, while the accepted C4 replacement semantics make rejection depend on the configured expression. Aligning these requirements needs `/speckit-clarify` (see R5 *Consequence*).
+| FR-011 / SR-005 / FR-012 / SC-005 / CFG-005 alignment with C4 | Aligned in `spec.md` (Clarifications, session 2026-10-28) | Maintainer command `6480240156` |
+
+No open items remain.
