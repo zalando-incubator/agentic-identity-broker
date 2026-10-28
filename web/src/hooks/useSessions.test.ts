@@ -178,8 +178,9 @@ describe('useSessions', () => {
       expect(result.current.sessions).toEqual(mockSessions);
 
       // Call refetch
+      let refetched: SessionSummary[] = [];
       await act(async () => {
-        await result.current.refetch();
+        refetched = await result.current.refetch();
       });
 
       // Wait for refetch to complete
@@ -188,6 +189,7 @@ describe('useSessions', () => {
       });
 
       // Verify updated data
+      expect(refetched).toEqual([mockSessions[0]]);
       expect(result.current.sessions).toEqual([mockSessions[0]]);
       expect(sessionsApi.listSessions).toHaveBeenCalledTimes(2);
     });
@@ -237,7 +239,7 @@ describe('useSessions', () => {
       });
 
       // Start refetch
-      let refetchPromise: Promise<void>;
+      let refetchPromise: Promise<SessionSummary[]>;
 
       await act(async () => {
         refetchPromise = result.current.refetch();

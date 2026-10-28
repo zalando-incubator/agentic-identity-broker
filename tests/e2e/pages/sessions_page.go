@@ -79,12 +79,57 @@ func (sp *SessionsPage) ClickLoginButton(ctx context.Context) error {
 	return nil
 }
 
-func (sp *SessionsPage) IsReauthenticationRequiredVisible(ctx context.Context) (bool, error) {
-	visible, err := sp.page().GetByText("Re-authenticate required", playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}).IsVisible()
+func (sp *SessionsPage) GetLoginButtonCount(ctx context.Context) (int, error) {
+	count, err := sp.loginButtonLocator().Count()
 	if err != nil {
-		return false, fmt.Errorf("failed to check re-authentication notice: %w", err)
+		return 0, fmt.Errorf("failed to count login buttons: %w", err)
+	}
+	return count, nil
+}
+
+func (sp *SessionsPage) WaitForTerminateButton(ctx context.Context) error {
+	if err := sp.terminateButtonLocator().First().WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("terminate button did not become visible: %w", err)
+	}
+	return nil
+}
+
+func (sp *SessionsPage) GetTerminateButtonCount(ctx context.Context) (int, error) {
+	count, err := sp.terminateButtonLocator().Count()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count terminate buttons: %w", err)
+	}
+	return count, nil
+}
+
+func (sp *SessionsPage) WaitForErrorMessage(ctx context.Context, message string) error {
+	alert := sp.page().GetByRole("alert").Filter(playwright.LocatorFilterOptions{HasText: message})
+	if err := alert.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("error alert containing %q did not appear: %w", message, err)
+	}
+	return nil
+}
+
+func (sp *SessionsPage) IsTextVisible(ctx context.Context, text string) (bool, error) {
+	visible, err := sp.page().GetByText(text, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}).IsVisible()
+	if err != nil {
+		return false, fmt.Errorf("failed to check text %q: %w", text, err)
 	}
 	return visible, nil
+}
+
+func (sp *SessionsPage) IsRefreshTokenExpiryVisible(ctx context.Context) (bool, error) {
+	count, err := sp.page().GetByText("Session might expire after").Count()
+	if err != nil {
+		return false, fmt.Errorf("failed to check refresh token expiry: %w", err)
+	}
+	return count > 0, nil
 }
 
 func (sp *SessionsPage) page() playwright.Page {
@@ -108,6 +153,13 @@ func (sp *SessionsPage) waitForPageLoad(ctx context.Context) error {
 func (sp *SessionsPage) loginButtonLocator() playwright.Locator {
 	return sp.page().GetByRole("button", playwright.PageGetByRoleOptions{
 		Name:  "Login",
+		Exact: playwright.Bool(true),
+	})
+}
+
+func (sp *SessionsPage) terminateButtonLocator() playwright.Locator {
+	return sp.page().GetByRole("button", playwright.PageGetByRoleOptions{
+		Name:  "Terminate",
 		Exact: playwright.Bool(true),
 	})
 }

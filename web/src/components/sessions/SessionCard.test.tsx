@@ -309,36 +309,54 @@ describe('SessionCard', () => {
   });
 
   describe('Login button', () => {
-    it.each([
-      ['missing', false, undefined],
-      ['expired', true, new Date(Date.now() - 60_000).toISOString()],
-    ])(
-      'offers Login when the refresh token is %s and access is valid',
-      async (_, hasRefreshToken, refreshTokenExpiresAt) => {
-        const user = userEvent.setup();
-        const session = createMockSession({
-          has_refresh_token: hasRefreshToken,
-          refresh_token_expires_at: refreshTokenExpiresAt,
-        });
-        const onLogin = vi.fn();
+    it('offers Login next to Terminate when the refresh token is expired and access is valid', async () => {
+      const user = userEvent.setup();
+      const session = createMockSession({
+        refresh_token_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      });
+      const onLogin = vi.fn();
 
-        render(
-          <SessionCard
-            session={session}
-            onTerminate={vi.fn()}
-            onRefresh={vi.fn()}
-            onLogin={onLogin}
-          />,
-        );
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onRefresh={vi.fn()}
+          onLogin={onLogin}
+        />,
+      );
 
-        expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
-        expect(
-          screen.getByRole('button', { name: /terminate/i }),
-        ).toBeInTheDocument();
-        await user.click(screen.getByRole('button', { name: /login/i }));
-        expect(onLogin).toHaveBeenCalledWith(session.service_id);
-      },
-    );
+      expect(screen.getByText('Expiring Soon')).toBeInTheDocument();
+      expect(screen.getByText('Log in to keep access')).toBeInTheDocument();
+      expect(screen.queryByText(/Session might expire after/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+      expect(
+        screen.getByRole('button', { name: /terminate/i }),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /login/i }));
+      expect(onLogin).toHaveBeenCalledWith(session.service_id);
+    });
+
+    it('offers neither Login nor Refresh when the refresh token is missing and access is valid', () => {
+      const session = createMockSession({
+        has_refresh_token: false,
+        refresh_token_expires_at: undefined,
+      });
+
+      render(
+        <SessionCard
+          session={session}
+          onTerminate={vi.fn()}
+          onRefresh={vi.fn()}
+          onLogin={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole('button', { name: /login/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+      expect(
+        screen.getByRole('button', { name: /terminate/i }),
+      ).toBeInTheDocument();
+    });
 
     it.each([false, true])(
       'offers Refresh with unknown refresh expiry and access_token_expired=%s',
@@ -377,6 +395,7 @@ describe('SessionCard', () => {
         />,
       );
 
+      expect(screen.getByText('Log in to reconnect')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: /login/i }));
 
       expect(onLogin).toHaveBeenCalledWith(session.service_id);
