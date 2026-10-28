@@ -2,21 +2,21 @@
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Date**: 2026-10-27 | **Plan**: [plan.md](plan.md)
 
-Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5) and the current code. Decisions marked **Needs confirmation** are proposals for the API and ADR review. Implementation must not start until they are confirmed (Principles II, IV, X).
+Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5), the PR #293 review, and the current code. The maintainer's `/speckit-plan` command (authorized comment `6477637352`, 2026-10-28) recorded three decisions: ADR 044 is accepted, C4 replacement semantics are accepted, and the R8 unsigned-subject startup guard is not adopted. R1, R5, and R8 below reflect them.
 
 ## R1 — Governance: narrow superseding ADR for consent-free agent issuance
 
-**Decision**: Draft [ADR 044](adr-044-draft.md) with **Status: Proposed**. It supersedes decisions 1 and 2 of [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md) for agent-category requests only. Classification depends solely on verified signed raw `sub`/target-UUID equality, independently of rule eligibility. For eligible, CEL-authorized agents, delegation is skipped and the minted subject is the target UUID rather than necessarily the extracted subject principal. All principal extractions must still succeed; no new extraction-equality restriction is introduced. ADR 032 decisions 1–6 stay in force for eligible human-category requests; signed equality on human-only rules is intentionally ineligible even with active human delegation. ADR 031 and ADR 034 are unchanged.
+**Decision (Accepted — maintainer comment `6477637352`: "ADR 044 accepted")**: [ADR 044](adr-044-draft.md) has **Status: Accepted**. It supersedes decisions 1 and 2 of [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md) for agent-category requests only. Classification depends solely on verified signed raw `sub`/target-UUID equality, independently of rule eligibility. For eligible, CEL-authorized agents, delegation is skipped and the minted subject is the target UUID rather than necessarily the extracted subject principal. All principal extractions must still succeed; no new extraction-equality restriction is introduced. ADR 032 decisions 1–6 stay in force for eligible human-category requests; signed equality on human-only rules is intentionally ineligible even with active human delegation. ADR 031 and ADR 034 are unchanged.
 
-The draft lives in the feature directory because the planning phase may only write feature artifacts. After acceptance, the Phase 2 governance task moves it to `adrs/044-agent-subject-impersonation.md` (or the next free number) and adds it to the AGENTS.md ADR index.
+The ADR text lives in the feature directory because the planning phase may only write feature artifacts. The Phase 2 governance task moves it to `adrs/044-agent-subject-impersonation.md` (or the next free number) and adds it to the AGENTS.md ADR index.
 
-**Rationale**: ADR 032 is Accepted and merged. It requires delegation for every subject and has no opt-out. Under Principle II, deviating from it needs an Accepted superseding ADR. This phase drafts that ADR but does not accept it. A stakeholder must accept the precise agent-only supersession of both decisions 1 and 2 before any task that changes the delegation or minted-subject path.
+**Rationale**: ADR 032 is Accepted and merged. It requires delegation for every subject and has no opt-out. Under Principle II, deviating from it needs an Accepted superseding ADR. The stakeholder accepted ADR 044, which covers the precise agent-only supersession of both decisions 1 and 2.
 
 **Alternatives considered**:
 - *Amend ADR 032 in place*: forbidden for a merged Accepted ADR.
 - *Satisfy ADR 032 with a synthetic grant for the agent*: violates FR-005 (no synthetic human grants or sessions).
 
-**Needs confirmation**: Stakeholder acceptance of ADR 044's explicit agent-only supersession of ADR 032 decisions 1 and 2.
+**Approval reference**: authorized maintainer comment `6477637352` on PR #293 (2026-10-28).
 
 ## R2 — Category classification: exact comparison of the verified `sub` claim
 
@@ -77,11 +77,11 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - **Startup**: the expression is compiled with the other token-exchange expressions in `NewCELEvaluator` (FR-017 precedent). A syntax error, an undeclared variable, or a static output type other than `bool` or `dyn` fails startup.
 - **Runtime**: evaluation uses the existing token-exchange evaluation timeout. It follows `ExtractPrincipal`'s error semantics: an evaluation error or timeout is a terminal `server_error` through `celEvaluationError` (`identity_resolution / cel_evaluation_failed`), and a non-boolean result is a terminal `server_error` with `identity_resolution / cel_configuration`. The broker never treats a failed detection as "not an agent" (Principle I).
 - **Helm and examples**: `tokenExchange.claimExtraction.agentSubjectExpression` is an optional string in `values.schema.json` (the `claimExtraction` object is strict). `templates/configmap.yaml` renders `agent_subject_expression` only when the value is set, so the broker default applies otherwise. `values.yaml`, the chart `README.md`, and `examples/config/token-exchange.yaml` document the default and the override requirement.
-- **Override semantics (BLOCKED, C4; analysis I1)**: replacement remains an unapproved proposal, not an interpretation of the review's phrase "can default to". A valid configured expression such as `false` can suppress the default and let broker agent-subject tokens continue to human grant/session lookups. Documentation requiring a default disjunct does not enforce unconditional FR-011/SR-005. Stakeholder resolution is required; the recommended option is a non-removable built-in rejection check plus configurable widening. No option is accepted by this remediation. Any requirement weakening requires `/speckit-clarify`, not automatic remediation. After the decision, reconcile all dependent artifacts and require regression tests proving broker-token rejection with false, external-only, and compliant widening expressions, both without human state and with a same-text human grant/session.
+- **Override semantics (Decided, C4 — maintainer comment `6477637352`: "a configured agent_subject_expression replaces the default is accepted")**: a non-empty configured expression **replaces** the default. There is no additional built-in check: the configured expression is the only detector on the third-party exchange. Documentation, examples, and the Helm chart state that an override must keep matching broker-issued agent-subject tokens, for example by keeping the default as a disjunct. An override that does not match them, such as `false`, lets those tokens continue to the existing exchange flow; the operator owns that configuration. *Consequence* below records the spec impact of this decision.
 
 `ports.ImpersonationMintInput` is unchanged. The impersonation service passes `Subject = target UUID` and `Email = nil` for an agent-category request (R7). `baseClaims` is unchanged: `sub` and `agent_id` are already reserved, so `token_claims_expression` cannot break the `sub == agent_id` equality on an agent-subject token or create it on a human token.
 
-**Rationale**: The spec requires no separate category claim, and the reviewer asked for a configurable CEL detector that defaults to `sub == agent_id`. With the default, every broker agent-subject token is detected by construction, because FR-004 sets both reserved claims to the target UUID and CEL cannot override them. The comparison is between two claims, not an inference from the subject text alone: a human token's `sub` is the human principal and its `agent_id` is the target agent. Making the detector configurable lets operators cover trusted external issuers that represent agent subjects differently, without a broker-specific claim.
+**Rationale**: The spec requires no separate category claim, and the reviewer asked for a configurable CEL detector that defaults to `sub == agent_id`. The maintainer accepted replacement semantics for that detector. With the default, every broker agent-subject token is detected by construction, because FR-004 sets both reserved claims to the target UUID and CEL cannot override them. The comparison is between two claims, not an inference from the subject text alone: a human token's `sub` is the human principal and its `agent_id` is the target agent. Making the detector configurable lets operators cover trusted external issuers that represent agent subjects differently, without a broker-specific claim.
 
 **Collision analysis (fail closed)**:
 - A broker human token can satisfy the default only when the minted human principal is the exact target UUID text. Under FR-003, a signed raw `sub` with that text is always agent-category, so this can only happen through an unsigned (ADR 031) subject or a `principal_expression` that maps another claim to the exact UUID. Such a token is rejected for third-party exchange. This is a fail-closed restriction, not a consent bypass, and is documented.
@@ -94,7 +94,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - *Emit `subject_category: human` on every token*: changes every existing token.
 - *An RFC 9493 `sub_id` object*: too complex for a single flag, and no consumer uses it.
 
-**Consequence (unresolved)**: FR-011/SR-005 cannot be delegated to operator documentation. The replacement proposal and its dependent contracts/draft ADR/tasks are not implementation-ready. T003 must remain blocking until C4 preserves categorical rejection and the artifacts are reconciled to the actual authorized decision.
+**Consequence (spec alignment required)**: With the default expression, FR-011 and SR-005 hold for every broker agent-subject token. Under the accepted replacement semantics, an operator override can stop detecting broker agent-subject tokens. FR-011 ("Every agent-subject token MUST be categorically rejected") and SR-005 do not currently allow for that configuration-dependent outcome. The planning phase must not change `spec.md` requirements, so a `/speckit-clarify` review must align FR-011/SR-005 (and, where affected, FR-012 and SC-005) with the accepted C4 decision before the plan gate can pass. Suggested wording: "With the default `agent_subject_expression`, every broker-issued agent-subject token MUST be categorically rejected … A configured expression replaces the default; the operator is responsible for keeping it matching broker-issued agent-subject tokens, and documentation MUST state this." Tests then cover the default (US3.4), replacement by a compliant override, and replacement by a non-matching override.
 
 ## R6 — Third-party exchange rejection (FR-011)
 
@@ -107,7 +107,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 ## R7 — Agent token content: subject, email, and audit identity
 
 **Decision**:
-- `sub` and `agent_id` are both the target UUID (FR-004). The minted subject is `target.Agent.ID.String()`. This equals the raw verified `sub` by construction, but need not equal the successfully extracted subject principal. That agent-only departure from ADR 032 decision 2 requires the Proposed ADR 044's acceptance; humans retain the extracted-principal invariant.
+- `sub` and `agent_id` are both the target UUID (FR-004). The minted subject is `target.Agent.ID.String()`. This equals the raw verified `sub` by construction, but need not equal the successfully extracted subject principal. That agent-only departure from ADR 032 decision 2 is covered by the Accepted ADR 044; humans retain the extracted-principal invariant.
 - `act` is unchanged: the extracted actor and the verified actor issuer. The broker keeps it even when the actor and subject strings are equal (FR-007).
 - `email_expression` is **not evaluated** for an agent-category request, and no `email` reaches local token CEL. An agent token is not a token for a human (Journey 1 shows no email). The impersonation service passes `Email = nil`; the mint input and strategy are unchanged.
 - No category claim is minted (R5). The token is identifiable as an agent-subject token because `sub == agent_id`.
@@ -121,11 +121,13 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - `ports.ImpersonationRuleConfig` gains `AllowedSubjectCategories []string \`mapstructure:"allowed_subject_categories"\``. Constants `ports.SubjectCategoryHuman = "human"` and `ports.SubjectCategoryAgent = "agent"` are added.
 - **Shape validation (YAML source)**: Viper decodes with weakly typed input and string-to-slice hooks. It would turn a scalar `human` into `[human]`, `1` into `"1"`, and `null` into the omitted value. Rule lists are YAML-only (`docs/configuration.md`, "rule lists are YAML-only"). So `internal/config` adds `validateImpersonationRuleShapesYAML(data []byte)`, called from `loadYAML` before `ReadConfig`. It follows the existing `decodeCredentialFilesYAML` precedent. It parses `oauth2_authorization_server.impersonation.rules[*]` with `go.yaml.in/yaml/v3` nodes. When `allowed_subject_categories` is present, the value must be a sequence node whose entries are scalar `!!str` nodes. Startup fails for null, a scalar, a mapping, and non-string or null entries (CFG-001 table).
 - **Value validation (all sources, and direct construction)**: `validateImpersonationRule` in `internal/config/validator.go` and `validateRuleInvariants` in the domain both run the same check. The list may be nil (omitted, default `[human]`) or a non-empty list of distinct case-sensitive entries from `{human, agent}`. An empty non-nil list, an unknown value, or a duplicate fails startup.
-- **Unsigned-subject guard (Needs confirmation)**: A rule with `roles.subject.verification: none` whose list contains `agent` fails startup. Unsigned subjects are always human (SR-003), so the setting would have no effect, and an operator could wrongly believe agent issuance was enabled. The alternative is to accept and ignore the setting; the plan prefers failing closed.
+- **No unsigned-subject startup guard (Decided — maintainer comment `6477637352`: "R8 unsigned-subject startup guard is not needed and should not fail startup")**: A rule with `roles.subject.verification: none` may list `agent`, and startup accepts it. Classification (R2) never produces `agent` for an unsigned subject (SR-003), so `agent` eligibility on such a rule has no effect: an `[agent]`-only unsigned rule matches no request, and `[human, agent]` behaves like `[human]`. The configuration documentation states this. No validator or domain invariant rejects the combination, and no unsigned agent issuance is introduced.
 - `compileRule` stores the categories as a two-flag set on `compiledRule` (`allowsHuman`, `allowsAgent`), with nil meaning human only.
 - **Helm**: `values.schema.json` is strict (`additionalProperties: false` on each rule). It gains the property `allowed_subject_categories` as an array of `enum [human, agent]` with `minItems: 1`, `maxItems: 2`, and `uniqueItems: true`. `values.yaml` comments and `README.md` gain the key. The ConfigMap passes the subtree through unchanged.
 
-**Rationale**: CFG-001 requires rejecting null and scalars, while omission defaults to `[human]`. That difference exists only before decoding. The domain check covers direct construction (E2E bootstrap and tests).
+**Rationale**: CFG-001 requires rejecting null and scalars, while omission defaults to `[human]`. That difference exists only before decoding. The domain check covers direct construction (E2E bootstrap and tests). CFG-001 lists no unsigned-subject constraint, and classification enforces SR-003, so dropping the guard needs no requirement change.
+
+**Alternatives considered**: Rejecting agent-capable unsigned-subject rules at startup. Not adopted, per the maintainer decision.
 
 ## R9 — CEL authorization context
 
@@ -139,7 +141,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 - **E2E**: Add `tests/e2e/agent_subject_impersonation_test.go` with one `It()` per scenario: 12 in total, mapped in [plan.md](plan.md). It reuses `helpers.MockJWKSServer`, `fixtures.LocalConfig()`, and `fixtures.ActiveGrant`. The agent-only, human-only, and dual-category rule configurations come from a new fixture, `tests/e2e/fixtures/impersonation_rules.go`.
 - **US3.4**: Boots one local-mode broker with both impersonation and `token_exchange` configured, as in `tests/e2e/local_token_exchange_e2e_test.go`. The subject-token trust is the broker's local issuer. The test exchanges the minted agent token, first without and then with a human `UserGrant` and a stored session for the identical UUID text. It leaves `agent_subject_expression` unset, so it proves that the default detects broker agent-subject tokens.
 - **US2.5**: Covers direct-construction failures through `BuildApp`. It covers YAML-shape failures through the production loader: `bootstrap.LoadCredentialConfiguration` with a temporary YAML file.
-- **Unit**: Table-driven tests for `classifySubject`, category eligibility, rule invariants, YAML shape validation, `validator.go`, the mint strategy (agent input yields `sub == agent_id` with no category claim; CEL cannot override either), `CELEvaluator.IsAgentSubject` (default and override expressions, missing claims, type mismatch, non-boolean result, evaluation error, startup compile failure), the token-exchange rejection, and handler audit fields.
+- **Unit**: Table-driven tests for `classifySubject` (an unsigned subject on an agent-capable rule stays human), category eligibility, rule invariants (an unsigned rule listing `agent` is accepted), YAML shape validation, `validator.go`, the mint strategy (agent input yields `sub == agent_id` with no category claim; CEL cannot override either), `CELEvaluator.IsAgentSubject` (default and replacing override expressions, missing claims, type mismatch, non-boolean result, evaluation error, startup compile failure), the token-exchange rejection, and handler audit fields.
 - **Regression**: The existing `tests/e2e/impersonation_test.go` and `tests/e2e/local_token_exchange_e2e_test.go` must pass unchanged. This proves the human behavior is preserved (US2.4).
 
 **Rationale**: Principle XIII, with existing harnesses only.
@@ -160,6 +162,17 @@ The existing `docs/api/enduser-api.md` token-endpoint page is extended rather th
 
 ## Resolved unknowns
 
-The spec contains no `NEEDS CLARIFICATION` markers, but that does not establish design approval. Classification input, order, YAML presence detection, error mapping, and the E2E harness are described above. Agent-token detector override semantics remain blocked by I1: the proposed replacement cannot guarantee FR-011/SR-005. G1 also remains blocked on explicit ADR 044 acceptance and R8 confirmation; see the approval record in `plan.md`.
+The spec contains no `NEEDS CLARIFICATION` markers. Classification input, order, YAML presence detection, error mapping, and the E2E harness are described above.
 
-The PR #293 review confirmed R4 (C2) and R6 (C3), and replaced the reserved-claim proposal with the configurable detection expression in R5. Three items still need stakeholder confirmation before implementation: R1 (ADR 044 acceptance), the R5 override semantics (C4), and the R8 unsigned-subject guard.
+Stakeholder decisions recorded on PR #293:
+
+| Item | Decision | Reference |
+| --- | --- | --- |
+| R1 / ADR 044 | Accepted | Maintainer comment `6477637352` |
+| R4 / C2 | Confirmed | PR #293 review inline comment |
+| R5 / C1 | Withdrawn (no category claim) | PR #293 review inline comment |
+| R5 / C4 | Replacement semantics accepted | Maintainer comment `6477637352` |
+| R6 / C3 | Confirmed | PR #293 review inline comment |
+| R8 / unsigned guard | Not adopted; startup must not fail | Maintainer comment `6477637352` |
+
+One item remains open. It is a specification item, not a design unknown: FR-011/SR-005 require rejecting every agent-subject token, while the accepted C4 replacement semantics make rejection depend on the configured expression. Aligning these requirements needs `/speckit-clarify` (see R5 *Consequence*).

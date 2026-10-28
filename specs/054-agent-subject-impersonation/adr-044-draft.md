@@ -1,9 +1,9 @@
 # ADR 044: Agent-Subject Impersonation Without User Delegation
 
 **Date**: 2026-10-27
-**Status**: Proposed
+**Status**: Accepted (stakeholder acceptance: authorized maintainer comment `6477637352` on PR #293, 2026-10-28)
 **Feature**: 054-agent-subject-impersonation
-**Location**: Draft kept in the feature directory during planning. On acceptance it moves to `adrs/044-agent-subject-impersonation.md`.
+**Location**: Kept in the feature directory during planning. The Phase 2 governance task moves it to `adrs/044-agent-subject-impersonation.md` (or the next free number) and indexes it in `AGENTS.md`.
 **Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
 ## Context
@@ -25,9 +25,9 @@ The clarified specification limits the extension:
    For an eligible, CEL-authorized agent-category request, this ADR supersedes ADR 032 decision 1's mandatory delegation check and decision 2's extracted-principal-as-minted-`sub` invariant. All configured principal extractions must still succeed, but the minted `sub` is the target UUID (equal to the raw verified `sub`), not necessarily the extracted subject principal. No additional equality restriction is imposed on `principal_expression`. The broker does not call `UserDelegationVerifier` and creates no grant or session.
 2. **Human invariants are preserved.** Every unsigned subject and every signed subject whose raw verified `sub` does not exactly equal the target UUID is human-category. For eligible human requests, ADR 032 decisions 1–6 continue to apply in full: the extracted principal remains both the byte-for-byte minted `sub` and the delegation principal. Signed exact equality is never human-category, including on human-only rules.
 3. **Category gating precedes delegation.** A rule that does not allow the classified category falls through, like a policy denial. A human delegation failure stays terminal and is never retried as an agent request. Signed exact equality on a human-only rule (including the omitted setting) is ineligible even when an identically named human has active delegation, and is never retried as human on that rule. Ordered evaluation may consider later rules only under their own eligibility and authorization constraints.
-4. **Default is human only.** When `allowed_subject_categories` is omitted, the rule allows `[human]`. Empty, unknown, duplicate, or non-list values fail startup. A rule with an unsigned subject cannot allow `agent`.
+4. **Default is human only.** When `allowed_subject_categories` is omitted, the rule allows `[human]`. Empty, unknown, duplicate, or non-list values fail startup. A rule with an unsigned subject may list `agent`; startup accepts it, but the setting has no effect because unsigned subjects are always human-category (decision 2). This ADR does not add unsigned agent subjects.
 5. **Distinguishable tokens without a category claim.** An agent-subject token has no additional claim. Its `sub` and `agent_id` both equal the target UUID, and both are reserved base claims that local token-claims policy cannot change. A human token's `sub` is the human principal.
-6. **No third-party exchange.** RFC 8693 third-party exchange evaluates the CEL boolean `token_exchange.claim_extraction.agent_subject_expression` on the validated subject token. The default is the guarded form of `sub == agent_id`. A configured expression replaces the default and must keep matching broker agent-subject tokens. A `true` result is rejected with `403 access_denied`. An evaluation failure is a terminal `server_error`, never "not an agent". The check runs before any grant or session lookup, so a human principal with the same identifier text cannot lend credentials to the request.
+6. **No third-party exchange.** RFC 8693 third-party exchange evaluates the CEL boolean `token_exchange.claim_extraction.agent_subject_expression` on the validated subject token. The default is the guarded form of `sub == agent_id`. A configured expression replaces the default; there is no additional built-in check. The operator must keep a configured expression matching broker agent-subject tokens. A `true` result is rejected with `403 access_denied`. An evaluation failure is a terminal `server_error`, never "not an agent". The check runs before any grant or session lookup, so a human principal with the same identifier text cannot lend credentials to the request.
 7. **Auditability.** Every impersonation decision records the subject category together with the represented identity, actor, privileged client, rule, and target. No credentials are recorded.
 
 ## Consequences
@@ -42,7 +42,8 @@ The clarified specification limits the extension:
 
 - A request whose verified `sub` exactly equals the target UUID is now rejected on a human-only rule, even when a human with that identifier text holds an active delegation (spec Q4). Such collisions are not expected in practice.
 - With the default expression, a trusted external issuer whose subject tokens carry equal `sub` and `agent_id` claims has those tokens rejected for third-party exchange. So does a broker human token whose minted principal is the exact target UUID text, which is possible only through an unsigned subject or a `principal_expression` that maps another claim.
-- An operator who overrides `agent_subject_expression` owns its correctness. An override that stops matching `sub == agent_id` would let broker agent-subject tokens reach third-party exchange, so the documentation requires keeping the default as a disjunct.
+- An operator who overrides `agent_subject_expression` owns its correctness (accepted replacement semantics). An override that stops matching broker agent-subject tokens, such as `false`, lets those tokens reach the existing third-party exchange flow. The documentation therefore requires an override to keep matching them, for example by keeping the default as a disjunct.
+- An unsigned-subject rule that lists `agent` starts without error, although the setting has no effect. The documentation explains this.
 
 ### Non-goals
 

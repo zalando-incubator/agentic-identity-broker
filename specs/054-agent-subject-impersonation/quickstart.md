@@ -6,10 +6,11 @@ This guide shows how to prove the feature works after implementation. It does no
 
 ## Prerequisites
 
-- Before implementation, three confirmations are recorded on PR #293:
-  - [ADR 044](adr-044-draft.md) is **Accepted**.
-  - The OpenAPI delta in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml) is confirmed. C2 and C3 were confirmed in the PR #293 review, and C1 was withdrawn. C4 (the `agent_subject_expression` override semantics, research R5) still needs confirmation.
-  - The unsigned-subject startup guard (research R8) is confirmed.
+- Stakeholder decisions recorded on PR #293 (see [research.md](research.md), *Resolved unknowns*):
+  - [ADR 044](adr-044-draft.md) is **Accepted** (maintainer comment `6477637352`).
+  - The OpenAPI delta in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml): C2 and C3 confirmed in the PR #293 review, C1 withdrawn, and C4 (a configured `agent_subject_expression` replaces the default, research R5) accepted in comment `6477637352`.
+  - No unsigned-subject startup guard (research R8, comment `6477637352`): an unsigned rule listing `agent` starts, and the setting has no effect.
+- Before implementation, FR-011/SR-005 in `spec.md` are aligned with the accepted C4 replacement semantics through `/speckit-clarify` (research R5 *Consequence*).
 - Go toolchain and `just`, per the repository README. Run `just install-tools` once.
 - The default E2E tests use in-memory storage, so no Docker is needed.
 
@@ -20,7 +21,7 @@ just check
 just test
 ```
 
-Expected: everything passes. The new unit tables cover `classifySubject`, category eligibility, rule invariants, YAML shape validation, agent-subject minting (`sub == agent_id`, no category claim), `CELEvaluator.IsAgentSubject` with the default and override expressions, the token-exchange rejection, and handler audit fields.
+Expected: everything passes. The new unit tables cover `classifySubject`, category eligibility, rule invariants, YAML shape validation, agent-subject minting (`sub == agent_id`, no category claim), `CELEvaluator.IsAgentSubject` with the default and replacing override expressions, rule invariants accepting an unsigned rule that lists `agent`, the token-exchange rejection, and handler audit fields.
 
 ## 2. Acceptance journeys (E2E)
 

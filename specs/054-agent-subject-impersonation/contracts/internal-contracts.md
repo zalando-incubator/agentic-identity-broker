@@ -33,6 +33,7 @@ func (e *CELEvaluator) IsAgentSubject(subjectTokenClaims map[string]interface{})
 | Situation | Result |
 | --- | --- |
 | Expression empty or omitted | The default is compiled. |
+| Expression configured (non-empty) | It replaces the default; no built-in check is added (C4, maintainer comment `6477637352`). |
 | Compile error, or a static output type other than `bool`/`dyn` | `NewCELEvaluator` fails, and startup fails. |
 | Result `true` | `(true, nil)` |
 | Result `false` | `(false, nil)` |

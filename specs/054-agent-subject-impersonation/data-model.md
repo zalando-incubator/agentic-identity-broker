@@ -18,14 +18,14 @@ There is no new persisted entity, no new UUID-keyed type, and no migration. The 
 
 | Field | Type | mapstructure | Rule |
 | --- | --- | --- | --- |
-| `AllowedSubjectCategories` | `[]string` | `allowed_subject_categories` | `nil` means omitted, which defaults to `[human]`. A non-nil list must have 1–2 distinct entries from `{human, agent}`, matched case-sensitively. A list containing `agent` is invalid when `roles.subject.verification` is `none` (research R8; needs confirmation). Raw YAML shape checks reject `null`, scalars, mappings, and non-string entries before decoding. |
+| `AllowedSubjectCategories` | `[]string` | `allowed_subject_categories` | `nil` means omitted, which defaults to `[human]`. A non-nil list must have 1–2 distinct entries from `{human, agent}`, matched case-sensitively. A list containing `agent` is accepted when `roles.subject.verification` is `none`, but has no effect because unsigned subjects are always human (research R8; maintainer decision `6477637352`). Raw YAML shape checks reject `null`, scalars, mappings, and non-string entries before decoding. |
 
 New constants: `ports.SubjectCategoryHuman = "human"`, `ports.SubjectCategoryAgent = "agent"`.
 
 Validation layers (fail closed, before traffic):
 
 1. `internal/config` YAML shape check (`loadYAML`): rejects explicit `null`, scalar, mapping, and non-string or null entries. These are YAML-only (rule lists are YAML-only).
-2. `internal/config/validator.go` `validateImpersonationRule`: rejects an empty, unknown, or duplicate value, and the unsigned-subject guard. Reports the field path `oauth2_authorization_server.impersonation.rules[i].allowed_subject_categories`.
+2. `internal/config/validator.go` `validateImpersonationRule`: rejects an empty, unknown, or duplicate value. It applies no unsigned-subject guard (research R8). Reports the field path `oauth2_authorization_server.impersonation.rules[i].allowed_subject_categories`.
 3. `internal/domain/impersonation/rule.go` `validateRuleInvariants`: repeats layer 2 for directly constructed configurations.
 
 The [configuration contract](contracts/impersonation-config.yaml) lists every input and its outcome.
@@ -66,7 +66,7 @@ This is not a new type. It is held on `ruleResult`:
 | email | From `email_expression`, per the existing rules | Not evaluated, not minted |
 | delegation | `UserDelegationVerifier` required | Skipped |
 
-All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception require acceptance of the Proposed ADR 044's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
+All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception are covered by the Accepted ADR 044's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
 
 ## Configuration: `ClaimExtractionConfig` (extended)
 
@@ -74,7 +74,7 @@ All principal extractions must succeed before classification. For agents, the ex
 
 | Field | Type | mapstructure | Rule |
 | --- | --- | --- | --- |
-| `AgentSubjectExpression` | `string` | `agent_subject_expression` | Optional CEL boolean over `subject_token` (research R5). Empty or omitted means `tokenexchange.DefaultAgentSubjectExpression`: `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. Compiled at startup with the other token-exchange expressions; a compile error or a static non-boolean output type fails startup. A configured value replaces the default (C4, needs confirmation). |
+| `AgentSubjectExpression` | `string` | `agent_subject_expression` | Optional CEL boolean over `subject_token` (research R5). Empty or omitted means `tokenexchange.DefaultAgentSubjectExpression`: `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. Compiled at startup with the other token-exchange expressions; a compile error or a static non-boolean output type fails startup. A configured value replaces the default (C4, accepted by maintainer comment `6477637352`); the operator must keep it matching broker agent-subject tokens. |
 
 ## Port DTO: `ports.ImpersonationMintInput` (unchanged)
 

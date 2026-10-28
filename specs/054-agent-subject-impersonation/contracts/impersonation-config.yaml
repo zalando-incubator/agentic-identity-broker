@@ -31,8 +31,10 @@
 #   [human, human]                           -> invalid: duplicate entry
 #   [agent, 1] / [null]                      -> invalid: entries must be strings (YAML shape check)
 #   [agent] or [human, agent] with roles.subject.verification: none
-#                                            -> invalid: unsigned subjects are human-only (SR-003)
-#                                               [design proposal, research R8; needs confirmation]
+#                                            -> valid, startup does not fail (research R8, decided by
+#                                               maintainer comment 6477637352). Unsigned subjects are
+#                                               always human (SR-003), so `agent` has no effect:
+#                                               [agent] matches no request, [human, agent] acts as [human].
 #
 # Error messages name the field path, for example
 #   oauth2_authorization_server.impersonation.rules[0].allowed_subject_categories
