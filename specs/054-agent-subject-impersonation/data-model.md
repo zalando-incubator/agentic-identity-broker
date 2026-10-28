@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Date**: 2026-10-27 | **Plan**: [plan.md](plan.md) | **Research**: [research.md](research.md)
 
-There is no new persisted entity, no new UUID-keyed type, and no migration. The feature adds one configuration attribute, two value objects, one reserved token claim, and new audit and diagnostic fields to the existing `impersonation` and `tokenexchange` bounded contexts.
+There is no new persisted entity, no new UUID-keyed type, and no migration. The feature adds one impersonation rule attribute, one token-exchange claim-extraction expression, two value objects, and new audit and diagnostic fields to the existing `impersonation` and `tokenexchange` bounded contexts.
 
 ## Existing entities reused
 
@@ -68,30 +68,30 @@ This is not a new type. It is held on `ruleResult`:
 
 All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception require acceptance of the Proposed ADR 044's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
 
-## Port change: `ports.ImpersonationMintInput`
+## Configuration: `ClaimExtractionConfig` (extended)
 
-`internal/ports/oauth2.go`
+`internal/ports/config.go`
 
-| Field | Change |
-| --- | --- |
-| `SubjectCategory string` | **New.** Empty or `human` mints no category claim. `agent` mints `subject_category: "agent"`. Any other value fails minting (fail closed). |
-| `Subject` | Doc comment changes to "represented identity", the human principal or the agent UUID. |
+| Field | Type | mapstructure | Rule |
+| --- | --- | --- | --- |
+| `AgentSubjectExpression` | `string` | `agent_subject_expression` | Optional CEL boolean over `subject_token` (research R5). Empty or omitted means `tokenexchange.DefaultAgentSubjectExpression`: `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. Compiled at startup with the other token-exchange expressions; a compile error or a static non-boolean output type fails startup. A configured value replaces the default (C4, needs confirmation). |
 
-No new port interface is added. `ImpersonationTokenIssuer` and `UserDelegationVerifier` are unchanged.
+## Port DTO: `ports.ImpersonationMintInput` (unchanged)
+
+No field is added. For an agent-category request, the impersonation service passes `Subject = target UUID` and `Email = nil`. No new port interface is added. `ImpersonationTokenIssuer` and `UserDelegationVerifier` are unchanged.
 
 ## Token: agent-subject access token
 
 | Claim | Value | Source |
 | --- | --- | --- |
 | `iss` | Local issuer | Unchanged |
-| `sub` | Target agent UUID | R7 |
-| `agent_id` | Target agent UUID | Unchanged (target-derived) |
+| `sub` | Target agent UUID | R7 (reserved base claim) |
+| `agent_id` | Target agent UUID | Unchanged (target-derived, reserved base claim) |
 | `act` | `{iss: verified actor issuer, sub: extracted actor}` | Unchanged |
-| `subject_category` | `"agent"` | **New reserved claim** (research R5). Present only on agent-subject tokens. CEL cannot set or remove it. |
 | `scope`, `iat`, `exp`, `jti` | As for normal local issuance | Unchanged |
 | `aud` and other custom claims | `token_claims_expression` | Unchanged (policy-owned) |
 
-`tokenexchange.SubjectCategoryClaim = "subject_category"`, `tokenexchange.SubjectCategoryAgent = "agent"`. `oauth2server.baseClaims` gains `subject_category`.
+There is no category claim. An agent-subject token is identified by `sub == agent_id`; both are already in `oauth2server.baseClaims`, so `token_claims_expression` cannot change either. `baseClaims` is unchanged.
 
 ## Audit event: `impersonation_decision` (extended)
 
@@ -110,7 +110,7 @@ The event never contains credentials or wholesale claims (SR-004).
 | Detail | Stage | Exchange kind | Meaning |
 | --- | --- | --- | --- |
 | `subject_category_ineligible` | `client_authorization` | impersonation | The rule does not allow the classified category. Fall-through. |
-| `subject_category_unsupported` | `identity_resolution` | third_party | An agent-subject token was presented for third-party exchange. |
+| `subject_category_unsupported` | `identity_resolution` | third_party | The subject token matched `agent_subject_expression` in a third-party exchange. |
 
 ## State and decision flow (one rule)
 
@@ -127,13 +127,16 @@ stateDiagram-v2
     PolicyEvaluated --> Mint: agent (no delegation)
     Delegation --> Mint: active
     Delegation --> Abort: missing/expired (consent-required, terminal)
-    Mint --> [*]: token (agent adds subject_category)
+    Mint --> [*]: token (agent: sub == agent_id == target UUID)
 ```
 
 ## Third-party exchange step (extended)
 
 ```text
 validate subject_token → validate client_assertion → extract principal → finalize security context
-  → [NEW] subject_category == "agent" ? 403 access_denied (subject_category_unsupported), stop
+  → [NEW] agent_subject_expression(subject_token)
+        true  → 403 access_denied (subject_category_unsupported), stop
+        error → 500 server_error (cel_evaluation_failed / cel_configuration), stop
+        false → continue
   → extract agent_id → CEL authorization → resource → grant → session …   (unchanged)
 ```

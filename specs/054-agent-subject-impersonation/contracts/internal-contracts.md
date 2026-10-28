@@ -1,8 +1,8 @@
-# Internal Contracts: Ports, Token Minting, Exchange Rejection, and Audit
+# Internal Contracts: Ports, Agent-Subject Detection, Exchange Rejection, and Audit
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Research**: [../research.md](../research.md) | **Data model**: [../data-model.md](../data-model.md)
 
-These contracts are internal. They define the seams that tests target. Their visible effects (the token claim and HTTP responses) are proposed in [openapi-token-agent-subject.yaml](openapi-token-agent-subject.yaml) and must be confirmed.
+These contracts are internal. They define the seams that tests target. Their visible effects (decoded token claims and HTTP responses) are documented in [openapi-token-agent-subject.yaml](openapi-token-agent-subject.yaml) and must be confirmed.
 
 ## 1. `ports.ImpersonationRuleConfig.AllowedSubjectCategories`
 
@@ -12,23 +12,34 @@ These contracts are internal. They define the seams that tests target. Their vis
 AllowedSubjectCategories []string `mapstructure:"allowed_subject_categories"`
 ```
 
-## 2. `ports.ImpersonationMintInput.SubjectCategory`
+## 2. `ports.ClaimExtractionConfig.AgentSubjectExpression` and `CELEvaluator.IsAgentSubject`
 
 ```go
-// SubjectCategory is "human" (or empty) for a human subject and "agent" for an agent acting for
-// itself. An agent category mints the reserved subject_category claim; other values fail minting.
-SubjectCategory string
+// AgentSubjectExpression is an optional CEL boolean over subject_token that detects a subject token
+// representing an agent acting for itself. Empty means tokenexchange.DefaultAgentSubjectExpression.
+AgentSubjectExpression string `mapstructure:"agent_subject_expression"`
 ```
 
-`JWXAccessTokenStrategy.GenerateImpersonationToken` behaves as follows:
+```go
+// internal/domain/tokenexchange/constants.go
+DefaultAgentSubjectExpression = "has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id"
 
-| Input | Effect |
+// internal/domain/tokenexchange/cel_evaluator.go
+func (e *CELEvaluator) IsAgentSubject(subjectTokenClaims map[string]interface{}) (bool, error)
+```
+
+`CELEvaluatorConfig` gains `AgentSubjectExpression`. `internal/app/builder.go` passes the configured value into the shared token-exchange `CELEvaluatorConfig` (`builder.go` ~L1269). Approval authentication shares that evaluator but never calls `IsAgentSubject`; only `TokenExchangeService.Exchange` evaluates it.
+
+| Situation | Result |
 | --- | --- |
-| `""` or `"human"` | Behavior unchanged; no `subject_category` claim. |
-| `"agent"` | Adds the claim `subject_category: "agent"` after the CEL claims. The claim name is in `baseClaims`, so CEL cannot override it. |
-| anything else | Returns an error. The impersonation service maps it to the existing terminal `server_error`. |
+| Expression empty or omitted | The default is compiled. |
+| Compile error, or a static output type other than `bool`/`dyn` | `NewCELEvaluator` fails, and startup fails. |
+| Result `true` | `(true, nil)` |
+| Result `false` | `(false, nil)` |
+| Evaluation error or timeout | `server_error` through `celEvaluationError` at `identity_resolution` (`cel_evaluation_failed`) |
+| Non-boolean result | `server_error` at `identity_resolution` (`cel_configuration`) |
 
-For `"agent"`, the impersonation service passes `Subject = target UUID` and `Email = nil`.
+`ports.ImpersonationMintInput` and `JWXAccessTokenStrategy.GenerateImpersonationToken` are unchanged. For an agent-category request, the impersonation service passes `Subject = target UUID` and `Email = nil`. `sub` and `agent_id` are already reserved base claims, so the minted token always satisfies the default expression.
 
 ## 3. `impersonation.Service` behavior
 
@@ -38,7 +49,7 @@ For `"agent"`, the impersonation service passes `Subject = target UUID` and `Ema
 | CEL false | Fall-through `access_denied` | Same |
 | CEL error | Terminal `server_error` | Same |
 | Delegation | `UserDelegationVerifier` called; a missing or expired delegation is a terminal consent-required denial | **Not called** |
-| Mint | `Subject = extracted principal` | `Subject = target UUID`, `SubjectCategory = agent` |
+| Mint | `Subject = extracted principal` | `Subject = target UUID`, `Email = nil` |
 
 Invariant (tested): no code path calls `VerifyUserDelegation` for an agent-category request, and no agent-category failure produces `error_uri`.
 
@@ -47,12 +58,15 @@ Invariant (tested): no code path calls `VerifyUserDelegation` for an agent-categ
 The new step runs after `ExtractPrincipal` and `security.FinalizeCaptureHolder`, and before `ExtractAgentID`:
 
 ```text
-if claims[SubjectCategoryClaim] is the string SubjectCategoryAgent:
+isAgent, err := celEvaluator.IsAgentSubject(subjectTokenClaims)
+if err != nil:
+    return err   # terminal server_error; never treated as "not an agent"
+if isAgent:
     return access_denied("agent-subject tokens cannot be exchanged for third-party service tokens")
            with diagnostic (identity_resolution, subject_category_unsupported), and no error_uri
 ```
 
-Invariant (tested with a recording fake or storage spy): for an agent-subject token, the exchange calls none of `consent.Service.VerifyAgentAccess`, `OAuth2SessionService.GetValidAccessToken`, or the provider lookup.
+Invariant (tested with a recording fake or storage spy): for a subject token that matches the expression, and for an evaluation failure, the exchange calls none of `consent.Service.VerifyAgentAccess`, `OAuth2SessionService.GetValidAccessToken`, or the provider lookup.
 
 ## 5. Audit event `impersonation_decision`
 

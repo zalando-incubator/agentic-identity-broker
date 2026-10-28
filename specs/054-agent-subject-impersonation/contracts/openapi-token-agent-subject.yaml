@@ -3,18 +3,20 @@
 # Feature: 054-agent-subject-impersonation (spec API-001..API-004, research R4–R6)
 # Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
 #
-# STATUS: PROPOSED — NOT CONFIRMED. Under Constitution Principles IV and X, a stakeholder must
-# confirm this delta in writing on PR #293 before it is applied to api/enduser/openapi.yaml or
-# implemented. It adds no path, parameter, request field, response field, or OAuth2 error code.
-# It changes the operation description, adds examples, and documents a new reserved claim
-# in the issued JWT.
+# STATUS: PARTIALLY CONFIRMED. Under Constitution Principles IV and X, every item below must be
+# confirmed in writing on PR #293 before this delta is applied to api/enduser/openapi.yaml or
+# implemented. It adds no path, parameter, request field, response field, token claim, or OAuth2
+# error code. It changes the operation description and adds examples.
 #
-# Items needing explicit confirmation:
-#   C1  The reserved claim `subject_category: "agent"` on agent-subject tokens (research R5).
-#   C2  Category-ineligible requests use the existing generic 403 access_denied no-match envelope,
-#       with no error_uri (research R4).
-#   C3  Third-party exchange of an agent-subject token returns 403 access_denied, with no error_uri
-#       and the description below (research R6).
+# Items:
+#   C1  WITHDRAWN by the PR #293 review: no `subject_category` claim. Agent-subject tokens are the
+#       ordinary local tokens with `sub == agent_id` (research R5).
+#   C2  CONFIRMED (PR #293 review): category-ineligible requests use the existing generic
+#       403 access_denied no-match envelope, with no error_uri (research R4).
+#   C3  CONFIRMED (PR #293 review): third-party exchange of an agent-subject token returns
+#       403 access_denied, with no error_uri and the description below (research R6).
+#   C4  NEEDS CONFIRMATION: detection uses token_exchange.claim_extraction.agent_subject_expression
+#       (default `sub == agent_id`); a configured expression replaces the default (research R5).
 
 paths:
   /oauth2/token:
@@ -40,18 +42,22 @@ paths:
         An agent-category request that a rule authorizes needs no user delegation. It never
         returns the consent-required `error_uri`, and it creates no grant or session. The
         issued token has `sub` and `agent_id` equal to the target UUID. It keeps the `act`
-        claim (`act.iss` is the verified actor issuer, `act.sub` is the extracted actor), and
-        it carries the reserved claim `subject_category: "agent"`. `token_claims_expression`
-        cannot set or remove that claim. Human-category tokens do not carry it.
+        claim (`act.iss` is the verified actor issuer, `act.sub` is the extracted actor). There
+        is no category claim: `sub` and `agent_id` are reserved, so `token_claims_expression`
+        cannot change either of them.
 
         Human-category requests keep the active-delegation requirement and the existing
         consent-required response unchanged.
 
         #### Third-party exchange of agent-subject tokens
         A third-party token exchange (`resource` present) whose validated `subject_token`
-        carries `subject_category: "agent"` is always rejected with `403 access_denied`. The
-        response has no `error_uri`. No grant or stored provider session is consulted, even if a
-        human principal with the same identifier text has both.
+        matches `token_exchange.claim_extraction.agent_subject_expression` is always rejected
+        with `403 access_denied`. The default expression matches when the token's `sub` and
+        `agent_id` claims are both present and equal, which holds for every agent-subject token
+        that the broker issues. The response has no `error_uri`. No grant or stored provider
+        session is consulted, even if a human principal with the same identifier text has both.
+        A detection evaluation failure returns `500 server_error` and is never treated as a
+        non-agent token.
 
       requestBody:
         content:
@@ -80,7 +86,6 @@ paths:
                     {"iss": "https://broker.example.com",
                      "sub": "550e8400-e29b-41d4-a716-446655440000",
                      "agent_id": "550e8400-e29b-41d4-a716-446655440000",
-                     "subject_category": "agent",
                      "aud": "https://policy.example.com",
                      "act": {"iss": "https://idp.example.com", "sub": "research-runner"},
                      "scope": "", "iat": 1793005200, "exp": 1793008800}
