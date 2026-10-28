@@ -56,11 +56,15 @@ paths:
         `agent_id` claims are both present and equal, which holds for every agent-subject token
         that the broker issues. A configured expression replaces the default, with no
         additional built-in check; operators must keep it matching broker agent-subject tokens.
-        A non-matching override lets such tokens continue through the existing exchange checks.
-        The response has no `error_uri`. No grant or stored provider
-        session is consulted, even if a human principal with the same identifier text has both.
-        A detection evaluation failure returns `500 server_error` and is never treated as a
-        non-agent token.
+        For a matching detector result, the rejection response has no `error_uri`, and no
+        grant or stored provider session is consulted, even if a human principal with the
+        same identifier text has both. A detection evaluation failure returns
+        `500 server_error`, with no `error_uri` or human-state access, and is never treated
+        as a non-agent token.
+        A non-matching result (`false`), including under a replacing override, continues
+        through the existing exchange checks. Those checks may consult matching human
+        grants and stored provider sessions and return existing consent-required errors
+        with an `error_uri`; categorical rejection and human-state isolation do not apply.
 
       requestBody:
         content:

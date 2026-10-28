@@ -58,6 +58,14 @@ The earlier planning blocker is closed. Authorized maintainer command `648024015
 
 The design already matched these semantics (research R5 and R6). This re-plan updates the acceptance mapping, the test strategy, the quickstart, and the contracts to cover the new US3.4 variants, and it clears the gate. No design decision changed.
 
+### Remediation gate — analysis run `40773362732/1`
+
+**BLOCKED (HIGH finding: accepted ADR wording).** The OpenAPI delta now scopes no-consent/no-human-state guarantees to detector matches and fail-closed detection failures. A `false` result continues existing checks, which may consult matching human state and return existing consent errors. C4 and all recorded decisions are unchanged.
+
+Accepted `adr-044-draft.md` still contains unconditional promises in Context and Positive Consequences. This remediation phase forbids modifying binding ADRs, so that file is unchanged. Before T003 can pass, a maintainer must resolve those explanations through the permitted same-PR ADR governance process (Constitution II), without changing decision 6 or C4. Proposed wording for review: “With the default detector or a matching override, agent-subject tokens are rejected before human-state access; detection failures fail closed. A non-matching result continues existing checks, which may consult matching human grants/sessions and return existing consent errors.” This proposal is not an approval or a new decision.
+
+The second HIGH finding (incompatible E2E storage spies) is addressed by the production boundary instrumentation design below and tasks T071–T072. The associated MEDIUM finding is addressed by positive downstream checkpoints for both `false` fixtures. These document corrections do not implement instrumentation, complete tasks, or waive the ADR gate.
+
 ## Technical Context
 
 **Language/Version**: Go 1.27.3
@@ -140,9 +148,9 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   - No new cross-context dependency: detection lives entirely in `tokenexchange`, and `oauth2server` is unchanged.
 - [x] **Persistence Patterns**: N/A (no persistence).
 
-**Gate status**: PASS. ADR 044 is accepted, C2–C4 are confirmed (C1 withdrawn), the R8 guard is not adopted, and FR-011/SR-005/FR-012/SC-005/CFG-005 are aligned with C4 (spec session 2026-10-28, maintainer command `6480240156`). Implementation Phase 2 still records these references in the governance task before code changes.
+**Gate status**: BLOCKED pending the accepted-ADR explanatory wording resolution recorded in the Remediation gate above. The earlier product/API decisions remain resolved: ADR 044 is accepted, C2–C4 are confirmed (C1 withdrawn), the R8 guard is not adopted, and FR-011/SR-005/FR-012/SC-005/CFG-005 are aligned with C4 (spec session 2026-10-28, maintainer command `6480240156`). Implementation Phase 2 still records these references in the governance task before code changes.
 
-**Post-Design Re-check**: PASS. Structural observations:
+**Post-Design Re-check**: BLOCKED on the same ADR wording gate; no new product decision is proposed. Structural observations:
 - The design adds no persistence, no port interface, no request input, and no token claim.
 - The design preserves established human delegation and responses except for the confirmed human-only signed exact-equality rejection; the existing E2E suites must pass unchanged.
 - Deviations from binding decisions are limited to ADR 032 decisions 1 and 2 for agents only, covered by the Accepted ADR 044.
@@ -202,7 +210,7 @@ internal/
 │   ├── constants.go                                  # DefaultAgentSubjectExpression
 │   ├── cel_evaluator.go (+ cel_evaluator_test.go)    # AgentSubjectExpression compile, IsAgentSubject
 │   ├── diagnostic.go (+ _test.go)                    # two new details
-│   └── service.go (+ service_security_test.go)       # agent-subject rejection step
+│   └── service.go (+ service_security_test.go, service_observation_test.go)  # rejection + production grant/session boundary spans
 ├── app/builder.go                                    # pass agent_subject_expression to the token-exchange CEL evaluator
 ├── config/loader.go, config/impersonation_shape.go (+ _test.go)  # YAML shape check
 ├── config/validator.go (+ impersonation_validator_test.go)
@@ -279,13 +287,27 @@ ARCHITECTURE.md, AGENTS.md (glossary + ADR 044 index entry)
 **Test Execution Flow**: Phase 2f writes all 12 tests. Running `ginkgo -v --focus "Agent-Subject Impersonation" ./tests/e2e/` must show semantic failures. Implementation turns them green with fixture-only adjustments.
 
 **Bootstrap Strategy**:
-- Production `bootstrap.NewServerFactory(config, logger).BuildApp(storage)`, with admin and end-user test servers, per test.
+- Production `bootstrap.NewServerFactory(config, logger).BuildApp(storage)`, with admin and end-user test servers, per test. US3.4 uses the existing `BuildAppWithTracerProvider(storage, tp)` variant and `bootstrap.NewInMemoryTracerProvider()` (AlwaysSample); it still passes the concrete production storage adapter and uses production Builder wiring.
 - US3.4 configures `token_exchange` in local mode with the broker issuer as subject-token trust, following `tests/e2e/local_token_exchange_e2e_test.go`. Inside the single `It`, it boots one broker per detector configuration and exchanges the same kind of agent token in both fixture states (no human state; same-UUID-text human grant and valid session):
   1. `agent_subject_expression` unset (default): `403 access_denied` with the agent-subject description, no `error_uri`, and no grant, session, or provider access.
   2. Journey 3 Step 3's compliant override (default kept as a disjunct): the same rejection.
-  3. Non-matching override `false`: no agent-subject rejection. The response is whatever the existing checks yield. Without human state, that is the existing missing-grant denial. The test asserts that the agent-subject description and diagnostic are absent. It does not assert categorical rejection or automatic success (spec US3.4, SC-005).
+  3. Non-matching override `false`: valid extraction, privileged-client authorization, registered target, resource, permission-set and scope fixtures ensure downstream checks are reachable. Without human state, assert the existing `403 access_denied` missing-grant description, `grant_authorization / grant_missing` diagnostic, and consent `error_uri` ending `/agents/<target UUID>`, plus a `tokenexchange.verify_agent_access` span. With a same-text active grant covering the resource and a valid session, require both `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` spans in the exchange trace. Both fixtures additionally assert absence of the agent-subject description/diagnostic. An unrelated early 400/401/500 cannot satisfy these positive checkpoints; neither fixture requires categorical isolation or automatic exchange success (spec US3.4, SC-005).
   4. Detection error: override `subject_token.sub` (statically `dyn`, so startup accepts it) returns a string at runtime: `500 server_error` and no human-state access.
 - A mock upstream provider records calls, so the test can assert that no refresh or provider request is made in variants 1, 2, and 4.
+
+#### Human-state observation boundary (required prerequisite, T071–T072)
+
+**Source constraint:** `bootstrap.ServerFactory.BuildApp` type-asserts `*storage.Adapter`; Builder stores that concrete type, and its repository fields are private (`tests/e2e/bootstrap/server_factory.go:91–115`, `internal/app/builder.go:168–195`, `internal/adapters/storage/factory.go:43–50`). An E2E spy wrapper cannot be injected. Do not change these signatures, expose repository setters, use reflection, or build services outside Builder.
+
+**Minimal production change:** In `internal/domain/tokenexchange/service.go`, instrument the existing `consentService.VerifyAgentAccess` and `oauth2SessionService.GetValidAccessToken` calls with child spans named `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` from `otel.Tracer("tokenexchange")`. Start each span immediately before its call, pass the child context into the service, and end it immediately after return, including errors, before mapping the result. These are the exchange's only entry boundaries into grant/session reads; verify that invariant over the complete call graph before using the negative evidence. Detection remains before both. Span presence means entry, not necessarily a successful repository read; absence proves neither read-capable boundary was entered. Existing source at Exchange steps 9/10 calls these concrete services; `consent.Service.VerifyAgentAccess` calls the grant repository and `OAuth2SessionService.GetValidAccessToken` calls the session repository. Any future read path must be covered before claiming zero reads.
+
+The production justification is request-correlated latency and reachability of authorization and credential-retrieval boundaries, specifically needed for FR-011/SR-005/SC-005 evidence. Follow ADR 011's global OTel API and context propagation, without an SDK dependency in the domain, new constructor/port, or test-only production API. Emit no token/claim/principal/URL/error-cause attributes or events. Disabled telemetry remains a no-op and must not affect exchange results. T005/T058 document these two boundaries in `ARCHITECTURE.md`; no general telemetry cleanup is in scope.
+
+**Test-first validation:** T071 writes compiling semantic-red tests in `internal/domain/tokenexchange/service_observation_test.go`, using real consent/session services with recording repository fakes in unit tests only. Require a started child span before each repository access, correct parenting, closure on success/missing/error returns, unchanged errors/results/context cancellation, and no sensitive attributes/events. Cover missing grant, valid grant plus session retrieval, and no-op tracing. T072 adds only the two production spans and turns these tests green before story work. Existing unit fakes continue to prove exact zero repository calls under matches/errors in T041; they supplement rather than replace E2E evidence.
+
+**E2E capture and positive controls:** Keep one US3.4 `It`, with fresh storage/server/provider per detector variant and fixture state. Set telemetry and traces enabled; capture with the existing AlwaysSample in-memory provider through `BuildAppWithTracerProvider`. Use a unique sampled W3C `traceparent` for each exchange, require its completed HTTP server span, and inspect only spans with that trace ID after bounded `Eventually` completion/`ForceFlush`, not setup/mint/admin traces or recorder totals. In the same fixture/bootstrap, send an ordinary human token with unequal `sub`/`agent_id`: with no grant it must emit the grant span and the existing missing-grant envelope; with a resource-covering grant and usable session it must emit both spans. Run these controls for default, compliant and `false` configurations. The `subject_token.sub` error configuration cannot admit an ordinary string-subject control token: run its control in an otherwise identical broker with the default detector, sequentially using the same tracer provider/recorder setup pattern, and separately require the failing request's completed server span. Never alter credential validation or fabricate non-string subjects to make a control pass. Then assert zero boundary spans for agent-token default/compliant/error requests, plus zero mock-provider/refresh calls. An absent server/control span is a broken observation setup, never evidence of isolation. `false` requests require the positive checkpoints above.
+
+Manage the global provider within one broker lifetime at a time: snapshot/restore the prior provider and propagator, drain the app and shut down the provider in cleanup; do not run goroutine-parallel broker builds inside the scenario. Reuse trace helpers in `tests/e2e/helpers/` if needed; no production or bootstrap observation API is added. Storage-state comparisons and zero provider calls alone cannot establish zero reads.
 
 **Helper Utilities**:
 - Reuse `decodeJWTClaims` from the impersonation suite by moving it to `tests/e2e/helpers/`, only if it is shared. Otherwise, use a local helper.
