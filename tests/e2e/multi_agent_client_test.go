@@ -103,6 +103,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 					[]string{"read"},
 				)
 				Expect(testStorage.UserGrants().Create(context.Background(), grant)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 
 				// When: Authorization request using agent internal ID as client_id
 				resp, err := server.AuthenticatedGET(
@@ -130,6 +131,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 					[]string{"read"},
 				)
 				Expect(testStorage.UserGrants().Create(context.Background(), grant)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 
 				// When: Authorization request uses agent.ID (UUID) as client_id
 				resp, err := server.AuthenticatedGET(
@@ -391,6 +393,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 					[]string{"read"},
 				)
 				Expect(testStorage.UserGrants().Create(context.Background(), grant)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 
 				// When: Authorization request using agent.ID as client_id (still UUID-based)
 				resp, err := server.AuthenticatedGET(
@@ -449,6 +452,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 					[]string{"repo", "user"},
 				)
 				Expect(testStorage.UserGrants().Create(ctx, grant)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 
 				// Create active session for default principal — token exchange requires an active session.
 				session := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
@@ -622,6 +626,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 					[]string{"repo", "user"},
 				)
 				Expect(testStorage.UserGrants().Create(ctx, grant)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 
 				// Create active session for default principal — token exchange requires an active session.
 				session := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
@@ -770,6 +775,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				[]string{"read"},
 			)
 			Expect(testStorage.UserGrants().Create(context.Background(), grant)).ToNot(HaveOccurred())
+			Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 
 			// Authorize with agent.ID (UUID) — should proxy to upstream normally
 			resp, err := srv.AuthenticatedGET(

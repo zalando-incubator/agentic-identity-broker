@@ -260,7 +260,7 @@ type UserSessionRepository interface {
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
-	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
+	// Used for FR-020 consent submission validation.
 	// Returns empty slice if no active sessions exist (not an error).
 	ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 

@@ -181,6 +181,7 @@ var _ = Describe("OAuth2 Authorization Endpoint", func() {
 			grant := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), agent.ID.String(), fixtures.GitHubService().ID.String(), []string{"read", "write"})
 			err = testStorage.UserGrants().Create(context.Background(), grant)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 		})
 
 		It("should proxy the request to upstream OAuth2 server with all parameters preserved", func() {
@@ -295,6 +296,7 @@ var _ = Describe("OAuth2 Authorization Endpoint", func() {
 			grant := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), agent.ID.String(), fixtures.GitHubService().ID.String(), []string{"read", "write"})
 			err = testStorage.UserGrants().Create(context.Background(), grant)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 		})
 
 		It("should accept valid redirect_uri and proxy to upstream", func() {
@@ -365,6 +367,7 @@ var _ = Describe("OAuth2 Authorization Endpoint", func() {
 				grant := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), agent.ID.String(), fixtures.GitHubService().ID.String(), []string{"read", "write"})
 				err := testStorage.UserGrants().Create(context.Background(), grant)
 				Expect(err).ToNot(HaveOccurred())
+				Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
 			})
 
 			It("should preserve state parameter in redirect to upstream", func() {
@@ -407,6 +410,7 @@ var _ = Describe("OAuth2 Authorization Endpoint", func() {
 			grantDefault := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), agent.ID.String(), fixtures.GitHubService().ID.String(), []string{"read", "write"})
 			err = testStorage.UserGrants().Create(context.Background(), grantDefault)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grantDefault)).To(Succeed())
 
 			// Another principal has no grant
 		})

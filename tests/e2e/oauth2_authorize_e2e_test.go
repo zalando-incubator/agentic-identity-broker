@@ -54,6 +54,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		// Grant must include at least one GrantedPermissionSetEntry.
 		grant := fixtures.ActiveGrant("test@example.com", agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
 		Expect(testStorage.UserGrants().Create(ctx, grant)).ToNot(HaveOccurred())
+		Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 
 		serverFactory := bootstrap.NewServerFactory(config, logger)
 		app, err := serverFactory.BuildApp(testStorage)
@@ -496,6 +497,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 
 		grant := fixtures.ActiveGrant("test@example.com", agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
 		Expect(testStorage.UserGrants().Create(ctx, grant)).ToNot(HaveOccurred())
+		Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 
 		// No client-credentials endpoint call — agent has no secret.
 		serverFactory := bootstrap.NewServerFactory(fixtures.LocalConfig(), logger)
@@ -622,6 +624,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 		Expect(testStorage.Agents().Create(ctx, agent)).ToNot(HaveOccurred())
 		grant := fixtures.ActiveGrant("test@example.com", agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
 		Expect(testStorage.UserGrants().Create(ctx, grant)).ToNot(HaveOccurred())
+		Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 
 		app, err := bootstrap.NewServerFactory(fixtures.LocalConfigWithCEL(`{"pemail": principal.email, "pname": principal.display_name}`), logger).BuildApp(testStorage)
 		Expect(err).ToNot(HaveOccurred())

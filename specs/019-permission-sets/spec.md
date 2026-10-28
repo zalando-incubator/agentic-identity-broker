@@ -80,6 +80,10 @@ When a user submits the consent form, the system stores which permission sets (b
 2. **Given** a `UserGrant` exists with `granted_permission_sets`, **When** a token exchange is requested, **Then** the response includes `granted_permission_sets: {<permission_set_id>: [included_service_ids]}` alongside the access token.
 3. **Given** a user has an existing grant and re-visits consent to change their selections, **When** the user submits the updated grant, **Then** the `UserGrant` is upserted with the new `granted_permission_sets` entries (mandatory PS always present, per-service inclusions reflect current toggle state).
 4. **Given** two granted permission sets both cover Service A with different scopes and both include Service A in their `included_service_ids`, **When** a token exchange is requested, **Then** the token exchange resolves both sets' `ServiceScope` entries for Service A and returns an access token scoped to their scope union.
+5. **Given** an active grant includes optional Service B and the user's Service B session was deleted after consent, **When** the agent calls `/oauth2/authorize`, **Then** the broker redirects to the consent screen (`/agents/{agent_id}?session_token=…`) and the consent info no longer lists Service B in `active_session_service_ids` (FR-022, Journey 1).
+6. **Given** the consent redirect from Scenario 5, **When** the user deselects Service B (or reconnects it) and saves the grant with the `session_token`, **Then** the response carries `redirect_url` back to the original `/oauth2/authorize` request, which now proceeds without consent (FR-022, Journey 1).
+7. **Given** an active grant does not include Service C and the user has no Service C session, **When** the agent calls `/oauth2/authorize`, **Then** the request proceeds without consent — services outside `included_service_ids` never block (FR-022).
+8. **Given** an active grant includes Service B, its access token has expired, and the provider rejected its refresh token (recorded as an expired refresh token per `specs/013-token-exchange/spec.md` User Story 5, Scenario 4), **When** the agent calls `/oauth2/authorize`, **Then** the broker redirects to the consent screen; after the user reconnects Service B, the request proceeds (FR-022).
 
 ---
 
@@ -93,6 +97,7 @@ When a user submits the consent form, the system stores which permission sets (b
 - How does the system handle a permission set that covers Service A and Service B, but the user only has an active session for Service A? The consent screen shows Service B in the connections section with a Connect button (if it's in SR). The Approve button remains disabled until Service B is connected.
 - What happens if all required services have active sessions? The service connections section shows all services as connected; the Approve button is enabled.
 - What happens if the `UserSession` token does not cover the scopes of a granted permission set at token exchange time? The exchange fails with a descriptive error (FR-018). The user must initiate a new OAuth2 session for the affected service to acquire the missing scopes. Note: this should be rare with FR-020 blocking submission without sessions, but can occur if sessions expire between consent and exchange.
+- What happens if a session for an included service is deleted, expires, or has its refresh token rejected by the provider after consent? Token exchange fails with `invalid_grant`. The agent's next `/oauth2/authorize` redirects to the consent screen (FR-022), which shows the service as not connected. The user reconnects it, or deselects it when it is optional, and saves; authorization then proceeds. Without FR-022 the agent would loop between authorization and failing token exchanges.
 - Permission set definitions may change between consent grant and token exchange (cache staleness ≤60s). This is acceptable — the cache TTL bounds the window of stale scope resolution.
 
 ---
@@ -178,6 +183,21 @@ flowchart TD
 
 ---
 
+### Authorization — Included-Service Session Check (FR-022)
+
+```mermaid
+flowchart TD
+    A([Agent calls /oauth2/authorize<br/>user has an active grant]) --> B[For each service in<br/>included_service_ids]
+    B --> C{Session usable?<br/>exists and not expired}
+    C -- No: missing, expired,<br/>or refresh rejected --> D([302 to consent screen<br/>with session_token])
+    C -- Yes, for all services --> E[Mandatory service requirements check]
+    E --> F([Proceed: issue code<br/>or redirect upstream])
+    D --> G[User reconnects or deselects<br/>the service and saves]
+    G --> A
+```
+
+---
+
 ### Token Exchange — Permission Set Scope Resolution & Validation
 
 ```mermaid
@@ -197,6 +217,85 @@ flowchart TD
 ```
 
 ---
+
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — Alice disconnected an optional service she granted (User Story 4, Scenarios 5–6)
+
+**Cast**: Alice (`alice@example.com`); agent *Research Assistant* (`6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42`), a local client with redirect URI `https://assistant.example.com/callback`; permission set *Repository access* (`3a9e1b74-2c6f-4d08-b5e1-7f42c9d0a613`, mandatory) covering GitHub (`880e8400-e29b-41d4-a716-446655440010`); permission set *Calendar insights* (`d2b7c5e0-9f31-4a6e-8c14-5e0b3f7a2d91`, optional) covering Google Calendar (`c41f0e7a-6d25-4b93-a8e2-1b9d7c3f5e08`). All times are 2026-10-28 UTC. All IDs, codes, and tokens are synthetic.
+
+**Step 1 — Initial state**
+
+Alice consented with both permission sets and included Google Calendar. Her grant stores:
+
+```json
+{
+  "granted_permission_sets": {
+    "3a9e1b74-2c6f-4d08-b5e1-7f42c9d0a613": ["880e8400-e29b-41d4-a716-446655440010"],
+    "d2b7c5e0-9f31-4a6e-8c14-5e0b3f7a2d91": ["c41f0e7a-6d25-4b93-a8e2-1b9d7c3f5e08"]
+  }
+}
+```
+
+At 09:00:00 she ended her Google Calendar session on the sessions page. Her GitHub session is still usable.
+
+**Step 2 — 09:10:00: the agent re-authorizes and the broker asks for consent**
+
+```http
+GET /oauth2/authorize?client_id=6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42&redirect_uri=https%3A%2F%2Fassistant.example.com%2Fcallback&response_type=code&state=st_91c2&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/agents/6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42?session_token=eyJ...
+```
+
+The included Google Calendar service has no session, so the broker does not issue a code (FR-022).
+
+**Step 3 — the consent screen shows Google Calendar as not connected**
+
+```http
+GET /api/consent/agents/6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42?session_token=eyJ... HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"data": {"active_session_service_ids": ["880e8400-e29b-41d4-a716-446655440010"], "...": "..."}}
+```
+
+The page pre-fills her saved selections and lists Google Calendar under the service connections with a Login action. Save stays disabled while Google Calendar is selected and not connected (FR-020).
+
+**Step 4 — 09:11:00: Alice deselects Google Calendar and saves**
+
+```http
+POST /api/consent/agents/6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42/grants?session_token=eyJ... HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+Content-Type: application/json
+
+{"granted_permission_sets": {"3a9e1b74-2c6f-4d08-b5e1-7f42c9d0a613": ["880e8400-e29b-41d4-a716-446655440010"]}}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{
+  "data": {"granted_permission_sets": {"3a9e1b74-2c6f-4d08-b5e1-7f42c9d0a613": ["880e8400-e29b-41d4-a716-446655440010"]}, "...": "..."},
+  "redirect_url": "/oauth2/authorize?client_id=6f1c2a9e-4b7d-4e21-9a3f-0c5d8e7b1a42&redirect_uri=https%3A%2F%2Fassistant.example.com%2Fcallback&response_type=code&state=st_91c2&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256"
+}
+```
+
+Had she chosen Login instead, the third-party callback would store a new Google Calendar session and an unchanged Save would return the same `redirect_url`.
+
+**Step 5 — the browser follows `redirect_url` and authorization proceeds**
+
+```http
+HTTP/1.1 302 Found
+Location: https://assistant.example.com/callback?code=ac_4f7e2b&state=st_91c2
+```
+
+**Observable result**: Alice reaches the consent screen instead of looping between authorization and failing token exchanges. After she resolves the disconnected service, the agent receives an authorization code.
 
 ## Requirements *(mandatory)*
 
@@ -222,6 +321,7 @@ flowchart TD
 - **FR-016**: The database migration MUST invalidate (delete) all existing `UserGrant` records. The `DelegatedToken` sub-structure is removed; `UserGrant` gains a `granted_permission_sets JSONB` column storing the structured map `{ps_id: [included_service_ids]}`. Affected users will be required to re-consent on their next access.
 - **FR-017**: During token exchange, the system MUST resolve `granted_permission_sets` → effective scopes using an in-process cache (≈60s TTL), applying the explicit SR scope ceiling or the `require_all_scopes` full-union rule from FR-013. It MUST validate that the existing `UserSession` token already covers the resulting effective scopes — it MUST NOT expand or re-request scopes.
 - **FR-018**: If the `UserSession` token does not satisfy the required scopes of a granted permission set at exchange time, the token exchange MUST fail with a descriptive error.
+- **FR-022**: When an agent calls `/oauth2/authorize` and the user has an active grant, every service in the grant's `included_service_ids` MUST have a usable session: one that exists and whose access token is unexpired or whose stored refresh token is present with no recorded expiry or one in the future. A missing or unusable session MUST redirect the user to the consent screen with a `session_token`, so the user can reconnect or deselect the service. Services not in `included_service_ids` MUST NOT trigger this redirect. Mandatory service requirements remain checked as before.
 - **FR-021**: The consent-info response MUST disclose the scope set a user can authorize for every `require_all_scopes` service requirement: the sorted, deduplicated union from the agent's assigned Permission Sets that cover that same service, with provider scope descriptions. This is a consent-time maximum; token exchange remains constrained to Permission Sets and service IDs actually included in the user grant. Raw scopes MUST remain omitted from `permission_sets.service_scopes`, and Permission Set services absent from `service_requirements` MUST not be disclosed.
 
 ### Domain Model
@@ -342,6 +442,10 @@ flowchart TD
 
 ## Clarifications
 
+### Session 2026-10-28
+
+- Q: Should `/oauth2/authorize` proceed when a service the user included in the grant no longer has a usable session (deleted, expired, or refresh token rejected)? → A: No. FR-020 guarantees each included service had a session when consent was saved, so a missing or unusable session means the user must act. Authorization redirects to consent, where the user reconnects or deselects the service (FR-022). Services the user did not include never block.
+
 ### Session 2026-04-24
 
 - Q: Can a permission set mandate a specific service independently of the agent's `ServiceRequirement`? → A: Yes, via `ServiceScope.requirement_type`. An optional SR on the agent is correct when the PS itself is optional (the service is not needed when the PS is deselected). But when the user selects that PS, the PS may declare the service as mandatory within its context. Effective per-service lock state on the consent card = `max(SR.requirement_type, ServiceScope.requirement_type)` where mandatory > optional. FR-019 is unchanged — every SR must still be declared on the agent; `ServiceScope.requirement_type` only affects locking behavior for SR-intersecting services when the PS is selected.
@@ -377,7 +481,7 @@ flowchart TD
 1. **Scope boundary**: This specification covers `PermissionSet` as a first-class domain entity and the consent/admin UX changes that use it (Tier 1 of the issue #200 three-tier model). Runtime tool approval (Tier 2) and CIBA relay (Tier 3) are out of scope.
 2. **Multi-service permission sets**: A single `PermissionSet` can include scopes for more than one `ThirdpartyOAuth2Service`. This is an explicit requirement from the user and diverges from the per-service ER diagram in issue #200.
 3. **No backward compatibility for raw scopes**: All agents MUST be updated via the admin API to declare their `permission_sets` list. Raw `scopes[]` on `DelegatedToken` are replaced by structured `granted_permission_sets` (map of PS ID → included service IDs). `ServiceRequirement` retains its `scopes[]` (unchanged). Existing `UserGrant` records with raw scopes in `DelegatedToken` are invalidated at deploy time; affected users must re-consent.
-4. **Active session definition**: A service has an "active session" if a `UserSession` exists for the `(principal, service_id)` pair with a non-expired access token. This reuses existing session check logic.
+4. **Active session definition**: A service has an "active session" if a `UserSession` exists for the `(principal, service_id)` pair and is usable: its access token is unexpired, or it stores a refresh token with no recorded expiry or one in the future. A refresh token the provider rejected is recorded as expired (`specs/013-token-exchange/spec.md`, User Story 5, Scenario 4). This reuses the domain rule `storage.SessionIsUsable`.
 5. **No runtime enforcement in this feature**: The `granted_permission_sets` field added to the token exchange response bridges to future OPA-based enforcement; this spec does not implement ExtProc enforcement logic.
 6. **Effective scope computation**: The union of all granted permission sets' scopes for a service is computed at token exchange time, not stored pre-computed.
 

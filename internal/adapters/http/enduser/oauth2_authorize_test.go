@@ -307,7 +307,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 
 	svc := oauth2.NewAuthorizationService(
 		grantRepo,
-		&noopSessionRepository{},
+		&connectedSessionRepository{},
 		oauth2.NewAgentClientResolver(agentRepo, nil),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
@@ -371,7 +371,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 
 	svc := oauth2.NewAuthorizationService(
 		grantRepo,
-		&noopSessionRepository{},
+		&connectedSessionRepository{},
 		oauth2.NewAgentClientResolver(agentRepo, nil),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
@@ -735,6 +735,14 @@ func (m *mockGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Con
 		}
 	}
 	return len(agents), nil
+}
+
+// connectedSessionRepository reports a usable session for every service, as FR-020 guarantees
+// for services included at consent time.
+type connectedSessionRepository struct{ noopSessionRepository }
+
+func (c *connectedSessionRepository) FindByPrincipalAndService(_ context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, TokenType: "Bearer"}, nil
 }
 
 type noopSessionRepository struct{ ports.UserSessionRepository }

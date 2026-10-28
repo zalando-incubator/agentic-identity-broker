@@ -259,6 +259,14 @@
 - [ ] T090 Complete `quickstart.md` verification checklist — all items checked before opening PR
 - [X] T091 Add `require_all_scopes` ServiceRequirement mode: validate mutual exclusion with `required_scopes`, resolve the granted Permission Set union at token exchange, disclose the assigned Permission Set union in consent service requirements, and cover the admin, domain, handler, and end-user contract paths.
 
+### Amendment 2026-10-28: Included-service sessions at authorization (FR-022)
+
+- [X] T092 [US4] Write failing unit cases in `internal/domain/oauth2/service_test.go` (`TestService_HandleAuthorization_SessionExpiry`): a missing session for an included service redirects to consent; a rejected refresh token with an expired access token redirects to consent; with a valid access token it proceeds; a missing session for a service outside the grant proceeds.
+- [X] T093 [US4] Write failing E2E scenarios US4.S5–S8 in `tests/e2e/permission_sets_test.go` (production builder, one `It()` each).
+- [X] T094 [US4] Replace `anyDelegatedSessionExpired` with `anyDelegatedSessionUnusable` in `internal/domain/oauth2/service.go`: a missing or expired session for an included service redirects to consent, logged as `DelegatedSessionUnusable` with `service_id` and `reason`.
+- [X] T095 [US4] Add `fixtures.SeedGrantSessions` and seed sessions for included services in authorization E2E tests whose grants previously had none, matching FR-020.
+- [X] T096 Update `ARCHITECTURE.md` (Optional Service glossary, consent flow) and run `just check`, `just test`, and the backend E2E suite.
+
 ---
 
 ## Dependencies & Execution Order
