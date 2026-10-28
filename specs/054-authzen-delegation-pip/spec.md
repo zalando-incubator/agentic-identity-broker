@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft — blocked on the freshness decisions I1/U1/U2 in [remediation.md](./remediation.md); prior clarification answers remain valid, but do not settle these findings. Contract review and architectural approval (including I2's audit-perimeter extension) remain required.
+**Status**: Draft — R15 OPA input-shape clarification integrated. Design-artifact reconciliation, contract review, and architectural approval (including I2's audit-perimeter extension) remain required. The separate freshness and audit-seam handoff is recorded in [remediation.md](./remediation.md).
 
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
 
@@ -22,6 +22,16 @@ Both answers were supplied by maintainer `mjungsbluth` as “Q1: A; Q2: A” in 
 - Q: Should evaluation introduce a distinct caller-policy grant type, or reuse the existing token-exchange CEL policy for the token-exchange action? → A: Reuse the same policy without a new grant type: for `action: {"name": "urn:ietf:params:oauth:grant-type:token-exchange"}`, the caller-policy input is `request.grant_type = "urn:ietf:params:oauth:grant-type:token-exchange"`.
 
 This clarification records maintainer `mjungsbluth`'s phase guidance in command [6438164850](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6438164850), not an answer supplied on the maintainer's behalf. It does not approve an OpenAPI amendment or accept an ADR.
+
+### Session 2026-10-28
+
+- Q: Where must ExtProc expose delegation members to policies? → A: Directly in the existing `input.context`, beside `granted_permission_sets_available`, `granted_permission_sets`, and `agent_session_id`: `principal` (string from permit `subject.id`), `agent {id, canonical_id}`, `resource {id, canonical_id, resource_uri, scopes}`, `grant {id, updated_at, valid_until}`, and `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. No `delegation` wrapper; unset optional `canonical_id` and `valid_until` fields are omitted, never null.
+- Q: Must the policy context be a verbatim copy of the AuthZEN permit? → A: No. ExtProc decodes the permit into its own typed struct and emits only the documented fields. Unknown permit fields do not reach policies, and AuthZEN wire-format details do not leak into Rego.
+- Q: How long must the existing OPA permission-set inputs remain? → A: `granted_permission_sets` and `granted_permission_sets_available` remain permanently, populated from the permit on both enabled request paths. This is separate from FR-019's unchanged exchange-response deprecation.
+- Q: Which availability signal applies to the extended context? → A: Use only `granted_permission_sets_available`. In enabled mode, `true` guarantees all five new members are present, including on the header-only path, subject to nested optional-field omissions. Resolution failure returns 503 before policy, never an availability-false fallback. Disabled mode omits the new members and keeps existing behavior byte-for-byte unchanged; no `delegation_available` field is added.
+- Q: Which paths must the canonical-ID policy fixture use? → A: `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id`.
+
+These five points record maintainer `mjungsbluth`'s phase guidance in command [6480426911](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6480426911), resolving R15's input-shape questions. They do not approve an OpenAPI amendment, accept an ADR, or authorize planning or implementation in this phase.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -96,14 +106,14 @@ As an operator who enables delegation context, I want both request paths to eval
 
 **Acceptance Scenarios**:
 
-1. **US3.1 — Body-bearing permit**: **Given** enabled delegation context and an allowed delegation, **When** a body-bearing request reaches ExtProc, **Then** exchange and delegation resolution run concurrently during request headers, both must succeed before the request proceeds to body policy evaluation, and policy receives the resolved context verbatim with `delegation_available: true` before any downstream forwarding.
-2. **US3.2 — Header-only permit**: **Given** the same delegation, **When** a supported header-only request reaches ExtProc, **Then** it resolves delegation before policy evaluation, policy sees the same delegation information, and exchange occurs only after policy allows.
+1. **US3.1 — Body-bearing permit**: **Given** enabled delegation context and an allowed delegation, **When** a body-bearing request reaches ExtProc, **Then** exchange and delegation resolution run concurrently during request headers, both must succeed before body policy evaluation, and policy receives the documented `principal`, `agent`, `resource`, `grant`, and `permission_sets` members directly in `input.context`, with permit-derived `granted_permission_sets` and `granted_permission_sets_available: true`, before any downstream forwarding. ExtProc maps its own typed permit struct rather than copying the wire context; unknown permit fields, a `delegation` wrapper, and `delegation_available` are absent. Unset optional `canonical_id` and `valid_until` fields are omitted, never null.
+2. **US3.2 — Header-only permit**: **Given** the same delegation, **When** a supported header-only request reaches ExtProc, **Then** it resolves delegation before policy evaluation, policy sees the same documented direct `input.context` members and permit-derived `granted_permission_sets` with `granted_permission_sets_available: true` as the body path, and exchange occurs only after policy allows.
 3. **US3.3 — Delegation denial**: **Given** the broker returns `decision: false` with Alice's consent URL, **When** ExtProc handles the request, **Then** it returns HTTP 403 `access_denied` with that recovery URL before policy evaluation or downstream forwarding; a concurrent successful exchange cannot override the denial.
 4. **US3.4 — Independent freshness**: **Given** a permit cached at 10:00:00 for 60 seconds and an exchanged token usable until 11:00:00, **When** Alice revokes her grant at 10:00:10 and repeats her request at 10:01:00, **Then** ExtProc resolves again and denies instead of feeding the hour-old permission snapshot to policy.
 5. **US3.5 — Denials not cached**: **Given** a denied request and subsequent valid user consent, **When** Alice repeats the request immediately, **Then** ExtProc consults the broker again and can permit without waiting for a negative-cache lifetime.
-6. **US3.6 — No stale-on-error**: **Given** an expired delegation permit but a still-cached exchanged token, **When** resolution times out or the broker is unavailable, **Then** ExtProc fails closed and does not substitute stale delegation, exchange-response permission sets, or an availability-false input that policy could allow.
+6. **US3.6 — No stale-on-error**: **Given** an expired delegation permit but a still-cached exchanged token, **When** resolution times out or the broker is unavailable, **Then** ExtProc returns 503 before policy and does not substitute stale delegation, exchange-response permission sets, or `granted_permission_sets_available: false` that policy could allow.
 7. **US3.7 — Cache isolation and local cap**: **Given** two different subject tokens or resource URIs, and `max_staleness: 20s`, **When** a 60-second permit is cached for one pair, **Then** another pair cannot use it and the original pair requires revalidation after at most 20 seconds.
-8. **US3.8 — Canonical policy and compatibility projection**: **Given** a valid context and a policy keyed on canonical IDs rather than deployment UUIDs, **When** equivalent configured entities use different UUIDs, **Then** policy makes the same decision, the context remains unchanged, and legacy `granted_permission_sets*` inputs during the deprecation window are derived from that context, not the exchange response.
+8. **US3.8 — Canonical policy and compatibility projection**: **Given** a valid permit and a policy keyed on `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than deployment UUIDs, **When** equivalent configured entities use different UUIDs, **Then** policy makes the same decision on both request paths, the documented direct context members retain the corresponding permit values through the typed mapping, and permanently retained `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit, not the exchange response. Unknown permit fields never become policy inputs.
 9. **US3.9 — Policy denial still wins**: **Given** a permitted delegation but a header-only request forbidden by policy, **When** ExtProc evaluates it, **Then** it denies without invoking exchange or forwarding downstream; delegation permission is not tool-call permission.
 10. **US3.10 — Exchange failure still wins**: **Given** a permitted delegation but an unusable provider session, **When** a body-bearing request triggers concurrent exchange and resolution, **Then** exchange failure prevents forwarding despite successful delegation resolution and preserves existing exchange-error handling.
 
@@ -117,7 +127,7 @@ As an operator, I want startup to reject discovery mix-ups and invalid opt-in se
 
 **Acceptance Scenarios**:
 
-1. **US4.1 — Disabled by default**: **Given** an existing ExtProc configuration with no delegation-context block, **When** it starts and serves requests, **Then** it performs no AuthZEN discovery or resolution and retains existing token-exchange and policy behavior.
+1. **US4.1 — Disabled by default**: **Given** an existing ExtProc configuration with no delegation-context block, **When** it starts and serves requests, **Then** it performs no AuthZEN discovery or resolution, omits the new `principal`, `agent`, `resource`, `grant`, and `permission_sets` policy-context members, and retains existing token-exchange and policy behavior byte-for-byte, including existing permission-set availability semantics.
 2. **US4.2 — Authorization dependency**: **Given** `delegation_context.enabled: true` and `authorization.enabled: false`, **When** ExtProc starts, **Then** startup fails with an actionable, credential-free configuration error.
 3. **US4.3 — Discovery failure**: **Given** delegation resolution is enabled but metadata is unavailable or invalid, **When** ExtProc starts, **Then** startup fails rather than guessing an evaluation endpoint or silently disabling the resolver.
 4. **US4.4 — Metadata mix-up**: **Given** the expected policy-decision-point identifier is `https://broker.example.com` but discovery advertises `https://other.example.com`, **When** ExtProc starts, **Then** it fails without sending any evaluation credentials to the mismatched service.
@@ -421,15 +431,51 @@ ExtProc performs Journey 1 step 2. Advertising `https://other.example.com` as th
 
 **Step 3 — At 10:00:00, a body-bearing proxied request arrives**
 
-The gateway's existing strict JWT validation supplies `aib.tokenexchange.subject_token = SYNTHETIC_SUBJECT_JWT` and `aib.tokenexchange.resource_uri = https://api.example.com/repos`. Raw headers cannot override them. ExtProc concurrently exchanges the token and performs Journey 1 step 3 using its existing assertion provider. After both succeed, body policy sees `input.context.delegation` exactly equal to the returned context and `input.context.delegation_available = true`. A policy allowing `data-assistant` with `repo-reader` access to `repo-api` allows the request. Only the exchanged credential is forwarded downstream.
+The gateway's existing strict JWT validation supplies `aib.tokenexchange.subject_token = SYNTHETIC_SUBJECT_JWT` and `aib.tokenexchange.resource_uri = https://api.example.com/repos`. Raw headers cannot override them. ExtProc concurrently exchanges the token and performs Journey 1 step 3 using its existing assertion provider. After both succeed, ExtProc maps its own typed permit struct into these members of `input.context` (other existing members, including `agent_session_id` when set, are unchanged):
+
+```json
+{
+  "granted_permission_sets_available": true,
+  "granted_permission_sets": {
+    "770e8400-e29b-41d4-a716-446655440001": ["880e8400-e29b-41d4-a716-446655440010"]
+  },
+  "principal": "alice@example.com",
+  "agent": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "canonical_id": "data-assistant"
+  },
+  "resource": {
+    "id": "880e8400-e29b-41d4-a716-446655440010",
+    "canonical_id": "repo-api",
+    "resource_uri": "https://api.example.com/repos",
+    "scopes": ["read:repo"]
+  },
+  "grant": {
+    "id": "990e8400-e29b-41d4-a716-446655440020",
+    "updated_at": "2026-10-26T09:59:00Z",
+    "valid_until": "2026-10-26T10:30:00Z"
+  },
+  "permission_sets": [{
+    "id": "770e8400-e29b-41d4-a716-446655440001",
+    "canonical_id": "repo-reader",
+    "services": [{
+      "id": "880e8400-e29b-41d4-a716-446655440010",
+      "canonical_id": "repo-api",
+      "scopes": ["read:repo"]
+    }]
+  }]
+}
+```
+
+The `principal` string comes from the permit's `subject.id`; no `subject` member, `delegation` wrapper, or `delegation_available` flag is added to OPA input. Unknown permit fields are ignored rather than exposed to Rego. In Journey 1's optional-metadata variant, the corresponding `canonical_id` members are omitted; for a grant with no expiry, `grant.valid_until` is omitted, never null. A policy matching `input.context.agent.canonical_id == "data-assistant"`, `input.context.resource.canonical_id == "repo-api"`, and an entry in `input.context.permission_sets` with `canonical_id == "repo-reader"` allows this request. Only the exchanged credential is forwarded downstream.
 
 **Step 4 — The same subject makes a header-only request**
 
-ExtProc resolves the same pair (or uses its still-fresh permit), supplies the same delegation to policy, then exchanges only if policy allows. If policy denies, exchange is not called. A resolver denial instead returns 403 `access_denied` with the consent URL before policy; an expired permit and a failed resolver cause rejection, never stale policy input. A successful resolution with a failed exchange also cannot forward a request.
+ExtProc resolves the same pair (or uses its still-fresh permit), supplies the same direct context members and permit-derived `granted_permission_sets` with `granted_permission_sets_available: true` to policy, then exchanges only if policy allows. If policy denies, exchange is not called. A resolver denial instead returns 403 `access_denied` with the consent URL before policy; a resolution failure returns 503 and never falls through as `granted_permission_sets_available: false`. An expired permit never becomes stale policy input. A successful resolution with a failed exchange also cannot forward a request.
 
-**Step 5 — Operator migrates and observes the release window**
+**Step 5 — Operator migrates policy while retaining compatibility**
 
-Canonical-ID policy works for the same named entities even if another deployment assigns different UUIDs. During the resolver release's compatibility window, legacy permission-set inputs are projected from this fresh context. Existing exchange `principal` and `agent_id` fields remain. `granted_permission_sets` is documented as deprecated and removed one release after the resolver ships under the separately approved contract change.
+Canonical-ID policy uses `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` and works for the same named entities even if another deployment assigns different UUIDs. The OPA members `granted_permission_sets` and `granted_permission_sets_available` remain permanently, populated from the permit on both enabled paths, not only during a deprecation window. Existing `agent_session_id` behavior remains unchanged. Disabling the feature omits the five new members, performs no discovery or resolution, and preserves existing behavior byte-for-byte. Separately, existing exchange `principal` and `agent_id` fields remain; only the exchange-response `granted_permission_sets` field is documented as deprecated and removed one release after the resolver ships under the separately approved contract change (FR-019).
 
 **Observable result**: Both request paths have delegation information before policy evaluation, and no permit, cache hit, or compatibility field bypasses caller authentication, delegation freshness, policy denial, exchange failure, or the existing approval gate.
 
@@ -453,8 +499,14 @@ Canonical-ID policy works for the same named entities even if another deployment
 - **FR-014**: ExtProc MUST offer a `DelegationResolver` boundary independent of token exchange, discover its endpoint from the metadata document, authenticate through its existing assertion provider, and fail startup on discovery failure or policy-decision-point identifier mismatch. It MUST preserve the accepted metadata-only gateway input boundary for subject token and resource URI.
 - **FR-015**: ExtProc MUST cache only permit contexts per exact `{subjectToken, resourceURI}` pair for no longer than the shorter of the advertised freshness and `max_staleness`. It MUST not cache denies or serve stale delegation on errors, including when exchanged-token fallback succeeds. Missing usable freshness MUST not imply an unbounded lifetime.
 - **FR-016**: With delegation context enabled, body-bearing requests MUST start exchange and resolution concurrently during request headers and require both successes before body policy processing; delegation denial MUST return 403 `access_denied` with the consent URL before policy. Header-only requests MUST resolve, evaluate policy, and only then exchange on policy allow. Every error/deny MUST prevent forwarding, irrespective of concurrent completion order.
-- **FR-017**: With delegation context enabled, ExtProc MUST provide `input.context.delegation` verbatim from the permit and `input.context.delegation_available: true` before both policy paths. During the deprecation window, `granted_permission_sets*` compatibility fields MUST be derived from that context, not token-exchange extensions. A resolution failure MUST reject the request, not continue with `delegation_available: false`.
-- **FR-018**: ExtProc MUST default `delegation_context.enabled` to false, require `authorization.enabled` when true, and preserve existing disabled-mode behavior without discovery or evaluation calls. Policy fixtures affected by enabled-mode acceptance MUST use canonical IDs rather than fixed deployment UUIDs.
+- **FR-017**: With delegation context enabled, ExtProc MUST decode the permit into its own typed struct and emit only these documented members directly in the existing `input.context`, beside `granted_permission_sets_available`, `granted_permission_sets`, and `agent_session_id`, before both body and header-only policy evaluation:
+  - `principal`: string mapped from the permit's `subject.id`, using the broker term rather than exposing an AuthZEN `subject` object.
+  - `agent`: `{id, canonical_id}`.
+  - `resource`: `{id, canonical_id, resource_uri, scopes}`.
+  - `grant`: `{id, updated_at, valid_until}`.
+  - `permission_sets[]`: `{id, canonical_id, services[] {id, canonical_id, scopes}}`.
+  Unset optional `canonical_id` (including nested service entries) and `valid_until` fields MUST be omitted, never null. ExtProc MUST NOT copy the permit verbatim, expose unknown permit fields to policies, or add a `delegation` wrapper or `delegation_available` flag. `granted_permission_sets` and `granted_permission_sets_available` MUST remain in OPA input permanently, independently of FR-019's exchange-response deprecation. On both enabled paths, `granted_permission_sets` MUST be derived from permit permission-set IDs and included service IDs, not token-exchange extensions, and `granted_permission_sets_available: true` MUST guarantee that all five new members are present, subject to nested optional-field omissions. A resolution failure MUST return 503 before policy, never fall through with availability `false`. Existing `agent_session_id` behavior MUST remain unchanged.
+- **FR-018**: ExtProc MUST default `delegation_context.enabled` to false, require `authorization.enabled` when true, and preserve existing disabled-mode behavior byte-for-byte without discovery or evaluation calls, omitting the new `principal`, `agent`, `resource`, `grant`, and `permission_sets` members. Policy fixtures affected by enabled-mode acceptance MUST use `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than fixed deployment UUIDs.
 - **FR-019**: The broker-only increment MUST be additive. `granted_permission_sets` on exchange responses MUST be deprecated when the resolver ships and removed one release later under a confirmed contract change; `principal` and `agent_id` MUST stay. The new endpoint MUST not cause immediate removal or an unrelated change to impersonation or other token grants.
 
 ### Domain Model *(document before API or database design)*
@@ -551,7 +603,7 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 - **SC-002**: With default freshness limits, a delegation revoked immediately after a cached permit stops contributing permissions to later gateway decisions within at most 60 seconds; a sooner grant expiry or configured consumer cap shortens that bound.
 - **SC-003**: Both body-bearing and header-only accepted journeys provide the same current delegation information before policy evaluation; neither forwards any request unless all applicable gates succeed.
 - **SC-004**: Every invalid-credential, caller-denied, malformed-request, dependency-outage, expired-context, and discovery-mismatch journey rejects safely, with zero credential disclosure in its observable responses and captured audit output.
-- **SC-005**: Equivalent named agents, permission sets, and services with different deployment UUIDs produce the same canonical-ID policy outcome in the acceptance fixtures, without hardcoded service UUID policy dependencies.
+- **SC-005**: Equivalent named agents, permission sets, and services with different deployment UUIDs produce the same policy outcome on both request paths in acceptance fixtures using `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id`, without hardcoded UUID policy dependencies. Both enabled paths expose the documented direct context members and permanently retained permit-derived permission-set inputs; unknown permit fields never appear in policy input.
 - **SC-006**: Existing disabled-mode deployments require zero new settings and make zero delegation discovery/resolution requests; the additive broker release preserves existing exchange fields and session behavior.
 
 ## Assumptions
@@ -567,4 +619,4 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 ### Clarification handoff
 
-The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. No further product clarification questions remain. Proceed to the separate planning phase; exact AuthZEN schema verification, reviewed OpenAPI design, release/versioning reconciliation, and the required architectural decision remain design gates, not approvals implied by clarification completion. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.
+The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. The 2026-10-28 guidance resolves R15's OPA shape, typed mapping, permanent compatibility, availability, and canonical-ID fixture questions in FR-017/FR-018, US3.1/US3.2/US3.6/US3.8/US4.1, Journey 4, and SC-005. FR-019's exchange-response deprecation is unchanged. No further product clarification questions remain. Proceed to the separate `/speckit-plan` phase to reconcile R15, data model §3.5, ExtProc contract §4, and other affected design artifacts before task regeneration; their pre-review input shapes are not implementation authority. Exact AuthZEN schema verification, reviewed OpenAPI design, release/versioning reconciliation, and the required architectural decision remain design gates, not approvals implied by clarification completion. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.
