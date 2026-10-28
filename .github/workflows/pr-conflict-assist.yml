@@ -19,7 +19,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      APP_CONFIGURED: ${{ vars.PR_CONFLICT_APP_CLIENT_ID != '' && secrets.PR_CONFLICT_APP_PRIVATE_KEY != '' }}
+      APP_CONFIGURED: ${{ vars.PR_CONFLICT_APP_CLIENT_ID != '' && secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY != '' }}
     outputs:
       candidates: ${{ steps.route.outputs.candidates }}
       count: ${{ steps.route.outputs.count }}
@@ -70,4 +70,4 @@ jobs:
       base: ${{ matrix.pr.base }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      PR_CONFLICT_APP_PRIVATE_KEY: ${{ secrets.PR_CONFLICT_APP_PRIVATE_KEY }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
