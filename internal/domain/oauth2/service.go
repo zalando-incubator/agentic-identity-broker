@@ -265,9 +265,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ConsentDecision(consentURL), nil
 	}
 
-	// Step 4: Check that sessions for all delegated services are not expired.
-	// Only sessions whose service ID is included in the grant's permission sets are checked.
-	expired, err := s.anyDelegatedSessionExpired(ctx, principal, grant.GrantedPermissionSets)
+	// Step 4: Check that every service included in the grant has a usable session.
+	// A missing or unusable session sends the user to consent to reconnect or deselect it.
+	unusableServiceID, unusableReason, err := s.anyDelegatedSessionUnusable(ctx, principal, grant.GrantedPermissionSets)
 	if err != nil {
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
@@ -280,12 +280,14 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			RedirectURL: errRedirect,
 		}, nil
 	}
-	if expired {
+	if unusableReason != "" {
 		if s.logger != nil {
 			s.logger.Warn(
-				"DelegatedSessionExpired",
+				"DelegatedSessionUnusable",
 				"agent_id", agent.ID,
 				"principal", principal,
+				"service_id", unusableServiceID,
+				"reason", unusableReason,
 			)
 		}
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
@@ -539,12 +541,11 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 	return metadata, nil
 }
 
-// anyDelegatedSessionExpired returns true if any OAuth2 session relevant to the
-// grant's permission sets has expired. Only sessions whose service ID appears in
-// the IncludedServiceIDs of a granted permission set entry are checked, preventing
-// false-positive consent redirects caused by unrelated expired sessions.
-func (s *AuthorizationService) anyDelegatedSessionExpired(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (bool, error) {
-	// Build the set of service IDs covered by the grant's permission sets.
+// anyDelegatedSessionUnusable reports the first service included in the grant whose
+// session is missing or no longer usable, with the reason. Only services listed in the
+// IncludedServiceIDs of a granted permission set entry are checked (FR-022 of Feature 019),
+// so sessions for services the user did not include never force consent.
+func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (id.ServiceID, string, error) {
 	relevantServices := make(map[id.ServiceID]bool)
 	for _, entry := range grantEntries {
 		for _, svcID := range entry.IncludedServiceIDs {
@@ -552,24 +553,21 @@ func (s *AuthorizationService) anyDelegatedSessionExpired(ctx context.Context, p
 		}
 	}
 
-	// If no services are referenced, nothing can be expired.
-	if len(relevantServices) == 0 {
-		return false, nil
-	}
-
-	// Use per-service lookup so we see expired sessions. ListByPrincipal filters
-	// to active-only (for FR-020); FindByPrincipalAndService returns all sessions
-	// including expired ones, which is exactly what expiry detection requires.
+	// Use per-service lookup so we see expired sessions. ListActiveByPrincipal filters
+	// to usable sessions only; FindByPrincipalAndService returns expired ones too.
 	for svcID := range relevantServices {
 		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
 		if err != nil {
-			return false, fmt.Errorf("failed to find session for service %s: %w", svcID, err)
+			return id.ServiceID{}, "", fmt.Errorf("failed to find session for service %s: %w", svcID, err)
 		}
-		if session != nil && session.IsExpired() {
-			return true, nil
+		if session == nil {
+			return svcID, "session_missing", nil
+		}
+		if session.IsExpired() {
+			return svcID, "session_expired", nil
 		}
 	}
-	return false, nil
+	return id.ServiceID{}, "", nil
 }
 
 // validateMandatoryRequirements checks that user has active sessions for all mandatory services

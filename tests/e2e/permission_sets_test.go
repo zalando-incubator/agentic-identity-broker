@@ -2,7 +2,7 @@ package e2e_test
 
 // Permission Sets E2E Acceptance Tests (019)
 //
-// This file implements all 21 acceptance scenarios from specs/019-permission-sets/spec.md.
+// This file implements all 25 acceptance scenarios from specs/019-permission-sets/spec.md.
 // Following Constitution Principle XIII: 1:1 spec-to-test mapping.
 //
 // Each It() block maps to exactly ONE acceptance scenario.
@@ -12,9 +12,9 @@ package e2e_test
 // - US1: Admin Manages Permission Sets (6 scenarios)
 // - US2: Consent Screen Shows Permission Sets First (6 scenarios)
 // - US3: Agent Declares Permission Sets at Agent Level (4 scenarios)
-// - US4: User Grant Stores Granted Permission Sets (4 scenarios)
+// - US4: User Grant Stores Granted Permission Sets (8 scenarios)
 // - Edge: Token Exchange Scope Validation (1 scenario)
-// Total: 21 scenarios
+// Total: 25 scenarios
 
 import (
 	"bytes"
@@ -1234,6 +1234,141 @@ var _ = Describe("Permission Sets (019)", func() {
 			gps := secondResult["granted_permission_sets"].(map[string]interface{})
 			Expect(gps).To(HaveLen(1))
 			Expect(gps).To(HaveKey(mandatoryPSID))
+		})
+
+		Context("when the agent re-authorizes after consent (FR-022)", func() {
+			const reauthRedirectURI = "https://client.example.com/cb"
+			var reauthAgentID string
+
+			authorize := func() string {
+				resp, err := enduserServer.AuthenticatedGET(
+					fmt.Sprintf("/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=us4-reauth",
+						reauthAgentID, url.QueryEscape(reauthRedirectURI)),
+					userPrincipal,
+				)
+				Expect(err).ToNot(HaveOccurred())
+				defer func() { _ = resp.Body.Close() }()
+				Expect(resp.StatusCode).To(Equal(http.StatusFound))
+				return resp.Header.Get("Location")
+			}
+			expectConsent := func(location string) {
+				Expect(location).To(ContainSubstring("/agents/" + reauthAgentID + "?session_token="))
+			}
+			expectProceed := func(location string) {
+				Expect(location).To(HavePrefix(mockUpstream.URL()))
+				Expect(location).ToNot(ContainSubstring("/agents/"))
+			}
+
+			BeforeEach(func() {
+				ar, err := adminServer.DirectRequest(
+					"POST", "/api/agents", adminPrincipal,
+					map[string]string{"Content-Type": "application/json"},
+					psJSON(map[string]interface{}{
+						"client_id":     "us4-reauth-agent",
+						"display_name":  "US4 Re-authorization Agent",
+						"description":   "Agent for FR-022 re-authorization tests",
+						"redirect_uris": []string{reauthRedirectURI},
+						"permission_sets": []map[string]interface{}{
+							{"permission_set_id": mandatoryPSID, "requirement_type": "mandatory"},
+							{"permission_set_id": optionalPSID, "requirement_type": "optional"},
+						},
+					}),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(ar.StatusCode).To(Equal(http.StatusCreated))
+				reauthAgentID = parsePS(ar)["id"].(string)
+
+				// FR-020: consent requires sessions for every included service.
+				Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService(userPrincipal, githubServiceID))).To(Succeed())
+				Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService(userPrincipal, googleServiceID))).To(Succeed())
+				grantResp, err := enduserServer.AuthenticatedPOST(
+					fmt.Sprintf("/api/consent/agents/%s/grants", reauthAgentID),
+					userPrincipal, "application/json",
+					psJSON(map[string]interface{}{
+						"granted_permission_sets": map[string][]string{
+							mandatoryPSID: {githubServiceID},
+							optionalPSID:  {googleServiceID},
+						},
+					}),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				_ = grantResp.Body.Close()
+				Expect(grantResp.StatusCode).To(Equal(http.StatusCreated))
+				expectProceed(authorize())
+			})
+
+			// US4.S5 from specs/019-permission-sets/spec.md
+			It("redirects to consent when an included optional service session was deleted", func() {
+				Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), id.Principal(userPrincipal), id.MustParseServiceID(googleServiceID))).To(Succeed())
+
+				expectConsent(authorize())
+
+				detail := parsePS(func() *http.Response {
+					resp, err := enduserServer.AuthenticatedGET(fmt.Sprintf("/api/consent/agents/%s", reauthAgentID), userPrincipal)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(resp.StatusCode).To(Equal(http.StatusOK))
+					return resp
+				}())
+				Expect(detail["active_session_service_ids"]).To(ConsistOf(githubServiceID))
+			})
+
+			// US4.S6 from specs/019-permission-sets/spec.md
+			It("proceeds after the user deselects the disconnected optional service on consent", func() {
+				Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), id.Principal(userPrincipal), id.MustParseServiceID(googleServiceID))).To(Succeed())
+				consentURL, err := url.Parse(authorize())
+				Expect(err).ToNot(HaveOccurred())
+				sessionToken := consentURL.Query().Get("session_token")
+				Expect(sessionToken).ToNot(BeEmpty())
+
+				saveResp, err := enduserServer.AuthenticatedPOST(
+					fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", reauthAgentID, url.QueryEscape(sessionToken)),
+					userPrincipal, "application/json",
+					psJSON(map[string]interface{}{
+						"granted_permission_sets": map[string][]string{mandatoryPSID: {githubServiceID}},
+					}),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				defer func() { _ = saveResp.Body.Close() }()
+				Expect(saveResp.StatusCode).To(Equal(http.StatusCreated))
+				var saved struct {
+					RedirectURL string `json:"redirect_url"`
+				}
+				Expect(json.NewDecoder(saveResp.Body).Decode(&saved)).To(Succeed())
+				Expect(saved.RedirectURL).To(ContainSubstring("/oauth2/authorize?client_id=" + reauthAgentID))
+
+				expectProceed(authorize())
+			})
+
+			// US4.S7 from specs/019-permission-sets/spec.md
+			It("does not require consent for a missing session of a service the grant does not include", func() {
+				deselectResp, err := enduserServer.AuthenticatedPOST(
+					fmt.Sprintf("/api/consent/agents/%s/grants", reauthAgentID),
+					userPrincipal, "application/json",
+					psJSON(map[string]interface{}{
+						"granted_permission_sets": map[string][]string{mandatoryPSID: {githubServiceID}},
+					}),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				_ = deselectResp.Body.Close()
+				Expect(deselectResp.StatusCode).To(Equal(http.StatusCreated))
+				Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), id.Principal(userPrincipal), id.MustParseServiceID(googleServiceID))).To(Succeed())
+
+				expectProceed(authorize())
+			})
+
+			// US4.S8 from specs/019-permission-sets/spec.md
+			It("redirects to consent when the provider rejected an included service's refresh token", func() {
+				now := time.Now()
+				rejected := fixtures.ExpiredRefreshableSession(userPrincipal, id.MustParseServiceID(googleServiceID), now)
+				rejectedAt := now.Add(-time.Minute)
+				rejected.RefreshTokenExpiresAt = &rejectedAt
+				Expect(testStorage.UserSessions().Create(context.Background(), rejected)).To(Succeed())
+
+				expectConsent(authorize())
+
+				Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService(userPrincipal, googleServiceID))).To(Succeed())
+				expectProceed(authorize())
+			})
 		})
 
 		// US4.S4 from specs/019-permission-sets/spec.md

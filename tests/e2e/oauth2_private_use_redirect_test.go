@@ -162,7 +162,9 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			agent = fixtures.LocalAgent()
 			agent.RedirectURIs = []string{fixtures.NativeAppCallback}
 			Expect(testStorage.Agents().Create(ctx, agent)).To(Succeed())
-			Expect(testStorage.UserGrants().Create(ctx, fixtures.ActiveGrant("test@example.com", agent.ID.String(), githubService.ID.String(), []string{"repo", "user"}))).To(Succeed())
+			grant := fixtures.ActiveGrant("test@example.com", agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
+			Expect(testStorage.UserGrants().Create(ctx, grant)).To(Succeed())
+			Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 		})
 
 		// Scenario 7.3 from specs/025-oauth2-server/spec.md

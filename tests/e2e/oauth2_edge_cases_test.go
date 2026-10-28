@@ -394,6 +394,7 @@ var _ = Describe("OAuth2 Edge Cases and Error Scenarios", func() {
 			grant = fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), agent.ID.String(), fixtures.GitHubService().ID.String(), []string{"read", "write"})
 			err = testStorage.UserGrants().Create(ctx, grant)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 		})
 
 		AfterEach(func() {
