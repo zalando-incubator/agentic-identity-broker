@@ -188,18 +188,26 @@ func MatchesAgentRedirectURI(registered, incoming string) bool {
 	if err != nil || len(registeredLabels) != len(incomingLabels) {
 		return false
 	}
+	// Check the concrete host too: `https://*.*.amazonaws.com` must not match
+	// `https://bucket.s3.amazonaws.com`, where `s3.amazonaws.com` is a private suffix.
 	if !hasLiteralPublicSuffixBoundary(registeredLabels, incomingLabels, incomingURL.Hostname()) {
 		return false
 	}
 	for index := range registeredLabels {
-		if !matchWildcardLabel(registeredLabels[index], incomingLabels[index]) {
+		// Match one concrete label at a time: `https://preview*.example.com` matches
+		// `https://preview-pr.example.com`, but not `https://preview.pr.example.com`.
+		if len(incomingLabels[index].parts) != 1 || !matchWildcardLabel(registeredLabels[index], incomingLabels[index].parts[0]) {
 			return false
 		}
 	}
 	return true
 }
 
-func hasLiteralPublicSuffixBoundary(patternLabels, candidateLabels []string, candidateHost string) bool {
+type wildcardLabel struct {
+	parts []string
+}
+
+func hasLiteralPublicSuffixBoundary(patternLabels, candidateLabels []wildcardLabel, candidateHost string) bool {
 	if len(patternLabels) != len(candidateLabels) {
 		return false
 	}
@@ -220,7 +228,9 @@ func hasLiteralPublicSuffixBoundary(patternLabels, candidateLabels []string, can
 		return false
 	}
 	for index := len(candidateLabels) - boundaryLabelCount; index < len(candidateLabels); index++ {
-		if strings.Contains(patternLabels[index], "*") || patternLabels[index] != candidateLabels[index] {
+		// For `bucket.s3.amazonaws.com`, the private suffix is `s3.amazonaws.com`,
+		// so the registrable domain `bucket.s3.amazonaws.com` must remain literal.
+		if len(patternLabels[index].parts) != 1 || len(candidateLabels[index].parts) != 1 || patternLabels[index].parts[0] != candidateLabels[index].parts[0] {
 			return false
 		}
 	}
@@ -260,30 +270,83 @@ func asciiDNSHostname(host string) (string, error) {
 	return asciiHost, nil
 }
 
-func normalizedWildcardLabels(host string, wildcard bool) ([]string, error) {
-	marker := wildcardMarker(host)
-	probe := host
-	if wildcard {
-		probe = strings.ReplaceAll(host, "*", marker)
+func normalizedWildcardLabels(host string, wildcard bool) ([]wildcardLabel, error) {
+	if !wildcard {
+		// Normalize concrete hosts through IDNA before comparing their labels with the pattern.
+		asciiHost, err := asciiDNSHostname(host)
+		if err != nil {
+			return nil, err
+		}
+		unicodeHost, err := idna.Lookup.ToUnicode(asciiHost)
+		if err != nil {
+			return nil, err
+		}
+		labels := strings.Split(strings.ToLower(unicodeHost), ".")
+		result := make([]wildcardLabel, len(labels))
+		for index, label := range labels {
+			result[index] = wildcardLabel{parts: []string{label}}
+		}
+		return result, nil
 	}
-	asciiHost, err := asciiDNSHostname(probe)
-	if err != nil {
-		return nil, err
+
+	// Keep wildcards structural: IDNA lowercasing `AIBWILDCARDMARKER` could turn
+	// `*.AIBWILDCARDMARKER.preview.example.com` into `*.*.preview.example.com`.
+	labels := []wildcardLabel{{parts: []string{""}}}
+	parts := strings.Split(host, "*")
+	for index, literal := range parts {
+		if literal != "" {
+			var err error
+			labels, err = appendNormalizedWildcardLiteral(labels, literal)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if index < len(parts)-1 {
+			lastLabel := len(labels) - 1
+			labels[lastLabel].parts = append(labels[lastLabel].parts, "")
+		}
 	}
-	unicodeHost, err := idna.Lookup.ToUnicode(asciiHost)
-	if err != nil {
-		return nil, err
-	}
-	if wildcard {
-		unicodeHost = strings.ReplaceAll(unicodeHost, marker, "*")
-	}
-	return strings.Split(strings.ToLower(unicodeHost), "."), nil
+	return labels, nil
 }
 
-func matchWildcardLabel(pattern, candidate string) bool {
-	parts := strings.Split(pattern, "*")
+func appendNormalizedWildcardLiteral(labels []wildcardLabel, literal string) ([]wildcardLabel, error) {
+	literalParts := strings.Split(literal, ".")
+	for index, part := range literalParts {
+		if part != "" {
+			// A wildcard can split a label, so frame each literal fragment for IDNA lookup validation.
+			asciiPart, err := idna.Lookup.ToASCII("x" + part + "x")
+			if err != nil {
+				return nil, err
+			}
+			unicodePart, err := idna.Lookup.ToUnicode(asciiPart)
+			if err != nil {
+				return nil, err
+			}
+			// IDNA can map Unicode separators to dots; preserve those as label boundaries.
+			normalizedLabels := strings.Split(strings.ToLower(unicodePart), ".")
+			normalizedLabels[0] = strings.TrimPrefix(normalizedLabels[0], "x")
+			lastNormalizedLabel := len(normalizedLabels) - 1
+			normalizedLabels[lastNormalizedLabel] = strings.TrimSuffix(normalizedLabels[lastNormalizedLabel], "x")
+			for labelIndex, normalizedPart := range normalizedLabels {
+				lastLabel := len(labels) - 1
+				lastPart := len(labels[lastLabel].parts) - 1
+				labels[lastLabel].parts[lastPart] += normalizedPart
+				if labelIndex < len(normalizedLabels)-1 {
+					labels = append(labels, wildcardLabel{parts: []string{""}})
+				}
+			}
+		}
+		if index < len(literalParts)-1 {
+			labels = append(labels, wildcardLabel{parts: []string{""}})
+		}
+	}
+	return labels, nil
+}
+
+func matchWildcardLabel(pattern wildcardLabel, candidate string) bool {
+	parts := pattern.parts
 	if len(parts) == 1 {
-		return pattern == candidate
+		return parts[0] == candidate
 	}
 	if !strings.HasPrefix(candidate, parts[0]) {
 		return false
