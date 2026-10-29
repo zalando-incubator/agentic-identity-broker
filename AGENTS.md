@@ -126,7 +126,7 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. O
 
 For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
 
-For RFC 8693 provider-session recovery, the stakeholder approved ADR 044 and End-User API `2.0.0` on 2026-10-26. This approval changes only the recoverable-session `error_uri` target; read ADR 044 and Feature 013's User Story 5 Amendment before implementation.
+For RFC 8693 provider-session recovery, the stakeholder approved ADR 044 on 2026-10-26 and retained End-User API `1.0.0` on 2026-10-27. This decision changes only the recoverable-session `error_uri` target. Read ADR 044 and Feature 013's User Story 5 Amendment before implementation.
 
 | ADR | File | Decision |
 |---|---|---|
