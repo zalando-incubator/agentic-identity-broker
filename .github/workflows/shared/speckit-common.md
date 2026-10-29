@@ -72,10 +72,20 @@ steps:
         ~/.cache/ms-playwright-go
       key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
       restore-keys: tools-${{ runner.os }}-
+  # The agent sandbox mounts an empty home with an allowlist of tool directories
+  # that excludes ~/go, so Go tools must live in ~/.local/bin to stay on its PATH.
+  - name: Put Go tools where the agent sandbox can run them
+    if: inputs.phase == 'implement'
+    run: |
+      mkdir -p "$HOME/.local/bin"
+      echo "GOBIN=$HOME/.local/bin" >> "$GITHUB_ENV"
+      echo "$HOME/.local/bin" >> "$GITHUB_PATH"
   # Playwright's system dependencies need root, which the agent sandbox does not have.
   - name: Install development tools
     if: inputs.phase == 'implement'
-    run: just install-tools
+    run: |
+      if [ -d "$HOME/go/bin" ]; then cp -a "$HOME/go/bin/." "$GOBIN/"; fi
+      just install-tools
   # A cache hit skips `playwright install --with-deps`, and the cache holds no system packages.
   - name: Install Playwright system dependencies
     if: inputs.phase == 'implement'
