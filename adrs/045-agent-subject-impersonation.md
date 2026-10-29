@@ -1,14 +1,13 @@
 # ADR 045: Agent-Subject Impersonation Without User Delegation
 
 **Date**: 2026-10-27
-**Status**: Proposed (decisions endorsed earlier in maintainer comment `6477637352` on PR #293; the revised text requires sign-off through the pipeline approval comment, plan.md Approval Items A1)
+**Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6495558326)
 **Feature**: 054-agent-subject-impersonation
-**Location**: Kept in the feature directory during planning. ADR number 044 is already used twice on `main` (`adrs/044-service-specific-session-recovery-url.md`, `adrs/044-client-registration-independent-of-authentication.md`), so this draft uses 045. The first implementation task records the supplied pipeline approval in the Status line and moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number); Phase 2 verifies and indexes it in `AGENTS.md`.
-**Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
+**Supersedes (in part)**: [ADR 032](032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
 ## Context
 
-[ADR 032](../../adrs/032-impersonation-requires-user-delegation.md) requires an active user delegation for every impersonation request, signed or unverified, with no opt-out. Feature 054 (issue #222) adds a second class of request. A privileged client with an external machine identity obtains a broker token whose subject is a registered agent acting for itself. That subject has no human to consent. To satisfy ADR 032, an operator would have to invent a human principal and a delegation for a machine. That defeats the purpose of the delegation check and pollutes consent state.
+[ADR 032](032-impersonation-requires-user-delegation.md) requires an active user delegation for every impersonation request, signed or unverified, with no opt-out. Feature 054 (issue #222) adds a second class of request. A privileged client with an external machine identity obtains a broker token whose subject is a registered agent acting for itself. That subject has no human to consent. To satisfy ADR 032, an operator would have to invent a human principal and a delegation for a machine. That defeats the purpose of the delegation check and pollutes consent state.
 
 The clarified specification limits the extension:
 
@@ -29,7 +28,7 @@ The clarified specification limits the extension:
 5. **Distinguishable tokens without a category claim.** An agent-subject token has no additional claim. Its `sub` and `agent_id` both equal the target UUID, and both are reserved base claims that local token-claims policy cannot change. A human token's `sub` is the human principal.
 6. **Third-party exchange rejection.** RFC 8693 third-party exchange evaluates the CEL boolean `token_exchange.claim_extraction.agent_subject_expression` on the validated subject token. The default is the guarded form of `sub == agent_id`. A configured expression replaces the default; there is no additional built-in check. The operator must keep a configured expression matching broker agent-subject tokens. A `true` result is rejected with `403 access_denied`. An evaluation failure is a terminal `server_error`, never "not an agent". The check runs before any grant or session lookup, so for a `true` result or an evaluation failure a human principal with the same identifier text cannot lend credentials to the request. A `false` result continues the existing exchange checks unchanged.
 7. **Auditability.** Every impersonation decision records the subject category together with the represented identity, actor, privileged client, rule, and target. No credentials are recorded.
-8. **Major contract version (Proposed A10).** Treat the affected End-User API 1.0.0 as released absent evidence of an unreleased baseline. The incompatible signed-target and equal-claim collision denials ship only with End-User OpenAPI `info.version: 2.0.0`, replacing the contract on existing routes, not adding a version selector or legacy route. Document the versioning strategy in `ARCHITECTURE.md` before behavior and the consumer migration guidance before release, with blocking verification as defined in `contracts/enduser-api-versioning.md`. The contract version is independent of broker release tags and the Admin API version. A parallel versioned endpoint is the main alternative, rejected for routing/discovery and security-policy complexity. Earlier endorsements do not approve this new decision.
+8. **Major contract version (approved A10).** Treat the affected End-User API 1.0.0 as released absent evidence of an unreleased baseline. The incompatible signed-target and equal-claim collision denials ship only with End-User OpenAPI `info.version: 2.0.0`, replacing the contract on existing routes, not adding a version selector or legacy route. Document the versioning strategy in `ARCHITECTURE.md` before behavior and the consumer migration guidance before release, with blocking verification as defined in `specs/054-agent-subject-impersonation/contracts/enduser-api-versioning.md`. The contract version is independent of broker release tags and the Admin API version. A parallel versioned endpoint is the main alternative, rejected for routing/discovery and security-policy complexity. This decision is covered by the approval cited in Status.
 
 ## Consequences
 
@@ -56,4 +55,4 @@ The clarified specification limits the extension:
 - `specs/054-agent-subject-impersonation/spec.md` (FR-001..FR-012, CFG-001, SR-001..SR-006)
 - `specs/054-agent-subject-impersonation/research.md` (R1–R11)
 - `specs/054-agent-subject-impersonation/contracts/token-exchange-agent-subject-config.yaml`
-- [ADR 009](../../adrs/009-cel-for-authorization-policies.md), [ADR 014](../../adrs/014-oauth2-server-mode.md), [ADR 031](../../adrs/031-unverified-subject-unsigned-jwt.md), [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), [ADR 033](../../adrs/033-request-security-context-propagation.md), [ADR 034](../../adrs/034-audience-absent-impersonation-credentials.md)
+- [ADR 009](009-cel-for-authorization-policies.md), [ADR 014](014-oauth2-server-mode.md), [ADR 031](031-unverified-subject-unsigned-jwt.md), [ADR 032](032-impersonation-requires-user-delegation.md), [ADR 033](033-request-security-context-propagation.md), [ADR 034](034-audience-absent-impersonation-credentials.md)

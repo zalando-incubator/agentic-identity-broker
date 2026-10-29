@@ -1,0 +1,89 @@
+# Complete local-mode configuration for feature 054, spec Journeys 1–2.
+# Replace example issuer/JWKS URLs and provision the target Agent before use.
+# Development-only fixed keys below MUST be replaced for deployment.
+# End-User API 2.0.0 migration: docs/api/enduser-api.md#migrate-to-end-user-api-200
+log:
+  level: info
+  format: json
+server:
+  enduser:
+    port: 8000
+    bind: "0.0.0.0"
+    public_url: https://broker.example.com
+    authentication:
+      preauth:
+        principal_header_name: X-Remote-User
+  admin:
+    port: 14000
+    bind: "0.0.0.0"
+    public_url: https://broker.example.com:14000
+    authentication:
+      preauth:
+        principal_header_name: X-Remote-User
+storage:
+  backend: memory
+encryption:
+  memory:
+    raw_key: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+third_party_oauth2:
+  jwe_signing_key: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+  state_token_ttl: 10m
+  pkce_verifier_length: 32
+oauth2_authorization_server:
+  mode: local
+  local:
+    issuer_uri: https://broker.example.com
+    token_ttl: 1h
+    token_claims_expression: '{"aud": "https://policy.example.com"}'
+    signing_keys:
+      bootstrap_timeout: 90s
+  impersonation:
+    audience_prefix: https://broker.example.com/impersonation
+    rules:
+      - name: research-machine
+        allowed_subject_categories: [agent]
+        roles:
+          client_assertion:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: client_assertion.sub
+          actor:
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: actor_token.sub
+          subject:
+            verification: jwks
+            expected_audience: https://broker.example.com/impersonation
+            principal_expression: subject_token.sub
+        trusted_issuers:
+          - issuer_uri: https://idp.example.com
+            jwks_uri: https://idp.example.com/jwks.json
+            allowed_algorithms: [ES256]
+            signs_roles: [client_assertion, actor, subject]
+        authorization:
+          type: cel
+          cel:
+            expression: >-
+              client_assertion.sub == 'gateway-prod' &&
+              actor_token.sub == 'research-runner' &&
+              subject_token.sub == '550e8400-e29b-41d4-a716-446655440000' &&
+              request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
+            evaluation_timeout: 100ms
+
+# Journey 2 alternatives replace only the category line and CEL predicate above;
+# keep the complete local/trust/role configuration. Do not install all alternatives.
+# Human-only: allowed_subject_categories: [human], or omit the key entirely.
+# Dual: allowed_subject_categories: [human, agent] (either order).
+# For either Journey 2 alternative use this exact predicate, deliberately authorizing
+# both identities so classification/eligibility and human consent determine outcomes:
+# expression: >-
+#   client_assertion.sub == 'gateway-prod' &&
+#   actor_token.sub == 'research-runner' &&
+#   subject_token.sub in ['alice@example.com', '550e8400-e29b-41d4-a716-446655440000'] &&
+#   request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
+# Alice requires active delegation in both alternatives; the signed exact-target
+# subject is ineligible on human-only and consent-free on dual.
+# Signed exact-target sub is ALWAYS agent-category, even on a human-only rule and
+# even with active same-text human delegation. No alias/case/UUID normalization occurs.
+# All principal extractions must succeed; the agent minted sub is the target UUID.
+# No email expression is evaluated for agents and no human grant/session is created.
+# An unsigned subject is always human: listing agent on an unsigned rule is valid
+# but has no effect; client assertions and actors still require signatures (ADR 031).

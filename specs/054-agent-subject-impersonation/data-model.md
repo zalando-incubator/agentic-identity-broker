@@ -4,6 +4,10 @@
 
 There is no new persisted entity, no new UUID-keyed type, and no migration. The feature adds one impersonation rule attribute, one token-exchange claim-extraction expression, two value objects, and new audit and diagnostic fields to the existing `impersonation` and `tokenexchange` bounded contexts.
 
+## Implementation-phase persistence review
+
+T011 reconfirmed that existing Agent resolution, UserGrant and UserSession storage suffice. The approved exception changes request-local classification and control flow, not persisted identity or consent. No new entity, UUID type, repository, SQL or migration is introduced. New PostgreSQL adapter work and migration apply/rollback/data-integrity tests are inapplicable while this decision holds; T054/T063 still verify the final implementation diff.
+
 ## Existing entities reused
 
 | Entity | Location | Role in this feature |

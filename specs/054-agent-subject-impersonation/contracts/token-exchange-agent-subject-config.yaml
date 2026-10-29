@@ -7,6 +7,15 @@
 # SCOPE: Overlay of the existing token_exchange block, not a bootable configuration. Every other
 # token_exchange key, default, and validation is unchanged. The key uses the existing
 # configuration system and its file, environment, and CLI precedence.
+# Environment: IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION
+# CLI: --token_exchange.claim_extraction.agent_subject_expression
+# Precedence: explicitly supplied CLI > environment > YAML > evaluator default.
+# The production Cobra root command registers the string flag with an empty default;
+# the broker loader explicitly binds that flag and environment key. An unchanged flag
+# does not shadow a lower-precedence source. Both inputs work without a YAML key/file.
+# An explicitly empty highest-precedence value selects the evaluator's guarded default,
+# not a lower-precedence expression. Omitted values likewise use the default.
+# These transport names follow existing broker naming conventions (approved A3/U1).
 #
 # ATTRIBUTE
 #   token_exchange.claim_extraction.agent_subject_expression
