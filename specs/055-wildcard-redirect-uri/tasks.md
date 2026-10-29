@@ -74,12 +74,12 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Enable validated HTTPS host-wildcard registrations in Agent create/update validation in `internal/domain/storage/agent.go` (FR-001-FR-004).
-- [ ] T015 [US1] Route opaque Agent callback checks through the wildcard matcher while keeping CIMD and private-use callback matching exact in `internal/domain/oauth2/service.go` (FR-006, FR-009-FR-010, SR-003-SR-004).
+- [X] T014 [US1] Enable validated HTTPS host-wildcard registrations in Agent create/update validation in `internal/domain/storage/agent.go` (FR-001-FR-004).
+- [X] T015 [US1] Route opaque Agent callback checks through wildcard matching in `internal/domain/oauth2/service.go` and the OAuth2 code issuer in `internal/domain/oauth2server/provider.go`; keep CIMD and private-use callbacks exact (FR-006, FR-009-FR-010, SR-003-SR-004).
 
 ### Verification for User Story 1
 
-- [ ] T016 [US1] Rerun the Agent and OAuth2 unit tests and the prewritten US1-S1 through US1-S5 E2E scenarios; verify every redirect uses the concrete callback and its own state (FR-001-FR-002, FR-006, SC-001-SC-002).
+- [X] T016 [US1] Rerun the Agent and OAuth2 unit tests and the prewritten US1-S1 through US1-S5 E2E scenarios; verify every redirect uses the concrete callback and its own state (FR-001-FR-002, FR-006, SC-001-SC-002).
 
 **Checkpoint**: US1-S1 through US1-S5 pass independently; every successful authorization redirects to the concrete request URI with its own state.
 
@@ -91,20 +91,20 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Ensure malformed stored Agent patterns and non-matching callbacks fail closed with the existing error response and no redirect in `internal/domain/oauth2/service.go` (FR-007, SR-001-SR-004).
+- [X] T017 [US2] Ensure malformed stored Agent patterns and non-matching callbacks fail closed with the existing error response and no redirect in `internal/domain/oauth2/service.go` (FR-007, SR-001-SR-004).
 
 ### Verification for User Story 2
 
-- [ ] T018 [US2] Rerun the prewritten Agent/OAuth2 unit tests and US2-S1 through US2-S4 E2E scenarios; verify invalid callbacks have no redirect and existing exact callbacks still work (FR-007-FR-010, SC-003-SC-005).
+- [X] T018 [US2] Rerun the prewritten Agent/OAuth2 unit tests and US2-S1 through US2-S4 E2E scenarios; verify invalid callbacks have no redirect and existing exact callbacks still work (FR-007-FR-010, SC-003-SC-005).
 
 **Checkpoint**: US2-S1 through US2-S4 pass; invalid registrations are rejected, no unregistered callback receives a redirect, and exact/private-use/loopback behavior is unchanged.
 
 ## Phase 5: Polish and Cross-Cutting Verification
 
-- [ ] T019 Reconcile the wildcard descriptions and examples across `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, and `docs/api/enduser-api.md` (API-001, FR-005-FR-007).
-- [ ] T020 Review and set the final ADR status to Accepted when approved; ensure `adrs/044-wildcard-web-redirect-uris.md` matches the implemented trust boundary (SR-001-SR-004, Principle II).
-- [ ] T021 Verify the Redirect URI Pattern glossary definition and architecture notes match the implementation in `ARCHITECTURE.md` (Principles II and V).
-- [ ] T022 Run the focused domain tests from `specs/055-wildcard-redirect-uri/quickstart.md` and resolve failures (FR-001-FR-010, SR-001-SR-004).
+- [X] T019 Reconcile the wildcard descriptions and examples across `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, and `docs/api/enduser-api.md` (API-001, FR-005-FR-007).
+- [X] T020 Review and set the final ADR status to Accepted when approved; ensure `adrs/044-wildcard-web-redirect-uris.md` matches the implemented trust boundary (SR-001-SR-004, Principle II).
+- [X] T021 Verify the Redirect URI Pattern glossary definition and architecture notes match the implementation in `ARCHITECTURE.md` (Principles II and V).
+- [X] T022 Run the focused domain tests from `specs/055-wildcard-redirect-uri/quickstart.md` and resolve failures (FR-001-FR-010, SR-001-SR-004).
 
 ## Phase N: Constitution Compliance Verification
 

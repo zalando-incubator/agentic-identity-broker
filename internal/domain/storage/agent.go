@@ -98,7 +98,7 @@ func (a *Agent) validateFields() error {
 
 	// Redirect URIs: https, loopback http, or a private-use scheme (RFC 8252 §7.1).
 	for i, uri := range a.RedirectURIs {
-		if !urivalidation.IsValidRedirectURI(uri) && !urivalidation.IsValidPrivateUseRedirectURI(uri) {
+		if err := urivalidation.ValidateAgentRedirectURIRegistration(uri); err != nil {
 			return fmt.Errorf("redirect_uris[%d] must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", i)
 		}
 	}
