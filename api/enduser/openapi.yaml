@@ -1279,9 +1279,9 @@ paths:
         Client ID Metadata Document (CIMD) when CIMD is enabled.
 
         **redirect_uri validation** (all modes):
-        - `redirect_uri` is matched against the agent's `redirect_uris`. For a CIMD `client_id`, it is matched against the fetched document's `redirect_uris`.
+        - For an opaque Agent client, `redirect_uri` is matched against the Agent's `redirect_uris`. A registered HTTPS host pattern may use `*` within subdomain labels; the wildcard never matches a dot, and the public suffix and effective registrable domain remain literal. Scheme, port, path, and query remain exact.
+        - For a CIMD `client_id`, web `redirect_uri` matching remains exact against the fetched document's `redirect_uris`. Private-use callbacks remain exact and must also be listed by the Agent.
         - Loopback `http` URIs match on any port.
-        - A private-use scheme URI such as `github-app://oauth/callback` matches only character for character. For a CIMD client, the agent's `redirect_uris` must also list it.
         - The broker never redirects to an unregistered `redirect_uri`.
 
         **Local/Hybrid Mode**:
@@ -1335,7 +1335,7 @@ paths:
           in: query
           required: true
           description: >
-            Callback URI to redirect to after authorization. Must be pre-registered: an https URI, a loopback http URI, or an allowlisted native-app private-use scheme URI (see redirect_uri validation).
+            Concrete callback URI to redirect to after authorization. It must match a pre-registered exact URI or valid Agent HTTPS host pattern, a loopback http URI, or an allowlisted native-app private-use scheme URI (see redirect_uri validation).
           schema:
             type: string
             format: uri

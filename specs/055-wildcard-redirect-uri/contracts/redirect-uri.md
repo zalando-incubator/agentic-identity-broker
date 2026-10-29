@@ -2,6 +2,10 @@
 
 This feature extends existing callback behavior. It adds no endpoint, request field, or response field.
 
+## Change Confirmation
+
+Wildcard matching for Agent-configured HTTPS preview callbacks is approved as a behavior-only extension. It changes which existing `redirect_uris` values are accepted and matched; it does not add an endpoint, request field, or response field.
+
 ## Agent Registration
 
 The existing `POST /api/agents` and `PUT /api/agents/{agent-id}` operations accept exact callback URIs and valid HTTPS host-wildcard callback URIs in `redirect_uris`. The `GET /api/agents/{agent-id}` response returns the registered strings unchanged.

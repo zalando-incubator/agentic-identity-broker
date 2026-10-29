@@ -181,7 +181,7 @@ Phase 1 setup is not required: the required `golang.org/x/net` dependency is alr
 
 **Test Execution Flow**:
 1. **Phase 2f (Design)**: Write E2E tests for all spec scenarios with detailed expectations
-2. **Verify Red Phase**: Run `ginkgo -v --focus="Wildcard Redirect URI" ./tests/e2e/` — all new acceptance tests must FAIL semantically
+2. **Verify Red Phase**: Run `ginkgo -v --focus="Wildcard Redirect URI" ./tests/e2e/` — the suite must compile and fail semantically for missing wildcard behavior; unchanged exact-callback regression coverage may pass
 3. **Implementation**: Implement feature incrementally
 4. **Verify Green Phase**: E2E tests turn GREEN as implementation satisfies acceptance criteria
 5. **Minimal Changes**: Only fixture adjustments during implementation, not test logic
