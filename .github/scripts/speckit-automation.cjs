@@ -851,11 +851,12 @@ function writeResult() {
     throw new Error("A phase report must not contain a result marker");
   }
   // The status comment carries the outcome; the full report and its result stay folded for reference.
-  fs.writeFileSync(`${directory}/comment.md`, [
-    `**Spec Kit ${context.phase}: ${result.status}.** ${result.summary}`, "",
-    `<details><summary>Full ${context.phase} report</summary>`, "", draft.report, "",
-    marker, "```json", JSON.stringify(result, null, 2), "```", "", "</details>", "",
-  ].join("\n"));
+  fs.writeFileSync(`${directory}/comment.md`,
+    [
+      `**Spec Kit ${context.phase}: ${result.status}.** ${result.summary}`, "",
+      `<details><summary>Full ${context.phase} report</summary>`, "", draft.report, "",
+      marker, "```json", JSON.stringify(result, null, 2), "```", "", "</details>", "",
+    ].join("\n"));
 }
 
 function selectFeature() {
