@@ -87,6 +87,32 @@ jobs:
               content: process.env.ROUTE_RESULT === 'success' ? 'eyes' : 'confused',
             });
 
+  # Replaces the PR's status comment with "running" so a queued or late command sees that work is in progress.
+  announce:
+    needs: route
+    if: needs.route.result == 'success' && needs.route.outputs.action != 'noop' && needs.route.outputs.pr != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the running status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const { announce } = require('./.github/scripts/speckit-automation.cjs');
+            await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+
   specify:
     needs: route
     if: needs.route.outputs.action == 'specify'
@@ -360,7 +386,7 @@ jobs:
             }
 
   report:
-    needs: [route, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals]
+    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -375,7 +401,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
-      - name: Explain where the run stopped
+      - name: Publish the status comment and fold agent reports
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           NEEDS: ${{ toJSON(needs) }}

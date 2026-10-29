@@ -69,9 +69,8 @@ version of this pipeline asked. Apply those answers, and resolve any questions
 they leave open yourself.
 
 Return `complete` with an empty `questions` array. Do not plan. If `plan.md`
-does not exist yet, end the report with this line: "Review the specification,
-then comment `/speckit-plan [guidance]` to plan." Otherwise, planning starts
-automatically after this phase.
+does not exist yet, the maintainer reviews the specification next. Otherwise,
+planning starts automatically after this phase.
 
 ## plan
 
@@ -158,6 +157,7 @@ Write `/tmp/gh-aw/speckit/result.json` with this shape:
 ```json
 {
   "status": "complete",
+  "summary": "Planned token exchange for agent subjects; 2 items need sign-off.",
   "report": "The complete human-readable phase report.",
   "questions": [],
   "findings": [],
@@ -167,7 +167,20 @@ Write `/tmp/gh-aw/speckit/result.json` with this shape:
 }
 ```
 
-`status` is `complete` or `blocked`. `questions` stays empty. For analysis,
+`status` is `complete` or `blocked`. `summary` is one line of at most 200
+characters that states the outcome a maintainer needs, such as decisions made,
+finding counts, or the blocker. The workflow shows it in the PR's status
+comment, which also names the next command, so do not repeat command hints.
+
+Write `report` for a maintainer who reviews the feature, not the automation.
+Lead with the outcome. Then list decisions you made, what the maintainer must
+decide with `path:line` references, and the changed feature files. Omit process
+narration: skills or files you read, skipped hooks, restored feature pointers,
+safe-output acknowledgements, whitespace checks, and tests you did not run
+because the phase changes documents only. The report is folded below the
+summary, and the PR timeline already shows each pushed commit.
+
+`questions` stays empty. For analysis,
 `findings` contains every finding as
 `{"severity":"HIGH","location":"spec.md:12","summary":"...","recommendation":"..."}`,
 and `approvals` contains every sign-off item as
@@ -184,5 +197,5 @@ with `add_comment` on `context.pr`. Do not create a replacement result or
 compute the machine-readable hashes yourself. Publish this comment even when a
 remediation phase needs no edits. If the phase is blocked, save permitted
 progress, publish the result with `status: blocked`, and then call
-`report_incomplete`. The workflow then posts a status comment on the PR that
-quotes your `next_step`.
+`report_incomplete`. The workflow's status comment then quotes your
+`next_step`.
