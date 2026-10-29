@@ -190,7 +190,7 @@ Still open:
 
 1. **Sign off the [Approval Items](#approval-items)**. The implementation phase records the
    approval in the ADR draft and moves it to `adrs/045-authzen-delegation-pip.md`. `tasks.md`
-   T008 performs this step.
+   T001 performs this step before any other implementation task.
 2. **Run the API-003 Verify checks** against the final AuthZEN 1.0 text before the OpenAPI is
    frozen: the discovery member names, the path-insertion rule (R8), and the denial envelope
    (R11). Any conflict with the proposed contract goes back to the stakeholder. The planning
@@ -506,6 +506,8 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 - `Label("delegation-context")`: 11 consumer specs
 - `Label("delegation-context-startup")`: 4 ExtProc-suite specs
 
+US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-backend` excludes that label, so it covers only 28 of the 29 broker scenarios; `just test-e2e-docker` supplies the infrastructure gate, and `just test-e2e` includes both recipes. The focused `authzen-delegation` label command in `quickstart.md` runs all 29 only with infrastructure available. An unavailable container runner is a validation blocker, never permission to skip US2.19 or remove its label.
+
 **Observation techniques**:
 
 | Technique | Use |
@@ -569,7 +571,7 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 | US4.5 | `tests/e2e/delegation_context_journey_test.go` | `It("discovers from the token endpoint origin by default and uses the advertised endpoint")` |
 | US4.6 | `tests/e2e/authzen_delegation_compat_test.go` | `It("keeps principal, agent_id, and deprecated granted_permission_sets on exchange")` |
 
-*Phase 2f adds line numbers.*
+*Phase 2f records actual test line numbers and red/green evidence in `quickstart.md`; implementation keeps this plan and `spec.md` unchanged.*
 
 **Red phase**: Tests compile against the Phase 2.5 scaffolding and fail on concrete assertions,
 because the stub handlers return 501 and the stub resolver returns an error. No `XIt`, `PIt`, or
