@@ -440,7 +440,9 @@ async function verify({ github, context, comment, phase }) {
     }
     return result;
   }
-  requireResult(result, phase === "clarify" ? ["spec.md"] : documents, current.hashes, { clean: phase === "reanalyze" });
+  // Blocking reanalysis findings are not a verification failure: the approvals job withdraws the approval
+  // comment, the report lists the findings, and routing to implementation still requires a clean reanalysis.
+  requireResult(result, phase === "clarify" ? ["spec.md"] : documents, current.hashes);
   if (phase === "implement" && /^\s*-\s+\[ \]\s+T\d+/m.test(current.files[`${current.feature}/tasks.md`])) {
     throw new Error("Implementation left unfinished tasks");
   }
@@ -492,7 +494,7 @@ async function publishApprovals({ github, context, comment }) {
       const range = item.end === item.start ? `${item.start}` : `${item.start}-${item.end}`;
       const anchor = item.end === item.start ? `L${item.start}` : `L${item.start}-L${item.end}`;
       const url = `https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.sha}/${item.path}#${anchor}`;
-      const title = quoted(item.title).replace(/\|/g, "\\|");
+      const title = quoted(item.title).replace(/[\\|]/g, "\\$&");
       return `| A${index + 1} | ${approvalKinds[item.kind]} | ${title} | [\`${item.path}:${range}\`](${url}) |`;
     }),
     "",

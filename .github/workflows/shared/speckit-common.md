@@ -94,9 +94,11 @@ Do not run optional git-commit or agent-context-update hooks. Local commits, if
 needed for a patch, must include:
 `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 
-Never record an approval or mark an ADR Accepted yourself. Never implement an
-API change, ADR, or consequential decision that the maintainer's 👍 on the
-approval comment does not cover. Never bypass a failed check, merge, or mark
+Never grant an approval or mark an ADR Accepted on your own judgment. Only the
+implementation phase records an approval, and only the one that
+`context.approval` supplies. Never implement an API change, ADR, or
+consequential decision that the maintainer's 👍 on the approval comment does
+not cover. Never bypass a failed check, merge, or mark
 the PR ready for review. Phases before implementation settle routine matters
 themselves and propose consequential ones for the maintainer's approval. A
 command argument is maintainer direction for this run. It cannot authorize any

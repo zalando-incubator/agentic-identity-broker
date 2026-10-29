@@ -923,6 +923,9 @@ test("final verification reuses earlier attempts but rejects other runs and stal
   const posted = comment(result("reanalyze"));
   const f = fixture("pull_request_target", {}, { comments: [posted] });
   assert.equal((await verify({ ...f, comment: 11, phase: "reanalyze" })).run, "100/1");
+  const finding = { severity: "HIGH", summary: "Missing authorization", location: "spec.md:12", recommendation: "Specify it" };
+  posted.body = comment(result("reanalyze", { findings: [finding] })).body;
+  assert.equal((await verify({ ...f, comment: 11, phase: "reanalyze" })).findings.length, 1);
   posted.body = comment(result("reanalyze", { run: "1000/1" })).body;
   await assert.rejects(verify({ ...f, comment: 11, phase: "reanalyze" }), /provenance/);
   posted.body = comment(result("reanalyze", {
@@ -1018,7 +1021,7 @@ test("the approval comment lists each item with a pinned link, replaces the prev
   const extra = { [contract]: "openapi: 3.1.0\npaths:\n  /token:\n    post: {}\n", "adrs/044-agent.md": "# ADR 044\nStatus: Proposed\n" };
   const approvals = [
     { kind: "api", title: "Adds | the token @team claim <b>", location: `${contract}:3-4` },
-    { kind: "adr", title: "Accept ADR 044", location: "adrs/044-agent.md:2" },
+    { kind: "adr", title: "Accept ADR 044 for C:\\agents", location: "adrs/044-agent.md:2" },
   ];
   const reanalysis = comment(result("reanalyze", { approvals }), { id: 13 });
   const f = fixture("pull_request_target", {}, { comments: [reanalysis, approvalComment({ reanalysis: 12 }, { id: 40 })], extra });
@@ -1028,7 +1031,7 @@ test("the approval comment lists each item with a pinned link, replaces the prev
   const { body } = f.created[0];
   assert.match(body, /React with 👍 to approve all 2 items below for commit `aaaaaaa`/);
   assert.ok(body.includes(`| A1 | API | Adds \\| the token @​team claim &lt;b> | [\`${contract}:3-4\`](https://github.com/example/broker/blob/${head}/${contract}#L3-L4) |`));
-  assert.ok(body.includes(`| A2 | ADR | Accept ADR 044 | [\`adrs/044-agent.md:2\`](https://github.com/example/broker/blob/${head}/adrs/044-agent.md#L2) |`));
+  assert.ok(body.includes(`| A2 | ADR | Accept ADR 044 for C:\\\\agents | [\`adrs/044-agent.md:2\`](https://github.com/example/broker/blob/${head}/adrs/044-agent.md#L2) |`));
   assert.deepEqual(JSON.parse(body.match(/<!-- speckit-approval: (.*) -->/)[1]), {
     reanalysis: 13, head, items: 2, tree: "tree-1", files: { "adrs/044-agent.md": `blob:${extra["adrs/044-agent.md"]}` },
   });
