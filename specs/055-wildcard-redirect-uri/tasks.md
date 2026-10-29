@@ -23,23 +23,23 @@
 
 ### Phase 2a: Domain Model and Glossary
 
-- [ ] T002 Review and finalize Agent callback invariants in `specs/055-wildcard-redirect-uri/data-model.md`, confirming that no new entity, identifier, or persisted field is needed (FR-001-FR-005).
-- [ ] T003 [P] Add the Redirect URI Pattern domain term and its bounded-host definition to `ARCHITECTURE.md` (Principle V).
-- [ ] T004 [P] Create `adrs/044-wildcard-web-redirect-uris.md` with context, decision, consequences, and proposed status for wildcard grammar, PSL boundary, and callback-source isolation (SR-001-SR-004, Principle II).
+- [X] T002 Review and finalize Agent callback invariants in `specs/055-wildcard-redirect-uri/data-model.md`, confirming that no new entity, identifier, or persisted field is needed (FR-001-FR-005).
+- [X] T003 [P] Add the Redirect URI Pattern domain term and its bounded-host definition to `ARCHITECTURE.md` (Principle V).
+- [X] T004 [P] Create `adrs/044-wildcard-web-redirect-uris.md` with context, decision, consequences, and proposed status for wildcard grammar, PSL boundary, and callback-source isolation (SR-001-SR-004, Principle II).
 
 ### Phase 2b: Configuration Design
 
-- [ ] T005 Confirm in `specs/055-wildcard-redirect-uri/plan.md` that this feature adds no runtime configuration, YAML example, or Helm chart change (FR-011, SC-006, Principle VII).
+- [X] T005 Confirm in `specs/055-wildcard-redirect-uri/plan.md` that this feature adds no runtime configuration, YAML example, or Helm chart change (FR-011, SC-006, Principle VII).
 
 ### Phase 2c: API Design
 
-- [ ] T006 [P] Document wildcard registration syntax, fixed URI components, and invalid-pattern behavior in the Agent response, create, and update schemas in `api/admin/openapi.yaml` (API-001, FR-001-FR-005).
-- [ ] T007 [P] Document source-specific matching and unchanged error behavior in `api/enduser/openapi.yaml` and `docs/api/enduser-api.md` (API-001, FR-006-FR-010).
-- [ ] T008 Review the existing Agent and authorization contract and record confirmation of the behavior change in `specs/055-wildcard-redirect-uri/contracts/redirect-uri.md` before implementation (API-002, Principle X).
+- [X] T006 [P] Document wildcard registration syntax, fixed URI components, and invalid-pattern behavior in the Agent response, create, and update schemas in `api/admin/openapi.yaml` (API-001, FR-001-FR-005).
+- [X] T007 [P] Document source-specific matching and unchanged error behavior in `api/enduser/openapi.yaml` and `docs/api/enduser-api.md` (API-001, FR-006-FR-010).
+- [X] T008 Review the existing Agent and authorization contract and record confirmation of the behavior change in `specs/055-wildcard-redirect-uri/contracts/redirect-uri.md` before implementation (API-002, Principle X).
 
 ### Phase 2d: Database Design
 
-- [ ] T009 Confirm in `specs/055-wildcard-redirect-uri/data-model.md` that the existing string-list representation needs no migration or backfill (FR-001, Principle IX).
+- [X] T009 Confirm in `specs/055-wildcard-redirect-uri/data-model.md` that the existing string-list representation needs no migration or backfill (FR-001, Principle IX).
 
 ### Phase 2e: Frontend and Design System Review
 
@@ -47,9 +47,9 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Phase 2f: E2E Acceptance Test Design
 
-- [ ] T010 Review the concrete journeys and verify all nine scenarios map to observable HTTP outcomes in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
-- [ ] T010a Write all nine production-bootstrap Ginkgo acceptance tests in `tests/e2e/wildcard_redirect_uri_test.go`, one `It()` per scenario, using existing fixtures and scenario comments (Principle XIII).
-- [ ] T010b Run the new E2E tests and verify they compile and fail semantically before any feature implementation; do not use pending tests or placeholder assertions (Principle XIII).
+- [X] T010 Review the concrete journeys and verify all nine scenarios map to observable HTTP outcomes in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
+- [X] T010a Write all nine production-bootstrap Ginkgo acceptance tests in `tests/e2e/wildcard_redirect_uri_test.go`, one `It()` per scenario, using existing fixtures and scenario comments (Principle XIII).
+- [X] T010b Run the new E2E tests and verify they compile and that wildcard behavior scenarios fail semantically before implementation; unchanged exact-callback regression tests may pass (Principle XIII).
 
 **Checkpoint**: Complete the design tasks before feature implementation. Confirm no configuration, database, or frontend work is required.
 
