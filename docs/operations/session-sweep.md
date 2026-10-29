@@ -204,6 +204,16 @@ sum by (service_id, failure_detail) (
 )
 ```
 
+A replica creates each counter series, and the histogram's count series, on its first event for those attributes. The first exported value already includes that event. Backends that ignore the OTLP start time use it as the baseline, so `increase()` and `rate()` miss it. A service that starts failing can then show no failures until a sweep runs on the same replica again. In such a backend, subtract the value from an hour ago and count a series that did not exist then from zero:
+
+```promql
+# Sweep failures per service and reason over the last hour, including new series
+sum by (service_id, failure_detail) (
+  max_over_time(session_sweep_failed_total[1h])
+    - (session_sweep_failed_total offset 1h or max_over_time(session_sweep_failed_total[1h]) * 0)
+)
+```
+
 If your cluster runs kube-state-metrics, the CronJob status gives a second signal that does not depend on the broker:
 
 ```promql
