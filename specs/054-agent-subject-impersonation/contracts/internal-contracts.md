@@ -67,7 +67,7 @@ if isAgent:
            with diagnostic (identity_resolution, subject_category_unsupported), and no error_uri
 ```
 
-Invariant (tested with a recording fake or storage spy): for a subject token that matches the expression, and for an evaluation failure, the exchange calls none of `consent.Service.VerifyAgentAccess`, `OAuth2SessionService.GetValidAccessToken`, or the provider lookup.
+Invariant: for a subject token that matches the expression, and for an evaluation failure, the exchange calls none of `consent.Service.VerifyAgentAccess`, `OAuth2SessionService.GetValidAccessToken`, or the provider lookup. Unit tests use recording repository fakes. The production-bootstrap US3.4 journey uses the two request-correlated production boundary spans, completed HTTP traces, positive human controls, and mock-provider observations defined in plan.md §Human-state observation boundary; do not inject E2E storage spies or custom service wiring.
 
 ## 5. Audit event `impersonation_decision`
 

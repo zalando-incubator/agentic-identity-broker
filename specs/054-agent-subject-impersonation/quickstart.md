@@ -6,7 +6,7 @@ This guide shows how to prove the feature works after implementation. It does no
 
 ## Prerequisites
 
-- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), and the decisions A6–A8. Implementation records that approval in [ADR 045](adr-045-draft.md) before code changes.
+- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), and the decisions A6–A9. The first implementation task records the supplied `context.approval` (approving maintainers, dates, and pipeline comment URL) in [ADR 045](adr-045-draft.md), then moves it into `adrs/`. Record its final path and all A1–A9 approval coverage here; keep `spec.md` and `plan.md` unchanged during implementation.
 - FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
 - Go toolchain and `just`, per the repository README. Run `just install-tools` once.
 - The default E2E tests use in-memory storage, so no Docker is needed.
@@ -36,7 +36,7 @@ Expected: 12 passing specs, one per scenario US1.1–US3.4 (mapping in [plan.md]
 
 ### Required US3.4 read-access evidence
 
-T071–T072 must implement and validate the plan's Human-state observation boundary before negative span assertions count as evidence. Capture the two production spans `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` through existing `BuildAppWithTracerProvider(storage, tp)` / `NewInMemoryTracerProvider()`, with telemetry/traces enabled and the concrete production storage adapter. No E2E storage/port spy can be injected through this bootstrap.
+T026–T027 must implement and validate the plan's Human-state observation boundary before negative span assertions count as evidence. Capture the two production spans `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` through existing `BuildAppWithTracerProvider(storage, tp)` / `NewInMemoryTracerProvider()`, with telemetry/traces enabled and the concrete production storage adapter. No E2E storage/port spy can be injected through this bootstrap.
 
 For each exchange, use a unique sampled W3C trace header and require the completed HTTP server span before checking for zero child boundary spans. Use bounded completion/flush, filtering by that trace ID; never use recorder-wide totals. Demonstrate the grant span with an ordinary human missing-grant control, and both spans with an ordinary human resource-covering grant/usable-session control. Run these controls in each default/compliant/`false` broker; the `subject_token.sub` error broker uses a sequential otherwise-identical default-detector control broker as described in the plan, while requiring its own failing HTTP trace. No non-string subject fixture or weakened credential validation is permitted. Drain/close each broker and restore the prior global provider/propagator.
 
@@ -68,7 +68,7 @@ Repeat with an invalid `token_exchange.claim_extraction.agent_subject_expression
 go test ./tests/integration/ -run TestHelm
 ```
 
-Expected: the chart accepts `allowed_subject_categories: [agent]` and renders it verbatim into `config.yaml`. The schema rejects `[]`, `[machine]`, and duplicates. `tokenExchange.claimExtraction.agentSubjectExpression` renders as `agent_subject_expression` only when set, and the rendered config omits it otherwise. The test skips when `helm` is not installed.
+Expected: the chart accepts `allowed_subject_categories: [agent]` and renders it verbatim into `config.yaml`. The schema rejects `[]`, `[machine]`, and duplicates. `tokenExchange.claimExtraction.agentSubjectExpression` renders as `agent_subject_expression` only when set, and the rendered config omits it otherwise. Helm must be installed and these cases must execute; a skip when Helm is unavailable is not a successful feature validation.
 
 ## 6. Full gate
 

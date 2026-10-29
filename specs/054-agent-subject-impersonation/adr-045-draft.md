@@ -3,7 +3,7 @@
 **Date**: 2026-10-27
 **Status**: Proposed (decisions endorsed earlier in maintainer comment `6477637352` on PR #293; the revised text requires sign-off through the pipeline approval comment, plan.md Approval Items A1)
 **Feature**: 054-agent-subject-impersonation
-**Location**: Kept in the feature directory during planning. ADR number 044 is already used twice on `main` (`adrs/044-service-specific-session-recovery-url.md`, `adrs/044-client-registration-independent-of-authentication.md`), so this draft uses 045. After approval, the Phase 2 governance task moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number) and indexes it in `AGENTS.md`.
+**Location**: Kept in the feature directory during planning. ADR number 044 is already used twice on `main` (`adrs/044-service-specific-session-recovery-url.md`, `adrs/044-client-registration-independent-of-authentication.md`), so this draft uses 045. The first implementation task records the supplied pipeline approval in the Status line and moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number); Phase 2 verifies and indexes it in `AGENTS.md`.
 **Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
 ## Context
