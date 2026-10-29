@@ -124,12 +124,23 @@ func ValidateAgentRedirectURIRegistration(raw string) error {
 		return errors.New("wildcard is allowed only in the HTTPS hostname")
 	}
 
-	marker := wildcardMarker(host)
-	probe := strings.ReplaceAll(host, "*", marker)
-	asciiHost, err := asciiDNSHostname(probe)
+	patternLabels, err := normalizedWildcardLabels(host, true)
 	if err != nil {
 		return fmt.Errorf("wildcard redirect URI hostname is invalid: %w", err)
 	}
+	// Validate the shortest valid pattern expansion separately from the synthetic PSL probe.
+	if err := validateWildcardPatternLength(patternLabels); err != nil {
+		return fmt.Errorf("wildcard redirect URI hostname is invalid: %w", err)
+	}
+
+	marker := wildcardMarker(host)
+	probe := strings.ReplaceAll(host, "*", marker)
+	// The marker exists only to classify public-suffix boundaries, not to measure DNS label lengths.
+	asciiHost, err := idna.Lookup.ToASCII(probe)
+	if err != nil {
+		return fmt.Errorf("wildcard redirect URI hostname is invalid: %w", err)
+	}
+	asciiHost = strings.ToLower(asciiHost)
 	if _, err := netip.ParseAddr(asciiHost); err == nil {
 		return errors.New("wildcard redirect URI cannot use an IP literal hostname")
 	}
@@ -307,6 +318,29 @@ func normalizedWildcardLabels(host string, wildcard bool) ([]wildcardLabel, erro
 		}
 	}
 	return labels, nil
+}
+
+// Measure literal length with empty wildcard matches; fill a wildcard only when needed for a valid label.
+func validateWildcardPatternLength(labels []wildcardLabel) error {
+	probeLabels := make([]string, len(labels))
+	for index, label := range labels {
+		parts := slices.Clone(label.parts)
+		literal := strings.Join(parts, "")
+		if literal == "" && len(parts) > 1 {
+			parts[0] = "a"
+		} else {
+			if parts[0] == "" && strings.HasPrefix(literal, "-") {
+				parts[0] = "a"
+			}
+			lastPart := len(parts) - 1
+			if parts[lastPart] == "" && strings.HasSuffix(literal, "-") {
+				parts[lastPart] = "a"
+			}
+		}
+		probeLabels[index] = strings.Join(parts, "")
+	}
+	_, err := asciiDNSHostname(strings.Join(probeLabels, "."))
+	return err
 }
 
 func appendNormalizedWildcardLiteral(labels []wildcardLabel, literal string) ([]wildcardLabel, error) {
