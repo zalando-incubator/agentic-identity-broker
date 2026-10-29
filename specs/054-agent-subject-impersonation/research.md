@@ -8,7 +8,7 @@ Each decision follows the confirmed answers in [spec.md](spec.md) (Q1–Q5), the
 
 **Decision (Proposed — endorsed in maintainer comment `6477637352`: "ADR 044 accepted"; sign-off via plan Approval Items A1)**: [ADR 045](adr-045-draft.md) has **Status: Proposed**. It was drafted as ADR 044, but that number is already used twice on `main`, so it is renumbered to 045. It supersedes decisions 1 and 2 of [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md) for agent-category requests only. Classification depends solely on verified signed raw `sub`/target-UUID equality, independently of rule eligibility. For eligible, CEL-authorized agents, delegation is skipped and the minted subject is the target UUID rather than necessarily the extracted subject principal. All principal extractions must still succeed; no new extraction-equality restriction is introduced. ADR 032 decisions 1–6 stay in force for eligible human-category requests; signed equality on human-only rules is intentionally ineligible even with active human delegation. ADR 031 and ADR 034 are unchanged.
 
-The ADR text lives in the feature directory because the planning phase may only write feature artifacts. The first implementation task verifies all A1–A9 coverage and records only the supplied `context.approval` in its Status line, moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number), and records approval coverage and the final path in `quickstart.md`. Phase 2 verifies the relocated ADR and adds it to the AGENTS.md ADR index; implementation keeps `spec.md` and `plan.md` unchanged.
+The ADR text lives in the feature directory because the planning phase may only write feature artifacts. The first implementation task verifies all A1–A10 coverage and records only the supplied `context.approval` in its Status line, moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number), and records approval coverage and the final path in `quickstart.md`. Phase 2 verifies the relocated ADR and adds it to the AGENTS.md ADR index; implementation keeps `spec.md` and `plan.md` unchanged.
 
 **Rationale**: ADR 032 is Accepted and merged. It requires delegation for every subject and has no opt-out. Under Principle II, deviating from it needs an Accepted superseding ADR. ADR 045 covers the precise agent-only supersession of both decisions 1 and 2. This re-plan also corrected its Context and Positive Consequences so they match decision 6 (C4): rejection is guaranteed only for the default or a matching detector, and detection failures fail closed. That wording was the open HIGH finding of analysis `40773362732/1`; because the text changed, it needs the maintainer's sign-off.
 
@@ -54,7 +54,7 @@ The eligibility check runs before CEL and before delegation (SR-001). A human re
 
 **Decision (Proposed C2 — endorsed in the PR #293 review, inline comment "confirmed"; sign-off via plan Approval Items A4)**: A category-ineligible request uses the existing no-match envelope: `403 access_denied` with the same generic description as a policy denial. No new `error` code and no `error_uri` are added. The structured audit event and the diagnostic detail `subject_category_ineligible` tell the two cases apart. The human consent-required response (`403 access_denied` plus `error_uri`) is unchanged. It is never returned for an agent-category request.
 
-**Rationale**: API-003 asks for a confirmed mapping and keeps the human responses. Reusing the established envelope does not reveal rule configuration to callers, and existing clients need no change.
+**Rationale**: API-003 asks for a confirmed mapping and keeps the human responses. Reusing the established envelope does not reveal rule configuration to callers. Unchanged envelope shape does not imply backward compatibility: the A8/A9 behavior changes require the Proposed A10 major-version and consumer migration gates (R12).
 
 **Alternatives considered**: A distinct `error_description` per cause. Rejected because descriptions are not stable identifiers (existing OpenAPI text) and would reveal rule contents.
 
@@ -109,7 +109,7 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 **Decision**:
 - `sub` and `agent_id` are both the target UUID (FR-004). The minted subject is `target.Agent.ID.String()`. This equals the raw verified `sub` by construction, but need not equal the successfully extracted subject principal. That agent-only departure from ADR 032 decision 2 is covered by the proposed ADR 045; humans retain the extracted-principal invariant.
 - `act` is unchanged: the extracted actor and the verified actor issuer. The broker keeps it even when the actor and subject strings are equal (FR-007).
-- `email_expression` is **not evaluated** for an agent-category request, and no `email` reaches local token CEL. An agent token is not a token for a human (Journey 1 shows no email). The impersonation service passes `Email = nil`; the mint input and strategy are unchanged.
+- `email_expression` is **not evaluated** for an agent-category request, and no credential-derived email is supplied. The impersonation service passes `Email = nil`; the mint input, CEL context and strategy are unchanged. Existing `token_claims_cel.go` exposes `principal.email` as `""` for nil email, and `strategies.go` permits a policy-produced `email` custom claim. Thus `{"email": principal.email}` emits an empty-string `email`; a literal policy value is also permitted. Without a policy emitting `email`, it is absent (Journey 1's example). Tests characterize both cases rather than require unconditional suppression (FR-010; analysis I1).
 - No category claim is minted (R5). The token is identifiable as an agent-subject token because `sub == agent_id`.
 - `AuditRecord` gains `SubjectCategory` (`human` | `agent`). `SubjectIdentity` holds the represented identity: the minted `sub` for both categories. The handler logs `subject_category`, plus the existing rule, target, client, and actor fields (SR-004).
 
@@ -154,16 +154,22 @@ Detection happens on the third-party token exchange through a new, optional CEL 
 ## R11 — Documentation and architecture
 
 **Decision**: Implementation updates these files:
-- `ARCHITECTURE.md`: §3.1.y, plus glossary terms *Subject Category*, *Agent-Subject Token*, and *Allowed Subject Categories*.
+- `ARCHITECTURE.md`: §3.1.y, plus glossary terms *Subject Category*, *Agent-Subject Token*, and *Allowed Subject Categories*, and the Proposed A10 End-User API 2.0.0 versioning/replacement strategy.
 - The AGENTS.md glossary row and ADR index entry, after ADR 045 is approved.
-- `api/enduser/openapi.yaml`, from [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml).
+- `api/enduser/openapi.yaml`, from [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml), including `info.version: 2.0.0` under Proposed A10.
 - `docs/configuration.md` and `docs/reference/token-exchange.md` (new diagnostic details, `token_exchange.claim_extraction.agent_subject_expression` with its default, failure semantics, fail-closed collision cases, and override requirement).
 - `docs/concepts/token-exchange.md` (third-party limitation).
-- `docs/api/enduser-api.md`: extend its existing `POST /oauth2/token` documentation with agent-subject requests, decoded token claims, the eligibility matrix and human-only signed collision rejection, and category/third-party denial examples. Keep these aligned with the confirmed OpenAPI contract and link the concept/reference/configuration guides.
+- `docs/api/enduser-api.md`: extend its existing `POST /oauth2/token` documentation with agent-subject requests, decoded token claims, the eligibility matrix and human-only signed collision rejection, and category/third-party denial examples. Keep these aligned with the confirmed OpenAPI contract, add the End-User API 2.0.0 migration guidance from `contracts/enduser-api-versioning.md`, and link the concept/reference/configuration guides.
 - `examples/config/impersonation.yaml`, plus `examples/config/impersonation-agent-subject.yaml`, referenced from `examples/config/README.md`.
 - The Helm chart files listed in R8 and R5, and `examples/config/token-exchange.yaml` (R5).
 
 The existing `docs/api/enduser-api.md` token-endpoint page is extended rather than exempted: rendered end-user API examples are required by Constitution IV.
+
+## R12 — Released-contract compatibility and acceptance-first delivery
+
+**Decision (Proposed A10)**: treat the affected End-User API 1.0.0 as released because there is no evidence of an unreleased baseline. Adopt the major-contract-bump strategy in [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md): End-User API 2.0.0 replaces 1.0.0 on the existing routes, independently of broker and Admin API versions. T010 applies the version and architecture strategy before behavior; T048 documents migration, and T053/T058/T059 verify it. This addresses analysis C1 without asserting an unsupported release history. Alternative: parallel versioned endpoint; rejected for added routing/discovery and security-policy complexity. A8/A9 approval alone does not approve A10.
+
+**Acceptance-first order (analysis C2)**: T008's Helm tests may be authored before acceptance tests, but T009's production schema/template behavior must wait for the full T013–T017 12-scenario authoring and initial semantic-red run. T009 then turns the Helm tests green and reruns the acceptance suite to record remaining broker semantic failures before foundation work. Only DTO/type scaffolding necessary for compilation may move earlier; no feature behavior may be called scaffolding.
 
 ## Resolved unknowns
 

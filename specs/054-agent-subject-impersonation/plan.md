@@ -28,7 +28,7 @@ The technical approach:
 - Presence-sensitive YAML shape checks run in the config loader.
 - A narrowly superseding ADR ([045](adr-045-draft.md), **Proposed**; endorsed earlier in maintainer comment `6477637352`) covers ADR 032 decisions 1 and 2 for agents only: delegation is skipped and minted `sub` is target-derived, not necessarily the successfully extracted principal. Human invariants remain intact.
 
-Decisions are in [research.md](research.md) R1–R11.
+Decisions are in [research.md](research.md) R1–R12. Analysis `40859455167/1` remediation proposes End-User API 2.0.0 on the existing endpoint (A10; [versioning and migration contract](contracts/enduser-api-versioning.md)), moves all production Helm behavior after the complete acceptance-red gate, and clarifies that nil agent email omits credential-derived input, not policy-owned output. These changes do not record approval.
 
 ### PR #293 review feedback applied (planning re-run)
 
@@ -99,7 +99,7 @@ No new module.
 - Fail closed everywhere (Principle I).
 - No widening of ADR 031.
 - No new request input.
-- No change to established human responses.
+- No change to nonmatching human responses; A8/A9 collision denials require the Proposed End-User API 2.0.0 major contract bump (A10), not an unversioned patch.
 - ADR 045, the C2–C4 API contracts, and the decisions in [Approval Items](#approval-items) need the maintainer's sign-off before implementation (Principles II, IV, X). FR-011/SR-005 are aligned with C4 (clarification session 2026-10-28).
 
 **Scale/Scope**:
@@ -121,11 +121,11 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Configuration Design**: [contracts/impersonation-config.yaml](contracts/impersonation-config.yaml) gives the key, enum, default, every CFG-001 outcome, and the layered validation (research R8). [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml) gives `token_exchange.claim_extraction.agent_subject_expression`, its default, and its startup and runtime outcomes (research R5). Both use `internal/ports/config.go` and the existing loader (Principle VII).
 - [x] **Config Examples**: The plan adds `examples/config/impersonation-agent-subject.yaml` (agent-only, human-only, and dual alternatives), updates `examples/config/impersonation.yaml` to show the explicit `[human]` setting and the omission note, and references both from `examples/config/README.md`. `examples/config/token-exchange.yaml` documents the optional `agent_subject_expression`, its default, the replacement semantics, and the override requirement.
 - [x] **Helm Deployment Contract**: The broker is chart-managed. Updates: `values.schema.json` (the strict rule schema gains `allowed_subject_categories`), the `values.yaml` comment example, and `README.md`. `templates/configmap.yaml` already renders the impersonation subtree verbatim; the plan verifies this with a render check. The strict `tokenExchange.claimExtraction` schema gains the optional `agentSubjectExpression` string, and `templates/configmap.yaml` renders `agent_subject_expression` only when it is set.
-- [x] **API Design First**: The OpenAPI delta is drafted in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml). It adds no new path, parameter, token claim, or error code: only description text and examples.
+- [x] **API Design First**: The OpenAPI delta is drafted in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml). It adds no path, parameter, token claim, or error code, but changes behavior. [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md) treats the existing 1.0.0 contract as released and proposes `info.version: 2.0.0` on existing routes (A10). T010 applies both the version and behavior documentation plus the `ARCHITECTURE.md` versioning strategy before production behavior; T048 supplies migration guidance, and T053/T058/T059 verify agreement before delivery. No unreleased-contract exemption is assumed (Constitution IV/X; API-005).
 - [x] **API Documentation**: The delta targets `api/enduser/openapi.yaml`. Extend the existing token-endpoint documentation in `docs/api/enduser-api.md` with agent-subject requests, decoded claims, eligibility and denial examples, aligned with the confirmed OpenAPI. Retain the `docs/concepts/token-exchange.md` and `docs/reference/token-exchange.md` updates and cross-link the guides (Principle IV).
 - [x] **API Changes**: Drafted and registered for sign-off: C2 (the category-ineligible mapping) and C3 (the third-party rejection mapping), endorsed in the PR #293 review, and C4 (a configured `agent_subject_expression` replaces the default), endorsed in maintainer comment `6477637352`, are **Proposed** (Approval Items A2–A6). C1 (the `subject_category` claim) was **withdrawn** by that review. The OpenAPI delta is applied in Phase 2 after approval.
 - [x] **Database Design**: No schema change (spec Assumptions; data-model).
-- [x] **E2E Acceptance Tests**: All 12 scenarios are mapped below. They are written in Phase 2f before implementation.
+- [x] **E2E Acceptance Tests**: All 12 scenarios are mapped below. T013–T017 write and run them in Phase 2f before any production behavior, including Helm schema/template changes. T008's Helm tests run red first; T009 is deferred to Phase 2g after T017, then makes Helm tests green and reruns acceptance tests before broker foundation work.
 - [x] **E2E Test Mapping**: Each scenario maps 1:1 to one `It()` (table below).
 - [x] **E2E Red Phase**: Each `It` asserts real responses and decoded claims. Before implementation, they fail on startup acceptance of the new key, a consent-required response instead of `200`, a third-party exchange that is not rejected, and so on. No `Skip`, `XIt`, or `PIt`.
 - [x] **Frontend Playwright E2E**: N/A. There is no UI change (API-004).
@@ -150,7 +150,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 **Gate status**: PASS for planning. No violation is unjustified, and no `NEEDS CLARIFICATION` remains. The ADR wording finding from analysis `40773362732/1` is resolved in the draft. Implementation remains gated on the maintainer's 👍 for every row in [Approval Items](#approval-items); the first implementation task records only the supplied `context.approval` in ADR 045 and relocates it before any code change. Keep `spec.md` and this plan unchanged during implementation; `quickstart.md` records approval coverage and the final ADR path, including any numbering collision, so the frozen draft links remain traceable.
 
 **Post-Design Re-check**: PASS, subject to the same approvals. Structural observations:
-- The design adds no persistence, no port interface, no request input, and no token claim.
+- The design adds no persistence, no port interface, no request input, and no token claim. It does bump the End-User API contract major version under Proposed A10 to cover A8/A9's incompatible denials; neither approval of denials alone nor unchanged response shapes waives that gate.
 - The design preserves established human delegation and responses except for the human-only signed exact-equality rejection (spec Q4; Approval Items A8); the existing E2E suites must pass unchanged.
 - Deviations from binding decisions are limited to ADR 032 decisions 1 and 2 for agents only, covered by the proposed ADR 045 (Approval Items A1).
 - Principle XIV journeys in the spec match the contracts. Journey 1's decoded claims (`sub == agent_id`, `act`, no category claim) match the OpenAPI example exactly. Journey 3's `subject_token.agent_id` extraction matches the default detection's input, and Step 3's compliant override is the exact example in [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml).
@@ -171,6 +171,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 | SR-001–SR-003, SR-006 | Research R3, R8, and R2. Credential verification is unchanged. |
 | SR-004 | Research R7. Internal contracts §5. |
 | API-001–API-004 | [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml) (C2–C4 proposed, C1 withdrawn; Approval Items A4). |
+| API-005 | [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md) (Proposed A10); T001 approval, T010 blocking version/architecture design, T048 migration, T053/T058/T059 verification. |
 
 ## Project Structure
 
@@ -180,13 +181,14 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 specs/054-agent-subject-impersonation/
 ├── spec.md
 ├── plan.md                                   # This file
-├── research.md                               # Phase 0 (R1–R11)
+├── research.md                               # Phase 0 (R1–R12)
 ├── data-model.md                             # Phase 1
 ├── quickstart.md                             # Phase 1
 ├── contracts/
 │   ├── impersonation-config.yaml             # allowed_subject_categories contract + Helm schema
 │   ├── token-exchange-agent-subject-config.yaml  # agent_subject_expression contract + Helm schema
 │   ├── openapi-token-agent-subject.yaml      # OpenAPI delta (C2–C4 proposed; C1 withdrawn)
+│   ├── enduser-api-versioning.md             # Proposed A10: 2.0.0 major contract and migration
 │   └── internal-contracts.md                 # ports, mint, exchange rejection, audit, diagnostics
 ├── checklists/requirements.md
 └── tasks.md                                  # /speckit-tasks (dependent entries aligned with the review)
@@ -233,11 +235,11 @@ ARCHITECTURE.md, AGENTS.md (glossary + ADR 045 index entry)
 | Phase | Purpose | Included |
 |-------|---------|----------|
 | **Phase 0** | Pre-implementation refactoring | Skip. `evaluateRule` accepts the new step without restructuring. |
-| **Phase 1** | Setup | T001 verifies `context.approval` covers all A1–A9, records the supplied approval in ADR 045 and `quickstart.md`, and moves the ADR to `adrs/`; T002–T003 establish feature selection, existing tools and baseline evidence. No new dependency or tooling. |
-| **Phase 2** | Design preconditions | Required. In order: verification of T001's supplied A1–A9 approval record and relocated ADR (without accepting anything independently), and the FR-011/SR-005 alignment from spec session 2026-10-28; glossary and architecture; config contract, examples, and Helm schema; the OpenAPI edit; the DB "no change" record; the E2E file in red. |
+| **Phase 1** | Setup | T001 verifies `context.approval` covers all A1–A10, records the supplied approval in ADR 045 and `quickstart.md`, and moves the ADR to `adrs/`; T002–T003 establish feature selection, existing tools and baseline evidence. No new dependency or tooling. |
+| **Phase 2** | Design preconditions | Required. Verify T001's supplied A1–A10 approval record and relocated ADR (without independent acceptance); reconcile existing FR-011/SR-005 alignment; document glossary, architecture and major-version strategy; config contract/examples and Helm tests red (T008); versioned OpenAPI edit (T010); no-DB record; all 12 E2E scenarios authored and run red (T013–T017). Only then Phase 2g T009 implements Helm behavior, runs Helm green and reruns E2E before broker foundation. |
 | **Phase 2.7** | Entity boilerplate | Skip. No new entity. |
 | **Phase 2.5** | Foundational | Config DTO fields, constants, diagnostic details, YAML shape check and validator, rule compilation of categories, and compilation of `agent_subject_expression`. Unit tests first. |
-| **Phase 3** | US1 (P1) | Classification, delegation skip, agent minting (`sub == agent_id`, no email), `act` retention, audit field. |
+| **Phase 3** | US1 (P1) | Classification, delegation skip, agent minting (`sub == agent_id`, no credential-derived email; custom claims remain policy-owned), `act` retention, audit field. |
 | **Phase 4** | US2 (P1) | Category gating and fall-through, the human-only collision rejection, the default, and the startup failures. |
 | **Phase 5** | US3 (P2) | CEL binding and unresolved targets (already enforced, now asserted), plus `IsAgentSubject` and the third-party rejection. |
 | **Phase N** | Constitution compliance | `just check`, `just test`, the feature E2E, the regression E2E, the Helm check, `just verify`. |
@@ -283,7 +285,7 @@ ARCHITECTURE.md, AGENTS.md (glossary + ADR 045 index entry)
 - Existing fixtures: `fixtures.LocalConfig()`, `fixtures.AgentWithClientID`, `fixtures.ActiveGrant`, the session fixtures (`tests/e2e/fixtures/sessions.go`), `helpers.MockJWKSServer`, and `helpers.ProvisionSigningKey`.
 - New fixture: `tests/e2e/fixtures/impersonation_rules.go`. It holds signed-rule builders that take `allowed_subject_categories`, plus a second registered agent for the cross-agent cases.
 
-**Test Execution Flow**: Phase 2f writes all 12 tests. Running `ginkgo -v --focus "Agent-Subject Impersonation" ./tests/e2e/` must show semantic failures. Implementation turns them green with fixture-only adjustments.
+**Test Execution Flow**: Phase 2f writes all 12 tests. Running `ginkgo -v --focus "Agent-Subject Impersonation" ./tests/e2e/` must show semantic failures before any production behavior, including T009's chart schema/templates. T008's Helm tests run red before T009 as well. After both red gates, Phase 2g T009 implements only chart behavior and runs Helm tests green; rerun the complete acceptance suite and record remaining broker semantic failures before foundation. No behavioral change may move forward as scaffolding. Later implementation turns the acceptance scenarios green with fixture-only adjustments.
 
 **Bootstrap Strategy**:
 - Production `bootstrap.NewServerFactory(config, logger).BuildApp(storage)`, with admin and end-user test servers, per test. US3.4 uses the existing `BuildAppWithTracerProvider(storage, tp)` variant and `bootstrap.NewInMemoryTracerProvider()` (AlwaysSample); it still passes the concrete production storage adapter and uses production Builder wiring.
@@ -320,12 +322,12 @@ Manage the global provider within one broker lifetime at a time: snapshot/restor
   - gating and fall-through order
   - the delegation verifier is never called for an agent request (recording fake)
   - a human delegation failure stays terminal
-  - email suppression for agent requests
+  - credential-email extraction suppression for agent requests (not custom-claim suppression)
   - audit `SubjectCategory`
 - `internal/domain/impersonation` rule invariants: every CFG-001 value case, and an unsigned rule listing `agent` accepted at startup while its subjects stay human.
 - `internal/config/impersonation_shape_test.go`: null, scalar, mapping, `[agent, 1]`, `[null]`, and an omitted key.
 - `internal/config/impersonation_validator_test.go`: field paths and messages.
-- `internal/domain/oauth2server/impersonation_mint_test.go`: an agent mint input (`Subject` = target UUID, nil email) yields `sub == agent_id` and no category claim, and CEL cannot override `sub` or `agent_id`.
+- `internal/domain/oauth2server/impersonation_mint_test.go`: an agent mint input (`Subject` = target UUID, nil email) yields `sub == agent_id` and no category claim, and CEL cannot override `sub` or `agent_id`. Characterize no-policy/no-`email` output, `{"email": principal.email}` yielding `email: ""`, and a literal policy-supplied email. Existing CEL exposes an empty-string `principal.email`; it receives no credential-derived email. These tests must not demand a mint-strategy change.
 - `internal/domain/tokenexchange/cel_evaluator_test.go`: the default and a replacing override `agent_subject_expression` (the override, not the default, decides) (equal, unequal, missing `sub` or `agent_id`, type mismatch), a non-boolean result, an evaluation error, and startup compile failures for syntax errors and static non-boolean output.
 - `internal/domain/tokenexchange/service_security_test.go`: rejection before grant and session lookups, ADR 033 capture still finalized, a detection error that is terminal and consults no human state, non-matching tokens that pass through, a compliant replacing override that still rejects broker agent tokens, and a non-matching replacing override (`false`) that reaches the existing flow.
 - `internal/adapters/http/enduser/oauth2_token_audit_test.go`: the `subject_category` attribute and no credential leakage.
@@ -353,12 +355,13 @@ Every row is **Proposed**. None is approved until a maintainer reacts 👍 on th
 
 | ID | Type | Decision | Details |
 | --- | --- | --- | --- |
-| A1 | ADR | ADR 045 (drafted as 044): agent-only supersession of ADR 032 decisions 1 and 2 (no delegation for eligible, CEL-authorized agent-category requests; minted `sub` is the target UUID), with C4-consistent Context and Consequences. Alternative: synthetic delegation (violates FR-005). | `specs/054-agent-subject-impersonation/adr-045-draft.md:21-31` |
+| A1 | ADR | ADR 045 (drafted as 044): agent-only supersession of ADR 032 decisions 1 and 2 (no delegation for eligible, CEL-authorized agent-category requests; minted `sub` is the target UUID), with C4-consistent Context and Consequences and the major-version decision 8 (A10). Alternative: synthetic delegation (violates FR-005). | `specs/054-agent-subject-impersonation/adr-045-draft.md:21-32` |
 | A2 | API | New configuration key `oauth2_authorization_server.impersonation.rules[].allowed_subject_categories` (`human`/`agent` list, default `[human]`, fail-closed shape and value validation) and the matching strict Helm rule schema. Alternative: a boolean `allow_agent` flag (cannot express agent-only). | `specs/054-agent-subject-impersonation/contracts/impersonation-config.yaml:14-96` |
 | A3 | API | New configuration key `token_exchange.claim_extraction.agent_subject_expression` (CEL boolean, default `has(sub) && has(agent_id) && sub == agent_id`, startup and runtime failure semantics) and Helm value `tokenExchange.claimExtraction.agentSubjectExpression`. Alternative: hard-coded comparison (cannot cover external issuers). | `specs/054-agent-subject-impersonation/contracts/token-exchange-agent-subject-config.yaml:1-68` |
-| A4 | API | `POST /oauth2/token` OpenAPI delta: agent-subject issuance semantics; C2 category-ineligible requests use the existing generic `403 access_denied` without `error_uri`; C3 third-party exchange of a detected agent-subject token returns `403 access_denied` with a fixed description and no `error_uri`; detection failures return `500 server_error`. No new path, parameter, claim, or error code. Alternative: distinct error descriptions per cause (would leak rule contents). | `specs/054-agent-subject-impersonation/contracts/openapi-token-agent-subject.yaml:1-120` |
-| A5 | API | New documented diagnostic details `subject_category_ineligible` and `subject_category_unsupported`, and the `subject_category` attribute on the `impersonation_decision` audit event. Alternative: reuse existing details (operators could not tell category denials from policy denials). | `specs/054-agent-subject-impersonation/data-model.md:96-113` |
+| A4 | API | Within Proposed End-User API 2.0.0 (A10), `POST /oauth2/token` OpenAPI delta: agent-subject issuance semantics; C2 category-ineligible requests use the existing generic `403 access_denied` without `error_uri`; C3 third-party exchange of a detected agent-subject token returns `403 access_denied` with a fixed description and no `error_uri`; detection failures return `500 server_error`. No new path, parameter, claim, or error code. Alternative: distinct error descriptions per cause (would leak rule contents). | `specs/054-agent-subject-impersonation/contracts/openapi-token-agent-subject.yaml:1-126` |
+| A5 | API | New documented diagnostic details `subject_category_ineligible` and `subject_category_unsupported`, and the `subject_category` attribute on the `impersonation_decision` audit event. Alternative: reuse existing details (operators could not tell category denials from policy denials). | `specs/054-agent-subject-impersonation/data-model.md:98-115` |
 | A6 | Decision | Security trade-off (C4): a configured `agent_subject_expression` replaces the default with no additional built-in check; a non-matching override such as `false` removes categorical rejection and same-text human-state isolation, under documented operator responsibility. Alternative: a non-removable built-in check that overrides can only widen. | `specs/054-agent-subject-impersonation/research.md:80` |
 | A7 | Decision | No unsigned-subject startup guard: an unsigned rule listing `agent` starts, and the setting has no effect because unsigned subjects are always human. Alternative: fail startup for that combination. | `specs/054-agent-subject-impersonation/research.md:124` |
-| A8 | Decision | Backward-incompatible: on a human-only rule (including the omitted setting), a signed subject whose `sub` exactly equals the target UUID is rejected as ineligible even with active human delegation (spec Q4). Alternative: keep legacy human handling for that collision. | `specs/054-agent-subject-impersonation/spec.md:440` |
-| A9 | Decision | Backward-incompatible, fail closed: with the default detector, any subject token with equal `sub` and `agent_id` (including pre-upgrade human tokens and trusted external issuer tokens) is rejected for third-party exchange. Alternative: restrict detection to the broker's own issuer (no security benefit; expressible in an override). | `specs/054-agent-subject-impersonation/research.md:86-89` |
+| A8 | Decision | Subject to Proposed A10's major-version gate, backward-incompatible: on a human-only rule (including the omitted setting), a signed subject whose `sub` exactly equals the target UUID is rejected as ineligible even with active human delegation (spec Q4). Alternative: keep legacy human handling for that collision. | `specs/054-agent-subject-impersonation/spec.md:445` |
+| A9 | Decision | Subject to Proposed A10's major-version gate, backward-incompatible, fail closed: with the default detector, any subject token with equal `sub` and `agent_id` (including pre-upgrade human tokens and trusted external issuer tokens) is rejected for third-party exchange. Alternative: restrict detection to the broker's own issuer (no security benefit; expressible in an override). | `specs/054-agent-subject-impersonation/research.md:86-89` |
+| A10 | API | Major End-User API contract bump from 1.0.0 to 2.0.0 on existing routes, treating the baseline as released; includes A8/A9 compatibility impact, architecture versioning strategy, migration guidance and blocking delivery checks. No runtime version selector or legacy compatibility route. Alternative: a new versioned endpoint with parallel old semantics. | `specs/054-agent-subject-impersonation/contracts/enduser-api-versioning.md:5-32` |

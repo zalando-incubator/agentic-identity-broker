@@ -63,7 +63,7 @@ This is not a new type. It is held on `ruleResult`:
 | --- | --- | --- |
 | `category` | `human` | `agent` |
 | `subject` (represented identity and minted `sub`) | Extracted subject principal | `target.Agent.ID.String()` |
-| email | From `email_expression`, per the existing rules | Not evaluated, not minted |
+| credential-derived email | From `email_expression`, per the existing rules | Extraction not evaluated; `Email=nil` passed to mint |
 | delegation | `UserDelegationVerifier` required | Skipped |
 
 All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception are covered by the proposed ADR 045's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
@@ -90,6 +90,8 @@ No field is added. For an agent-category request, the impersonation service pass
 | `act` | `{iss: verified actor issuer, sub: extracted actor}` | Unchanged |
 | `scope`, `iat`, `exp`, `jti` | As for normal local issuance | Unchanged |
 | `aud` and other custom claims | `token_claims_expression` | Unchanged (policy-owned) |
+
+Email output remains policy-owned (FR-010). With `Email=nil`, existing token-claims CEL exposes `principal.email` as `""`; a policy such as `{"email": principal.email}` still emits an empty-string `email`, and a policy-provided literal email remains possible. Without a policy emitting `email`, the token has no such claim. Skipping credential email extraction is not unconditional output suppression; neither the CEL context nor the mint strategy changes.
 
 There is no category claim. An agent-subject token is identified by `sub == agent_id`; both are already in `oauth2server.baseClaims`, so `token_claims_expression` cannot change either. `baseClaims` is unchanged.
 

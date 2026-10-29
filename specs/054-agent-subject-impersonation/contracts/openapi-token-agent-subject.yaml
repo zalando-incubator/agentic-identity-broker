@@ -1,13 +1,16 @@
 # PROPOSED OpenAPI delta: Agent-Subject Impersonation
 #
-# Feature: 054-agent-subject-impersonation (spec API-001..API-004, research R4–R6)
+# Feature: 054-agent-subject-impersonation (spec API-001..API-005, research R4–R6/R12)
 # Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
 #
-# STATUS: Proposed; sign-off via plan.md Approval Items A4 (Constitution Principles IV and X).
+# STATUS: Proposed; sign-off via plan.md Approval Items A4/A10 (Constitution Principles IV and X).
 # C2-C4 were endorsed earlier on PR #293 (review inline comments and maintainer comment
 # 6477637352); C1 was WITHDRAWN. After approval, implementation Phase 2 applies the delta to
 # api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim,
-# or OAuth2 error code. It changes the operation description and adds examples.
+# or OAuth2 error code. It changes behavior, operation descriptions and examples.
+# A8/A9 are incompatible with the baseline; A10 requires the major End-User API bump
+# and migration/architecture gates in enduser-api-versioning.md. Applying descriptions
+# alone is insufficient; info.version must be 2.0.0 before behavioral implementation.
 #
 # Items:
 #   C1  WITHDRAWN by the PR #293 review: no `subject_category` claim. Agent-subject tokens are the
@@ -20,6 +23,9 @@
 #   C4  PROPOSED (endorsed in maintainer comment 6477637352): detection uses
 #       token_exchange.claim_extraction.agent_subject_expression (default `sub == agent_id`);
 #       a configured expression replaces the default (research R5).
+
+info:
+  version: 2.0.0
 
 paths:
   /oauth2/token:

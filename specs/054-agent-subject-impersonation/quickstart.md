@@ -6,10 +6,20 @@ This guide shows how to prove the feature works after implementation. It does no
 
 ## Prerequisites
 
-- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), and the decisions A6–A9. The first implementation task records the supplied `context.approval` (approving maintainers, dates, and pipeline comment URL) in [ADR 045](adr-045-draft.md), then moves it into `adrs/`. Record its final path and all A1–A9 approval coverage here; keep `spec.md` and `plan.md` unchanged during implementation.
+- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), the decisions A6–A9, and the End-User API 2.0.0 major contract/migration proposal A10. The first implementation task records the supplied `context.approval` (approving maintainers, dates, and pipeline comment URL) in [ADR 045](adr-045-draft.md), then moves it into `adrs/`. Record its final path and all A1–A10 approval coverage here; keep `spec.md` and `plan.md` unchanged during implementation.
 - FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
 - Go toolchain and `just`, per the repository README. Run `just install-tools` once.
 - The default E2E tests use in-memory storage, so no Docker is needed.
+
+## Blocking delivery order and compatibility evidence
+
+All statements below describe required future execution, not checks passed by this document-only remediation.
+
+1. T001 must record supplied approval covering A1–A10. A10 treats the baseline End-User API 1.0.0 as released absent evidence of an unreleased contract and proposes 2.0.0 on existing routes. See [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md) for the rationale, alternative and migration requirements. T010 applies the versioned OpenAPI and architecture strategy before production behavior.
+2. T008 writes/runs Helm tests red; T013–T017 then write/compile/run all 12 acceptance scenarios with semantic-red evidence. No Helm schema/template or broker behavior may precede this all-scenario gate. Only necessary DTO/type compilation scaffolding is permitted.
+3. T009 (Phase 2g) implements chart behavior after both red gates, runs Helm green, and reruns the acceptance suite to record remaining broker semantic failures before foundation work. Keep task IDs stable and follow dependencies rather than numeric order.
+4. T030 characterizes unchanged email policy behavior: `Email=nil` means no credential-derived input; no email-emitting policy means no output `email`; `{"email": principal.email}` means `email: ""`; a literal policy-supplied email remains allowed. Record those results, not an unconditional email-suppression claim.
+5. T048 publishes the End-User API 2.0.0 migration guide. T053/T058/T059 verify actual `info.version`, architecture strategy, migration guide and approval coverage, both incompatible A8/A9 denials, and unchanged nonmatching human behavior. T070–T072 run all acceptance/regression/full gates before delivery. Record the evidence here during implementation; do not claim readiness when consumers or checks remain blocked.
 
 ## 1. Static checks and fast tests
 
@@ -18,7 +28,7 @@ just check
 just test
 ```
 
-Expected: everything passes. The new unit tables cover `classifySubject`, category eligibility, rule invariants, YAML shape validation, agent-subject minting (`sub == agent_id`, no category claim), `CELEvaluator.IsAgentSubject` with the default and replacing override expressions, rule invariants accepting an unsigned rule that lists `agent`, the token-exchange rejection, and handler audit fields.
+Expected: everything passes. The mint tables additionally distinguish no-policy email absence from policy-emitted empty-string/literal email without credential propagation. The new unit tables cover `classifySubject`, category eligibility, rule invariants, YAML shape validation, agent-subject minting (`sub == agent_id`, no category claim), `CELEvaluator.IsAgentSubject` with the default and replacing override expressions, rule invariants accepting an unsigned rule that lists `agent`, the token-exchange rejection, and handler audit fields.
 
 ## 2. Acceptance journeys (E2E)
 
