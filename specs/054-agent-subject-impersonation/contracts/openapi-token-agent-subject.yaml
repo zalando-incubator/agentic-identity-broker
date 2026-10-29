@@ -1,22 +1,25 @@
-# CONFIRMED OpenAPI delta: Agent-Subject Impersonation
+# PROPOSED OpenAPI delta: Agent-Subject Impersonation
 #
 # Feature: 054-agent-subject-impersonation (spec API-001..API-004, research R4–R6)
 # Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
 #
-# STATUS: C2-C4 CONFIRMED in writing on PR #293, C1 WITHDRAWN (Constitution Principles IV and X).
-# FR-011/SR-005 were aligned with C4 in spec clarification session 2026-10-28, so implementation
-# Phase 2 applies the delta to api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim, or OAuth2
-# error code. It changes the operation description and adds examples.
+# STATUS: Proposed; sign-off via plan.md Approval Items A4 (Constitution Principles IV and X).
+# C2-C4 were endorsed earlier on PR #293 (review inline comments and maintainer comment
+# 6477637352); C1 was WITHDRAWN. After approval, implementation Phase 2 applies the delta to
+# api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim,
+# or OAuth2 error code. It changes the operation description and adds examples.
 #
 # Items:
 #   C1  WITHDRAWN by the PR #293 review: no `subject_category` claim. Agent-subject tokens are the
 #       ordinary local tokens with `sub == agent_id` (research R5).
-#   C2  CONFIRMED (PR #293 review): category-ineligible requests use the existing generic
-#       403 access_denied no-match envelope, with no error_uri (research R4).
-#   C3  CONFIRMED (PR #293 review): third-party exchange of an agent-subject token returns
-#       403 access_denied, with no error_uri and the description below (research R6).
-#   C4  CONFIRMED (maintainer comment 6477637352): detection uses
-#       (default `sub == agent_id`); a configured expression replaces the default (research R5).
+#   C2  PROPOSED (endorsed in the PR #293 review): category-ineligible requests use the existing
+#       generic 403 access_denied no-match envelope, with no error_uri (research R4).
+#   C3  PROPOSED (endorsed in the PR #293 review): third-party exchange of an agent-subject token
+#       whose detector matches returns 403 access_denied, with no error_uri and the description
+#       below (research R6).
+#   C4  PROPOSED (endorsed in maintainer comment 6477637352): detection uses
+#       token_exchange.claim_extraction.agent_subject_expression (default `sub == agent_id`);
+#       a configured expression replaces the default (research R5).
 
 paths:
   /oauth2/token:
@@ -51,7 +54,7 @@ paths:
 
         #### Third-party exchange of agent-subject tokens
         A third-party token exchange (`resource` present) whose validated `subject_token`
-        matches `token_exchange.claim_extraction.agent_subject_expression` is always rejected
+        matches `token_exchange.claim_extraction.agent_subject_expression` is rejected
         with `403 access_denied`. The default expression matches when the token's `sub` and
         `agent_id` claims are both present and equal, which holds for every agent-subject token
         that the broker issues. A configured expression replaces the default, with no

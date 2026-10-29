@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Research**: [../research.md](../research.md) | **Data model**: [../data-model.md](../data-model.md)
 
-These contracts are internal. They define the seams that tests target. Their visible effects (decoded token claims and HTTP responses) are documented in [openapi-token-agent-subject.yaml](openapi-token-agent-subject.yaml) and must be confirmed.
+These contracts are internal. They define the seams that tests target. Their visible effects (decoded token claims and HTTP responses) are documented in [openapi-token-agent-subject.yaml](openapi-token-agent-subject.yaml) and require sign-off (plan Approval Items A4 and A5).
 
 ## 1. `ports.ImpersonationRuleConfig.AllowedSubjectCategories`
 
@@ -33,7 +33,7 @@ func (e *CELEvaluator) IsAgentSubject(subjectTokenClaims map[string]interface{})
 | Situation | Result |
 | --- | --- |
 | Expression empty or omitted | The default is compiled. |
-| Expression configured (non-empty) | It replaces the default; no built-in check is added (C4, maintainer comment `6477637352`). |
+| Expression configured (non-empty) | It replaces the default; no built-in check is added (C4, proposed, plan Approval Items A3 and A6). |
 | Compile error, or a static output type other than `bool`/`dyn` | `NewCELEvaluator` fails, and startup fails. |
 | Result `true` | `(true, nil)` |
 | Result `false` | `(false, nil)` |

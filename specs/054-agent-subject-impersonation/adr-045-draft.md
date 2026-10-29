@@ -1,9 +1,9 @@
-# ADR 044: Agent-Subject Impersonation Without User Delegation
+# ADR 045: Agent-Subject Impersonation Without User Delegation
 
 **Date**: 2026-10-27
-**Status**: Accepted (stakeholder acceptance: authorized maintainer comment `6477637352` on PR #293, 2026-10-28)
+**Status**: Proposed (decisions endorsed earlier in maintainer comment `6477637352` on PR #293; the revised text requires sign-off through the pipeline approval comment, plan.md Approval Items A1)
 **Feature**: 054-agent-subject-impersonation
-**Location**: Kept in the feature directory during planning. The Phase 2 governance task moves it to `adrs/044-agent-subject-impersonation.md` (or the next free number) and indexes it in `AGENTS.md`.
+**Location**: Kept in the feature directory during planning. ADR number 044 is already used twice on `main` (`adrs/044-service-specific-session-recovery-url.md`, `adrs/044-client-registration-independent-of-authentication.md`), so this draft uses 045. After approval, the Phase 2 governance task moves it to `adrs/045-agent-subject-impersonation.md` (or the next free number) and indexes it in `AGENTS.md`.
 **Supersedes (in part)**: [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
 ## Context
@@ -15,7 +15,7 @@ The clarified specification limits the extension:
 - Agent issuance requires explicit per-rule enablement. Existing rules stay human-only by default.
 - The verified signed subject `sub` must be byte-for-byte equal to the UUID of the target agent selected by the audience. The request has no category input, and no aliases or cross-agent representation are allowed.
 - Credential validation and the rule's CEL authorization remain mandatory, and `act` is kept.
-- A token issued to an agent subject can never be exchanged for a third-party service token.
+- With the default detector, or a configured detector that still matches them, tokens issued to agent subjects are rejected for third-party service-token exchange before any human grant, session, or provider access. Detection failures fail closed. A configured detector replaces the default (decision 6); a non-matching result continues the existing exchange checks, which may consult matching human grants and sessions and return existing consent errors.
 - Unsigned subjects (ADR 031) remain human-only.
 
 ## Decision
@@ -27,7 +27,7 @@ The clarified specification limits the extension:
 3. **Category gating precedes delegation.** A rule that does not allow the classified category falls through, like a policy denial. A human delegation failure stays terminal and is never retried as an agent request. Signed exact equality on a human-only rule (including the omitted setting) is ineligible even when an identically named human has active delegation, and is never retried as human on that rule. Ordered evaluation may consider later rules only under their own eligibility and authorization constraints.
 4. **Default is human only.** When `allowed_subject_categories` is omitted, the rule allows `[human]`. Empty, unknown, duplicate, or non-list values fail startup. A rule with an unsigned subject may list `agent`; startup accepts it, but the setting has no effect because unsigned subjects are always human-category (decision 2). This ADR does not add unsigned agent subjects.
 5. **Distinguishable tokens without a category claim.** An agent-subject token has no additional claim. Its `sub` and `agent_id` both equal the target UUID, and both are reserved base claims that local token-claims policy cannot change. A human token's `sub` is the human principal.
-6. **No third-party exchange.** RFC 8693 third-party exchange evaluates the CEL boolean `token_exchange.claim_extraction.agent_subject_expression` on the validated subject token. The default is the guarded form of `sub == agent_id`. A configured expression replaces the default; there is no additional built-in check. The operator must keep a configured expression matching broker agent-subject tokens. A `true` result is rejected with `403 access_denied`. An evaluation failure is a terminal `server_error`, never "not an agent". The check runs before any grant or session lookup, so a human principal with the same identifier text cannot lend credentials to the request.
+6. **Third-party exchange rejection.** RFC 8693 third-party exchange evaluates the CEL boolean `token_exchange.claim_extraction.agent_subject_expression` on the validated subject token. The default is the guarded form of `sub == agent_id`. A configured expression replaces the default; there is no additional built-in check. The operator must keep a configured expression matching broker agent-subject tokens. A `true` result is rejected with `403 access_denied`. An evaluation failure is a terminal `server_error`, never "not an agent". The check runs before any grant or session lookup, so for a `true` result or an evaluation failure a human principal with the same identifier text cannot lend credentials to the request. A `false` result continues the existing exchange checks unchanged.
 7. **Auditability.** Every impersonation decision records the subject category together with the represented identity, actor, privileged client, rule, and target. No credentials are recorded.
 
 ## Consequences
@@ -36,7 +36,7 @@ The clarified specification limits the extension:
 
 - Unattended agent workloads obtain attributable broker tokens without fabricated human identities or consent records.
 - Existing human delegation and response invariants are preserved, except for the intentional human-only signed exact-equality rejection described below. Agent issuance is explicit and limited to a single target.
-- Third-party credentials remain bound to human delegation. Agent tokens cannot reach them through an identifier collision.
+- With the default detector or a matching override, agent-subject tokens are rejected before human-state access, so they cannot reach third-party credentials through an identifier collision. Detection failures fail closed. A non-matching override removes this protection (see Negative).
 
 ### Negative
 
@@ -52,6 +52,6 @@ The clarified specification limits the extension:
 ## References
 
 - `specs/054-agent-subject-impersonation/spec.md` (FR-001..FR-012, CFG-001, SR-001..SR-006)
-- `specs/054-agent-subject-impersonation/research.md` (R1–R8)
+- `specs/054-agent-subject-impersonation/research.md` (R1–R11)
 - `specs/054-agent-subject-impersonation/contracts/token-exchange-agent-subject-config.yaml`
 - [ADR 009](../../adrs/009-cel-for-authorization-policies.md), [ADR 014](../../adrs/014-oauth2-server-mode.md), [ADR 031](../../adrs/031-unverified-subject-unsigned-jwt.md), [ADR 032](../../adrs/032-impersonation-requires-user-delegation.md), [ADR 033](../../adrs/033-request-security-context-propagation.md), [ADR 034](../../adrs/034-audience-absent-impersonation-credentials.md)

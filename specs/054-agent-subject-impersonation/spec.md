@@ -408,7 +408,7 @@ Content-Type: application/json
 }
 ```
 
-This is the categorical-denial mapping recorded in the feature's confirmed C3 design contract; this clarification does not change `api/enduser/openapi.yaml`. No human-consent recovery is offered when detection matches: even granting consent cannot make that request exchangeable. Repeat the same exchange after adding an active human grant and valid service session under the exact same UUID text; with the default detector it must still return no service token and must not use that session. Detection compares validated claims, not subject identifier text alone, and requires no new category claim.
+This is the categorical-denial mapping recorded in the feature's proposed C3 design contract (endorsed in the PR #293 review; `plan.md` Approval Items A4); this clarification does not change `api/enduser/openapi.yaml`. No human-consent recovery is offered when detection matches: even granting consent cannot make that request exchangeable. Repeat the same exchange after adding an active human grant and valid service session under the exact same UUID text; with the default detector it must still return no service token and must not use that session. Detection compares validated claims, not subject identifier text alone, and requires no new category claim.
 
 **Step 3 — Operator reviews replacement behavior (US3.4 variants)**
 

@@ -6,12 +6,8 @@ This guide shows how to prove the feature works after implementation. It does no
 
 ## Prerequisites
 
-- Stakeholder decisions recorded on PR #293 (see [research.md](research.md), *Resolved unknowns*):
-  - [ADR 044](adr-044-draft.md) is **Accepted** (maintainer comment `6477637352`).
-  - The OpenAPI delta in [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml): C2 and C3 confirmed in the PR #293 review, C1 withdrawn, and C4 (a configured `agent_subject_expression` replaces the default, research R5) accepted in comment `6477637352`.
-  - No unsigned-subject startup guard (research R8, comment `6477637352`): an unsigned rule listing `agent` starts, and the setting has no effect.
-- FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the accepted C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
-- **Governance blocker:** analysis `40773362732/1` identified unconditional explanatory promises in Accepted ADR 044. This remediation preserves the binding ADR unchanged; a maintainer must resolve that wording through the permitted same-PR governance process before T003/implementation. See plan Remediation gate. No validation below has been executed by this document-only remediation.
+- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), and the decisions A6–A8. Implementation records that approval in [ADR 045](adr-045-draft.md) before code changes.
+- FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
 - Go toolchain and `just`, per the repository README. Run `just install-tools` once.
 - The default E2E tests use in-memory storage, so no Docker is needed.
 

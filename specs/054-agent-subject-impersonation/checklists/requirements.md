@@ -35,14 +35,11 @@
 
 - Validation pass 1 checked the draft against the issue title/body, existing impersonation source, end-user contract, relevant ADRs, constitution, and active specification template. The third-party denial example was corrected to use explicit existing claim extraction and the existing missing-grant response, including its consent URL. Validation pass 2 reviewed the resulting specification and retained the incomplete items below intentionally.
 - Protocol, configuration, CEL, and decoded claim examples describe observable domain behavior required by Constitution Principle XIV. No new implementation library, handler structure, persistence design, or executable code is prescribed; API references are contract dependencies, not an approved replacement API.
-- **Mandatory sections incomplete**: “The new category setting and any category-selection input must be made concrete after Q1.” The baseline configuration intentionally does not invent a new runtime key. Complete, confirmed enablement examples remain outstanding.
-- **Clarification / ambiguity**: FR-003 and FR-004 contain two NEEDS CLARIFICATION markers. Category selection and agent-subject/target resolution determine request fixtures and exact acceptance outcomes.
-- **Acceptance definition incomplete**: “Scenarios that depend on Q1 or Q2 remain provisional until clarification.” Story coverage exists, but category inputs and cross-agent cases cannot be finalized yet.
-- **Functional acceptance / outcomes pending**: FR-003, FR-004, CFG-001, API-002, and SC-006 require answers and concrete examples; measurable outcomes are defined, not demonstrated by this documentation-only phase.
-- **Governance dependency**: ADR 032 currently requires delegation for every impersonation subject. Consent-free agent issuance requires an accepted superseding ADR before implementation; this draft does not accept an ADR or amend the constitution. OpenAPI changes likewise require explicit stakeholder confirmation.
+- **Status update (planning re-run 2026-10-29)**: Pass-1 notes about incomplete items are historical. Clarification sessions 2026-10-26 to 2026-10-28 resolved Q1 (exact signed `sub`/target-UUID equality, no request input), Q2 (self-agent only, option A), and Q3–Q5; the spec has no `NEEDS CLARIFICATION` markers, and Journeys 1–3 contain the concrete configuration examples. Governance (ADR 045 superseding ADR 032 decisions 1 and 2 for agents) and the API contracts are registered for sign-off in `plan.md` Approval Items.
+- *(Historical)* Mandatory sections, clarification markers, provisional acceptance, and pending outcomes recorded in pass 1 were resolved by the clarification sessions above.
+- **Governance dependency**: ADR 032 requires delegation for every impersonation subject. Consent-free agent issuance requires the superseding ADR 045 (Proposed) to be approved before implementation; OpenAPI and configuration changes likewise require explicit sign-off (`plan.md` Approval Items).
 - The unsigned-subject exception is not broadened. Signed machine subjects are the documented bounded assumption; existing human controls remain intact.
 - No issue comments were fetched or used. Only this new feature's specification and checklist belong in the PR. Planning, tests, implementation, optional context-update hooks, and optional commit hooks are deferred.
-- Items marked incomplete require clarification/spec updates before planning. Unanswered product questions are an expected draft handoff, not a technical failure of the specify phase.
 
 ### Q1 — Subject category selection and binding
 
@@ -57,7 +54,7 @@
 | C | Configured subject-category resolver evaluated within the rule | Requires a precise resolver contract, dual-category semantics, and safeguards against caller-controlled reclassification. |
 | Custom | Provide another binding and selection mechanism | Describe legacy behavior, dual-category selection, exact configuration, and why human consent cannot be bypassed. |
 
-**Your choice**: Pending the separate clarification phase; no option has been selected.
+**Your choice**: Custom (recorded in `spec.md` Clarifications, session 2026-10-26): agent category only when the verified signed `sub` exactly equals the audience-selected target UUID; no request category input or category claim.
 
 ### Q2 — Self-agent scope and identifier resolution
 
@@ -72,4 +69,4 @@
 | C | A different registered subject agent may be represented | Expands scope; requires independent subject resolution, policy binding, and explicit meanings for `sub` versus target-derived `agent_id`. |
 | Custom | Provide another identity mapping | Specify accepted inputs, resolution, subject-target relationship, and mismatched/unknown behavior. |
 
-**Your choice**: Pending the separate clarification phase; no option has been selected.
+**Your choice**: A (recorded in `spec.md` Clarifications, session 2026-10-26): self-agent only, exact broker UUID.

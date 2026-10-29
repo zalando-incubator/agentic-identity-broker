@@ -19,8 +19,8 @@
 #     default:  has(subject_token.sub) && has(subject_token.agent_id) &&
 #               subject_token.sub == subject_token.agent_id
 #               (the guarded form of `sub == agent_id`; tokens without either claim are not agents)
-#     override: a configured expression REPLACES the default (C4, accepted by maintainer comment
-#               6477637352). There is no additional built-in check. The operator MUST keep it
+#     override: a configured expression REPLACES the default (C4; proposed, plan Approval Items A3
+#               and A6). There is no additional built-in check. The operator MUST keep it
 #               matching broker-issued agent-subject tokens, for example by keeping the default as a
 #               disjunct. A non-matching override (for example `false`) lets broker agent-subject
 #               tokens continue to the existing exchange flow and removes the categorical
