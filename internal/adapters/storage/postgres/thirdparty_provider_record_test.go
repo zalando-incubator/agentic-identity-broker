@@ -175,8 +175,44 @@ func TestRecordToEntity_RejectsCorruptClientRegistration(t *testing.T) {
 			var storageErr *storage.StorageError
 			require.ErrorAs(t, err, &storageErr)
 			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+			assert.ErrorContains(t, err, record.ID)
 		})
 	}
+}
+
+func TestRecordToEntity_AllowsUnsafeStoredDiscoveryURLForAdministrativeReads(t *testing.T) {
+	record, err := entityToRecord(newTestEntity())
+	require.NoError(t, err)
+	unsafeURL := "https://10.0.0.1/resource"
+	record.ResourceURL = &unsafeURL
+	record.MetadataURL = nil
+	record.EnableDiscovery = true
+	record.AuthorizationParams = providerAuthorizationParams{"resource": unsafeURL}
+
+	stored, err := recordToEntity(record)
+	require.NoError(t, err)
+	assert.Equal(t, &unsafeURL, stored.Discovery.ResourceURL)
+	assert.ErrorIs(t, stored.ValidateStoredClientAuthentication(), model.ErrUnsafeDiscoveryResourceURL)
+}
+
+func TestRecordToEntity_RejectsDiscoveredCIMDPublicClient(t *testing.T) {
+	entity := newTestEntity()
+	entity.ClientRegistration = model.ClientRegistrationCIMD
+	entity.ClientID = id.ClientID("https://broker.example.test/.well-known/oauth-client/" + entity.ID.String())
+	entity.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	entity.Secret = model.NewAbsentSecret()
+	record, err := entityToRecord(entity)
+	require.NoError(t, err)
+	method := string(model.ClientBootstrapCIMD)
+	record.ClientMethod = &method
+
+	stored, err := recordToEntity(record)
+	require.Error(t, err)
+	assert.Nil(t, stored)
+	assert.ErrorContains(t, err, record.ID)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
 }
 
 func TestRecordToEntity_Success(t *testing.T) {

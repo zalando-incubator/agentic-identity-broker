@@ -232,7 +232,7 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 // recordToEntity converts a ThirdpartyOAuth2ProviderRecord to a ThirdpartyOAuth2ProviderEntity.
 // The resulting entity's Secret is encrypted when ciphertext is stored or absent when it is NULL.
 // The domain service must decrypt encrypted secrets before they can be used for OAuth2 operations.
-// Invalid identities or source-specific credential states return storage validation errors.
+// Invalid client registration or authentication state returns a storage validation error.
 func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	if record == nil {
 		return nil, nil
@@ -250,7 +250,8 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 
 	tokenEndpointAuthMethod, err := clientAuthenticationFromRecord(record)
 	if err != nil {
-		return nil, err
+		return nil, storage.NewStorageError("recordToEntity", storage.ErrorKindValidation, err,
+			fmt.Sprintf("service %s: stored client registration or authentication is invalid", serviceID))
 	}
 	secret := model.NewAbsentSecret()
 	if record.SecretCiphertext != nil {
@@ -318,9 +319,6 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		entity.ProtectedResources = make([]string, len(record.ProtectedResources))
 		copy(entity.ProtectedResources, record.ProtectedResources)
 	}
-	if err := entity.ValidateStoredClientAuthentication(); err != nil {
-		return nil, invalidProviderRecord("stored client registration or authentication is invalid")
-	}
 
 	return entity, nil
 }
@@ -343,6 +341,10 @@ func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (mod
 	} else if (record.TokenEndpointAuthMethod != nil && *record.TokenEndpointAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT)) ||
 		(record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapCIMD)) {
 		return "", invalidProviderRecord("stored client_registration is incompatible with client authentication")
+	}
+	if record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapCIMD) &&
+		(record.TokenEndpointAuthMethod == nil || *record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT)) {
+		return "", invalidProviderRecord("discovered CIMD requires private_key_jwt authentication")
 	}
 	switch model.CredentialSource(record.CredentialSource) {
 	case model.CredentialSourceFilesystem:

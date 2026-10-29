@@ -47,6 +47,8 @@ Reject `client_registration: cimd` with `400` for `oauth2_flavor: google` or `cr
 
 At startup, every persisted `cimd` service must satisfy `client_id == <server.enduser.public_url>/.well-known/oauth-client/<service-id>`. A mismatch stops startup. Run `EnsureInitialKey` and `RequireUsablePublishedKey` only if at least one CIMD confidential service exists. CIMD public services never create, require, or block on a CIMD client-authentication key. This extends feature 046 identity checks without changing ADR 037 key lifecycle.
 
+PostgreSQL reads check the stored registration and authentication state. An invalid state returns an error with the service ID. Reads do not repeat write-time validation of `discovery.resource_url`. An older URL that becomes blocked must not stop service lists or startup. Writes still validate the URL, and the guarded outbound client rejects unsafe destinations.
+
 ### 7. D-G — Make full-replacement transitions explicit
 
 The valid manual service combinations are:

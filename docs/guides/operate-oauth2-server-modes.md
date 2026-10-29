@@ -265,6 +265,12 @@ document for up to 300 seconds. See [manage agents and services](/docs/guides/ma
 for service registration and replacement.
 
 
+## Persisted third-party service reads
+
+Startup checks that each CIMD client ID matches the configured public URL. A stored registration or authentication error identifies the service ID. The broker does not validate stored `discovery.resource_url` values during reads or startup. Thus, an older URL that becomes blocked does not stop service lists or replicas from starting.
+
+New service writes reject unsafe discovery URLs. The guarded outbound client also rejects unsafe destinations. Update the affected service with a valid URL before you retry discovery.
+
 ## Custom token claims with CEL
 
 In local and hybrid modes, `local.token_claims_expression` can add claims to broker-issued
