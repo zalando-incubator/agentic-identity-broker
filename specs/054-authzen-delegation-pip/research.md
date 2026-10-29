@@ -96,8 +96,8 @@ It owns the AuthZEN request invariants and turns the resolution result into one 
 The service also performs these steps:
 
 - It validates `subject.type`, `action.name`, and `resource.type` (FR-003).
-- It compares the optional `context.agent` anchor with the resolved agent after resolution and
-  before the outcome is built (FR-005).
+- It passes the optional `context.agent` anchor as `ExpectedAgentID` to the shared resolver,
+  which compares it after agent load and before any grant read (FR-005).
 - It computes freshness (R5).
 - It builds the Delegation Context (R4).
 
@@ -373,8 +373,10 @@ and the AGENTS invariant). It contains:
 - `resolver.go`: `Resolver` with a permit-only cache keyed by the struct
   `cacheKey{subjectToken, resourceURI}` (the same separator-safe pattern as ADR 012), a
   `sync.RWMutex`, `singleflight`, and eviction.
-  - An entry stays until the result's `Deadline`. The client already rejected an unusable
-    `max-age`, so every permit that reaches the cache has a future deadline (FR-015).
+  - An entry expires at the result's original `Deadline`. A positive `max-age` does not
+    guarantee that the deadline is still in the future when a delayed response arrives.
+    Receipt, insertion and singleflight delivery never renew it; a result received after its
+    deadline cannot be a cache hit or reach policy (FR-015; R14).
   - A lookup returns an entry only while `now < Deadline`. A hit returns the stored
     deadline unchanged.
   - Denials and errors are never cached.
