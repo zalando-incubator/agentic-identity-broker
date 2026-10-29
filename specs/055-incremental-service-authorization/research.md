@@ -42,7 +42,10 @@ re-specified for every consumer.
 **Decision**:
 
 - Authorization grants each virtual scope in the form the client requested. The broker does not
-  rewrite it. Duplicate scopes for the same service collapse to the first occurrence.
+  rewrite it. Repeated identical scope tokens collapse to their first occurrence. Canonical and
+  UUID tokens for the same service form one Requested Service Set entry, but both distinct raw
+  tokens remain granted and bound to that service. This follows FR-020 and the data model's
+  `Scopes []VirtualServiceScope`; deduplicating services must not rewrite the granted scope set.
   Challenges always emit the current canonical form, or the UUID form when the service has no
   canonical ID.
 - When the authorization endpoint resolves a virtual scope, it records a **service-scope binding**

@@ -8,8 +8,9 @@ repeating them. All values are synthetic and follow the spec's shared cast.
 ## Prerequisites
 
 - `just install-tools` has completed, including Playwright browsers.
-- Docker or Podman is available for infrastructure-backed integration tests and agentgateway E2E
-  scenarios.
+- Docker or Podman is available for infrastructure-backed integration tests and the full
+  verification gate's container-backed suites. This feature's broker-plus-ExtProc challenge tests
+  use `bootstrap.ExtProcEnvironment` and assert gRPC immediate responses without a gateway container.
 - The maintainer has approved the items in [plan.md › Approval Items](./plan.md#approval-items).
   ADRs 045 and 046 have been moved to `adrs/` with an Accepted status.
 
@@ -47,11 +48,32 @@ Run the suites below, or the whole E2E set:
 
 | Suite | Proves |
 |---|---|
-| `tests/e2e/incremental_authorization_test.go` | Story 1, Scenarios 1–7; Story 3, Scenarios 1 and 4; Story 4, Scenarios 2 and 3. It covers the `scope` member on exchange errors, refresh widening that is refused without rotation, focused consent, `requested_service_ids`, submission enforcement, code exchange with visible virtual scopes, local refresh recheck, and the rename and reuse cases. |
+| `tests/e2e/incremental_authorization_test.go` | Story 1, Scenarios 2, 3, 5, 6 and 7; Story 3, Scenarios 1 and 4; Story 4, Scenarios 2 and 3. Complete authorization/consent/code/refresh/exchange journeys cover non-consuming widening refusal, server-derived coverage, submission enforcement, exact visible scopes, local refresh rechecks, and rename/reuse identity continuity. |
 | `tests/e2e/incremental_authorization_proxy_test.go` | Story 3, Scenarios 2 and 3. A mock upstream IdP records the received `scope`: virtual scopes never appear, and the rotated upstream refresh token is returned unchanged. |
-| `tests/e2e/service_session_page_test.go` | Story 2, Scenarios 1–4 at the API level: `GET /api/third-party/sessions/{service}` for both identifier forms, `session: null`, `401` and `404`, and the recovery return to `/sessions/<identifier>`. |
-| `tests/e2e/extproc/incremental_authorization_challenge_test.go` | Story 1, Scenario 1 (gateway half) and Story 4, Scenario 1: the challenge with and without `resource_metadata_url` metadata. |
-| `tests/e2e/frontend/incremental_authorization_test.go` | Consent States C and D, plus the service page States A and B. It saves screenshots to `tests/e2e/screenshots/`. |
+| `tests/e2e/service_session_page_test.go` | Story 2, Scenarios 1, 3 and 4: both detail identifiers, `session: null`, `401` and `404`, principal isolation, provider login/callback to the same service page and successful exchange after direct recovery. |
+| `tests/e2e/incremental_authorization_gateway_test.go` | Story 1, Scenario 1 and Story 4, Scenario 1. Each owns one complete broker-plus-ExtProc scenario, including persisted provider rejection, scope/action propagation and unchanged elicitation, with metadata-present/absent variants. |
+| `tests/e2e/incremental_authorization_docs_test.go` | Story 4, Scenario 4: live discovery excludes virtual scopes and the operator guide's route/config example agrees with the contract. |
+| `tests/e2e/frontend/incremental_authorization_test.go` | Story 1, Scenario 4 and Story 2, Scenario 2. Consent States C/D and service-page States A/B are exercised through the existing page objects, including login, Save/tool retry and refresh/termination. |
+
+The [task mapping](./tasks.md#acceptance-scenario--task-mapping) assigns exactly one owning `It`
+to each of the 19 scenarios; supporting unit/integration assertions do not duplicate acceptance
+ownership. Run `just test-e2e-backend` for these broker-plus-ExtProc and proxy journeys, and
+`just test-e2e-frontend` for the two browser journeys.
+
+### Maintained UI captures
+
+Normal verification does not capture screenshots. For maintained artifacts, use the existing
+capture-enabled serial frontend harness:
+
+```bash
+E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
+```
+
+The harness stages captures under `coverage/screenshots/` relative to the frontend suite working
+directory. Retain the four plan-named images under `tests/e2e/screenshots/` using existing screenshot
+handling; do not modify workflows. Verify consent C/D and session A/B against the spec's Wireloom
+states. Task T010 records the design-system composition decisions here during implementation;
+no frontend design review or capture is claimed by task generation.
 
 ## 4. Manual spot check (optional)
 
@@ -85,4 +107,16 @@ Trigger an exchange error.
 Rolling back requires reverting the code first, then migration 046. Rolling back the code alone is
 not enough: the pre-feature broker treats a granted virtual scope as an ordinary scope string.
 After the rollback, affected clients may need to authorize again. No user session or grant data is
-lost.
+lost. The discarded service-scope bindings cannot be recovered by reapplying migration 046;
+affected clients need fresh interactive authorization to reestablish identity pinning.
+
+## 7. Full completion gate
+
+```bash
+just verify
+```
+
+All tasks, including migration/repository validation and the complete acceptance journeys, remain
+required. Unavailable PostgreSQL/container/browser infrastructure is a validation blocker, not a
+passing or optional check. The implementation report must distinguish successful commands from
+remaining validation and leave unfinished tasks unchecked.
