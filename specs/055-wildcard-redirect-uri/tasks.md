@@ -110,21 +110,21 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Design Phase Verification
 
-- [ ] T023 Verify every task maps to a spec requirement, acceptance scenario, or binding constraint in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/tasks.md` (Feature Scope & Deferred Findings).
-- [ ] T024 Verify the domain model and new glossary term are documented in `specs/055-wildcard-redirect-uri/data-model.md` and `ARCHITECTURE.md` (Principles II and V).
-- [ ] T025 Verify API contracts and examples are documented and stakeholder confirmation is recorded in `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, `docs/api/enduser-api.md`, and `specs/055-wildcard-redirect-uri/contracts/redirect-uri.md` (Principles IV and X).
-- [ ] T026 Verify the no-configuration, no-Helm, and no-database-change decisions are documented in `specs/055-wildcard-redirect-uri/plan.md` and `specs/055-wildcard-redirect-uri/data-model.md` (Principles VII and IX).
-- [ ] T027 Verify the concrete journeys and all nine scenario-to-test mappings remain aligned in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
+- [X] T023 Verify every task maps to a spec requirement, acceptance scenario, or binding constraint in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/tasks.md` (Feature Scope & Deferred Findings).
+- [X] T024 Verify the domain model and new glossary term are documented in `specs/055-wildcard-redirect-uri/data-model.md` and `ARCHITECTURE.md` (Principles II and V).
+- [X] T025 Verify API contracts and examples are documented and stakeholder confirmation is recorded in `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, `docs/api/enduser-api.md`, and `specs/055-wildcard-redirect-uri/contracts/redirect-uri.md` (Principles IV and X).
+- [X] T026 Verify the no-configuration, no-Helm, and no-database-change decisions are documented in `specs/055-wildcard-redirect-uri/plan.md` and `specs/055-wildcard-redirect-uri/data-model.md` (Principles VII and IX).
+- [X] T027 Verify the concrete journeys and all nine scenario-to-test mappings remain aligned in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
 
 ### Implementation Phase Verification
 
-- [ ] T028 Review `internal/domain/urivalidation/redirect.go` and `internal/domain/oauth2/service.go` to confirm PSL-boundary enforcement, exact non-host components, source-specific matching, and fail-closed behavior (FR-003-FR-010, SR-001-SR-004).
-- [ ] T029 Verify unit tests were written first, failed semantically, and then passed in `internal/domain/urivalidation/redirect_test.go`, `internal/domain/urivalidation/redirect_wildcard_security_test.go`, `internal/domain/storage/agent_test.go`, and `internal/domain/oauth2/service_test.go` (Principle VIII).
-- [ ] T030 Verify all nine acceptance scenarios have exactly one Ginkgo `It()` with a spec reference and now pass in `tests/e2e/wildcard_redirect_uri_test.go` (Principle XIII).
-- [ ] T031 Verify no frontend changes, unrelated remediations, or deployment-specific configuration were added; check the scope recorded in `specs/055-wildcard-redirect-uri/plan.md` (FR-011, SC-006).
-- [ ] T032 Run `just check` from `justfile` and resolve formatting, vet, and lint failures (Principle VIII).
-- [ ] T033 Run `just test` from `justfile` and resolve Go test failures (Principle VIII).
-- [ ] T034 Run `just test-e2e-backend` from `justfile` and resolve backend E2E failures (Principle XIII).
+- [X] T028 Review `internal/domain/urivalidation/redirect.go`, `internal/domain/oauth2/service.go`, and `internal/domain/oauth2server/provider.go` to confirm PSL-boundary enforcement, exact non-host components, source-specific matching, and fail-closed behavior (FR-003-FR-010, SR-001-SR-004).
+- [X] T029 Verify unit tests were written first, failed semantically, and then passed in `internal/domain/urivalidation/redirect_test.go`, `internal/domain/urivalidation/redirect_wildcard_security_test.go`, `internal/domain/storage/agent_test.go`, `internal/domain/oauth2/service_test.go`, and `internal/domain/oauth2server/provider_test.go` (Principle VIII).
+- [X] T030 Verify all nine acceptance scenarios have exactly one Ginkgo `It()` with a spec reference and now pass in `tests/e2e/wildcard_redirect_uri_test.go` (Principle XIII).
+- [X] T031 Verify no frontend changes, unrelated remediations, or deployment-specific configuration were added; check the scope recorded in `specs/055-wildcard-redirect-uri/plan.md` (FR-011, SC-006).
+- [X] T032 Run `just check` from `justfile` and resolve formatting, vet, and lint failures (Principle VIII).
+- [X] T033 Run `just test` from `justfile` and resolve Go test failures (Principle VIII).
+- [X] T034 Run `just test-e2e-backend` from `justfile` and resolve backend E2E failures (Principle XIII).
 - [ ] T035 Before external preview validation, confirm the separate test deployment has reconciled the callback registration for existing and newly created test Agents (SC-001).
 
 ## Dependencies and Execution Order
