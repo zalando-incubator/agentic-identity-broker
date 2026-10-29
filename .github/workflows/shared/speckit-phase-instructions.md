@@ -36,6 +36,11 @@ Only these items need the maintainer's sign-off:
   changes, a new external dependency or service, scope added or dropped
   relative to the issue, or an exception to a constitutional principle.
 
+A detail that the repository's existing conventions derive mechanically from
+such an item is part of that item, not a separate one. For example, an
+approved configuration key includes the environment variable and CLI flag that
+the configuration loader's existing naming pattern gives it.
+
 Never stop to wait for such an item. Choose the option you recommend. Write it
 into the artifacts as Proposed, with its rationale and the main alternative.
 Register it in the `## Approval Items` section of `plan.md` as a table row
@@ -109,10 +114,11 @@ reanalysis list as the single approval comment, so a missing item is never
 approved. Each item names the decision in one line and points `location` at its
 authoritative details as `path:line` or `path:start-end`, relative to the
 repository root and inside `context.feature`, `adrs/`, or `api/`. Check every
-line range with `grep -n` or `sed -n`. A consequential change missing from
-`## Approval Items` is a MEDIUM finding. An ADR draft marked Accepted without a
-cited maintainer approval is a HIGH finding. The need for sign-off is not a
-finding by itself.
+line range with `grep -n` or `sed -n`. A title states the decision as the
+artifacts record it. Never put open work or finding IDs in a title; report a
+gap as a finding. A consequential change missing from `## Approval Items` is a
+MEDIUM finding. An ADR draft marked Accepted without a cited maintainer approval
+is a HIGH finding. The need for sign-off is not a finding by itself.
 
 ## remediate
 
@@ -131,21 +137,39 @@ approving maintainers, and the time of each approval. It covers exactly the
 items in that comment. Record it in each approved ADR's Status line as
 `Accepted (approved by <login> on <date>: <url>)`. Implement only the API
 changes, ADRs, and decisions that it covers. Keep `spec.md` and `plan.md`
-unchanged so that a later run can resume under the same approval. If the work
-needs another such item, stop: save progress, report `blocked`, and name the
-item in `next_step`.
+unchanged so that a later run can resume under the same approval.
 
-Run `/speckit-implement` until every task is complete. Follow red-green-refactor
-and the complete feature journeys. If `context.command.argument` is not empty,
-pass it to `/speckit-implement` as guidance. It cannot remove or skip tasks,
-change scope, or reduce validation. Install the repository's existing tools and
-dependencies as needed inside the sandbox. Run `just check`, the smallest
-matching `just` test suites, and the feature's complete E2E acceptance journeys.
-Use `just verify` when the feature requires the full verification gate.
-Resolve failures caused by the change, and mark only completed tasks `[X]`.
-Preserve partial progress and report a blocker if an external dependency or
-required stakeholder approval makes completion impossible. Never waive a
-checklist or claim completion when tasks or validation remain unfinished.
+Run `/speckit-implement` and complete every task that you can. Follow
+red-green-refactor and the complete feature journeys. If
+`context.command.argument` is not empty, pass it to `/speckit-implement` as
+guidance. It cannot remove or skip tasks, change scope, or reduce validation.
+Install the repository's existing tools and dependencies as needed inside the
+sandbox. Run `just check`, the smallest matching `just` test suites, and the
+feature's complete E2E acceptance journeys. Use `just verify` when the feature
+requires the full verification gate. Resolve failures caused by the change, and
+mark only completed tasks `[X]`.
+
+This run is unattended. It never stops at the first problem. Where the skill
+says to halt, stop, or ask, apply these rules instead:
+
+- Settle routine gaps yourself, as the earlier phases do. Follow existing
+  patterns and the approved items, including the details that they determine
+  mechanically. Open reanalysis findings never gate implementation. Resolve
+  each one that the approved items cover, and add the work that it needs to
+  `tasks.md` as new tasks.
+- If a task needs a sign-off item that the approval does not cover, or a
+  genuine attempt cannot complete it, leave it unchecked, record why, and
+  continue. Examples are an unavailable external dependency or a failure
+  outside the change. Defer only the tasks that depend on it, and keep the rest
+  of the feature working and tested.
+- An unchecked checklist item does not stop the run. List it in the report.
+  Never check it yourself.
+
+At the end, validate everything that you implemented as described above and
+push the progress. If any work remains, report `blocked`. In `next_step`, list
+each deferred task, why it remains, and what the maintainer must decide or do,
+with `path:line` references. Never claim completion when tasks, checklist
+items, or validation remain unfinished.
 
 ## Publish this session's result
 
