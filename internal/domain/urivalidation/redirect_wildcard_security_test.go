@@ -40,3 +40,29 @@ func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+	}{
+		{
+			name:       "mixed-case marker remains literal",
+			registered: "https://*.AIBWILDCARDMARKER.preview.example.com/callback",
+			incoming:   "https://preview.attacker.preview.example.com/callback",
+		},
+		{
+			name:       "IDNA-mapped marker remains literal",
+			registered: "https://*.\uff41\uff49\uff42\uff57\uff49\uff4c\uff44\uff43\uff41\uff52\uff44\uff4d\uff41\uff52\uff4b\uff45\uff52.preview.example.com/callback",
+			incoming:   "https://preview.attacker.preview.example.com/callback",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if MatchesAgentRedirectURI(test.registered, test.incoming) {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", test.registered, test.incoming)
+			}
+		})
+	}
+}
