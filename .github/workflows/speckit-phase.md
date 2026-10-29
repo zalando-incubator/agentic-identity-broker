@@ -26,6 +26,8 @@ permissions:
   issues: read
   pull-requests: read
 safe-outputs:
+  report-failure-as-issue:
+    - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   push-to-pull-request-branch:

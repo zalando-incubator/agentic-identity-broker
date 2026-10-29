@@ -12,6 +12,8 @@ const {
   requireResult,
   prepare,
   verify,
+  publishApprovals,
+  report,
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
@@ -61,6 +63,23 @@ function review(body, overrides = {}) {
   };
 }
 
+function approvalComment(state = {}, overrides = {}) {
+  const marker = JSON.stringify({ reanalysis: 13, head: "a".repeat(40), items: 1, tree: "tree-1", files: {}, ...state });
+  return {
+    id: 50, body: `## Spec Kit approval\n\nReact with 👍.\n\n<!-- speckit-approval: ${marker} -->\n`,
+    html_url: "https://github.com/example/broker/pull/42#issuecomment-50",
+    issue_url: "https://api.github.com/repos/example/broker/issues/42",
+    user: { login: "github-actions[bot]", type: "Bot" }, updated_at: "2026-10-28T10:00:00Z", ...overrides,
+  };
+}
+
+function thumbs(content = "+1", overrides = {}) {
+  return {
+    comment_id: 50, content, created_at: "2026-10-28T10:05:00Z",
+    user: { login: "maintainer", type: "User" }, ...overrides,
+  };
+}
+
 function reviewEvent(entry) {
   return { action: "submitted", pull_request: { number: 42 }, review: entry };
 }
@@ -84,6 +103,9 @@ function fixture(eventName, payload, options = {}) {
     ...options.pr,
   };
   const contentReads = [];
+  const created = [];
+  const deleted = [];
+  const sources = { ...files, ...options.extra };
   const github = {
     rest: {
       repos: {
@@ -108,12 +130,15 @@ function fixture(eventName, payload, options = {}) {
             error.status = 404;
             throw error;
           }
+          if (path === "specs") return { data: [{ path: spec, type: "dir", sha: options.tree || "tree-1" }] };
+          const content = path === ".specify/feature.json" ? JSON.stringify({ feature_directory: spec }) : sources[path];
+          if (content === undefined) {
+            const error = new Error("Not found");
+            error.status = 404;
+            throw error;
+          }
           return {
-            data: { type: "file", encoding: "base64", content: Buffer.from(
-              path === ".specify/feature.json"
-                ? JSON.stringify({ feature_directory: spec })
-                : files[path],
-            ).toString("base64") },
+            data: { type: "file", encoding: "base64", sha: `blob:${content}`, content: Buffer.from(content).toString("base64") },
           };
         },
       },
@@ -127,12 +152,25 @@ function fixture(eventName, payload, options = {}) {
         listComments: async () => ({ data: options.comments || [] }),
         get: async () => ({ data: options.issue }),
         getComment: async ({ comment_id }) => ({ data: options.comments.find((entry) => entry.id === comment_id) }),
+        createComment: async (args) => {
+          created.push(args);
+          return { data: { id: 900 + created.length, html_url: `https://github.com/example/broker/pull/42#issuecomment-${900 + created.length}`, ...args } };
+        },
+        deleteComment: async ({ comment_id }) => {
+          deleted.push(comment_id);
+          return { data: {} };
+        },
+      },
+      reactions: {
+        listForIssueComment: async ({ comment_id }) => ({
+          data: (options.reactions || []).filter((entry) => entry.comment_id === comment_id),
+        }),
       },
     },
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads,
+    github, calls, contentReads, created, deleted,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -329,7 +367,7 @@ test("/speckit-plan and /speckit-implement enforce the same gates as their label
     comments: [...clarified, comment(result("analyze"), { id: 12 })],
   })), /reanaly/i);
   assert.deepEqual(await route(fixture("issue_comment", implement, {
-    comments: [...clarified, comment(result("reanalyze"), { id: 13 })],
+    comments: [...clarified, comment(result("reanalyze"), { id: 13 }), approvalComment()], reactions: [thumbs()],
   })), { action: "implement", issue: 7, pr: 42, comment: 20 });
   for (const pr of [
     { head: { ref: "speckit/issue-7", repo: { full_name: "outsider/broker" } } },
@@ -431,7 +469,8 @@ test("planning and implementation follow a specification revised by a later phas
   }).github, inputs: { phase: "plan", pr: 42 } }), /waiting/);
   const implement = commandEvent(command("/speckit-implement"));
   assert.equal((await route(fixture("issue_comment", implement, {
-    comments: [clarified, remediated, comment(result("reanalyze"), { id: 14 })],
+    comments: [clarified, remediated, comment(result("reanalyze"), { id: 14 }), approvalComment({ reanalysis: 14 })],
+    reactions: [thumbs()],
   }))).action, "implement");
 });
 
@@ -601,7 +640,7 @@ test("a visible result heading isolates the result from JSON examples in the rep
 test("result command rejects reserved markers in reports before publishing", () => {
   const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
   const context = { phase: "analyze", run: "100/1", feature: spec };
-  const draft = { status: "complete", report: "Analysis report", findings: [], questions: [] };
+  const draft = { status: "complete", report: "Analysis report", findings: [], questions: [], approvals: [] };
   const saved = [];
   const local = {
     "/tmp/gh-aw/speckit/context.json": context,
@@ -630,7 +669,7 @@ test("result command rejects reserved markers in reports before publishing", () 
     ...comment(result("analyze")),
     body: `${saved[0].body}\n<!-- gh-aw-workflow-call-id: example/broker/speckit-analyze -->`,
   });
-  assert.deepEqual(published, result("analyze", { answer_id: 0 }));
+  assert.deepEqual(published, result("analyze", { answer_id: 0, approvals: [] }));
   saved.length = 0;
   for (const report of ["Quoted ## Spec Kit result", `## Spec Kit result\n${comment(result("reanalyze")).body}`]) {
     draft.report = report;
@@ -657,8 +696,8 @@ test("a clean initial analysis cannot bypass the independent reanalysis", async 
   const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
   const comments = [comment(result("clarify")), comment(result("analyze"), { id: 12 })];
   await assert.rejects(route(fixture("pull_request_target", payload, { comments })), /reanaly/i);
-  comments.push(comment(result("reanalyze"), { id: 13 }));
-  assert.equal((await route(fixture("pull_request_target", payload, { comments }))).action, "implement");
+  comments.push(comment(result("reanalyze"), { id: 13 }), approvalComment());
+  assert.equal((await route(fixture("pull_request_target", payload, { comments, reactions: [thumbs()] }))).action, "implement");
 });
 
 test("queued maintainer replies are accepted once even if the next questions were posted later", async () => {
@@ -741,7 +780,9 @@ test("workers re-validate the command comment before using its parameter", async
   await assert.rejects(prepare({ ...tasks, inputs: { phase: "tasks", pr: 42, comment: 20 } }), /command/);
 
   const implement = fixture("issue_comment", {}, {
-    comments: [comment(result("reanalyze")), command("/speckit-implement Start with the storage adapters")],
+    comments: [comment(result("reanalyze")), command("/speckit-implement Start with the storage adapters"),
+      approvalComment({ reanalysis: 11 })],
+    reactions: [thumbs()],
   });
   const implementation = await prepare({ ...implement, inputs: { phase: "implement", pr: 42, comment: 20 } });
   assert.equal(implementation.command.argument, "Start with the storage adapters");
@@ -907,4 +948,244 @@ test("final verification accepts unanswered clarification without falsely comple
   const pending = result("clarify", { status: "waiting", questions: ["Which policy applies?"] });
   const f = fixture("issues", {}, { comments: [comment(pending)] });
   assert.equal((await verify({ ...f, comment: 11, phase: "clarify" })).status, "waiting");
+});
+
+test("implementation requires a maintainer 👍 on the approval comment for the current reanalysis and artifacts", async (t) => {
+  preparationIO(t);
+  const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
+  const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 })];
+  const attempt = (options) => route(fixture("pull_request_target", payload, {
+    permissions: { contributor: "read" }, ...options, comments: [...reviewed, ...(options.comments || [])],
+  }));
+  await assert.rejects(attempt({}), /No approval comment/);
+  const planted = approvalComment({}, { user: { login: "maintainer", type: "User" } });
+  await assert.rejects(attempt({ comments: [planted], reactions: [thumbs()] }), /No approval comment/);
+  const agentWritten = approvalComment({ items: 0 });
+  agentWritten.body += "\n<!-- gh-aw-agentic-workflow: Spec Kit Plan, engine: pi, workflow_id: speckit-plan -->\n";
+  await assert.rejects(attempt({ comments: [agentWritten] }), /No approval comment/);
+  await assert.rejects(attempt({ comments: [approvalComment({ reanalysis: 12 })], reactions: [thumbs()] }), /earlier reanalysis/);
+  await assert.rejects(attempt({ comments: [approvalComment()], reactions: [thumbs()], tree: "tree-2" }), /changed after the approval/);
+  const external = { files: { "api/enduser/openapi.yaml": "blob:reviewed" } };
+  await assert.rejects(attempt({
+    comments: [approvalComment(external)], reactions: [thumbs()], extra: { "api/enduser/openapi.yaml": "edited" },
+  }), /changed after the approval/);
+  for (const reactions of [
+    [],
+    [thumbs("+1", { user: { login: "contributor", type: "User" } })],
+    [thumbs("+1", { user: { login: "coderabbitai[bot]", type: "Bot" } })],
+    [thumbs("+1", { created_at: "2026-10-28T09:59:59Z" })],
+    [thumbs("heart")],
+    [thumbs("+1", { comment_id: 49 })],
+  ]) await assert.rejects(attempt({ comments: [approvalComment()], reactions }), /Approval pending/);
+  await assert.rejects(attempt({
+    comments: [approvalComment()], reactions: [thumbs(), thumbs("-1", { user: { login: "reviewer", type: "User" } })],
+  }), /reacted 👎/);
+  await assert.rejects(attempt({
+    comments: [approvalComment({}, { id: 49 }), approvalComment({}, { id: 51 })], reactions: [thumbs("+1", { comment_id: 49 })],
+  }), /Approval pending/);
+  assert.equal((await attempt({
+    comments: [approvalComment(external)], reactions: [thumbs()], extra: { "api/enduser/openapi.yaml": "reviewed" },
+  })).action, "implement");
+  assert.equal((await attempt({ comments: [approvalComment({ items: 0 })] })).action, "implement");
+  const f = fixture("pull_request_target", {}, { comments: [...reviewed, approvalComment()], reactions: [thumbs()] });
+  assert.deepEqual((await prepare({ ...f, inputs: { phase: "implement", pr: 42 } })).approval, {
+    url: approvalComment().html_url, items: 1, approvers: [{ login: "maintainer", at: "2026-10-28T10:05:00Z" }],
+  });
+  const unapproved = fixture("pull_request_target", {}, { comments: [...reviewed, approvalComment()] });
+  await assert.rejects(prepare({ ...unapproved, inputs: { phase: "implement", pr: 42 } }), /Approval pending/);
+});
+
+test("a blocked implementation resumes under its approval although it changed the feature directory", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
+  const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
+  const partial = comment(result("implement", { status: "blocked", next_step: "Approve the new claim" }), { id: 60 });
+  assert.equal((await route(fixture("pull_request_target", payload, {
+    comments: [...reviewed, partial], reactions: [thumbs()], tree: "tree-2",
+  }))).action, "implement");
+  await assert.rejects(route(fixture("pull_request_target", payload, {
+    comments: [...reviewed, partial], tree: "tree-2",
+  })), /Approval pending/);
+  const earlier = comment(result("implement", { status: "blocked", next_step: "Old" }), { id: 45 });
+  await assert.rejects(route(fixture("pull_request_target", payload, {
+    comments: [...reviewed, earlier], reactions: [thumbs()], tree: "tree-2",
+  })), /changed after the approval/);
+});
+
+test("the approval comment lists each item with a pinned link, replaces the previous one, and binds the reviewed state", async () => {
+  const head = "a".repeat(40);
+  const contract = `${spec}/contracts/api.yaml`;
+  const extra = { [contract]: "openapi: 3.1.0\npaths:\n  /token:\n    post: {}\n", "adrs/044-agent.md": "# ADR 044\nStatus: Proposed\n" };
+  const approvals = [
+    { kind: "api", title: "Adds | the token @team claim <b>", location: `${contract}:3-4` },
+    { kind: "adr", title: "Accept ADR 044", location: "adrs/044-agent.md:2" },
+  ];
+  const reanalysis = comment(result("reanalyze", { approvals }), { id: 13 });
+  const f = fixture("pull_request_target", {}, { comments: [reanalysis, approvalComment({ reanalysis: 12 }, { id: 40 })], extra });
+  const posted = await publishApprovals({ ...f, comment: 13 });
+  assert.deepEqual(f.deleted, [40]);
+  assert.equal(f.created.length, 1);
+  const { body } = f.created[0];
+  assert.match(body, /React with 👍 to approve all 2 items below for commit `aaaaaaa`/);
+  assert.ok(body.includes(`| A1 | API | Adds \\| the token @​team claim &lt;b> | [\`${contract}:3-4\`](https://github.com/example/broker/blob/${head}/${contract}#L3-L4) |`));
+  assert.ok(body.includes(`| A2 | ADR | Accept ADR 044 | [\`adrs/044-agent.md:2\`](https://github.com/example/broker/blob/${head}/adrs/044-agent.md#L2) |`));
+  assert.deepEqual(JSON.parse(body.match(/<!-- speckit-approval: (.*) -->/)[1]), {
+    reanalysis: 13, head, items: 2, tree: "tree-1", files: { "adrs/044-agent.md": `blob:${extra["adrs/044-agent.md"]}` },
+  });
+  const approved = { ...posted, user: { login: "github-actions[bot]", type: "Bot" }, updated_at: "2026-10-28T10:00:00Z" };
+  assert.equal((await route(fixture("issue_comment", commandEvent(command("/speckit-implement")), {
+    comments: [comment(result("clarify")), reanalysis, approved], extra,
+    reactions: [thumbs("+1", { comment_id: posted.id })],
+  }))).action, "implement");
+  for (const location of ["internal/app/builder.go:1", `${contract}:4-9`]) {
+    const invalid = comment(result("reanalyze", { approvals: [{ kind: "decision", title: "Fail closed", location }] }), { id: 13 });
+    const g = fixture("pull_request_target", {}, { comments: [invalid], extra: { ...extra, "internal/app/builder.go": "package app\n" } });
+    await assert.rejects(publishApprovals({ ...g, comment: 13 }), /must point into|past the end/);
+    assert.equal(g.created.length, 0);
+  }
+});
+
+test("blocking reanalysis findings withdraw the approval comment, and an empty list needs no approval", async () => {
+  const finding = { severity: "HIGH", summary: "Missing authorization", location: "spec.md:12", recommendation: "Specify it" };
+  const blocked = fixture("pull_request_target", {}, {
+    comments: [comment(result("reanalyze", { findings: [finding], approvals: [] }), { id: 13 }), approvalComment({ reanalysis: 12 }, { id: 40 })],
+  });
+  assert.equal(await publishApprovals({ ...blocked, comment: 13 }), null);
+  assert.deepEqual(blocked.deleted, [40]);
+  assert.equal(blocked.created.length, 0);
+  const clean = fixture("pull_request_target", {}, { comments: [comment(result("reanalyze", { approvals: [] }), { id: 13 })] });
+  await publishApprovals({ ...clean, comment: 13 });
+  assert.match(clean.created[0].body, /No API change, ADR, or consequential decision needs approval for commit `aaaaaaa`/);
+  assert.equal(JSON.parse(clean.created[0].body.match(/<!-- speckit-approval: (.*) -->/)[1]).items, 0);
+});
+
+test("approval items and next steps are validated before they reach the PR", () => {
+  for (const approvals of [
+    [{ kind: "api", title: "Adds a claim", location: "../secrets:1" }],
+    [{ kind: "api", title: "Adds a claim", location: `${spec}/spec.md:0` }],
+    [{ kind: "api", title: "Adds a claim", location: `${spec}/spec.md:5-3` }],
+    [{ kind: "api", title: "Adds a claim", location: `${spec}//spec.md:1` }],
+    [{ kind: "feature", title: "Adds a claim", location: `${spec}/spec.md:1` }],
+    [{ kind: "api", title: "Adds\na claim", location: `${spec}/spec.md:1` }],
+    [{ kind: "api", title: " ", location: `${spec}/spec.md:1` }],
+  ]) assert.equal(parseResult(comment(result("reanalyze", { approvals }))), null);
+  assert.equal(parseResult(comment(result("plan", { approvals: [] }))), null);
+  assert.equal(parseResult(comment(result("remediate", { status: "blocked", next_step: " " }))), null);
+  const valid = result("reanalyze", { approvals: [{ kind: "decision", title: "Fail closed", location: `${spec}/spec.md:1` }] });
+  assert.deepEqual(parseResult(comment(valid)), valid);
+});
+
+function resultCommand(context, draft, extra = {}) {
+  const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
+  const local = {
+    "/tmp/gh-aw/speckit/context.json": { run: "100/1", feature: spec, ...context },
+    "/tmp/gh-aw/speckit/result.json": { findings: [], questions: [], ...draft },
+    ".specify/feature.json": { feature_directory: spec },
+  };
+  const tracked = { ...files, ...extra };
+  const saved = [];
+  const io = {
+    readFileSync: (name) => {
+      name = name.replace(/^\/workspace\//, "");
+      return Object.hasOwn(local, name) ? JSON.stringify(local[name]) : tracked[name];
+    },
+    existsSync: (name) => Object.hasOwn(tracked, name),
+    lstatSync: () => ({ isSymbolicLink: () => false }),
+    writeFileSync: (name, body) => saved.push({ name, body }),
+  };
+  const run = () => {
+    const module = { exports: {} };
+    const load = (name) => name === "node:fs" ? io : require(name);
+    load.main = module;
+    vm.runInNewContext(source, {
+      module, require: load, process: { argv: ["node", "automation.cjs", "result"], cwd: () => "/workspace" },
+    });
+  };
+  const published = (workflow) => parseResult({
+    ...comment(result(context.phase)),
+    body: `${saved[0].body}\n<!-- gh-aw-workflow-call-id: example/broker/speckit-${workflow} -->`,
+  });
+  return { run, saved, published };
+}
+
+test("published results name the next step when blocked and list approval items after analysis", () => {
+  const contract = `${spec}/contracts/api.yaml`;
+  const extra = { [contract]: "openapi: 3.1.0\npaths: {}\n" };
+  const blocked = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked" }, extra);
+  assert.throws(blocked.run, /next step/);
+  const unlisted = resultCommand({ phase: "reanalyze" }, { status: "complete", report: "Reanalysis" }, extra);
+  assert.throws(unlisted.run, /approval items/);
+  for (const location of [`${spec}/contracts/missing.yaml:1`, `${contract}:2-9`]) {
+    const missing = resultCommand({ phase: "reanalyze" }, {
+      status: "complete", report: "Reanalysis", approvals: [{ kind: "api", title: "Adds a path", location }],
+    }, extra);
+    assert.throws(missing.run, /does not exist/);
+    assert.equal(missing.saved.length, 0);
+  }
+  const listed = resultCommand({ phase: "reanalyze" }, {
+    status: "complete", report: "Reanalysis",
+    approvals: [{ kind: "api", title: "Adds a path", location: `${contract}:2`, note: "dropped" }],
+  }, extra);
+  listed.run();
+  assert.deepEqual(listed.published("analyze").approvals, [{ kind: "api", title: "Adds a path", location: `${contract}:2` }]);
+  const stopped = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step: "Decide X" }, extra);
+  stopped.run();
+  assert.equal(stopped.published("phase").next_step, "Decide X");
+  const done = resultCommand({ phase: "remediate" }, { status: "complete", report: "Done", next_step: "Ignored" }, extra);
+  done.run();
+  assert.equal(done.published("phase").next_step, undefined);
+});
+
+test("a stopped run leaves one status comment that names the reason and the next step", async () => {
+  const bot = { login: "github-actions[bot]", type: "Bot" };
+  const issueURL = "https://api.github.com/repos/example/broker/issues/42";
+  const stale = { id: 60, body: "## Spec Kit stopped\n\nOld\n\n<!-- speckit-status -->\n", user: bot, issue_url: issueURL };
+  const implement = commandEvent(command("/speckit-implement"));
+  const rejected = fixture("issue_comment", implement, { comments: [stale] });
+  await report({ ...rejected, needs: { route: { result: "failure", outputs: { error: "Approval pending: react with 👍" } } } });
+  assert.deepEqual(rejected.deleted, [60]);
+  assert.equal(rejected.created[0].issue_number, 42);
+  assert.match(rejected.created[0].body, /\*\*Stopped in `route`:\*\* Approval pending: react with 👍/);
+  assert.match(rejected.created[0].body, /\[Workflow run\]\(https:\/\/github\.com\/example\/broker\/actions\/runs\/100\)/);
+
+  const quiet = fixture("issue_comment", implement, { comments: [stale] });
+  assert.equal(await report({ ...quiet, needs: { route: { result: "success", outputs: { action: "noop" } } } }), null);
+  assert.equal(quiet.created.length + quiet.deleted.length, 0);
+  const outsider = fixture("issue_comment", implement, { comments: [stale], permission: "read" });
+  assert.equal(await report({ ...outsider, needs: { route: { result: "failure", outputs: { error: "Lookup failed" } } } }), null);
+  assert.equal(outsider.created.length + outsider.deleted.length, 0);
+
+  const chain = {
+    reanalyze: { result: "skipped", outputs: {} }, verify: { result: "failure", outputs: {} },
+    route: { result: "success", outputs: { action: "plan", pr: "42" } }, plan: { result: "success", outputs: {} },
+    remediate: { result: "failure", outputs: {} },
+  };
+  const reportURL = "https://github.com/example/broker/pull/42#issuecomment-70";
+  const blocked = comment(result("remediate", { status: "blocked", next_step: "Decide @team whether X" }), { id: 70, html_url: reportURL });
+  const stopped = fixture("issue_comment", implement, { comments: [blocked] });
+  await report({ ...stopped, needs: chain });
+  assert.match(stopped.created[0].body, /\*\*Stopped in `remediate`:\*\* the phase is blocked/);
+  assert.ok(stopped.created[0].body.includes("**Next step:** Decide @​team whether X"));
+  assert.ok(stopped.created[0].body.includes(`Details: [remediate report](${reportURL})`));
+
+  const earlier = comment(result("remediate", { status: "blocked", run: "99/1", next_step: "Old" }), { id: 70 });
+  const crashed = fixture("issue_comment", implement, { comments: [earlier] });
+  await report({ ...crashed, needs: chain });
+  assert.match(crashed.created[0].body, /\*\*Stopped in `remediate`:\*\* the job failed before publishing a result/);
+
+  const green = {
+    route: { result: "success", outputs: { action: "plan", pr: "42" } },
+    reanalyze: { result: "success", outputs: {} }, approvals: { result: "success", outputs: {} },
+  };
+  const finding = { severity: "HIGH", summary: "Missing authorization", location: "spec.md:12", recommendation: "Specify it" };
+  const findings = fixture("issue_comment", implement, {
+    comments: [comment(result("reanalyze", { findings: [finding], approvals: [] }), { id: 71, html_url: reportURL })],
+  });
+  await report({ ...findings, needs: green });
+  assert.ok(findings.created[0].body.includes("- **HIGH** `spec.md:12`: Missing authorization"));
+  assert.ok(findings.created[0].body.includes(`Details: [reanalysis report](${reportURL})`));
+
+  const ready = fixture("issue_comment", implement, { comments: [comment(result("reanalyze", { approvals: [] }), { id: 71 }), stale] });
+  assert.equal(await report({ ...ready, needs: green }), null);
+  assert.deepEqual(ready.deleted, [60]);
+  assert.equal(ready.created.length, 0);
 });

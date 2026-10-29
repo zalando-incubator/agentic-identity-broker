@@ -8,6 +8,12 @@ const reviewCommands = ["clarify", "plan"];
 const documents = ["spec.md", "plan.md", "tasks.md"];
 const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
+const approvalKinds = { api: "API", adr: "ADR", decision: "Decision" };
+const approvalMarker = /^<!-- speckit-approval: (\{.*\}) -->$/m;
+const statusMarker = "<!-- speckit-status -->";
+const blocking = ["CRITICAL", "HIGH"];
+const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
+  "implement", "verify", "approvals"];
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -51,7 +57,35 @@ function validateResult(result) {
   if (result.answer_id !== undefined && (!Number.isSafeInteger(result.answer_id) || result.answer_id < 0)) {
     throw new Error("Invalid clarification answer ID");
   }
+  if (result.approvals !== undefined) {
+    if (!["analyze", "reanalyze"].includes(result.phase) || !Array.isArray(result.approvals) ||
+        result.approvals.length > 25) {
+      throw new Error("Invalid approval items");
+    }
+    for (const item of result.approvals) {
+      if (!Object.hasOwn(approvalKinds, item?.kind) || typeof item.title !== "string" || !item.title.trim() ||
+          item.title.length > 300 || /[\r\n]/.test(item.title)) {
+        throw new Error("Invalid approval item");
+      }
+      approvalLocation(item.location);
+    }
+  }
+  if (result.next_step !== undefined &&
+      (typeof result.next_step !== "string" || !result.next_step.trim() || result.next_step.length > 1500)) {
+    throw new Error("Invalid next step");
+  }
   return result;
+}
+
+function approvalLocation(location) {
+  const match = typeof location === "string" &&
+    location.match(/^([A-Za-z0-9][A-Za-z0-9._/-]*):([1-9]\d*)(?:-([1-9]\d*))?$/);
+  const start = match && Number(match[2]);
+  const end = match && Number(match[3] || match[2]);
+  if (!match || end < start || match[1].split("/").some((part) => [".", "..", ""].includes(part))) {
+    throw new Error(`Invalid approval item location: ${String(location).slice(0, 200)}`);
+  }
+  return { path: match[1], start, end };
 }
 
 function actionsBot(user) {
@@ -164,7 +198,7 @@ function managedPR(pr, repo, state = "open") {
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
 }
 
-async function readFile(github, repo, ref, name, optional = false) {
+async function readBlob(github, repo, ref, name, optional = false) {
   let data;
   try {
     ({ data } = await github.rest.repos.getContent({ ...repo, ref, path: name }));
@@ -175,7 +209,22 @@ async function readFile(github, repo, ref, name, optional = false) {
   if (data.type !== "file" || data.encoding !== "base64" || data.target) {
     throw new Error(`Expected a regular file: ${name}`);
   }
-  return Buffer.from(data.content, "base64").toString("utf8");
+  return { text: Buffer.from(data.content, "base64").toString("utf8"), sha: data.sha };
+}
+
+async function readFile(github, repo, ref, name, optional = false) {
+  return (await readBlob(github, repo, ref, name, optional))?.text ?? null;
+}
+
+// The feature directory's tree SHA covers every pre-implementation artifact; files outside it are
+// pinned individually, so an approval never outlives a change to what the maintainer reviewed.
+async function fingerprint(github, repo, ref, feature, external) {
+  const { data: entries } = await github.rest.repos.getContent({ ...repo, ref, path: path.posix.dirname(feature) });
+  const directory = Array.isArray(entries) && entries.find((entry) => entry.path === feature && entry.type === "dir");
+  if (!directory?.sha) throw new Error(`Feature directory is missing: ${feature}`);
+  const files = {};
+  for (const name of [...new Set(external)].sort()) files[name] = (await readBlob(github, repo, ref, name)).sha;
+  return { tree: directory.sha, files };
 }
 
 async function artifacts(github, repo, pr) {
@@ -287,9 +336,10 @@ async function route({ github, context }) {
   const current = await artifacts(github, repo, pr);
   requireSpecification(entries, current.hashes);
   if (action === "implement") {
-    const analysis = latest(entries, ["analyze", "reanalyze"])?.result;
-    if (analysis?.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
-    requireResult(analysis, documents, current.hashes, { clean: true });
+    const analysis = latest(entries, ["analyze", "reanalyze"]);
+    if (analysis?.result.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
+    requireResult(analysis.result, documents, current.hashes, { clean: true });
+    await approval(github, repo, pr, current.feature, analysis.comment, entries);
   }
   return routed(action);
 }
@@ -321,7 +371,8 @@ async function prepare({ github, context, inputs }) {
     if (inputs.phase === "plan") {
       data.previous = requireSpecification(entries, current.hashes);
     } else if (previous) {
-      data.previous = latest(entries, previous)?.result;
+      const upstream = latest(entries, previous);
+      data.previous = upstream?.result;
       if (inputs.phase === "implement" && data.previous?.phase !== "reanalyze") {
         throw new Error("Independent reanalysis is required before implementation");
       }
@@ -330,6 +381,9 @@ async function prepare({ github, context, inputs }) {
         clean: inputs.phase === "implement",
         run: ["tasks", "analyze", "remediate", "reanalyze"].includes(inputs.phase) ? run : undefined,
       });
+      if (inputs.phase === "implement") {
+        data.approval = await approval(github, context.repo, pr, current.feature, upstream.comment, entries);
+      }
     }
     Object.assign(data, { pr: pr.number, head: pr.head.sha, branch: pr.head.ref, feature: current.feature });
     if (Number(inputs.comment) && Number(inputs.review)) throw new Error("A phase accepts one maintainer command");
@@ -357,7 +411,7 @@ async function prepare({ github, context, inputs }) {
   return data;
 }
 
-async function verify({ github, context, comment, phase }) {
+async function publishedResult(github, context, comment, phase) {
   if (!Number.isSafeInteger(Number(comment)) || Number(comment) <= 0) throw new Error("Worker did not publish a result comment");
   const { data: posted } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(comment) });
   const result = parseResult(posted);
@@ -367,7 +421,11 @@ async function verify({ github, context, comment, phase }) {
   const number = Number(posted.issue_url.split("/").pop());
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
   if (!managedPR(pr, context.repo)) throw new Error("Worker result is not on a managed draft PR");
-  const current = await artifacts(github, context.repo, pr);
+  return { posted, result, pr, current: await artifacts(github, context.repo, pr) };
+}
+
+async function verify({ github, context, comment, phase }) {
+  const { result, current } = await publishedResult(github, context, comment, phase);
   if (phase === "clarify" && result.status === "waiting") {
     for (const name of ["spec.md"]) {
       if (result.files[`${result.feature}/${name}`] !== current.hashes[`${result.feature}/${name}`]) {
@@ -381,6 +439,157 @@ async function verify({ github, context, comment, phase }) {
     throw new Error("Implementation left unfinished tasks");
   }
   return result;
+}
+
+function quoted(text) {
+  return text.replace(/@/g, "@\u200b").replace(/</g, "&lt;");
+}
+
+// Agent output reaches the PR through gh-aw safe outputs, which always append this footer. Only the
+// trusted jobs below post without it, so an agent can never author an approval or status comment.
+async function botComments(github, repo, number, matches) {
+  const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
+  return comments.filter((entry) => actionsBot(entry.user) && matches(entry.body || "") &&
+    !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:"));
+}
+
+async function publishApprovals({ github, context, comment }) {
+  const { repo } = context;
+  const { posted, result, pr, current } = await publishedResult(github, context, comment, "reanalyze");
+  requireResult(result, documents, current.hashes);
+  for (const stale of await botComments(github, repo, pr.number, (body) => approvalMarker.test(body))) {
+    await github.rest.issues.deleteComment({ ...repo, comment_id: stale.id });
+  }
+  if (result.findings.some((finding) => blocking.includes(finding.severity))) return null;
+  const items = (result.approvals || []).map((item) => ({ ...item, ...approvalLocation(item.location) }));
+  const lengths = {};
+  for (const item of items) {
+    if (![`${current.feature}/`, "adrs/", "api/"].some((prefix) => item.path.startsWith(prefix))) {
+      throw new Error(`Approval item must point into ${current.feature}/, adrs/, or api/: ${item.path}`);
+    }
+    lengths[item.path] ??= (await readBlob(github, repo, pr.head.sha, item.path)).text.split("\n").length;
+    if (item.end > lengths[item.path]) throw new Error(`Approval item location is past the end of ${item.path}`);
+  }
+  const state = {
+    reanalysis: posted.id, head: pr.head.sha, items: items.length,
+    ...await fingerprint(github, repo, pr.head.sha, current.feature,
+      items.map((item) => item.path).filter((name) => !name.startsWith(`${current.feature}/`))),
+  };
+  const commit = `\`${pr.head.sha.slice(0, 7)}\``;
+  const lines = items.length ? [
+    `React with 👍 to approve all ${items.length} item${items.length === 1 ? "" : "s"} below for commit ${commit}. ` +
+      "Then comment `/speckit-implement`.",
+    "",
+    "| Item | Type | Decision | Details |",
+    "| --- | --- | --- | --- |",
+    ...items.map((item, index) => {
+      const range = item.end === item.start ? `${item.start}` : `${item.start}-${item.end}`;
+      const anchor = item.end === item.start ? `L${item.start}` : `L${item.start}-L${item.end}`;
+      const url = `https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.sha}/${item.path}#${anchor}`;
+      const title = quoted(item.title).replace(/\|/g, "\\|");
+      return `| A${index + 1} | ${approvalKinds[item.kind]} | ${title} | [\`${item.path}:${range}\`](${url}) |`;
+    }),
+    "",
+    "To change a decision instead, comment `/speckit-plan` with the change. " +
+      "The pipeline updates every affected artifact and replaces this comment.",
+  ] : [
+    `No API change, ADR, or consequential decision needs approval for commit ${commit}. ` +
+      "Comment `/speckit-implement` to start implementation.",
+  ];
+  const body = ["## Spec Kit approval", "", ...lines, "", `<!-- speckit-approval: ${JSON.stringify(state)} -->`, ""];
+  const { data } = await github.rest.issues.createComment({ ...repo, issue_number: pr.number, body: body.join("\n") });
+  return data;
+}
+
+async function approval(github, repo, pr, feature, reanalysis, entries) {
+  const [published] = (await botComments(github, repo, pr.number, (body) => approvalMarker.test(body)))
+    .sort((a, b) => b.id - a.id);
+  if (!published) throw new Error("No approval comment exists yet. Comment `/speckit-plan` to publish one");
+  let state;
+  try {
+    state = JSON.parse(published.body.match(approvalMarker)[1]);
+  } catch {
+    throw new Error(`The approval comment ${published.html_url} is malformed. Comment \`/speckit-plan\` to replace it`);
+  }
+  if (state.reanalysis !== reanalysis.id) {
+    throw new Error(`The approval comment ${published.html_url} belongs to an earlier reanalysis. ` +
+      "Comment `/speckit-plan` to replace it");
+  }
+  // Implementation ticks tasks and moves ADR drafts, so the reviewed state is only enforced until it starts.
+  const started = entries.some((entry) => entry.result.phase === "implement" && entry.comment.id > published.id);
+  const files = state.files && typeof state.files === "object" ? state.files : {};
+  const current = started ? state : await fingerprint(github, repo, pr.head.sha, feature, Object.keys(files));
+  if (current.tree !== state.tree || JSON.stringify(current.files) !== JSON.stringify(files)) {
+    throw new Error(`Feature artifacts changed after the approval comment ${published.html_url}. ` +
+      "Comment `/speckit-plan` to refresh it");
+  }
+  const record = { url: published.html_url, items: state.items, approvers: [] };
+  if (!state.items) return record;
+  const since = Date.parse(published.updated_at);
+  const reactions = await github.paginate(github.rest.reactions.listForIssueComment,
+    { ...repo, comment_id: published.id, per_page: 100 });
+  for (const reaction of reactions) {
+    if (!["+1", "-1"].includes(reaction.content) || reaction.user?.type !== "User" ||
+        !(Date.parse(reaction.created_at) >= since) || !await maintainer(github, repo, reaction.user.login)) continue;
+    if (reaction.content === "-1") {
+      throw new Error(`Maintainer \`${reaction.user.login}\` reacted 👎 to ${published.html_url}. ` +
+        "Comment `/speckit-plan` with the requested change");
+    }
+    record.approvers.push({ login: reaction.user.login, at: reaction.created_at });
+  }
+  if (!record.approvers.length) {
+    throw new Error(`Approval pending: a maintainer must react with 👍 to ${published.html_url}`);
+  }
+  return record;
+}
+
+async function report({ github, context, needs }) {
+  const { repo } = context;
+  const route = needs.route || {};
+  if (route.result === "success" && route.outputs?.action === "noop") return null;
+  if (!await maintainer(github, repo, context.actor)) return null;
+  const number = Number(needs.specify?.outputs?.created_pr_number) || Number(route.outputs?.pr) ||
+    context.payload.pull_request?.number || context.payload.issue?.number;
+  if (!number) return null;
+  for (const stale of await botComments(github, repo, number, (body) => body.includes(statusMarker))) {
+    await github.rest.issues.deleteComment({ ...repo, comment_id: stale.id });
+  }
+  const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
+  const [last] = comments.map((comment) => ({ comment, result: parseResult(comment) }))
+    .filter((entry) => entry.result?.run.split("/")[0] === String(context.runId))
+    .sort((a, b) => b.comment.id - a.comment.id);
+  const jobs = Object.entries(needs).sort(([a], [b]) => pipeline.indexOf(a) - pipeline.indexOf(b));
+  const error = jobs.find(([, job]) => job.result === "failure" && job.outputs?.error);
+  const failed = jobs.find(([, job]) => job.result === "failure");
+  const findings = last?.result.phase === "reanalyze" ?
+    last.result.findings.filter((finding) => blocking.includes(finding.severity)) : [];
+  let lines;
+  if (error) {
+    lines = [`**Stopped in \`${error[0]}\`:** ${quoted(error[1].outputs.error)}`];
+  } else if (last?.result.status === "blocked") {
+    lines = [
+      `**Stopped in \`${last.result.phase}\`:** the phase is blocked.`, "",
+      `**Next step:** ${quoted(last.result.next_step || "Read the phase report.")}`, "",
+      `Details: [${last.result.phase} report](${last.comment.html_url})`,
+    ];
+  } else if (failed) {
+    lines = [`**Stopped in \`${failed[0]}\`:** the job failed before publishing a result. ` +
+      "Check the workflow run, then repeat the command."];
+  } else if (findings.length) {
+    lines = [
+      "**Implementation is blocked:** reanalysis still reports these findings.", "",
+      ...findings.slice(0, 10).map((finding) =>
+        `- **${finding.severity}** \`${quoted(finding.location)}\`: ${quoted(finding.summary)}`),
+      "", "Comment `/speckit-plan` to remediate them. Add guidance after the command to steer the fix.", "",
+      `Details: [reanalysis report](${last.comment.html_url})`,
+    ];
+  } else {
+    return null;
+  }
+  const run = `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`;
+  const body = ["## Spec Kit stopped", "", ...lines, "", `[Workflow run](${run})`, "", statusMarker, ""];
+  const { data } = await github.rest.issues.createComment({ ...repo, issue_number: number, body: body.join("\n") });
+  return data;
 }
 
 function localFile(name) {
@@ -410,10 +619,28 @@ function writeResult() {
       throw new Error("Implementation requires completed tasks, just check, and matching test suites");
     }
   }
+  if (draft.status === "blocked" && (typeof draft.next_step !== "string" || !draft.next_step.trim())) {
+    throw new Error("A blocked result must state the maintainer's next step");
+  }
+  const analysis = ["analyze", "reanalyze"].includes(context.phase);
+  if (analysis && !Array.isArray(draft.approvals)) {
+    throw new Error("An analysis must list its approval items, even when there are none");
+  }
+  const approvals = analysis ? draft.approvals.map((item) => ({
+    kind: item?.kind, title: item?.title, location: item?.location,
+  })) : [];
+  for (const item of approvals) {
+    const { path: name, end } = approvalLocation(item.location);
+    if (!fs.existsSync(name) || localFile(name).split("\n").length < end) {
+      throw new Error(`Approval item location does not exist: ${item.location}`);
+    }
+  }
   const result = validateResult({
     phase: context.phase, run: context.run, feature, files: artifactHashes(files),
     status: draft.status, findings: draft.findings, questions: draft.questions,
     answer_id: context.answer?.id || context.previous?.answer_id || 0,
+    ...(analysis ? { approvals } : {}),
+    ...(draft.status === "blocked" ? { next_step: draft.next_step } : {}),
   });
   if (typeof draft.report !== "string" || !draft.report.trim()) throw new Error("A phase report is required");
   if (draft.report.includes(marker)) throw new Error("A phase report must not contain a result marker");
@@ -444,7 +671,9 @@ function selectFeature() {
   }
 }
 
-module.exports = { artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify };
+module.exports = {
+  artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, report,
+};
 
 if (require.main === module) {
   if (process.argv[2] === "select-feature") {

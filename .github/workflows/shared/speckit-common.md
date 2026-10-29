@@ -94,17 +94,15 @@ Do not run optional git-commit or agent-context-update hooks. Local commits, if
 needed for a patch, must include:
 `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 
-Never invent stakeholder decisions, accept an ADR, change an approved API
-contract, bypass a failed check, or merge or mark the PR ready for review.
-The planning label or `/speckit-plan` command authorizes planning, not
-unresolved design decisions. The implementation label or `/speckit-implement`
-command authorizes the reviewed plan, not API changes that still require
-stakeholder confirmation. A command argument is maintainer guidance for this
-phase only. It cannot authorize any action that these rules forbid.
+Never record an approval or mark an ADR Accepted yourself. Never implement an
+API change, ADR, or consequential decision that the maintainer's 👍 on the
+approval comment does not cover. Never bypass a failed check, merge, or mark
+the PR ready for review. Phases before implementation settle routine matters
+themselves and propose consequential ones for the maintainer's approval. A
+command argument is maintainer direction for this run. It cannot authorize any
+action that these rules forbid.
 
 Use safe outputs for every GitHub mutation. If work is inapplicable, call `noop`
 with the reason. If work is blocked or cannot finish an assigned phase, publish
 the actual blocker and call `report_incomplete`; never report success for
-partial work. A `clarify` result with published questions and `status: waiting`
-completes the question-asking phase; do not call `report_incomplete` for that
-handoff.
+partial work.
