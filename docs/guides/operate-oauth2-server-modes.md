@@ -242,6 +242,35 @@ The broker rejects removal of the last, current, or effective-current key. The p
 
 `/oauth2/jwks.json` does not publish CIMD keys.
 
+### Increment 2 (issue #264): public services without keys
+
+Client registration and token-endpoint authentication are separate service settings.
+Set `client_registration: cimd` and `token_endpoint_auth_method: none` for a CIMD public service.
+The broker assigns a hosted client identifier URL. This explicit mode works in proxy, local,
+and hybrid modes. In proxy mode, the service uses that URL, not the proxy upstream credentials.
+
+The broker serves public metadata at the client identifier URL without a CIMD client-authentication key.
+The document declares `token_endpoint_auth_method: none` and omits `jwks_uri` and
+`token_endpoint_auth_signing_alg`. A request to `<client-id>/jwks.json` returns the uniform
+JSON `404` for an unavailable CIMD JWK Set. Public service authorization uses PKCE `S256`.
+Code exchange and refresh send the client identifier URL without a client secret, client
+assertion, or authorization header. The broker does not retry with another authentication
+method after provider rejection.
+
+An empty CIMD key set is valid at startup only when no CIMD confidential service exists.
+A CIMD public service does not create or require a key. A CIMD confidential service still
+requires a usable key in every server mode. The key rotation procedure remains unchanged.
+After a switch between `none` and `private_key_jwt`, a provider can cache the previous
+document for up to 300 seconds. See [manage agents and services](/docs/guides/manage-agents-and-services)
+for service registration and replacement.
+
+
+## Persisted third-party service reads
+
+Startup checks that each CIMD client ID matches the configured public URL. A stored registration or authentication error identifies the service ID. The broker does not validate stored `discovery.resource_url` values during reads or startup. Thus, an older URL that becomes blocked does not stop service lists or replicas from starting.
+
+New service writes reject unsafe discovery URLs. The guarded outbound client also rejects unsafe destinations. Update the affected service with a valid URL before you retry discovery.
+
 ## Custom token claims with CEL
 
 In local and hybrid modes, `local.token_claims_expression` can add claims to broker-issued

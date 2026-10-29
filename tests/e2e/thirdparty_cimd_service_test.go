@@ -120,11 +120,13 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			service := decodeJSON[map[string]any](created)
 			expectedClientID := fixtures.CIMDEndUserPublicURL + "/.well-known/oauth-client/" + service["id"].(string)
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
+			Expect(service).To(HaveKeyWithValue("client_registration", "cimd"))
 			Expect(service).To(HaveKeyWithValue("client_id", expectedClientID))
 			Expect(service).NotTo(HaveKey("client_secret"))
 
 			read := readService(service["id"].(string))
 			Expect(read).To(HaveKeyWithValue("client_id", expectedClientID))
+			Expect(read).To(HaveKeyWithValue("client_registration", "cimd"))
 			Expect(read).NotTo(HaveKey("client_secret"))
 		})
 	})
@@ -173,6 +175,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		service := decodeJSON[map[string]any](response)
 		Expect(service).To(HaveKey("token_endpoint_auth_method"))
 		Expect(service["token_endpoint_auth_method"]).To(BeNil())
+		Expect(service).To(HaveKeyWithValue("client_registration", "static"))
 		Expect(service).To(HaveKeyWithValue("client_secret", "REDACTED"))
 	})
 
@@ -186,6 +189,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		Expect(response.StatusCode).To(Equal(http.StatusCreated))
 		service := decodeJSON[map[string]any](response)
 		Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "none"))
+		Expect(service).To(HaveKeyWithValue("client_registration", "static"))
 		Expect(service).NotTo(HaveKey("client_secret"))
 	})
 
@@ -235,6 +239,9 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			Expect(methods).To(HaveKey(BeNil()))
 			Expect(methods).To(HaveKey("none"))
 			Expect(methods).To(HaveKey("private_key_jwt"))
+			Expect(methods[nil]).To(HaveKeyWithValue("client_registration", "static"))
+			Expect(methods["none"]).To(HaveKeyWithValue("client_registration", "static"))
+			Expect(methods["private_key_jwt"]).To(HaveKeyWithValue("client_registration", "cimd"))
 			Expect(methods["private_key_jwt"]).To(HaveKeyWithValue("id", cimdService["id"]))
 			Expect(methods["private_key_jwt"]).NotTo(HaveKey("client_secret"))
 		})
@@ -251,6 +258,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		It("reads the immutable CIMD client ID without a shared secret", Label("cimd-upstream-client"), func() {
 			service := readService(cimdService["id"].(string))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
+			Expect(service).To(HaveKeyWithValue("client_registration", "cimd"))
 			Expect(service["client_id"]).To(Equal(fixtures.CIMDEndUserPublicURL + "/.well-known/oauth-client/" + cimdService["id"].(string)))
 			Expect(service).NotTo(HaveKey("client_secret"))
 		})
@@ -282,6 +290,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		// US5-S3 from specs/046-cimd-upstream-client/spec.md
 		It("replaces static secret state with CIMD authentication", Label("cimd-upstream-client"), func() {
 			Expect(updatedService).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
+			Expect(updatedService).To(HaveKeyWithValue("client_registration", "cimd"))
 			Expect(updatedService).NotTo(HaveKey("client_secret"))
 			Expect(updatedService["client_id"]).To(HavePrefix(fixtures.CIMDEndUserPublicURL + "/.well-known/oauth-client/"))
 		})

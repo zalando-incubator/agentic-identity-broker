@@ -1936,12 +1936,10 @@ func TestProxyOAuth2ConfigUpstreamTimeout(t *testing.T) {
 	}
 }
 
-// TestBuilder_CIMDKeyStartupReadiness specifies the mode-independent outbound-CIMD
-// key startup contract. It deliberately uses the production Builder and memory adapter:
-// the only test data written directly is the persisted service state that a later
-// service-registration implementation will create.
+// TestBuilder_CIMDKeyStartupReadiness checks key bootstrap and hosted identity
+// validation for persisted CIMD services in each OAuth server mode.
 func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
-	const cimdAuthMethod = model.TokenEndpointAuthMethod("private_key_jwt")
+	const cimdAuthMethod = model.TokenEndpointAuthMethodPrivateKeyJWT
 
 	type modeCase struct {
 		name string
@@ -2046,7 +2044,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		return count
 	}
 
-	persistCIMDService := func(t *testing.T, adapter *storage.Adapter) id.ServiceID {
+	persistCIMDService := func(t *testing.T, adapter *storage.Adapter, method model.TokenEndpointAuthMethod) id.ServiceID {
 		t.Helper()
 		serviceID := id.NewServiceID()
 		service := &model.ThirdpartyOAuth2ProviderEntity{
@@ -2054,7 +2052,8 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			DisplayName:             "CIMD upstream",
 			ClientID:                id.ClientID("https://broker.example.com/.well-known/oauth-client/" + serviceID.String()),
 			Secret:                  model.NewAbsentSecret(),
-			TokenEndpointAuthMethod: cimdAuthMethod,
+			TokenEndpointAuthMethod: method,
+			ClientRegistration:      model.ClientRegistrationCIMD,
 			IssuerURI:               "https://issuer.example.com",
 		}
 		require.NoError(t, adapter.Services().Create(context.Background(), service))
@@ -2076,9 +2075,37 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			}
 		})
 
+		t.Run(mode.name+" starts with only CIMD public services and no CIMD key", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter, model.TokenEndpointAuthMethodNone)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			require.NotNil(t, app)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+			require.NotNil(t, app.CIMDKeyReadiness)
+			assert.ErrorIs(t, app.CIMDKeyReadiness.RequireUsablePublishedKey(context.Background()), ports.ErrCIMDPublicKeyUnavailable)
+			require.NotNil(t, app.CIMDMetadataProvider)
+			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, "https://broker.example.com/.well-known/oauth-client/"+serviceID.String(), metadata.ClientID)
+			assert.Equal(t, "none", metadata.TokenEndpointAuthMethod)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+		})
+
+		t.Run(mode.name+" rejects a mismatched CIMD public identity without creating a key", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter, model.TokenEndpointAuthMethodNone)
+			_, err := build(t, mode.mode, adapter, "https://broker.changed.example")
+			require.ErrorContains(t, err, "server.enduser.public_url")
+			persisted, getErr := adapter.Services().Get(context.Background(), serviceID)
+			require.NoError(t, getErr)
+			assert.Equal(t, id.ClientID("https://broker.example.com/.well-known/oauth-client/"+serviceID.String()), persisted.ClientID)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+		})
+
 		t.Run(mode.name+" bootstraps a persisted CIMD service with an immediately usable published key", func(t *testing.T) {
 			adapter := newStorage(t)
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 
 			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
@@ -2099,7 +2126,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 
 		t.Run(mode.name+" fails closed when persisted CIMD key publication is unavailable", func(t *testing.T) {
 			adapter := newStorage(t)
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 			require.NoError(t, adapter.SigningKeys().Create(context.Background(), &domstorage.SigningKey{
 				ID:                  id.NewSigningKeyID(),
 				KID:                 id.NewKeyID("cimd-unpublishable-" + mode.mode),
@@ -2123,13 +2150,13 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			require.NotNil(t, app)
 			assert.NotNil(t, app.CIMDKeyReadiness)
 
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 			assert.Zero(t, countCIMDKeys(t, adapter), "service registration must not provision a CIMD key")
 		})
 
 		t.Run(mode.name+" rejects changed public origin without rewriting the CIMD identity", func(t *testing.T) {
 			adapter := newStorage(t)
-			serviceID := persistCIMDService(t, adapter)
+			serviceID := persistCIMDService(t, adapter, cimdAuthMethod)
 			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
 			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)

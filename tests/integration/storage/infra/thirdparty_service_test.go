@@ -63,6 +63,46 @@ func TestAuthorizationParamsPersistence(t *testing.T) {
 	assert.Empty(t, services[0].AuthorizationParams)
 }
 
+func TestPersistedUnsafeDiscoveryURLDoesNotBlockServiceListOrStartup(t *testing.T) {
+	ctx, repo, providerService, shared, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+	providerService.WithCIMDPublicURL("https://broker.example.test")
+
+	resourceURL := "https://api.example.test/resource"
+	completedAt := time.Now().UTC()
+	discovered := createTestService("discovery-with-stale-url", "Discovered service", nil)
+	discovered.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	discovered.Secret = model.NewAbsentSecret()
+	discovered.Discovery = model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceURL, ClientMethod: model.ClientBootstrapDCR}
+	discovered.AuthorizationParams = map[string]string{"resource": resourceURL}
+	discovered.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
+	require.NoError(t, repo.Create(ctx, discovered))
+
+	hosted := createTestService("unaffected-hosted-service", "Hosted public service", nil)
+	hosted.ClientID = ""
+	hosted.Secret = model.NewAbsentSecret()
+	hosted.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	hosted.ClientRegistration = model.ClientRegistrationCIMD
+	hosted.ClientRegistrationProvided = true
+	require.NoError(t, providerService.Create(ctx, hosted))
+
+	const unsafeURL = "https://10.0.0.1/resource"
+	shared.ExecuteSQL(t, dbName, fmt.Sprintf(`UPDATE thirdparty_oauth2_services
+		SET resource_url = '%s', authorization_params = '{"resource":"%s"}'::jsonb
+		WHERE id = '%s'`, unsafeURL, unsafeURL, discovered.ID))
+
+	stored, err := repo.Get(ctx, discovered.ID)
+	require.NoError(t, err)
+	assert.Equal(t, unsafeURL, *stored.Discovery.ResourceURL)
+	services, err := providerService.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, services, 2)
+	requiresKey, err := providerService.VerifyCIMDServiceIdentities(ctx)
+	require.NoError(t, err)
+	assert.False(t, requiresKey)
+	assert.ErrorIs(t, stored.ValidateStoredClientAuthentication(), model.ErrUnsafeDiscoveryResourceURL)
+}
+
 func TestAuthorizationParamsOmittedUpdatePreservesResponseAndStorage(t *testing.T) {
 	ctx, repo, providerService, cleanup := setupThirdpartyProviderTestHarness(t)
 	defer cleanup()

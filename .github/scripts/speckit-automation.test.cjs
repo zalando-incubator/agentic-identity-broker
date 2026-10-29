@@ -412,6 +412,29 @@ test("planning requires completed clarification for the current specification", 
   assert.equal((await route(ready)).action, "plan");
 });
 
+test("planning and implementation follow a specification revised by a later phase", async (t) => {
+  preparationIO(t);
+  const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
+  const revised = { ...artifactHashes(files), [`${spec}/spec.md`]: "0".repeat(64) };
+  const clarified = comment(result("clarify", { files: revised }));
+  const remediated = comment(result("remediate"), { id: 12 });
+  await assert.rejects(route(fixture("pull_request_target", payload, { comments: [clarified] })), /changed after clarify/);
+  assert.equal((await route(fixture("pull_request_target", payload, { comments: [clarified, remediated] }))).action, "plan");
+  const f = fixture("pull_request_target", {}, { comments: [clarified, remediated] });
+  assert.equal((await prepare({ ...f, inputs: { phase: "plan", pr: 42 } })).previous.phase, "clarify");
+  const edited = comment(result("remediate", { files: revised }), { id: 12 });
+  await assert.rejects(route(fixture("pull_request_target", payload, { comments: [clarified, edited] })), /changed after remediate/);
+  const pending = comment(result("clarify", { status: "waiting", questions: ["Which audience?"] }), { id: 13 });
+  await assert.rejects(route(fixture("pull_request_target", payload, { comments: [clarified, remediated, pending] })), /waiting/);
+  await assert.rejects(prepare({ ...f, github: fixture("pull_request_target", {}, {
+    comments: [clarified, remediated, pending],
+  }).github, inputs: { phase: "plan", pr: 42 } }), /waiting/);
+  const implement = commandEvent(command("/speckit-implement"));
+  assert.equal((await route(fixture("issue_comment", implement, {
+    comments: [clarified, remediated, comment(result("reanalyze"), { id: 14 })],
+  }))).action, "implement");
+});
+
 test("PR metadata selects feature artifacts without requiring an ignored pointer", async () => {
   const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
   const clarification = [comment(result("clarify"))];

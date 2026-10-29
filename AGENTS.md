@@ -122,12 +122,6 @@ the same PR, even after acceptance. The final ADR and code MUST agree before mer
 After that merge, a change or deviation requires a new Accepted superseding ADR.
 See Principle II in `.specify/memory/constitution.md`.
 
-For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs. On 2026-10-12, the stakeholder approved renumbering ADR 039's migration from `036` to `037` after `main` took version 36.
-
-For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
-
-For RFC 8693 provider-session recovery, the stakeholder approved ADR 044 on 2026-10-26 and retained End-User API `1.0.0` on 2026-10-27. This decision changes only the recoverable-session `error_uri` target. Read ADR 044 and Feature 013's User Story 5 Amendment before implementation.
-
 | ADR | File | Decision |
 |---|---|---|
 | 002 | `adrs/002-configuration-libraries.md` | Viper + Cobra + godotenv config |
@@ -170,6 +164,7 @@ For RFC 8693 provider-session recovery, the stakeholder approved ADR 044 on 2026
 | 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
+| 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
 
 ## Domain Glossary
 

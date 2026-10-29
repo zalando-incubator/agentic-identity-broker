@@ -23,7 +23,69 @@ type cimdMetadataReadiness struct{ err error }
 
 func (r cimdMetadataReadiness) RequireUsablePublishedKey(context.Context) error { return r.err }
 
-func TestMetadataService_MetadataContainsExactCIMDPublicFields(t *testing.T) {
+func TestMetadataService_CIMDPublicMetadataNeedsNoClientKey(t *testing.T) {
+	serviceID := id.MustParseServiceID("00000000-0000-0000-0000-000000000106")
+	reader := &cimdMetadataServiceReader{getCIMDClientServiceFn: func(_ context.Context, got id.ServiceID) (*ports.CIMDClientServiceProjection, error) {
+		require.Equal(t, serviceID, got)
+		projection := cimdMetadataServiceProjection(serviceID)
+		projection.TokenEndpointAuthMethod = "none"
+		return projection, nil
+	}}
+	keys := &cimdMetadataPublicKeyProvider{publicJWKSetFn: func(context.Context) (jwk.Set, error) {
+		t.Fatal("CIMD public metadata must not request published keys")
+		return nil, nil
+	}}
+	readiness := cimdMetadataReadinessFunc(func(context.Context) error {
+		t.Fatal("CIMD public metadata must not require key readiness")
+		return nil
+	})
+	service := NewMetadataService(reader, keys, readiness, cimdMetadataTestPublicURL)
+
+	metadata, err := service.Metadata(context.Background(), serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+	encoded, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &document))
+	assert.Equal(t, map[string]any{
+		"client_id":                  cimdMetadataClientID(serviceID),
+		"redirect_uris":              []any{cimdMetadataCallbackURL(serviceID)},
+		"grant_types":                []any{"authorization_code", "refresh_token"},
+		"response_types":             []any{"code"},
+		"token_endpoint_auth_method": "none",
+	}, document)
+}
+
+func TestMetadataService_CIMDPublicJWKSetUnavailableWithoutKeyAccess(t *testing.T) {
+	serviceID := id.MustParseServiceID("00000000-0000-0000-0000-000000000107")
+	reader := &cimdMetadataServiceReader{getCIMDClientServiceFn: func(context.Context, id.ServiceID) (*ports.CIMDClientServiceProjection, error) {
+		projection := cimdMetadataServiceProjection(serviceID)
+		projection.TokenEndpointAuthMethod = "none"
+		return projection, nil
+	}}
+	keys := &cimdMetadataPublicKeyProvider{publicJWKSetFn: func(context.Context) (jwk.Set, error) {
+		t.Fatal("CIMD public JWK Set must not request published keys")
+		return nil, nil
+	}}
+	readiness := cimdMetadataReadinessFunc(func(context.Context) error {
+		t.Fatal("CIMD public JWK Set must not require key readiness")
+		return nil
+	})
+	service := NewMetadataService(reader, keys, readiness, cimdMetadataTestPublicURL)
+
+	set, err := service.JWKSet(context.Background(), serviceID)
+	require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+	assert.Nil(t, set)
+}
+
+type cimdMetadataReadinessFunc func(context.Context) error
+
+func (f cimdMetadataReadinessFunc) RequireUsablePublishedKey(ctx context.Context) error {
+	return f(ctx)
+}
+
+func TestMetadataService_MetadataContainsExactCIMDConfidentialFields(t *testing.T) {
 	serviceID := id.MustParseServiceID("00000000-0000-0000-0000-000000000101")
 	reader := &cimdMetadataServiceReader{
 		getCIMDClientServiceFn: func(context.Context, id.ServiceID) (*ports.CIMDClientServiceProjection, error) {
@@ -145,10 +207,11 @@ func TestMetadataService_UnavailableServicesExposeNeitherMetadataNorKeys(t *test
 			publicKeys: usableKeys,
 		},
 		{
-			name: "public service",
+			name: "static public service",
 			readService: func(context.Context, id.ServiceID) (*ports.CIMDClientServiceProjection, error) {
 				projection := cimdMetadataServiceProjection(serviceID)
 				projection.TokenEndpointAuthMethod = "none"
+				projection.ClientID = id.NewClientID("static-client-id")
 				return projection, nil
 			},
 			publicKeys: usableKeys,

@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,8 +14,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
-	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
-	"github.com/golang-migrate/migrate/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,15 +30,6 @@ func setupCredentialSourcePostgresHarness(t *testing.T) *credentialSourcePostgre
 	// Reuse the suite's shared container, current-schema template and adapter lifecycle.
 	ctx, providers, _, shared, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
 	t.Cleanup(cleanup)
-	projectRoot, err := bootstrap.FindProjectRoot()
-	require.NoError(t, err)
-	runner, err := migrate.New("file://"+filepath.Join(projectRoot, "migrations"), shared.ConnectionString(dbName))
-	require.NoError(t, err)
-	err = runner.Migrate(40)
-	_, _ = runner.Close()
-	if err != migrate.ErrNoChange {
-		require.NoError(t, err, "migration 040 must provide the source/session schema")
-	}
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: shared.ConnectionString(dbName)}})
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))

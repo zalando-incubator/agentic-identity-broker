@@ -10,7 +10,7 @@
  * - Dependent agent count
  * - Session initiation timestamp
  * - OAuth2 scopes display
- * - Refresh and Terminate actions, or Login for an expired session
+ * - Refresh and Terminate actions, or Login once the session can no longer be renewed
  * - WCAG 2.1 AA compliant
  */
 
@@ -31,13 +31,23 @@ interface SessionCardProps {
   onViewDetails?: (serviceId: string) => void;
   /** Callback when user clicks the refresh button (force token refresh) */
   onRefresh?: (serviceId: string) => void;
-  /** Callback when user clicks the login button of an expired session */
+  /** Callback when user clicks the login button of a session that can no longer be renewed */
   onLogin?: (serviceId: string) => void;
   /** Whether the refresh action is currently loading for this card */
   refreshing?: boolean;
   /** Whether card actions are currently loading */
   loading?: boolean;
 }
+
+/**
+ * Whether the session can no longer be renewed without the user logging in again: it is
+ * expired, or its stored refresh token is recorded as expired.
+ */
+export const sessionNeedsLogin = (session: SessionSummary): boolean =>
+  session.is_expired ||
+  (session.has_refresh_token &&
+    !!session.refresh_token_expires_at &&
+    new Date(session.refresh_token_expires_at).getTime() <= Date.now());
 
 /**
  * SessionCard displays a single OAuth2 session with status information.
@@ -106,10 +116,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
     }).format(new Date(session.refresh_token_expires_at));
   }, [session.refresh_token_expires_at]);
 
-  const canRefresh =
-    session.has_refresh_token &&
-    (!session.refresh_token_expires_at ||
-      new Date(session.refresh_token_expires_at).getTime() > Date.now());
+  const needsLogin = sessionNeedsLogin(session);
 
   return (
     <Card padding="default" border="subtle" hover="lift">
@@ -132,7 +139,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               View Details
             </Button>
           )}
-          {onRefresh && canRefresh && !session.is_expired && (
+          {onRefresh && session.has_refresh_token && !needsLogin && (
             <Button
               variant="secondary"
               size="sm"
@@ -144,9 +151,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               Refresh
             </Button>
           )}
-          {onLogin && (session.is_expired || !canRefresh) && (
+          {onLogin && needsLogin && (
             <Button
-              variant="primary"
+              variant="secondary"
               size="sm"
               onClick={() => onLogin(session.service_id)}
               disabled={loading}
@@ -175,9 +182,11 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         <Badge variant={variant} showDot>
           {status}
         </Badge>
-        {session.is_expired && (
+        {needsLogin && (
           <p className="m-0 text-xs font-medium text-error-primary">
-            Re-authenticate required
+            {session.is_expired
+              ? 'Log in to reconnect'
+              : 'Log in to keep access'}
           </p>
         )}
       </div>
@@ -239,7 +248,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         />
 
         {/* Refresh token expiry */}
-        {session.has_refresh_token && !session.is_expired && (
+        {session.has_refresh_token && !needsLogin && (
           <StatusIndicator
             icon={
               <svg

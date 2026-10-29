@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.0.0
+  version: 1.1.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -2395,9 +2395,11 @@ paths:
     get:
       summary: Client ID Metadata Document
       description: |
-        Returns the public Client ID Metadata Document for a CIMD-enabled service.
+        Returns the public Client ID Metadata Document for a CIMD confidential or CIMD public service.
         The returned `client_id` exactly equals this retrieval URL. The document uses
         the end-user public URL as its base and contains no private key material or secrets.
+        A CIMD public service returns the document without a CIMD client-authentication key.
+        Its document has no `jwks_uri` or `token_endpoint_auth_signing_alg`.
       operationId: getCIMDClientMetadata
       tags:
         - OAuth2 Discovery
@@ -2412,7 +2414,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Client ID Metadata Document
+          description: Client ID Metadata Document for a CIMD confidential or CIMD public service
           headers:
             Cache-Control:
               description: Cache directive for the metadata response
@@ -2423,20 +2425,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CIMDClientMetadataResponse"
-              example:
-                client_id: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000
-                redirect_uris:
-                  - https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/callback
-                grant_types:
-                  - authorization_code
-                  - refresh_token
-                response_types:
-                  - code
-                token_endpoint_auth_method: private_key_jwt
-                token_endpoint_auth_signing_alg: ES256
-                jwks_uri: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000/jwks.json
+              examples:
+                confidential:
+                  summary: CIMD confidential service
+                  value:
+                    client_id: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000
+                    redirect_uris:
+                      - https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/callback
+                    grant_types:
+                      - authorization_code
+                      - refresh_token
+                    response_types:
+                      - code
+                    token_endpoint_auth_method: private_key_jwt
+                    token_endpoint_auth_signing_alg: ES256
+                    jwks_uri: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000/jwks.json
+                public:
+                  summary: CIMD public service without a client-authentication key
+                  value:
+                    client_id: https://broker.example.com/.well-known/oauth-client/770e8400-e29b-41d4-a716-446655440002
+                    redirect_uris:
+                      - https://broker.example.com/api/third-party/770e8400-e29b-41d4-a716-446655440002/oauth2/callback
+                    grant_types:
+                      - authorization_code
+                      - refresh_token
+                    response_types:
+                      - code
+                    token_endpoint_auth_method: none
         "404":
-          description: Client ID Metadata Document unavailable
+          description: Client ID Metadata Document unavailable for an unknown, deleted, static public, static confidential, or unavailable CIMD service
           content:
             application/json:
               schema:
@@ -2448,7 +2465,8 @@ paths:
     get:
       summary: CIMD client-authentication JSON Web Key Set
       description: |
-        Returns the public ES256 client-authentication keys for a CIMD-enabled service.
+        Returns the public ES256 client-authentication keys for a CIMD confidential service.
+        A CIMD public service returns the uniform JSON 404, even without a CIMD client-authentication key.
         Keys come only from the `cimd_client_authentication` domain. The set can include
         a generated key during its activation grace period and retains non-current keys
         until an operator removes them. It never includes token-signing keys, upstream
@@ -2467,7 +2485,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: CIMD client-authentication JWK Set
+          description: CIMD confidential client-authentication JWK Set
           headers:
             Cache-Control:
               description: Cache directive for the JWK Set response
@@ -2488,7 +2506,7 @@ paths:
                     x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU"
                     y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
         "404":
-          description: CIMD client-authentication JWK Set unavailable
+          description: Uniform JSON response for a CIMD public, unknown, deleted, static public, static confidential, or unavailable CIMD service
           content:
             application/json:
               schema:
@@ -3481,6 +3499,11 @@ components:
           example: true
 
     CIMDClientMetadataResponse:
+      oneOf:
+        - $ref: "#/components/schemas/CIMDConfidentialClientMetadataResponse"
+        - $ref: "#/components/schemas/CIMDPublicClientMetadataResponse"
+
+    CIMDConfidentialClientMetadataResponse:
       type: object
       additionalProperties: false
       required:
@@ -3538,6 +3561,54 @@ components:
           type: string
           format: uri
           description: URL of the CIMD client-authentication JWK Set.
+
+    CIMDPublicClientMetadataResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - client_id
+        - redirect_uris
+        - grant_types
+        - response_types
+        - token_endpoint_auth_method
+      properties:
+        client_id:
+          type: string
+          format: uri
+          description: Retrieval URL for this Client ID Metadata Document.
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            format: uri
+          description: OAuth2 callback URL for this service.
+        grant_types:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - authorization_code
+              - refresh_token
+          description: Supported OAuth2 grant types.
+        response_types:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            enum:
+              - code
+          description: Supported OAuth2 response types.
+        token_endpoint_auth_method:
+          type: string
+          enum:
+            - none
+          description: No token endpoint client authentication.
 
     CIMDClientAuthenticationJWKSetResponse:
       type: object

@@ -281,7 +281,7 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -400,7 +400,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -459,7 +459,7 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -748,4 +748,24 @@ func (r *inMemoryGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, pri
 
 func (r *inMemoryGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
 	return 0, nil
+}
+
+// newConnectedSessionRepo stores a usable session for every service the grant includes,
+// as consent requires (FR-020 of specs/019-permission-sets/spec.md).
+func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserSessionRepository {
+	t.Helper()
+	repo := memory.NewInMemoryUserSessionRepository()
+	for _, entry := range grant.GrantedPermissionSets {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			require.NoError(t, repo.Create(context.Background(), &storage.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            grant.Principal,
+				ServiceID:            serviceID,
+				EncryptedAccessToken: []byte("opaque-test-token"),
+				TokenType:            "Bearer",
+				EncryptionContext:    storage.EncryptionContext{ServiceID: serviceID},
+			}))
+		}
+	}
+	return repo
 }

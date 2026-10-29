@@ -109,6 +109,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 	}
 	record.entity.CredentialSourceTransitioned = false
 	entity.CredentialSource = record.entity.CredentialSource
+	entity.ClientRegistration = record.entity.ClientRegistration
 	entity.CredentialSourceTransitioned = false
 	r.providers[entity.ID] = record
 	r.resources[entity.ID] = resources
@@ -323,6 +324,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		r.canonicalIndex[*canonicalID] = entity.ID
 	}
 	proposed.CredentialSource = record.entity.CredentialSource
+	proposed.ClientRegistration = record.entity.ClientRegistration
 	proposed.CredentialSourceTransitioned = record.entity.CredentialSourceTransitioned
 	*entity = proposed
 	return nil

@@ -65,6 +65,7 @@ func TestEntityToRecord_Success(t *testing.T) {
 	require.NotNil(t, record.ClientID)
 	assert.Equal(t, string(entity.ClientID), *record.ClientID)
 	assert.Equal(t, string(model.CredentialSourceStored), record.CredentialSource)
+	assert.Equal(t, string(model.ClientRegistrationStatic), record.ClientRegistration)
 	assert.Equal(t, testCiphertext, record.SecretCiphertext)
 	assert.Equal(t, entity.IssuerURI, record.IssuerURI)
 	assert.Equal(t, entity.Discovery.EnableDiscovery, record.EnableDiscovery)
@@ -126,6 +127,94 @@ func TestEntityToRecord_DeepCopiesSlices(t *testing.T) {
 		"record should not be affected by entity mutation")
 }
 
+func TestProviderRecord_ClientRegistrationRoundTrip(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       model.TokenEndpointAuthMethod
+	}{
+		{"static confidential", model.ClientRegistrationStatic, ""},
+		{"static public", model.ClientRegistrationStatic, model.TokenEndpointAuthMethodNone},
+		{"CIMD confidential", model.ClientRegistrationCIMD, model.TokenEndpointAuthMethodPrivateKeyJWT},
+		{"CIMD public", model.ClientRegistrationCIMD, model.TokenEndpointAuthMethodNone},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entity := newTestEntity()
+			entity.ClientRegistration = tt.registration
+			entity.ClientRegistrationProvided = true
+			entity.TokenEndpointAuthMethod = tt.method
+			if tt.method != "" {
+				entity.Secret = model.NewAbsentSecret()
+			}
+			if tt.registration == model.ClientRegistrationCIMD {
+				entity.ClientID = id.ClientID("https://broker.example.test/.well-known/oauth-client/" + entity.ID.String())
+			}
+
+			record, err := entityToRecord(entity)
+			require.NoError(t, err)
+			assert.Equal(t, string(tt.registration), record.ClientRegistration)
+			stored, err := recordToEntity(record)
+			require.NoError(t, err)
+			assert.Equal(t, tt.registration, stored.ClientRegistration)
+			assert.Equal(t, entity.ClientID, stored.ClientID)
+			assert.Equal(t, tt.method, stored.TokenEndpointAuthMethod)
+		})
+	}
+}
+
+func TestRecordToEntity_RejectsCorruptClientRegistration(t *testing.T) {
+	for _, value := range []string{"", "other"} {
+		t.Run(value, func(t *testing.T) {
+			record, err := entityToRecord(newTestEntity())
+			require.NoError(t, err)
+			record.ClientRegistration = value
+
+			stored, err := recordToEntity(record)
+			require.Error(t, err)
+			assert.Nil(t, stored)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+			assert.ErrorContains(t, err, record.ID)
+		})
+	}
+}
+
+func TestRecordToEntity_AllowsUnsafeStoredDiscoveryURLForAdministrativeReads(t *testing.T) {
+	record, err := entityToRecord(newTestEntity())
+	require.NoError(t, err)
+	unsafeURL := "https://10.0.0.1/resource"
+	record.ResourceURL = &unsafeURL
+	record.MetadataURL = nil
+	record.EnableDiscovery = true
+	record.AuthorizationParams = providerAuthorizationParams{"resource": unsafeURL}
+
+	stored, err := recordToEntity(record)
+	require.NoError(t, err)
+	assert.Equal(t, &unsafeURL, stored.Discovery.ResourceURL)
+	assert.ErrorIs(t, stored.ValidateStoredClientAuthentication(), model.ErrUnsafeDiscoveryResourceURL)
+}
+
+func TestRecordToEntity_RejectsDiscoveredCIMDPublicClient(t *testing.T) {
+	entity := newTestEntity()
+	entity.ClientRegistration = model.ClientRegistrationCIMD
+	entity.ClientID = id.ClientID("https://broker.example.test/.well-known/oauth-client/" + entity.ID.String())
+	entity.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	entity.Secret = model.NewAbsentSecret()
+	record, err := entityToRecord(entity)
+	require.NoError(t, err)
+	method := string(model.ClientBootstrapCIMD)
+	record.ClientMethod = &method
+
+	stored, err := recordToEntity(record)
+	require.Error(t, err)
+	assert.Nil(t, stored)
+	assert.ErrorContains(t, err, record.ID)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+}
+
 func TestRecordToEntity_Success(t *testing.T) {
 	entity := newTestEntity()
 	record, err := entityToRecord(entity)
@@ -138,6 +227,7 @@ func TestRecordToEntity_Success(t *testing.T) {
 	assert.Equal(t, entity.ID, roundTripped.ID)
 	assert.Equal(t, entity.DisplayName, roundTripped.DisplayName)
 	assert.Equal(t, entity.ClientID, roundTripped.ClientID)
+	assert.Equal(t, model.ClientRegistrationStatic, roundTripped.ClientRegistration)
 	assert.True(t, roundTripped.Secret.IsEncrypted())
 
 	ciphertext, err := roundTripped.Secret.GetCiphertext()
@@ -166,14 +256,15 @@ func TestRecordToEntity_NilRecord(t *testing.T) {
 func TestRecordToEntity_SecretIsEncryptedState(t *testing.T) {
 	clientID := "client-1"
 	record := &ThirdpartyOAuth2ProviderRecord{
-		ID:               "550e8400-e29b-41d4-a716-446655440099",
-		DisplayName:      "Provider",
-		ClientID:         &clientID,
-		SecretCiphertext: []byte("ciphertext"),
-		CredentialSource: string(model.CredentialSourceStored),
-		IssuerURI:        "https://issuer.example.com",
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		ID:                 "550e8400-e29b-41d4-a716-446655440099",
+		DisplayName:        "Provider",
+		ClientID:           &clientID,
+		SecretCiphertext:   []byte("ciphertext"),
+		CredentialSource:   string(model.CredentialSourceStored),
+		ClientRegistration: string(model.ClientRegistrationStatic),
+		IssuerURI:          "https://issuer.example.com",
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	entity, err := recordToEntity(record)
@@ -232,6 +323,7 @@ func TestRecordToEntity_RejectsInvalidClientAuthenticationStates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.record.ClientRegistration = string(model.ClientRegistrationStatic)
 			tt.record.CredentialSource = string(model.CredentialSourceStored)
 			tt.record.ClientID = &clientID
 			entity, err := recordToEntity(tt.record)
@@ -260,6 +352,7 @@ func TestProviderRecord_FilesystemCredentialsRoundTrip(t *testing.T) {
 			record, err := entityToRecord(entity)
 			require.NoError(t, err)
 			assert.Equal(t, string(model.CredentialSourceFilesystem), record.CredentialSource)
+			assert.Equal(t, string(model.ClientRegistrationStatic), record.ClientRegistration)
 			assert.True(t, record.CredentialSourceTransitioned)
 			assert.Nil(t, record.ClientID)
 			assert.Nil(t, record.SecretCiphertext)
@@ -268,6 +361,7 @@ func TestProviderRecord_FilesystemCredentialsRoundTrip(t *testing.T) {
 			roundTripped, err := recordToEntity(record)
 			require.NoError(t, err)
 			assert.Equal(t, model.CredentialSourceFilesystem, roundTripped.CredentialSource)
+			assert.Equal(t, model.ClientRegistrationStatic, roundTripped.ClientRegistration)
 			assert.True(t, roundTripped.CredentialSourceTransitioned)
 			assert.Equal(t, &canonicalID, roundTripped.CanonicalID)
 			assert.True(t, roundTripped.ClientID.IsZero())
@@ -313,6 +407,7 @@ func TestRecordToEntity_RejectsCorruptCredentialSources(t *testing.T) {
 			record := &ThirdpartyOAuth2ProviderRecord{
 				ID: "550e8400-e29b-41d4-a716-446655440099", CanonicalID: &canonicalID,
 				CredentialSource: string(model.CredentialSourceFilesystem), Flavor: string(model.OAuth2FlavorStandard),
+				ClientRegistration: string(model.ClientRegistrationStatic),
 			}
 			tt.mutate(record)
 			entity, err := recordToEntity(record)

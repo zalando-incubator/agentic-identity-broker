@@ -295,8 +295,33 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_PublicProviderRoundTrip(t *t
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, model.ClientRegistrationStatic, stored.ClientRegistration)
 	assert.True(t, stored.IsPublicClient())
 	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDPublicRegistrationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := testCIMDProvider(id.NewServiceID())
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	provider.ClientRegistration = model.ClientRegistrationCIMD
+	provider.ClientRegistrationProvided = true
+
+	require.NoError(t, repo.Create(ctx, provider))
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
+	assert.Equal(t, provider.ClientID, stored.ClientID)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
+
+	provider.DisplayName = "Updated CIMD public provider"
+	require.NoError(t, repo.Update(ctx, provider, nil))
+	stored, err = repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
+	assert.Equal(t, provider.DisplayName, stored.DisplayName)
 }
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsInvalidClientAuthentication(t *testing.T) {
@@ -358,6 +383,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *tes
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, id.ClientID(cimdClientIDPrefix+provider.ID.String()), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
 }
@@ -374,6 +400,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSe
 	stored, err := repo.Get(ctx, staticProvider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, id.ClientID(cimdClientIDPrefix+staticProvider.ID.String()), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
 }

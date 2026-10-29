@@ -125,6 +125,51 @@ func TestCIMDMetadataHandler_Metadata(t *testing.T) {
 	})
 }
 
+func TestCIMDMetadataHandler_PublicMetadata(t *testing.T) {
+	serviceID := id.NewServiceID()
+	clientID := "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()
+	callback := "https://broker.example.com/api/third-party/" + serviceID.String() + "/oauth2/callback"
+	provider := &cimdMetadataProviderFake{metadata: &ports.CIMDClientMetadata{
+		ClientID:                clientID,
+		RedirectURIs:            []string{callback},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: "none",
+	}}
+	response := httptest.NewRecorder()
+	newCIMDMetadataHandlerForTest(provider).Metadata(response, newCIMDMetadataRequest(http.MethodGet, "/.well-known/oauth-client/"+serviceID.String(), serviceID))
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
+	assert.Equal(t, "public, max-age=300", response.Header().Get("Cache-Control"))
+	assertNoCIMDMetadataRedirect(t, response)
+	assert.Equal(t, serviceID, provider.metadataServiceID)
+	var document map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&document))
+	assert.Equal(t, map[string]any{
+		"client_id":                  clientID,
+		"redirect_uris":              []any{callback},
+		"grant_types":                []any{"authorization_code", "refresh_token"},
+		"response_types":             []any{"code"},
+		"token_endpoint_auth_method": "none",
+	}, document)
+}
+
+func TestCIMDMetadataHandler_PublicJWKSetReturnsUniformNotFound(t *testing.T) {
+	serviceID := id.NewServiceID()
+	provider := &cimdMetadataProviderFake{jwkSetErr: ports.ErrCIMDPublicKeyUnavailable}
+	response := httptest.NewRecorder()
+	newCIMDMetadataHandlerForTest(provider).JWKS(response, newCIMDMetadataRequest(http.MethodGet, "/.well-known/oauth-client/"+serviceID.String()+"/jwks.json", serviceID))
+
+	require.Equal(t, http.StatusNotFound, response.Code)
+	assert.Equal(t, "application/json", response.Header().Get("Content-Type"))
+	assertNoCIMDMetadataRedirect(t, response)
+	assert.Equal(t, serviceID, provider.jwkSetServiceID)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	assert.Equal(t, map[string]any{"error": cimdMetadataNotFoundError, "message": cimdMetadataUnavailableText}, body)
+}
+
 func TestCIMDMetadataHandler_JWKS(t *testing.T) {
 	t.Run("serves anonymous public ES256 JWKs without private material", func(t *testing.T) {
 		serviceID := id.NewServiceID()
@@ -169,7 +214,7 @@ func TestCIMDMetadataHandler_UnavailableServices(t *testing.T) {
 	}{
 		{name: "unknown", err: ports.ErrNotFound},
 		{name: "deleted", err: fmt.Errorf("deleted service: %w", ports.ErrNotFound)},
-		{name: "public", err: fmt.Errorf("public service: %w", ports.ErrNotFound)},
+		{name: "static public", err: fmt.Errorf("static public service: %w", ports.ErrNotFound)},
 		{name: "static confidential", err: fmt.Errorf("static confidential service: %w", ports.ErrNotFound)},
 		{name: "no usable published key", err: ports.ErrCIMDPublicKeyUnavailable},
 	}
