@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -89,7 +90,9 @@ var _ = Describe("Wildcard Redirect URI", func() {
 
 		expectRedirect = func(response *http.Response, redirectURI, state string) {
 			defer func() { _ = response.Body.Close() }()
-			Expect(response.StatusCode).To(Equal(http.StatusFound))
+			body, readErr := io.ReadAll(response.Body)
+			Expect(readErr).ToNot(HaveOccurred())
+			Expect(response.StatusCode).To(Equal(http.StatusFound), string(body))
 
 			location, parseErr := url.Parse(response.Header.Get("Location"))
 			Expect(parseErr).ToNot(HaveOccurred())

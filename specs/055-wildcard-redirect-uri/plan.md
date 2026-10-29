@@ -89,6 +89,9 @@ internal/domain/storage/
 internal/domain/oauth2/
 ├── service.go                          # source-specific redirect matching
 └── service_test.go                     # CIMD exact-match regression coverage
+internal/domain/oauth2server/
+├── provider.go                         # authorization-code redirect validation
+└── provider_test.go                    # code-issuer wildcard and CIMD-exact tests
 api/admin/openapi.yaml                  # Agent create/update/response contract
 api/enduser/openapi.yaml                # OAuth2 authorization contract
 docs/api/enduser-api.md                 # maintained end-user API documentation
@@ -201,7 +204,7 @@ Not applicable. This feature changes no React UI and requires no frontend screen
 ### Unit & Integration Tests
 
 **Unit Tests**:
-- Location: `internal/domain/urivalidation/redirect_test.go`, `internal/domain/urivalidation/redirect_wildcard_security_test.go`, `internal/domain/storage/agent_test.go`, and `internal/domain/oauth2/service_test.go`
+- Location: `internal/domain/urivalidation/redirect_test.go`, `internal/domain/urivalidation/redirect_wildcard_security_test.go`, `internal/domain/storage/agent_test.go`, `internal/domain/oauth2/service_test.go`, and `internal/domain/oauth2server/provider_test.go`
 - Coverage: Host-label matching, component equality, PSL boundaries, malformed/unsafe patterns, and Agent create/update validation
 - Strategy: Table-driven TDD; write tests first and verify semantic failures before implementation
 

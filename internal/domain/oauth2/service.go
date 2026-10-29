@@ -180,7 +180,18 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if len(allowedRedirectURIs) == 0 {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
-	if !urivalidation.IsRegisteredRedirectURI(allowedRedirectURIs, agent.RedirectURIs, req.RedirectURI) {
+	registered := false
+	if cimdMeta != nil {
+		registered = urivalidation.IsRegisteredRedirectURI(allowedRedirectURIs, agent.RedirectURIs, req.RedirectURI)
+	} else {
+		for _, registeredURI := range allowedRedirectURIs {
+			if urivalidation.MatchesAgentRedirectURI(registeredURI, req.RedirectURI) {
+				registered = true
+				break
+			}
+		}
+	}
+	if !registered {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
 
