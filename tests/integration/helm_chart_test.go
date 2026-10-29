@@ -366,6 +366,15 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		}
 	})
 
+	// US1-S12 from specs/053-session-auto-refresh/spec.md
+	t.Run("allows the configured number of job retries", func(t *testing.T) {
+		output := renderHelmTemplate(t, sessionSweepArgs(
+			"--show-only", "templates/cronjob-session-sweep.yaml",
+			"--set", "sessionSweep.backoffLimit=1",
+		)...)
+		require.Contains(t, output, "backoffLimit: 1\n")
+	})
+
 	t.Run("keeps the session-sweep suffix when the fullname is long", func(t *testing.T) {
 		fullname := strings.Repeat("a", 52)
 		output := renderHelmTemplate(t, sessionSweepArgs(

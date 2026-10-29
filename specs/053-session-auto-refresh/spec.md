@@ -20,6 +20,9 @@
 - Q: Should the chart define how the scheduled job authenticates? → A: No. The chart only transports the request: target URL, `Host`, body, literal headers, headers read from mounted files, optional TLS client files, and the volumes that provide them. Deployments differ in how they authenticate admin callers, and the chart adds no identity model of its own. Rendering fails when the sweep is enabled without any configured identity. The default target is the release's in-cluster admin Service, and the documented path stays the authenticating proxy that [ADR 038](../../adrs/038-proactive-token-refresh.md) describes. Broker-side authentication of service callers is a separate future feature.
 - Q: Is a separate sweep run counter needed next to the duration histogram? → A: No. A duration histogram attributed by `outcome` and `dry_run` counts runs through its count series. Keep the histogram and the skipped counter. Drop the run counter.
 - Q: What must the health metrics cover? → A: Session health across all services and users, broken down by service and state, without per-user attributes. The gauge is computed by one grouped count query in each metric export cycle. A failed query reports no data for that cycle. This removes the separate snapshot interval, cache, failure counter, and age gauge.
+### Session 2026-10-29
+
+- Q: Should a failed sweep job retry? → A: Not by default. A rolling update of the broker can stop the replica that serves a sweep, and that run is then lost. `sessionSweep.backoffLimit`, default `0`, lets operators allow retries. A retry evaluates only the sessions that are still due, and the active deadline covers all attempts.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -41,9 +44,10 @@ An operator deploying the broker with the Helm chart enables the scheduled sessi
 6. **Given** TLS client certificate, key, or CA files are configured, **When** the job runs, **Then** the job presents the client certificate and trusts the configured CA for that request.
 7. **Given** the sweep is enabled with no literal header, no file header, and no client certificate, **When** the manifests are generated, **Then** rendering fails with a message that asks for an identity configuration.
 8. **Given** the broker returns `200`, including a summary with `failed` greater than zero, **When** the job finishes, **Then** the job succeeds and its log contains the response summary.
-9. **Given** the target returns a non-`2xx` status, the request times out, or the target is unreachable, **When** the job finishes, **Then** the job fails, is not retried, and its log contains the status and response body but no request header.
+9. **Given** the target returns a non-`2xx` status, the request times out, or the target is unreachable, **When** the job finishes, **Then** the job fails, is not retried by default, and its log contains the status and response body but no request header.
 10. **Given** the sweep is enabled, **When** the manifests are generated, **Then** the job's pod does not match the broker Service or PodDisruptionBudget selector, and carries `app.kubernetes.io/component: session-sweep` for network policies to select.
 11. **Given** the sweep is enabled with a `timeoutSeconds` not shorter than `activeDeadlineSeconds`, with only one of `tls.certFile` and `tls.keyFile`, or with a `lookaheadDuration` that is zero or not an ISO 8601 duration of days, hours, minutes, and seconds, **When** the manifests are generated, **Then** rendering fails with a message that names the offending value.
+12. **Given** the sweep is enabled with `sessionSweep.backoffLimit: 1`, **When** the manifests are generated, **Then** the job allows one retry of a failed attempt.
 
 ---
 
@@ -89,7 +93,7 @@ An operator wants to confirm from the metrics backend that the scheduled sweep r
 
 - A run is missed because the cluster was unavailable: the CronJob starts it late within the late-start window or skips it. The two-hour lookahead lets the next run cover sessions that the missed run would have refreshed.
 - A run takes longer than one schedule period: the next run is skipped rather than started concurrently, and the active deadline ends a stuck run.
-- The broker restarts mid-sweep: the job gets a transport error and fails. Sessions already refreshed stay refreshed. The next run evaluates the remainder.
+- The broker restarts mid-sweep, for example during a rolling update: the job gets a transport error and fails. Sessions already refreshed stay refreshed. The next run evaluates the remainder, or a retry does when `sessionSweep.backoffLimit` allows one.
 - No sessions exist: the sweep completes with all counts at zero, the job succeeds, and the gauge reports no series.
 - A third-party service is deleted while its sessions remain: those sessions are counted under that `service_id` until they are removed.
 - A provider issues access tokens shorter than the sweep lookahead: every run refreshes all of that provider's sessions. This is safe, but adds one refresh per session per run. The operations guide explains the tradeoff.
@@ -358,6 +362,43 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 
 **Observable result**: No CronJob is rendered, so no job can send an unauthenticated request.
 
+### Journey 5 — A rolling update interrupts a sweep and the job retries (User Story 1, Scenario 12)
+
+**Cast**: Same release as Journey 1. The operator deploys the broker several times a day. A sweep takes about five minutes.
+
+**Step 1 — Values**
+
+```yaml
+sessionSweep:
+  enabled: true
+  backoffLimit: 1                # retry a failed attempt once; activeDeadlineSeconds covers both
+```
+
+**Step 2 — the rendered job (excerpt)**
+
+```yaml
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 2100
+```
+
+**Step 3 — 2026-10-16T18:02:00Z: a rolling update stops the replica serving the 18:00Z sweep after it refreshed 30 of 50 due sessions**
+
+The first pod logs:
+
+```text
+curl: (52) Empty reply from server
+```
+
+**Step 4 — Kubernetes starts a second pod, which reaches a new replica**
+
+```json
+{"refreshed": 20, "skipped": 0, "failed": 0, "total_evaluated": 20, "dry_run": false}
+```
+
+**Observable result**: The job completes with one failed and one succeeded pod. The 18:00Z run is not lost: all 50 sessions are refreshed before they expire. The broker records one completed sweep duration, from the retry, and none for the interrupted attempt.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -366,7 +407,7 @@ Error: sessionSweep.enabled requires an identity for the admin API: set sessionS
 
 - **FR-001**: The Helm chart MUST offer a scheduled sweep that is disabled by default. With it disabled, the chart MUST render no sweep resources, and `sessionSweep` values MUST NOT affect any other rendered resource.
 - **FR-002**: When enabled, the chart MUST render a CronJob that calls `POST /api/sessions/sweep` once per schedule period. The default schedule is hourly.
-- **FR-003**: The CronJob MUST use `concurrencyPolicy: Forbid` and `backoffLimit: 0`. Its late-start window and active deadline MUST be configurable.
+- **FR-003**: The CronJob MUST use `concurrencyPolicy: Forbid`. Its retry limit (`backoffLimit`, default `0`), late-start window, and active deadline MUST be configurable.
 - **FR-004**: The request MUST send a configurable lookahead. The default is `PT2H`. The values schema MUST accept only the positive ISO 8601 duration form accepted by the sweep endpoint.
 - **FR-005**: The request MUST pass optional `dryRun` and `pageSize` values through unchanged.
 - **FR-006**: When `sessionSweep.url` is unset, the job MUST target the release's admin Service and admin port, and MUST send the host of `broker.server.admin.publicUrl` as `Host` unless that value is empty. When `sessionSweep.url` is set, the job MUST target it and override `Host` only when `sessionSweep.host` is set.

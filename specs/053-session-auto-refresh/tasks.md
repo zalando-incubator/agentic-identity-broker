@@ -223,6 +223,9 @@ T014 (E2E) is the test for this story. It must be red before T028.
   Replace the line 40 instruction to route sweep CronJobs through the proxy (FR-026).
 - [X] T034 [US1] Run `just helm-lint` and the quickstart step 3 checks, including the disabled-values diff (FR-001). Run `go test ./tests/integration/ -run TestHelmTemplate_SessionSweep` until the render checks are green, then run the rendered script manually per quickstart §5.
 
+- [X] T034a [US1] Add US1-S12 (`allows the configured number of job retries`) to `TestHelmTemplate_SessionSweep` in `tests/integration/helm_chart_test.go`. Confirm it is red before T034b.
+- [X] T034b [US1] Add `sessionSweep.backoffLimit` (integer, `minimum: 0`, default `0`) to `values.yaml` and `values.schema.json`, and render it in `cronjob-session-sweep.yaml` (FR-003). Update the chart README values table and retry paragraph, `contracts/chart-values.md`, `contracts/sweep-job.md`, and the chart-managed schedule section of `docs/operations/session-sweep.md`.
+
 **Checkpoint**: US1 is shippable alone: the sweep runs hourly from the chart.
 
 ---

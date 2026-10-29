@@ -19,6 +19,8 @@ sessionSweep:
   startingDeadlineSeconds: 3600
   # -- Hard cap on one Job, in seconds. Must exceed timeoutSeconds.
   activeDeadlineSeconds: 2100
+  # -- Retries of a failed Job. activeDeadlineSeconds covers all attempts.
+  backoffLimit: 0
   # -- Request timeout in seconds, passed to curl --max-time
   timeoutSeconds: 1800
   # -- ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only)
@@ -75,6 +77,7 @@ sessionSweep:
 | `schedule` | string, `minLength: 1` |
 | `timeZone` | string |
 | `startingDeadlineSeconds`, `activeDeadlineSeconds`, `timeoutSeconds` | integer, `minimum: 1` |
+| `backoffLimit` | integer, `minimum: 0` |
 | `lookaheadDuration` | string, ISO 8601 pattern from research R5 |
 | `pageSize` | `null` or integer `1..1000` |
 | `url` | string; empty or `^https?://` without whitespace |

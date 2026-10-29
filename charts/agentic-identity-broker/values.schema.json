@@ -1553,6 +1553,11 @@
           "minimum": 1,
           "description": "Hard cap on one Job in seconds; must exceed timeoutSeconds"
         },
+        "backoffLimit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Retries of a failed Job; activeDeadlineSeconds covers all attempts"
+        },
         "timeoutSeconds": {
           "type": "integer",
           "minimum": 1,

@@ -18,7 +18,7 @@ spec:
   startingDeadlineSeconds: {{ int $sweep.startingDeadlineSeconds }}
   jobTemplate:
     spec:
-      backoffLimit: 0
+      backoffLimit: {{ int $sweep.backoffLimit }}
       activeDeadlineSeconds: {{ int $sweep.activeDeadlineSeconds }}
       template:
         metadata:

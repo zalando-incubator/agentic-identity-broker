@@ -30,7 +30,7 @@ spec:
   startingDeadlineSeconds: <startingDeadlineSeconds>
   jobTemplate:
     spec:
-      backoffLimit: 0
+      backoffLimit: <backoffLimit>       # default 0
       activeDeadlineSeconds: <activeDeadlineSeconds>
       template:
         metadata:
