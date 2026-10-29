@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-29
 
-**Status**: Draft — clarification complete; consequential proposals await maintainer sign-off; no implementation approval recorded
+**Status**: Draft — planned; consequential proposals await maintainer sign-off (see `plan.md` Approval Items); no implementation approval recorded
 
 **Input**: [Issue #299](https://github.com/zalando-incubator/agentic-identity-broker/issues/299), “Incremental authorization: per-service virtual scopes for MCP step-up (fixes optional-service re-auth loop)”. The feature-description parameter is exactly the supplied issue title, a blank line, and the supplied issue body. Issue comments and referenced branches are not requirements sources for this draft.
 
@@ -19,6 +19,51 @@
 The three answers supersede the original unanswered handoff in `checklists/requirements.md`. All related requirements, acceptance scenarios and examples below use these answers. No API or ADR is approved by this clarification. Consistency correction: Story 1 Scenario 4 now explicitly requires the user's chosen permission-set combination to cover the configured provider scopes, matching FR-010 and the example where Issue Triage alone lacks `user:email`; accepting any candidate alone would contradict the existing coverage invariant.
 
 Additional **Proposed approval items carried into planning**: **API-EXCHANGE-CHALLENGE** covers the token-exchange error `scope` field and gateway challenge `scope`/optional `resource_metadata` propagation (FR-004–FR-005); **API-CONSENT** covers requested-service authorization and grant validation plus server-derived `requested_service_ids` (FR-002–FR-003, FR-007, FR-009–FR-012); **API-SESSION-DETAIL** covers the new authenticated detail read, both identifier forms and absent-session representation (API-001, FR-015–FR-016); **API-METADATA-CONFIG** covers optional owning-process metadata URL configuration with the key/default/validation to be designed (Configuration Requirements). These additions make step-up and recovery observable; their main alternative is keeping current contracts, which cannot provide the specified interaction. **DEC-003 (persistent unusability)** proposes persisting definitive provider rejection for consistent session consumers (FR-008, FR-018; Database Requirements), rather than leaving stored session usability unchanged and repeating login loops. **ADR-RECOVERY** requires a Proposed feature-local superseding ADR for ADR 044's fixed `/sessions` return and unchanged rejected-session clauses, retaining its other protections; the alternative is the existing generic landing page and unchanged stored-session behavior. Planning must register these items and DEC-001, API-LOCAL-SCOPES and DEC-002 in `plan.md`'s Approval Items with authoritative contract/decision references, including any schema change established by design. No plan, ADR draft or implementation is created in this clarification phase.
+
+### Session 2026-10-29 (planning)
+
+Planning resolved the items that clarification deferred to design. Each change below keeps the
+requirements consistent with the designed contracts in `contracts/`. None of these choices is
+approved yet. All of them are registered in `plan.md` Approval Items.
+
+- **Session detail contract (API-SESSION-DETAIL, API-001)**: The existing
+  `GET /api/third-party/{serviceId}/session` route is unchanged. It still accepts only a UUID and
+  returns `404` when no session exists. The new route `GET /api/third-party/sessions/{service}` is
+  additive. Journey 2's example now uses the existing `dependent_agents` field name and adds the
+  `scope_url` field to `service`. *Reason*: reuse the existing schema vocabulary and avoid a
+  breaking behavior change. *Main alternative*: change the existing route to accept canonical IDs
+  and return `200` with `session: null`.
+- **Metadata URL configuration (API-METADATA-CONFIG)**: The challenge metadata URL is an optional
+  ExtProc metadata field, `aib.tokenexchange.resource_metadata_url`. The operator sets it on each
+  route in the Agentgateway `metadataContext`, beside `resource_uri`. An invalid value is omitted
+  from the challenge. It does not fail the request. There is no ExtProc YAML key and no broker key.
+  Journey 4 Step 1 and Configuration Requirements are updated. *Reason*: RFC 9728 metadata is
+  specific to each resource, and ADR 036 makes route metadata the gateway-to-ExtProc trust
+  boundary. *Main alternative*: a single global ExtProc configuration key.
+- **Persistent unusability (DEC-003)**: The existing #271 marker already represents this state, so
+  there is no schema change. Under the session row lock, `refresh_token_expires_at` is set to the
+  rejection time. Database Requirements are updated. ADR-RECOVERY (ADR 045 draft) records the
+  marker and retires ADR 044's stale "leaves the stored session unchanged" sentence.
+- **Identity pinning schema (new approval item DEC-004)**: FR-019 requires pinning, and pinning
+  needs persistence. Migration `046_add_service_scope_bindings` adds a nullable
+  `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`.
+  *Main alternative*: store only UUID-form scopes. That alternative contradicts FR-019's
+  old-canonical refresh outcome.
+- **Virtual scope architecture ADR (new approval item ADR-SCOPES)**: The constitution requires an
+  ADR for a major architectural decision. The ADR 046 draft records the scope semantics, the single
+  `servicescope` owner, local and proxy behavior, and the non-advertisement rule.
+- **Granted scope form (API-LOCAL-SCOPES)**: A granted virtual scope keeps the exact form the
+  client requested. Challenges emit the current canonical form. FR-020 is updated. *Reason*: if
+  the broker rewrote the form, a later refresh that names the same scope would look like widening.
+- **Consent coverage data (API-CONSENT)**: The consent detail also returns
+  `requested_service_coverage`, which lists each candidate set's `supplied_required_scopes` and
+  the verified `usability`. The UI can then apply FR-010 to the user's unsaved selection. Raw
+  permission-set scopes stay unexposed. FR-009 is updated.
+- **Transient verification outcomes (API-CONSENT, API-LOCAL-SCOPES)**: When usability cannot be
+  verified, interactive authorization returns `temporarily_unavailable` and local refresh returns
+  `server_error`. Neither rotates a token nor persists unusability. FR-008 is updated.
+- **`client_credentials` (API-LOCAL-SCOPES)**: A virtual scope has no user session to check, so the
+  `client_credentials` grant rejects it with `invalid_scope`. FR-002 is updated.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -340,7 +385,7 @@ X-Remote-User: alice@example.com
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents"},"session":null,"agents":[{"id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
+{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents","scope_url":"https://broker.example.com/sessions/github"},"session":null,"dependent_agents":[{"id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
 ```
 
 ![State A: GitHub has no active session](wireframes/session-needs-login.svg)
@@ -461,7 +506,7 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 
 ### Journey 4 — Operator deployment and invalid scope boundaries (Story 4, Scenarios 1–4)
 
-**Step 1**: The operator publishes `https://agentgateway.example.com/.well-known/oauth-protected-resource/mcp` and configures the gateway/ExtProc's challenge metadata URL through its owning configuration contract. No new key name is assumed before design. The deployment guide shows how a route requiring GitHub announces `https://broker.example.com/sessions/github` in its initial challenge.
+**Step 1**: The operator publishes `https://agentgateway.example.com/.well-known/oauth-protected-resource/mcp` and sets the optional `resource_metadata_url` field in the Agentgateway route's ExtProc `metadataContext` (`aib.tokenexchange.resource_metadata_url: "'https://agentgateway.example.com/.well-known/oauth-protected-resource/mcp'"`), next to `resource_uri`. The deployment guide shows how a route requiring GitHub announces `https://broker.example.com/sessions/github` in its initial challenge.
 
 **Step 2**: A missing GitHub session produces Journey 1 Step 2's challenge. In the variant without metadata publishing/configuration, only `resource_metadata` is absent; the scope and recovery link are unchanged. The broker's own discovery document does not list these virtual scopes.
 
@@ -474,14 +519,14 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 ### Functional Requirements
 
 - **FR-001**: Define a broker-only virtual scope per configured third-party service: the configured public origin plus `/sessions/{identifier}`. Emit the canonical ID when present, otherwise the UUID; accept both current identifier forms.
-- **FR-002**: Recognize virtual scopes only under the configured broker public origin and the service-session path. Reject malformed, unknown or agent-unconfigured broker service scopes without creating a grant or forwarding them upstream. Do not derive trusted origins from request Host or user input.
+- **FR-002**: Recognize virtual scopes only under the configured broker public origin and the service-session path. Reject malformed, unknown or agent-unconfigured broker service scopes without creating a grant or forwarding them upstream. Do not derive trusted origins from request Host or user input. The `client_credentials` grant rejects every virtual scope with `invalid_scope`.
 - **FR-003**: A virtual scope means the authenticated user needs a usable session for that service, covered by their selected grant and the agent's configured required provider scopes. It does not independently grant provider scopes or choose permission sets.
 - **FR-004**: A missing/unusable service session or insufficient service grant during token exchange MUST include the resolved service's canonical virtual scope alongside the existing appropriate recovery action. Nonrecoverable errors MUST NOT acquire misleading service recovery information.
 - **FR-005**: The gateway MUST propagate the broker-provided service scope into its existing 403 `insufficient_scope` challenge, preserve its recovery URL and URL-elicitation body, and include a configured protected-resource metadata URL when available.
 - **FR-006**: Recoverable service-session action links MUST return the signed-in user to that service's session page after provider login rather than the generic list. Grant-denial recovery MUST still take the user to consent rather than falsely imply login grants permission.
 - **FR-007**: Interactive authorization MUST enforce all requested services in addition to permanent required services, preserving the original request through consent and not permanently changing the agent configuration.
-- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require configured provider scopes and existing client-identity checks. Definitive provider rejection MUST persist unusability consistently for all session consumers. Transient failures MUST NOT persist false revocation or allow silent authorization.
-- **FR-009**: Consent MUST expose server-derived requested service IDs, show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
+- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require configured provider scopes and existing client-identity checks. Definitive provider rejection MUST persist unusability consistently for all session consumers. Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
+- **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the required scopes, verified usability and each candidate set's supplied required scopes; it MUST show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
 - **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable. The broker MUST enforce the same rule on submitted grants before changing the grant or continuing authorization.
 - **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
 - **FR-012**: Local refresh MUST NOT widen its original scope set; adding a virtual scope requires interactive authorization and returns `invalid_scope` without consuming an otherwise valid refresh token. Local refresh with already-granted virtual scopes MUST recheck all those services, including when `scope` is omitted, and return a scope error if they are no longer covered or usable. Existing revoked-grant errors retain their existing handling.
@@ -493,7 +538,7 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 - **FR-018**: Preserve existing refresh concurrency, rotation, reconnect precedence, and update-only termination guarantees when persisting unusability. An older refresh failure MUST NOT invalidate credentials established by a newer successful reconnect.
 
 - **FR-019 (Proposed; DEC-001)**: Only service UUID scopes are durable across canonical-ID renames. Resolve only current canonical IDs and UUIDs; do not retain historical aliases. Emit the current canonical scope after rename. A local refresh bound to a former canonical scope MUST return `invalid_scope` without consuming an otherwise valid refresh token; clients must obtain a fresh challenge and interactively authorize the new scope. Preserve the originally resolved service identity in authorization/refresh continuity so canonical-ID reuse cannot redirect an existing grant to another service. Already-issued signed access tokens retain their normal expiry and are not rewritten.
-- **FR-020 (Proposed; API-LOCAL-SCOPES)**: Broker-issued local access-token `scope` claims and granted token-response `scope` values MUST include the granted virtual scopes consistently. Retain the granted service set for local refresh revalidation, including when request `scope` is omitted, subject to FR-012 and FR-019. Proxy responses MUST NOT manufacture virtual scopes or change upstream signed claims.
+- **FR-020 (Proposed; API-LOCAL-SCOPES)**: Broker-issued local access-token `scope` claims and granted token-response `scope` values MUST include the granted virtual scopes consistently, in the exact form the client requested. Retain the granted service set for local refresh revalidation, including when request `scope` is omitted, subject to FR-012 and FR-019. Proxy responses MUST NOT manufacture virtual scopes or change upstream signed claims.
 - **FR-021 (Proposed; DEC-002)**: This release's proxy refresh strips virtual scopes and forwards the upstream refresh outcome through the existing proxy handling, preserving any returned rotated refresh token. It MUST NOT add a post-upstream-response service-usability veto. A successful proxy refresh is not proof of broker service coverage/usability; subsequent service exchange and interactive authorization retain their checks, challenges and recovery. No parity with local refresh assurance is promised.
 
 ### Domain Model *(if applicable - document before API or database design)*
@@ -549,12 +594,12 @@ New domain terms require glossary additions during approved design; this specify
 ### Configuration Requirements *(if applicable - document before implementation)*
 
 - Use existing `server.enduser.public_url` as the trusted scope/recovery origin and existing `oauth2_authorization_server.mode` for local/proxy selection, as shown in the journeys. No new broker mode or per-service virtual-scope configuration is proposed.
-- Add an optional challenge protected-resource metadata URL through the configuration contract of the gateway/standalone process that owns the challenge. Its exact key, validation and deployment artifact must be designed before implementation; it must not be inserted into a broker workload that does not own it.
+- Add an optional challenge protected-resource metadata URL as the ExtProc metadata field `aib.tokenexchange.resource_metadata_url`. The operator configures it on each Agentgateway route, as `contracts/extproc-challenge.md` §1 specifies. The URL must be an absolute `https` URL that is safe in a header. An invalid value is omitted from the challenge. There is no default value, no ExtProc YAML key and no broker key. It is not inserted into the broker chart.
 - Update owning configuration documentation and examples for any added configuration, with defaults and precedence; update Helm only for changed chart-managed workload settings. The gateway metadata publishing requirement is optional in this draft (see Assumptions).
 
 ### API Requirements *(if applicable - design before database)*
 
-- **API-001**: Propose the token-exchange error `scope` field, consent `requested_service_ids`, requested-service scope validation on authorization/refresh, and session-detail behavior for both identifiers with no session. The issue's proposed new read is `GET /api/third-party/sessions/{service}`; final contract design must resolve its relation to existing `GET /api/third-party/{serviceId}/session` before implementation.
+- **API-001**: Propose the token-exchange error `scope` field, consent `requested_service_ids`, requested-service scope validation on authorization/refresh, and session-detail behavior for both identifiers with no session. The issue's proposed new read is `GET /api/third-party/sessions/{service}`; it is added alongside the unchanged UUID-only `GET /api/third-party/{serviceId}/session` (see `contracts/enduser-api.md`).
 - **API-002**: Design complete request/response, authentication, validation and error examples in `api/enduser/openapi.yaml` before implementing. Publish matching end-user reference documentation. Apply project API/versioning rules; draft examples here do not constitute API approval or silently change versioning.
 - **API-003**: Preserve successful ordinary authorization, current URL elicitation, error URI propagation, existing session actions, PKCE and grant-revocation behavior outside the proposed step-up changes. Do not add a broker-token-endpoint `WWW-Authenticate` response; the gateway owns that challenge.
 - **API-004**: Proposed APIs, refresh behavior and ADR deviations require explicit maintainer approval at the pipeline's later approval gate. No admin API expansion is proposed by this draft.
@@ -562,7 +607,8 @@ New domain terms require glossary additions during approved design; this specify
 ### Database Requirements *(if applicable)*
 
 - Persist definitive rejected-session usability so all broker replicas and background/session consumers agree, while preserving existing session identities, encrypted token storage and concurrency guarantees.
-- Whether existing fields can represent this state or a migration is required must be established during design. If schema changes are necessary, use paired sequential migrations with apply/rollback/repeat tests and both storage adapters; do not prescribe a speculative rejection column before design. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
+- The existing `user_sessions.refresh_token_expires_at` rejection marker represents this state (DEC-003). No `user_sessions` schema change is made.
+- Proposed (DEC-004): migration `046_add_service_scope_bindings` adds a nullable `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`. The column pins each granted virtual scope to its service UUID (FR-019). The migration has paired up/down files with apply/rollback/repeat tests, and both storage adapters support the column. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -600,6 +646,6 @@ The domain model above defines Agent, ThirdpartyOAuth2Service, UserGrant, UserSe
 - The scope and step-up behavior described in the issue's MCP 2026-07-28 references is the intended interoperability target. This phase does not implement a client or infer additional requirements from external branch artifacts.
 - Gateway metadata publishing is optional, as proposed in the issue's Operators section; when configured its URL is included in challenges. No mandatory publication requirement is added. A new consent Deny/Decline action is out of scope, as the issue explicitly proposes; users can leave the page and client-owned bounded retries terminate further attempts.
 - Q1–Q3 are resolved in Clarifications and FR-019–FR-021: UUID-only rename durability, visible local virtual scopes, and proxy refresh stripping plus subsequent recovery without a post-response veto. These are Proposed choices awaiting maintainer sign-off, not approvals. Alias compatibility and stronger proxy refresh assurance are outside this release.
-- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature proposes changing both; later design must introduce an approved superseding ADR for those clauses, not edit the merged accepted ADR in place. No such decision is accepted here.
+- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature proposes changing both; the Proposed feature-local draft `adrs/045-service-session-recovery-return.md` supersedes only those clauses. The merged accepted ADR is not edited in place. No such decision is accepted here.
 - Existing [ADR 016 authorization-context integrity](../../adrs/016-authorization-session-anti-spoofing.md), [ADR 014 local issuance](../../adrs/014-oauth2-server-mode.md), [ADR 035 root-mounted SPA](../../adrs/035-root-mounted-spa.md), [ADR 038 refresh concurrency](../../adrs/038-proactive-token-refresh.md) and current consent return behavior remain constraints. ADR 037's consent-selection decision is currently Proposed; this draft does not promote it to Accepted.
 - Every numbered acceptance scenario must receive its own complete-journey acceptance test during implementation preparation, including resolved Story 3 Scenarios 3–4 and the Story 4 Scenario 2 rename/recovery variants. No implementation or tests are added in this phase.
