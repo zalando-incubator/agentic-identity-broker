@@ -10,13 +10,16 @@ are in [data-model.md](./data-model.md).
 
 Before any implementation, these preconditions must hold:
 
-1. The stakeholder has confirmed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md).
-   This was done on 2026-10-28. The API-003 **Verify** checks against the final AuthZEN text
-   still have to pass before the OpenAPI is frozen.
-2. The new ADR decision set (research R16) is Accepted. This was done on 2026-10-28. The ADR file
-   is drafted in T008.
-3. The spec revision for the OPA input shape (research R15) has landed. This was done on
-   2026-10-28. `tasks.md` must still be regenerated from the revised plan.
+1. The maintainer has signed off the items in the plan's
+   [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
+   These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
+   [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
+   ADR draft [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md).
+2. T008 has recorded that approval in the ADR's Status line and moved the ADR to `adrs/`.
+3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
+   is frozen.
+4. The spec revision for the OPA input shape (research R15) has landed. This was done on
+   2026-10-28.
 
 Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). Docker or Podman is needed
 only for the PostgreSQL-backed scenario US2.19.

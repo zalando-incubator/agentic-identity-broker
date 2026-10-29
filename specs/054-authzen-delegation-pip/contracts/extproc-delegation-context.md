@@ -1,8 +1,9 @@
 # Contract: ExtProc Delegation Context (configuration, broker calls, request outcomes, and policy input)
 
 **Owner**: standalone `extproc-token-exchange` (ADR 011). It uses the `EXTPROC_` configuration
-namespace and is **not** part of the broker Helm chart. The maintainer accepted the new ADR
-decision set (research R16) on 2026-10-28. This contract changes ADR 028's input schema and
+namespace and is **not** part of the broker Helm chart. **Status**: Proposed; sign-off is
+approval items API-4–API-6 and ADR-1 in the plan. The maintainer endorsed the new ADR decision
+set (research R16) in the 2026-10-28 review. This contract changes ADR 028's input schema and
 request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
 spec clarification (FR-017, FR-018, and research R15).
 
@@ -65,7 +66,7 @@ The client uses the existing traced HTTP client (`internal/extproc/httpclient`) 
 The client reads `requestStart` just before it sends the POST. A permit's deadline is
 `requestStart + min(max-age, max_staleness)`, computed once. The cache, the singleflight
 followers, and the request state carry this deadline unchanged. ExtProc does no `Age` or
-transit accounting. The maintainer accepted the remaining skew.
+transit accounting. The maintainer chose to accept the remaining skew.
 
 **Response handling**:
 
