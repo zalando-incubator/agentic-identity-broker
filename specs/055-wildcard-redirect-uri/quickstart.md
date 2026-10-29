@@ -13,7 +13,7 @@ This guide validates broker behavior. Applying the registration to an external d
 Run focused URI and Agent validation tests:
 
 ```fish
-go test ./internal/domain/urivalidation ./internal/domain/storage ./internal/domain/oauth2
+go test ./internal/domain/urivalidation ./internal/domain/storage ./internal/domain/oauth2 ./internal/domain/oauth2server
 ```
 
 Expected results:
