@@ -81,7 +81,7 @@ function validateResult(result) {
     throw new Error("Invalid next step");
   }
   if (result.summary !== undefined && (typeof result.summary !== "string" || !result.summary.trim() ||
-      result.summary.length > 200 || /[\r\n]/.test(result.summary))) {
+      result.summary.length > 200 || /[\r\n\u2028\u2029]/.test(result.summary))) {
     throw new Error("Invalid summary");
   }
   return result;
@@ -681,15 +681,18 @@ async function publishStatus(github, repo, number, title, sections) {
 // The status comment replaces itself on every run, so the PR always ends with one summary of the phase and the next step.
 async function announce({ github, context, needs }) {
   const { repo } = context;
-  const { action, pr } = needs.route?.outputs || {};
-  const number = Number(pr);
+  const created = Number(needs.specify?.outputs?.created_pr_number);
+  const number = created || Number(needs.route?.outputs?.pr);
+  const action = created ? "clarify" : needs.route?.outputs?.action;
   if (!running[action] || !number || !await maintainer(github, repo, context.actor)) return null;
   const state = await pullRequestState(github, repo, number);
   const approve = action === "implement" ? "✅" : "○";
+  // Runs queue per triggering issue or PR number, so only a run started on this PR holds back its later commands.
+  const queued = [context.payload.pull_request?.number, context.payload.issue?.number].includes(number);
   return publishStatus(github, repo, number, `⏳ ${running[action]}`, [
     state ? [progress(state.stages, { active: action, approve })] : [], [
-    `Started by \`${context.actor}\`. Follow the [workflow run](${runURL(repo, context.runId)}). ` +
-      "Commands posted now wait until this run finishes.",
+    `Started by \`${context.actor}\`. Follow the [workflow run](${runURL(repo, context.runId)}).` +
+      (queued ? " Commands posted now wait until this run finishes." : ""),
   ]]);
 }
 
@@ -785,12 +788,18 @@ async function report({ github, context, needs }) {
     [`[Workflow run](${runURL(repo, run)})`],
   ]);
   // The status comment now summarizes this run, so its agent comments are folded but stay readable and parseable.
+  const unfolded = [];
   for (const entry of agentComments(state?.comments || [], repo, run)) {
-    await github.graphql(
-      "mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }",
-      { id: entry.node_id },
-    );
+    try {
+      await github.graphql(
+        "mutation($id: ID!) { minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }",
+        { id: entry.node_id },
+      );
+    } catch (error) {
+      unfolded.push(`${entry.html_url}: ${error.message}`);
+    }
   }
+  if (unfolded.length) throw new Error(`Status published, but these agent comments stay unfolded: ${unfolded.join("; ")}`);
   return data;
 }
 

@@ -172,6 +172,7 @@ function fixture(eventName, payload, options = {}) {
     },
     graphql: async (query, { id }) => {
       assert.match(query, /minimizeComment\(input: \{subjectId: \$id, classifier: OUTDATED\}\)/);
+      if (options.unfoldable?.includes(id)) throw new Error("Resource not accessible by integration");
       minimized.push(id);
       return {};
     },
@@ -688,6 +689,7 @@ test("result command rejects reserved markers in reports before publishing", () 
   draft.report = "Analysis report";
   for (const [summary, error] of [
     [undefined, /one-line phase summary/], [" ", /one-line phase summary/], ["Two\nlines", /Invalid summary/],
+    ["Two\u2028lines", /Invalid summary/], ["Two\u2029paragraphs", /Invalid summary/],
     ["x".repeat(201), /Invalid summary/], ["Quoted ## Spec Kit result", /result marker/],
   ]) {
     draft.summary = summary;
@@ -1279,6 +1281,14 @@ test("a finished run summarizes each phase with its commit, folds its agent comm
   assert.ok(!body.includes("| Clarify |"));
   assert.ok(body.includes(`<details><summary>Earlier runs</summary>\n\n- [Run 90](https://github.com/example/broker/actions/runs/90): [Clarify ✅](${link(10)})`));
   assert.deepEqual(f.minimized, ["node-12", "node-13", "node-14", "node-15", "node-16", "node-17", "node-18"]);
+
+  const partial = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments, unfoldable: ["node-13"] });
+  await assert.rejects(report({ ...partial, needs: {
+    route: { result: "success", outputs: { action: "plan", pr: "42" } },
+    reanalyze: { result: "success", outputs: {} }, approvals: { result: "success", outputs: {} },
+  } }), new RegExp(`stay unfolded: ${link(13).replace(/[.?]/g, "\\$&")}: Resource not accessible`));
+  assert.equal(partial.created.length, 1);
+  assert.deepEqual(partial.minimized, ["node-12", "node-14", "node-15", "node-16", "node-17", "node-18"]);
 });
 
 test("a rerun of an earlier phase supersedes later results in the progress line", async () => {
@@ -1304,6 +1314,19 @@ test("a routed command first replaces the status comment with a running notice",
   assert.ok(body.includes("Specify ✅ › Clarify ✅ › **Plan ⏳** › Tasks ○ › Analyze ○ › Remediate ○ › Reanalyze ○ › Approve ○ › Implement ○"));
   assert.ok(body.includes("Started by `maintainer`. Follow the [workflow run](https://github.com/example/broker/actions/runs/100)."));
   assert.deepEqual(f.minimized, []);
+  const fromIssue = fixture("issue_comment", commandEvent(command("/speckit-specify"), { number: 7, state: "open" }), { comments });
+  await announce({ ...fromIssue, needs: {
+    route: { result: "success", outputs: { action: "specify", pr: "0" } },
+    specify: { result: "success", outputs: { created_pr_number: "42" } },
+  } });
+  assert.equal(fromIssue.created[0].issue_number, 42);
+  assert.ok(fromIssue.created[0].body.startsWith("## Spec Kit · ⏳ Clarifying the specification\n"));
+  assert.ok(fromIssue.created[0].body.includes("Specify ✅ › **Clarify ⏳** › Plan ○"));
+  assert.ok(!fromIssue.created[0].body.includes("Commands posted now wait"));
+  const relabel = fixture("issues", { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } }, { comments });
+  await announce({ ...relabel, needs: { route: { result: "success", outputs: { action: "clarify", pr: "42" } } } });
+  assert.ok(relabel.created[0].body.includes("Follow the [workflow run](https://github.com/example/broker/actions/runs/100).\n"));
+  assert.ok(!relabel.created[0].body.includes("Commands posted now wait"));
   for (const outputs of [{ action: "noop" }, { action: "specify", pr: "0" }]) {
     const quiet = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
     assert.equal(await announce({ ...quiet, needs: { route: { result: "success", outputs } } }), null);

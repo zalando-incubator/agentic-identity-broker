@@ -88,9 +88,12 @@ jobs:
             });
 
   # Replaces the PR's status comment with "running" so a queued or late command sees that work is in progress.
+  # A new specification announces once specify has created its PR.
   announce:
-    needs: route
-    if: needs.route.result == 'success' && needs.route.outputs.action != 'noop' && needs.route.outputs.pr != '0'
+    needs: [route, specify]
+    if: >-
+      always() && needs.route.result == 'success' && needs.route.outputs.action != 'noop' &&
+      (needs.route.outputs.pr != '0' || needs.specify.outputs.created_pr_number != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
