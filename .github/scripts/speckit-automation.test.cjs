@@ -1286,7 +1286,7 @@ test("a finished run summarizes each phase with its commit, folds its agent comm
   await assert.rejects(report({ ...partial, needs: {
     route: { result: "success", outputs: { action: "plan", pr: "42" } },
     reanalyze: { result: "success", outputs: {} }, approvals: { result: "success", outputs: {} },
-  } }), new RegExp(`stay unfolded: ${link(13).replace(/[.?]/g, "\\$&")}: Resource not accessible`));
+  } }), (error) => error.message.includes(`stay unfolded: ${link(13)}: Resource not accessible`));
   assert.equal(partial.created.length, 1);
   assert.deepEqual(partial.minimized, ["node-12", "node-14", "node-15", "node-16", "node-17", "node-18"]);
 });
