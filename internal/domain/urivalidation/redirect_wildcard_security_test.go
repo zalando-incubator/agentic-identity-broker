@@ -1,6 +1,9 @@
 package urivalidation
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 	tests := []struct {
@@ -62,6 +65,48 @@ func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if MatchesAgentRedirectURI(test.registered, test.incoming) {
 				t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", test.registered, test.incoming)
+			}
+		})
+	}
+}
+
+func TestAgentRedirectURIWildcardLengthLimits(t *testing.T) {
+	pattern := "https://" + strings.Repeat("a", 50) + "*.example.com/callback"
+	tests := []struct {
+		name            string
+		registered      string
+		incoming        string
+		wantRegisterErr bool
+		wantMatch       bool
+	}{
+		{
+			name:       "accepts a wildcard pattern matching a maximum-length label",
+			registered: pattern,
+			incoming:   "https://" + strings.Repeat("a", 63) + ".example.com/callback",
+			wantMatch:  true,
+		},
+		{
+			name:            "rejects an overlong wildcard pattern literal",
+			registered:      "https://" + strings.Repeat("a", 64) + "*.example.com/callback",
+			wantRegisterErr: true,
+		},
+		{
+			name:       "rejects an overlong concrete callback label",
+			registered: pattern,
+			incoming:   "https://" + strings.Repeat("a", 64) + ".example.com/callback",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAgentRedirectURIRegistration(test.registered)
+			if (err != nil) != test.wantRegisterErr {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) error = %v, want error %v", test.registered, err, test.wantRegisterErr)
+			}
+			if test.incoming == "" {
+				return
+			}
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.wantMatch {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.wantMatch)
 			}
 		})
 	}
