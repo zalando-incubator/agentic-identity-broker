@@ -76,6 +76,12 @@ steps:
   - name: Install development tools
     if: inputs.phase == 'implement'
     run: just install-tools
+  # A cache hit skips `playwright install --with-deps`, and the cache holds no system packages.
+  - name: Install Playwright system dependencies
+    if: inputs.phase == 'implement'
+    run: |
+      driver="$(find "$HOME/.cache/ms-playwright-go" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+      "$driver/node" "$driver/package/cli.js" install-deps
 ---
 
 ## Shared execution rules
