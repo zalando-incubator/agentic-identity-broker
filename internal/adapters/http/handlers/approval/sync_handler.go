@@ -19,6 +19,9 @@ import (
 const (
 	defaultLongPollTimeout = 30 * time.Second
 	maxLongPollTimeout     = 120 * time.Second
+	// responseWriteTimeout is the write budget left once a long-poll stops waiting.
+	// It matches the HTTP server's WriteTimeout.
+	responseWriteTimeout = 15 * time.Second
 )
 
 // syncResponse matches the ApprovalSyncResponse schema.
@@ -145,6 +148,10 @@ func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if currentVersion == clientVersion {
 				h.longPollActive.Add(r.Context(), 1)
 				defer h.longPollActive.Add(context.WithoutCancel(r.Context()), -1)
+
+				// The wait can outlast the server's WriteTimeout, which would drop the response.
+				// Without deadline support (e.g. a recorder in tests) the server's timeout still applies.
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + responseWriteTimeout))
 
 				timer := time.NewTimer(timeout)
 				defer timer.Stop()
