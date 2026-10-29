@@ -568,6 +568,8 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 - `OAuth2TokenHandler` always exists; the builder injects `proxyTokenGrantStrategy`, `localGrantStrategy`, or `hybridTokenGrantStrategy` based on the selected mode.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
+**Client secret hashing**: Each confidential client authentication and credential generation runs one Argon2id hash, which allocates 64 MiB. The builder creates one `Argon2Hasher` for the token endpoint and the credential service, so they share one limit of `local.client_secret_hashing.max_concurrent` hashes (default 2). Further requests wait for a free slot and stop waiting when the request ends. This bounds peak memory. Throughput depends on CPU, not on this limit.
+
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
 **Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.

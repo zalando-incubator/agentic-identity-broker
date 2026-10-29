@@ -273,6 +273,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_ttl"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_claims_expression"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "signing_keys", "bootstrap_timeout"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "client_secret_hashing", "max_concurrent"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT")
 
 	// Set CIMD configuration defaults
 	cimdDefaults := ports.DefaultCIMDConfig()

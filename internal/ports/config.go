@@ -430,20 +430,32 @@ type ProxyModeConfig struct {
 
 const DefaultSigningKeyBootstrapTimeout = 90 * time.Second
 
+// DefaultClientSecretHashingMaxConcurrent is the default number of client secret hashes that
+// may run at once. Each Argon2id hash allocates 64 MiB and already spreads its four lanes
+// across CPUs, so a higher value adds memory, not throughput.
+const DefaultClientSecretHashingMaxConcurrent = 2
+
 // LocalModeConfig holds local token issuance configuration for local/hybrid mode.
 type LocalModeConfig struct {
 	// IssuerURI is the JWT iss claim for locally-minted tokens. Optional — defaults to
 	// server.enduser.public_url when empty, allowing independent control behind CDNs or proxies.
-	IssuerURI             string                 `mapstructure:"issuer_uri"`
-	TokenTTL              time.Duration          `mapstructure:"token_ttl"`
-	RefreshTokenTTL       time.Duration          `mapstructure:"refresh_token_ttl"`
-	TokenClaimsExpression string                 `mapstructure:"token_claims_expression"`
-	SigningKeys           LocalSigningKeysConfig `mapstructure:"signing_keys"`
+	IssuerURI             string                    `mapstructure:"issuer_uri"`
+	TokenTTL              time.Duration             `mapstructure:"token_ttl"`
+	RefreshTokenTTL       time.Duration             `mapstructure:"refresh_token_ttl"`
+	TokenClaimsExpression string                    `mapstructure:"token_claims_expression"`
+	SigningKeys           LocalSigningKeysConfig    `mapstructure:"signing_keys"`
+	ClientSecretHashing   ClientSecretHashingConfig `mapstructure:"client_secret_hashing"`
 }
 
 // LocalSigningKeysConfig holds local signing-key startup settings.
 type LocalSigningKeysConfig struct {
 	BootstrapTimeout time.Duration `mapstructure:"bootstrap_timeout"`
+}
+
+// ClientSecretHashingConfig bounds broker client secret hashing in local/hybrid mode.
+type ClientSecretHashingConfig struct {
+	// MaxConcurrent is the number of hashes that may run at once. Further requests wait.
+	MaxConcurrent int `mapstructure:"max_concurrent"`
 }
 
 // OAuth2AuthServerConfig represents configuration for OAuth2 authorization server functionality.
@@ -498,7 +510,7 @@ func (c *OAuth2AuthServerConfig) validateProxyMode() error {
 		return c.newValidationError("oauth2_authorization_server.cimd.enabled requires mode 'local' or 'hybrid'; CIMD is incompatible with proxy mode")
 	}
 
-	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
+	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 || c.Local.ClientSecretHashing.MaxConcurrent != 0 {
 		return c.newValidationError("oauth2_authorization_server.local must be empty in proxy mode")
 	}
 
@@ -539,6 +551,9 @@ func (c *OAuth2AuthServerConfig) validateLocalMode() error {
 	if err := c.validateLocalSigningKeys(); err != nil {
 		return err
 	}
+	if err := c.validateClientSecretHashing(); err != nil {
+		return err
+	}
 
 	if err := c.validateCIMDCache(); err != nil {
 		return err
@@ -565,6 +580,9 @@ func (c *OAuth2AuthServerConfig) validateHybridMode() error {
 	}
 	c.applySharedDefaults([]string{"authorization_code", "client_credentials", "refresh_token"})
 	if err := c.validateLocalSigningKeys(); err != nil {
+		return err
+	}
+	if err := c.validateClientSecretHashing(); err != nil {
 		return err
 	}
 	if err := c.validateCIMDCache(); err != nil {
@@ -607,6 +625,9 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	if c.Local.SigningKeys.BootstrapTimeout == 0 {
 		c.Local.SigningKeys.BootstrapTimeout = DefaultSigningKeyBootstrapTimeout
 	}
+	if c.Local.ClientSecretHashing.MaxConcurrent == 0 {
+		c.Local.ClientSecretHashing.MaxConcurrent = DefaultClientSecretHashingMaxConcurrent
+	}
 }
 
 func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
@@ -619,6 +640,13 @@ func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
 func (c *OAuth2AuthServerConfig) validateLocalSigningKeys() error {
 	if c.Local.SigningKeys.BootstrapTimeout <= 0 {
 		return c.newValidationError("oauth2_authorization_server.local.signing_keys.bootstrap_timeout must be a positive duration")
+	}
+	return nil
+}
+
+func (c *OAuth2AuthServerConfig) validateClientSecretHashing() error {
+	if c.Local.ClientSecretHashing.MaxConcurrent <= 0 {
+		return c.newValidationError("oauth2_authorization_server.local.client_secret_hashing.max_concurrent must be a positive integer")
 	}
 	return nil
 }
@@ -686,6 +714,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 			RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 			TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 			SigningKeys:            c.Local.SigningKeys,
+			ClientSecretHashing:    c.Local.ClientSecretHashing,
 			SupportedResponseTypes: c.SupportedResponseTypes,
 			SupportedGrantTypes:    c.SupportedGrantTypes,
 			SupportedScopes:        c.SupportedScopes,
@@ -711,6 +740,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 				RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 				TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 				SigningKeys:            c.Local.SigningKeys,
+				ClientSecretHashing:    c.Local.ClientSecretHashing,
 				SupportedResponseTypes: c.SupportedResponseTypes,
 				SupportedGrantTypes:    c.SupportedGrantTypes,
 				SupportedScopes:        c.SupportedScopes,

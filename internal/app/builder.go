@@ -1053,13 +1053,14 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// buildLocalProvider constructs the local token issuance infrastructure.
 	// Used in both "local" and "hybrid" modes.
-	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
+	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, secretHasher *oauth2server.Argon2Hasher, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
 		provider, err := oauth2server.NewProvider(
 			b.storage.AuthorizationCodes(),
 			b.storage.RefreshTokenSessions(),
 			b.storage.PKCESessions(),
 			b.storage.BrokerCredentials(),
 			clientResolver,
+			secretHasher,
 			signingKeyService,
 			localIssuerURI,
 			tokenTTL,
@@ -1100,9 +1101,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// wireLocalAdminHandlers constructs the local-mode admin services and handlers.
 	// Used in both "local" and "hybrid" modes.
-	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
+	wireLocalAdminHandlers := func(secretHasher *oauth2server.Argon2Hasher) *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
-		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
+		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, secretHasher, b.logger)
 		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
@@ -1125,8 +1126,10 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	switch cfg := oauthCfg.(type) {
 	case *ports.LocalOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
+		// One hasher for token requests and credential generation, so they share the limit.
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -1144,8 +1147,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		jwksPublisher = publisher
 		jwksHandler = enduserHandlers.NewJWKSHandler(publisher, b.logger)
 	case *ports.HybridOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.Local.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}

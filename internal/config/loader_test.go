@@ -356,6 +356,29 @@ func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
 	})
 }
 
+func TestClientSecretHashingConfiguration(t *testing.T) {
+	t.Run("max_concurrent defaults to 2", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
+	})
+
+	t.Run("max_concurrent is overridden by environment variable", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT", "5")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
+	})
+}
+
 func TestCIMDClientAuthenticationConfiguration(t *testing.T) {
 	t.Run("defaults are loaded", func(t *testing.T) {
 		setMinimalConfigEnv(t)

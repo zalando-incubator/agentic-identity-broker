@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ory/fosite"
 	"github.com/stretchr/testify/assert"
@@ -48,7 +49,7 @@ func (m *mockCredentialRepo) Rotate(_ context.Context, _ id.AgentID, _ *storage.
 }
 
 func TestArgon2Hasher_HashAndCompare(t *testing.T) {
-	hasher := &Argon2Hasher{}
+	hasher := NewArgon2Hasher(1)
 
 	t.Run("hash then compare succeeds", func(t *testing.T) {
 		secret := "test-secret-value-1234"
@@ -56,7 +57,7 @@ func TestArgon2Hasher_HashAndCompare(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, hash)
 
-		err = hasher.Compare(hash, secret)
+		err = hasher.Compare(context.Background(), hash, secret)
 		assert.NoError(t, err)
 	})
 
@@ -65,7 +66,7 @@ func TestArgon2Hasher_HashAndCompare(t *testing.T) {
 		hash, err := hasher.Hash(secret)
 		require.NoError(t, err)
 
-		err = hasher.Compare(hash, "wrong-secret")
+		err = hasher.Compare(context.Background(), hash, "wrong-secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
 	})
 
@@ -91,12 +92,12 @@ func TestArgon2Hasher_HashAndCompare(t *testing.T) {
 		assert.NotEqual(t, hash1, hash2)
 
 		// Both should verify against the same secret
-		assert.NoError(t, hasher.Compare(hash1, secret))
-		assert.NoError(t, hasher.Compare(hash2, secret))
+		assert.NoError(t, hasher.Compare(context.Background(), hash1, secret))
+		assert.NoError(t, hasher.Compare(context.Background(), hash2, secret))
 	})
 
 	t.Run("invalid PHC string fails", func(t *testing.T) {
-		err := hasher.Compare("not-a-valid-phc-string", "secret")
+		err := hasher.Compare(context.Background(), "not-a-valid-phc-string", "secret")
 		assert.Error(t, err)
 	})
 
@@ -107,14 +108,61 @@ func TestArgon2Hasher_HashAndCompare(t *testing.T) {
 		parts := strings.Split(hash, "$")
 		parts[5] = parts[5][:len(parts[5])-1]
 
-		err = hasher.Compare(strings.Join(parts, "$"), "test-secret")
+		err = hasher.Compare(context.Background(), strings.Join(parts, "$"), "test-secret")
 		assert.ErrorContains(t, err, "hash must be 32 bytes")
+	})
+}
+
+func TestArgon2Hasher_LimitsConcurrentHashes(t *testing.T) {
+	hasher := NewArgon2Hasher(2)
+	hash, err := hasher.Hash("test-secret")
+	require.NoError(t, err)
+
+	t.Run("frees its slot when done", func(t *testing.T) {
+		assert.Empty(t, hasher.slots)
+	})
+
+	t.Run("compare runs while a slot is free", func(t *testing.T) {
+		hasher.slots <- struct{}{}
+		defer func() { <-hasher.slots }()
+
+		assert.NoError(t, hasher.Compare(context.Background(), hash, "test-secret"))
+	})
+
+	t.Run("compare waits for a slot until the context ends", func(t *testing.T) {
+		hasher.slots <- struct{}{}
+		hasher.slots <- struct{}{}
+		defer func() { <-hasher.slots; <-hasher.slots }()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		assert.ErrorIs(t, hasher.Compare(ctx, hash, "test-secret"), context.DeadlineExceeded)
+	})
+
+	t.Run("hash waits for a free slot", func(t *testing.T) {
+		hasher.slots <- struct{}{}
+		hasher.slots <- struct{}{}
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := hasher.Hash("test-secret")
+			done <- err
+		}()
+		select {
+		case <-done:
+			t.Fatal("hash ran while every slot was taken")
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		<-hasher.slots
+		require.NoError(t, <-done)
+		<-hasher.slots
 	})
 }
 
 func TestClientAuthService_GenerateCredentials(t *testing.T) {
 	t.Run("client_id equals the agent UUID", func(t *testing.T) {
-		svc := &ClientAuthService{hasher: &Argon2Hasher{}}
+		svc := &ClientAuthService{hasher: NewArgon2Hasher(1)}
 		agentID := testAgentID()
 		cred, secret, err := svc.GenerateCredentials(agentID)
 		require.NoError(t, err)
@@ -129,7 +177,7 @@ func TestClientAuthService_GenerateCredentials(t *testing.T) {
 	})
 
 	t.Run("generates unique secrets each call, same client_id for same agent", func(t *testing.T) {
-		svc := &ClientAuthService{hasher: &Argon2Hasher{}}
+		svc := &ClientAuthService{hasher: NewArgon2Hasher(1)}
 		agentID := testAgentID()
 		cred1, secret1, err := svc.GenerateCredentials(agentID)
 		require.NoError(t, err)
@@ -154,7 +202,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create test credential
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, testSlogger())
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), testSlogger())
 		cred, plaintext, err := svc.GenerateCredentials(agent.ID)
 		require.NoError(t, err)
 		err = credRepo.Create(context.Background(), cred)
@@ -170,7 +218,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 	t.Run("unknown agent_id fails", func(t *testing.T) {
 		credRepo := memory.NewClientCredentialStore()
 		agentRepo := memory.NewAgentRepository()
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, testSlogger())
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), testSlogger())
 
 		_, err := svc.Authenticate(context.Background(), id.NewAgentID(), "secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -185,7 +233,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 		err := agentRepo.Create(context.Background(), agent)
 		require.NoError(t, err)
 
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, testSlogger())
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), testSlogger())
 		cred, _, err := svc.GenerateCredentials(agent.ID)
 		require.NoError(t, err)
 		err = credRepo.Create(context.Background(), cred)
@@ -204,7 +252,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, logger)
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -219,7 +267,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, logger)
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -242,7 +290,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, resolver, logger)
+		svc := NewClientAuthService(credRepo, resolver, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "irrelevant")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -265,7 +313,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, resolver, logger)
+		svc := NewClientAuthService(credRepo, resolver, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "irrelevant")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
