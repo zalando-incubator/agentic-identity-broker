@@ -188,8 +188,39 @@ func MatchesAgentRedirectURI(registered, incoming string) bool {
 	if err != nil || len(registeredLabels) != len(incomingLabels) {
 		return false
 	}
+	if !hasLiteralPublicSuffixBoundary(registeredLabels, incomingLabels, incomingURL.Hostname()) {
+		return false
+	}
 	for index := range registeredLabels {
 		if !matchWildcardLabel(registeredLabels[index], incomingLabels[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasLiteralPublicSuffixBoundary(patternLabels, candidateLabels []string, candidateHost string) bool {
+	if len(patternLabels) != len(candidateLabels) {
+		return false
+	}
+	asciiHost, err := asciiDNSHostname(candidateHost)
+	if err != nil {
+		return false
+	}
+	publicSuffix, _ := publicsuffix.PublicSuffix(asciiHost)
+	if publicSuffix == "" {
+		return false
+	}
+	registrableDomain, err := publicsuffix.EffectiveTLDPlusOne(asciiHost)
+	if err != nil {
+		return false
+	}
+	boundaryLabelCount := len(strings.Split(registrableDomain, "."))
+	if boundaryLabelCount > len(candidateLabels) {
+		return false
+	}
+	for index := len(candidateLabels) - boundaryLabelCount; index < len(candidateLabels); index++ {
+		if strings.Contains(patternLabels[index], "*") || patternLabels[index] != candidateLabels[index] {
 			return false
 		}
 	}
