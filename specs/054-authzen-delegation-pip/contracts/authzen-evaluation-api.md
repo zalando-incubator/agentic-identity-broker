@@ -3,15 +3,15 @@
 **Status**: **Proposed**. Maintainer `mjungsbluth` endorsed the contract as written here in the
 2026-10-28 `/speckit-plan` review (Principles IV and X, spec API-002): the strict members (R10),
 the plain-UUID anchor, denial form (a), the error mapping, and the `1.1.0` deprecation marker.
-Sign-off is approval items API-1–API-3 in the plan; `api/enduser/openapi.yaml` changes only after
-it. API-003 items marked **Verify** must still be checked against the final
+That review used a stale version baseline; the corrected `1.2.0` proposal in §3 is not a recorded approval.
+Sign-off is approval items API-1–API-3 in the plan; `api/enduser/openapi.yaml` changes only after it. API-003 items marked **Verify** must still be checked against the final
 AuthZEN Authorization API 1.0 text before the OpenAPI is frozen. Any conflict found goes back to
 the stakeholder.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
 
-**OpenAPI version**: `info.version` changes from `1.0.0` to `1.1.0`. The change is additive.
+**OpenAPI version (Proposed)**: `info.version` changes from the current `1.1.0` to `1.2.0`. The change is additive; see §3.
 
 ---
 
@@ -132,14 +132,14 @@ DelegationContext:
     subject:
       type: object
       required: [id]
-      properties: { id: { type: string, description: Verified principal } }
+      properties: { id: { type: string, minLength: 1, description: Verified principal } }
     agent:    { $ref: "#/components/schemas/DelegationEntityRef" }
     resource:
       type: object
       required: [id, resource_uri, scopes]
       properties:
         id:           { type: string, format: uuid, description: Resolved service UUID }
-        canonical_id: { type: string, description: Omitted when unset }
+        canonical_id: { type: string, minLength: 1, description: Omitted when unset }
         resource_uri: { type: string, format: uri, description: Normalized URI }
         scopes:       { type: array, items: { type: string }, description: Effective scopes after the agent ceiling }
     grant:
@@ -151,12 +151,13 @@ DelegationContext:
         valid_until: { type: string, format: date-time, description: Omitted when the grant does not expire }
     permission_sets:
       type: array
+      minItems: 1
       items:
         type: object
         required: [id, services]
         properties:
           id:           { type: string, format: uuid }
-          canonical_id: { type: string, description: Omitted when unset }
+          canonical_id: { type: string, minLength: 1, description: Omitted when unset }
           services:
             type: array
             description: Grant-included services only. Scopes are permission-set contributions, not the effective ceiling.
@@ -165,7 +166,7 @@ DelegationContext:
               required: [id, scopes]
               properties:
                 id:           { type: string, format: uuid }
-                canonical_id: { type: string, description: Omitted when unset }
+                canonical_id: { type: string, minLength: 1, description: Omitted when unset }
                 scopes:       { type: array, items: { type: string } }
 
 DelegationEntityRef:
@@ -173,7 +174,7 @@ DelegationEntityRef:
   required: [id]
   properties:
     id:           { type: string, format: uuid }
-    canonical_id: { type: string, description: Omitted when unset; never null }
+    canonical_id: { type: string, minLength: 1, description: Omitted when unset; never null }
 
 AccessEvaluationDenial:            # proposed form (a); see Verify below
   type: object
@@ -237,6 +238,12 @@ Requests and responses follow spec Journeys 1–3 exactly. Each scenario becomes
 - `serverError`
 
 ## 3. `/oauth2/token` response deprecation (additive documentation)
+
+**Proposed release version**: end-user OpenAPI `info.version` increases from the existing
+`1.1.0` (`api/enduser/openapi.yaml:92`) to `1.2.0` for the additive endpoints and deprecation
+marker. This corrects the stale `1.0.0` baseline used in the earlier design review; it does not
+claim maintainer approval of the corrected version. Alternative: intentionally reuse `1.1.0`,
+which would not identify this additive contract revision separately. Sign-off remains API-3.
 
 The `TokenExchangeResponse.granted_permission_sets` property gains `deprecated: true` and this
 description suffix: "Deprecated: superseded by the AuthZEN Delegation Context from

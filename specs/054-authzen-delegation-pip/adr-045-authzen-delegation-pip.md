@@ -111,7 +111,7 @@ authenticated and authorized; it has no opt-out.
 ### 8. Exchange-field deprecation
 
 `TokenExchangeResponse.granted_permission_sets` is marked `deprecated: true` in end-user API
-`1.1.0` and stays populated. `principal` and `agent_id` are unchanged. Removal happens one release
+`1.2.0` (an additive bump from the current `1.1.0`) and stays populated. `principal` and `agent_id` are unchanged. Removal happens one release
 after the ExtProc resolver ships, as a separately approved end-user API `2.0.0` change.
 
 ### 9. Standard-defined naming
