@@ -142,11 +142,14 @@ Run `/speckit-implement` and complete every task that you can. Follow
 red-green-refactor and the complete feature journeys. If
 `context.command.argument` is not empty, pass it to `/speckit-implement` as
 guidance. It cannot remove or skip tasks, change scope, or reduce validation.
-Install the repository's existing tools and dependencies as needed inside the
-sandbox. Run `just check`, the smallest matching `just` test suites, and the
-feature's complete E2E acceptance journeys. Use `just verify` when the feature
-requires the full verification gate. Resolve failures caused by the change, and
-mark only completed tasks `[X]`.
+The workflow runs `just install-tools` before this session, including browsers
+and their system dependencies. Run it again only when the feature changes tool
+versions. The sandbox has no root access, so a missing system dependency is a
+blocker to report, not something to work around. Run `just check`, the
+smallest matching `just` test suites, and the feature's complete E2E
+acceptance journeys. Use `just verify` when the feature requires the full
+verification gate. Resolve failures caused by the change, and mark only
+completed tasks `[X]`.
 
 This run is unattended. It never stops at the first problem. Where the skill
 says to halt, stop, or ask, apply these rules instead:

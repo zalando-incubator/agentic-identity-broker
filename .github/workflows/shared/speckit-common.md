@@ -53,6 +53,29 @@ steps:
     uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
     with:
       tool: just
+  # The agent sandbox inherits XDG_RUNTIME_DIR from the runner but cannot write
+  # to it, so shebang recipes such as `just check` need another script directory.
+  - name: Give just a writable script directory
+    if: inputs.phase == 'implement'
+    run: |
+      mkdir -p /tmp/gh-aw/just
+      echo "JUST_TEMPDIR=/tmp/gh-aw/just" >> "$GITHUB_ENV"
+  # Restore only: the agent can write to $HOME, so this job must never save a cache that CI restores.
+  - name: Restore CI development tools
+    if: inputs.phase == 'implement'
+    uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    with:
+      path: |
+        ~/go/bin
+        ~/.cache/golangci-lint
+        ~/.cache/ms-playwright
+        ~/.cache/ms-playwright-go
+      key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+      restore-keys: tools-${{ runner.os }}-
+  # Playwright's system dependencies need root, which the agent sandbox does not have.
+  - name: Install development tools
+    if: inputs.phase == 'implement'
+    run: just install-tools
 ---
 
 ## Shared execution rules
