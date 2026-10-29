@@ -57,10 +57,10 @@ safe-outputs:
       - "justfile"
       - "Dockerfile*"
       - "ARCHITECTURE.md"
+      - "AGENTS.md"
+      - "**/AGENTS.md"
       - ".gitignore"
       - ".dockerignore"
-    excluded-files:
-      - "**/AGENTS.md"
     protected-files: request-review
     fallback-as-pull-request: false
   add-comment:
@@ -70,3 +70,5 @@ safe-outputs:
 ---
 
 Require `context.phase` to be `implement`. Do not run any other phase.
+Update `AGENTS.md` files when a task requires it, such as the ADR index,
+glossary, or area guidance, and limit those edits to what the feature adds.
