@@ -130,6 +130,7 @@ func TestMatchesAgentRedirectURI(t *testing.T) {
 		{"matches PR preview labels", pattern, "https://preview-pr-123.app-test.example.com/api/oidc/callback", true},
 		{"matches zero-character wildcard suffix", pattern, "https://preview.app-test.example.com/api/oidc/callback", true},
 		{"matches different wildcard labels", pattern, "https://preview.app-sandbox.example.com/api/oidc/callback", true},
+		{"does not cross a private public suffix boundary", "https://*.*.amazonaws.com/callback", "https://bucket.s3.amazonaws.com/callback", false},
 		{"does not cross hostname labels", pattern, "https://preview-pr-123.extra.app-test.example.com/api/oidc/callback", false},
 		{"does not match another domain", pattern, "https://preview-pr-123.app-test.example.net/api/oidc/callback", false},
 		{"scheme remains exact", pattern, "http://preview-pr-123.app-test.example.com/api/oidc/callback", false},
