@@ -227,6 +227,19 @@ authorization:
 Keep `default_decision: "deny"`. If a policy result is undefined or evaluation times out,
 the OPA gate denies the request.
 :::
+
+For requests with a body, the policy can see who is calling. `input.context.principal` and
+`input.context.agent_id` carry the values from the broker's token-exchange response. Both are
+undefined when the broker returns none, and on header-only requests, which are evaluated before
+the exchange. This rule asks one user to approve each `get_user` call:
+
+```rego
+result := {"action": "approval_required", "approval_context": {"description": "Approve looking up a user", "risk_level": "low"}} if {
+    input.mcp.tool_name == "get_user"
+    input.context.principal == "alice@example.com"
+}
+```
+
 ### Enable approval gating
 
 Set `tool_approvals.enabled: true` only with OPA authorization enabled. When OPA returns `approval_required` for a standalone MCP `tools/call`, ExtProc checks its local approval cache, refreshes the caller's broker-authoritative `(principal, agent_id)` scope on a miss, and creates a pending approval only after a successful confirmed miss. It returns the broker-provided URL as MCP error `-32042`. The original subject token is used only for create and one-time consume; ExtProc never parses either token for cache identity.

@@ -19,4 +19,7 @@ type ContextInput struct {
 	GrantedPermissionSetsAvailable bool                `json:"granted_permission_sets_available"`
 	GrantedPermissionSets          map[string][]string `json:"granted_permission_sets,omitempty"`
 	AgentSessionID                 string              `json:"agent_session_id,omitempty"`
+	// Principal and AgentID come from the token-exchange response, so header-only inputs never carry them.
+	Principal string `json:"principal,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
 }

@@ -474,10 +474,14 @@ func startApprovalEnvironment(broker *bootstrap.MockApprovalBroker, idleTTL time
 }
 
 func startApprovalEnvironmentWithSessionHeader(broker *bootstrap.MockApprovalBroker, idleTTL time.Duration, sessionHeader string) (*bootstrap.TestEnvironment, *bootstrap.MockApprovalBroker, func()) {
+	return startApprovalEnvironmentWithPolicy(broker, "approval_required.rego", idleTTL, sessionHeader)
+}
+
+func startApprovalEnvironmentWithPolicy(broker *bootstrap.MockApprovalBroker, policy string, idleTTL time.Duration, sessionHeader string) (*bootstrap.TestEnvironment, *bootstrap.MockApprovalBroker, func()) {
 	if broker == nil {
 		broker = bootstrap.NewMockApprovalBroker()
 	}
-	cfg := opaEnabledConfig(policyPath("approval_required.rego"))
+	cfg := opaEnabledConfig(policyPath(policy))
 	cfg.ToolApprovals = extprocconfig.ToolApprovalsConfig{
 		Enabled:                true,
 		LongPollTimeoutSeconds: 30,
