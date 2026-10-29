@@ -132,7 +132,7 @@ jobs:
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
-  # A completed clarification continues into planning, so one command or label yields an approval comment.
+  # A completed clarification continues into planning only once a plan exists; the first spec is reviewed by hand.
   clarified:
     needs: clarify
     if: always() && needs.clarify.result == 'success'
@@ -143,7 +143,7 @@ jobs:
       issues: read
       pull-requests: read
     outputs:
-      status: ${{ steps.status.outputs.status }}
+      plan: ${{ steps.status.outputs.plan }}
       error: ${{ steps.status.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -159,10 +159,10 @@ jobs:
           RESULT_COMMENT: ${{ needs.clarify.outputs.comment_id }}
         with:
           script: |
-            const { verify } = require('./.github/scripts/speckit-automation.cjs');
+            const { continuesToPlan, verify } = require('./.github/scripts/speckit-automation.cjs');
             try {
               const result = await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: 'clarify' });
-              core.setOutput('status', result.status);
+              core.setOutput('plan', String(continuesToPlan(result)));
             } catch (error) {
               core.setOutput('error', error.message);
               throw error;
@@ -172,7 +172,7 @@ jobs:
     needs: [route, specify, clarified]
     if: >-
       always() && needs.route.result == 'success' &&
-      (needs.route.outputs.action == 'plan' || needs.clarified.outputs.status == 'complete')
+      (needs.route.outputs.action == 'plan' || needs.clarified.outputs.plan == 'true')
     permissions:
       actions: read
       contents: write

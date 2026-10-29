@@ -70,14 +70,16 @@ of the feature to be built, not a summary of the automation. Include:
   using the new feature's actual relative directory.
 - A short "Maintainer commands" section with these one-line entries. A command
   must start a new PR comment.
-  - The pipeline clarifies, plans, writes tasks, analyzes, and remediates on its
-    own, then posts one approval comment listing the API changes, ADRs, and
-    consequential decisions with links to their details.
+  - After the automatic clarification, review the specification and comment
+    `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
+    analyzes, and remediates on its own, and posts one approval comment listing
+    the API changes, ADRs, and consequential decisions with links to them.
   - React with 👍 to the approval comment to approve it, then comment
     `/speckit-implement [guidance]`.
   - `/speckit-plan <change>` revises the specification and design and replaces
     the approval comment.
-  - `/speckit-clarify [focus]` revisits the specification, then plans again.
+  - `/speckit-clarify [focus]` revisits the specification. Once a plan
+    exists, it also refreshes the plan and the approval comment.
   - Submit a review whose summary starts with `/speckit-clarify` or
     `/speckit-plan` to apply its inline comments in that phase.
 

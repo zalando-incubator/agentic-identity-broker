@@ -68,8 +68,10 @@ same way. If `context.answer` exists, it answers questions that an earlier
 version of this pipeline asked. Apply those answers, and resolve any questions
 they leave open yourself.
 
-Return `complete` with an empty `questions` array. Do not plan; planning
-starts automatically after this phase.
+Return `complete` with an empty `questions` array. Do not plan. If `plan.md`
+does not exist yet, end the report with this line: "Review the specification,
+then comment `/speckit-plan [guidance]` to plan." Otherwise, planning starts
+automatically after this phase.
 
 ## plan
 

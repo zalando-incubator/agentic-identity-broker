@@ -14,6 +14,7 @@ const {
   verify,
   publishApprovals,
   report,
+  continuesToPlan,
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
@@ -1188,4 +1189,12 @@ test("a stopped run leaves one status comment that names the reason and the next
   assert.equal(await report({ ...ready, needs: green }), null);
   assert.deepEqual(ready.deleted, [60]);
   assert.equal(ready.created.length, 0);
+});
+
+test("the first clarification stops for spec review; later ones continue into planning", () => {
+  const specOnly = { [`${spec}/spec.md`]: artifactHashes(files)[`${spec}/spec.md`] };
+  assert.equal(continuesToPlan(result("clarify", { files: specOnly })), false);
+  assert.equal(continuesToPlan(result("clarify")), true);
+  assert.equal(continuesToPlan(result("clarify", { status: "waiting", questions: ["Which policy applies?"] })), false);
+  assert.equal(continuesToPlan(result("plan")), false);
 });

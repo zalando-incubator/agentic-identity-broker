@@ -77,6 +77,12 @@ function validateResult(result) {
   return result;
 }
 
+// A maintainer reviews the first specification before any planning. Once a plan exists, a completed
+// clarification refreshes the plan, tasks, and analysis without another command.
+function continuesToPlan(result) {
+  return result.phase === "clarify" && result.status === "complete" && Boolean(result.files[`${result.feature}/plan.md`]);
+}
+
 function approvalLocation(location) {
   const match = typeof location === "string" &&
     location.match(/^([A-Za-z0-9][A-Za-z0-9._/-]*):([1-9]\d*)(?:-([1-9]\d*))?$/);
@@ -673,6 +679,7 @@ function selectFeature() {
 
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, report,
+  continuesToPlan,
 };
 
 if (require.main === module) {
