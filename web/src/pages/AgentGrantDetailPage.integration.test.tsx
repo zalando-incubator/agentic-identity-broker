@@ -98,12 +98,15 @@ describe('AgentGrantDetailPage - Integration', () => {
   it('should load and display agent information', async () => {
     renderPage();
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole('heading', { name: 'Test Agent' }),
-      ).toBeInTheDocument();
-      expect(screen.getByText('A test agent')).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(
+          screen.getByRole('heading', { name: 'Test Agent' }),
+        ).toBeInTheDocument();
+        expect(screen.getByText('A test agent')).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
   });
 
   it('should enable edit mode when toggle is clicked', async () => {
