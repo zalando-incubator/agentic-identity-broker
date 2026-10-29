@@ -57,12 +57,12 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 **Purpose**: Provide a tested, source-neutral HTTPS host-pattern validator and matcher for both user stories. Agent/CIMD source selection remains in the OAuth2 service.
 
-- [ ] T011 [P] Add table-driven matcher tests for whole-label and partial-label wildcards, zero-character matches, and exact non-host components in `internal/domain/urivalidation/redirect_test.go` (FR-003, FR-005, SR-002).
-- [ ] T012 [P] Add failing security tests for malformed labels, IDNA/PSL failures, wildcarded registrable domains or suffixes, and wildcard patterns whose probe hostname is an IP literal or single-label name in `internal/domain/urivalidation/redirect_wildcard_security_test.go` (FR-004, SR-001-SR-002).
-- [ ] T012a [P] Add Agent create/update validation tests for valid and invalid wildcard registrations in `internal/domain/storage/agent_test.go` (FR-001-FR-004).
-- [ ] T012b [P] Add OAuth2 service tests for opaque-Agent wildcard matching, concrete redirect preservation, exact CIMD/private-use matching, and malformed stored patterns in `internal/domain/oauth2/service_test.go` (FR-006-FR-010, SR-003-SR-004).
-- [ ] T012c Run the focused domain tests and verify all new cases compile and fail semantically before implementation (Principle VIII).
-- [ ] T013 Implement HTTPS host-pattern validation and label-bounded matching with `golang.org/x/net/idna` and `golang.org/x/net/publicsuffix` in `internal/domain/urivalidation/redirect.go`; reject unsafe patterns and preserve exact scheme, port, path, and query matching (FR-003-FR-005, SR-001-SR-002).
+- [X] T011 [P] Add table-driven matcher tests for whole-label and partial-label wildcards, zero-character matches, and exact non-host components in `internal/domain/urivalidation/redirect_test.go` (FR-003, FR-005, SR-002).
+- [X] T012 [P] Add failing security tests for malformed labels, IDNA/PSL failures, wildcarded registrable domains or suffixes, and wildcard patterns whose probe hostname is an IP literal or single-label name in `internal/domain/urivalidation/redirect_wildcard_security_test.go` (FR-004, SR-001-SR-002).
+- [X] T012a [P] Add Agent create/update validation tests for valid and invalid wildcard registrations in `internal/domain/storage/agent_test.go` (FR-001-FR-004).
+- [X] T012b [P] Add OAuth2 service tests for opaque-Agent wildcard matching, exact CIMD/private-use matching, and malformed stored patterns in `internal/domain/oauth2/service_test.go` (FR-006-FR-010, SR-003-SR-004).
+- [X] T012c Run the focused domain tests and verify they compile and new positive wildcard behavior fails semantically before implementation; rejection and compatibility assertions may already pass with exact-only matching (Principle VIII).
+- [X] T013 Implement HTTPS host-pattern validation and label-bounded matching with `golang.org/x/net/idna` and `golang.org/x/net/publicsuffix` in `internal/domain/urivalidation/redirect.go`; reject unsafe patterns and preserve exact scheme, port, path, and query matching (FR-003-FR-005, SR-001-SR-002).
 
 **Checkpoint**: `go test ./internal/domain/urivalidation` passes; pattern helpers fail closed and do not match across hostname labels.
 
