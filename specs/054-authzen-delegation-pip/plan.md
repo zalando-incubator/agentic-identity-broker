@@ -147,7 +147,7 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 | Persistence patterns | Not applicable | No persistence. |
 | Configuration system | Pass | Broker: none. ExtProc: `internal/extproc/config` with file, env, and flag precedence and startup validation (Principle VII, standalone exception under ADR 011). |
 | DI via Builder | Pass | `AuthZENHandlers` are created in `builder.go` and passed through `EnduserHandlers`. Routing only registers. ExtProc wiring is in `cmd/extproc-token-exchange/root.go`, the existing composition root. |
-| Feature scope | Pass | Every task traces to an FR, SR, SC, scenario, or binding rule. Three deferred findings are in [research.md](./research.md#deferred-findings-not-tasks-of-this-feature). Removing the exchange field is follow-up work for a later release (R12). |
+| Feature scope | Pass | Every task traces to an FR, SR, SC, scenario, or binding rule. Two deferred findings are in [research.md](./research.md#deferred-findings-not-tasks-of-this-feature). Removing the exchange field is follow-up work for a later release (R12). |
 
 ### Post-design re-check
 
@@ -198,7 +198,7 @@ Still open:
    sessions could not fetch the standard because TLS verification failed.
 3. **Remove `granted_permission_sets` later**: the removal needs a separately approved `2.0.0`
    contract change, one release after the resolver ships (R12, API-006).
-4. **Decide whether to file GitHub issues** for the three deferred findings in [research.md](./research.md).
+4. **Decide whether to file GitHub issues** for the two deferred findings in [research.md](./research.md).
 
 ## Approval Items
 
