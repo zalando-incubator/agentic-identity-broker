@@ -1461,6 +1461,8 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 040 extends decision 2 only for discovery-backed DCR.
 - [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 015's package locations and ADR 036 decision 2 for discovery-backed DCR clients.
 - [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
+- [ADR 045: Service-Specific Session Recovery Return and Persisted Rejection](adrs/045-service-session-recovery-return.md) - Accepted with maintainer approval. Partially supersedes ADR 044's generic session return and unchanged-rejection clauses; implementation is tracked in Feature 055.
+- [ADR 046: Virtual Service Scopes for Incremental Authorization](adrs/046-virtual-service-scopes.md) - Accepted with maintainer approval. Defines shared service assurance, protected continuation and immutable refresh bindings; implementation is tracked in Feature 055.
 
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
@@ -1661,7 +1663,13 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **UserSession**: An authenticated OAuth2 session between a user (principal) and a third-party service. Contains encrypted access/refresh tokens, scope, and expiration metadata. One session per (principal, service_id) pair enforced by database unique constraint. Aggregate root that owns the encrypted tokens and manages session lifecycle.
 
-**Session Usability**: A `UserSession` has usable access credentials or a usable stored refresh token. The domain predicate controls expired status, consent connection status, and active-session reads. Unknown refresh-token expiry permits refresh attempts but does not guarantee indefinite validity.
+**Session Usability**: The verified ability of a `UserSession` to supply a service's effective provider scopes with matching established client identity now. ADR 046 defines `usable`, `missing`, `unusable_definitive`, and `unverifiable_transient`. Valid, scope-sufficient access remains usable with absent or expired refresh; expired access requires a successful eligible refresh. Stored refreshability is only eligibility to attempt refresh, not verification of current usability. Unknown refresh-token expiry permits an attempt but does not guarantee success.
+
+**Virtual Service Scope**: A broker-only scope `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered session for one ThirdpartyOAuth2Service. It never grants provider scopes, selects permission sets, or changes permanent Agent requirements. ADR 046 defines the approved design; implementation is tracked in Feature 055.
+
+**Requested Service Set**: The deduplicated services selected by authorization Virtual Service Scopes or original refresh assurance bindings. It adds request-local requirements without changing the Agent's configuration.
+
+**Service-Scope Binding**: The protected/persisted map from each originally granted Virtual Service Scope string to its service UUID. It pins identity through consent re-entry, code exchange and refresh. Narrowing retains every binding as continuing-service assurance without re-granting removed scopes.
 
 **Callback Generation**: The private `UserSession.CallbackID` identifying the last successful authorization-code credential write. OAuth2 state seals the generation observed when authorization starts. A reconnect compares and replaces it atomically; refresh preserves it. This distinguishes deliberate reconnects from callbacks competing for the same connection state without relying on clock ordering.
 

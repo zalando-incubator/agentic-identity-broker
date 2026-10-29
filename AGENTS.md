@@ -165,6 +165,8 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 045 | `adrs/045-service-session-recovery-return.md` | Approved service-page recovery return and existing persisted refresh rejection; Feature 055 implementation pending |
+| 046 | `adrs/046-virtual-service-scopes.md` | Approved virtual service scopes, shared usability/coverage and immutable refresh assurance; Feature 055 implementation pending |
 
 ## Domain Glossary
 
@@ -186,6 +188,10 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Virtual Service Scope** | Broker-only `<public URL>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered third-party session; never a provider scope or an implicit permission selection. |
+| **Requested Service Set** | Deduplicated services named by requested scopes or original refresh assurance bindings, without changing permanent Agent requirements. |
+| **Service-Scope Binding** | Protected/persisted scope-string-to-service-UUID map, immutable through consent/code/refresh continuity and retained after scope narrowing without restoring removed privileges. |
+| **Session Usability** | Verified effective provider scopes and established client identity with valid or successfully refreshed access: usable, missing, definitively unusable, or transiently unverifiable. Stored refreshability alone is not verification. |
 
 ## Development Workflow
 

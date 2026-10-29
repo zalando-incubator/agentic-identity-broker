@@ -98,6 +98,27 @@ Set `resource_uri` to a CEL string literal. It must resolve to an absolute `http
 
 The configured `resource_uri` must exactly match the protected resource that is registered with the broker.
 
+### Incremental authorization metadata (approved design)
+
+Feature 055's implementation is pending. Its approved additive challenge contract allows
+Agentgateway to supply optional `resource_metadata_url` beside `resource_uri` in the literal
+`aib.tokenexchange` namespace. The producer is the Agentgateway route, not the broker or the
+ExtProc process configuration. See the
+[complete route example](../../examples/config/incremental-authorization-agentgateway.yaml),
+[broker overlay](../../examples/config/incremental-authorization.yaml), and
+[configuration validation rules](../configuration.md#incremental-service-authorization-approved-design).
+
+Omit that field for the default variant; no metadata URL is inferred. An absent/invalid value
+omits only the optional `resource_metadata` challenge attribute. The approved challenge also
+carries the broker's service `scope` and preserves `error_uri` and URL elicitation. The running
+baseline behavior described below remains unchanged until implementation completes.
+
+ADRs 011 and 036 keep the producer/consumer deployment boundary explicit. The
+`charts/agentic-identity-broker/` chart does not deploy Agentgateway or the standalone ExtProc
+sidecar and must not receive this route metadata setting. Keep strict JWT authentication,
+`preserveToken: false` and `failureMode: failClosed`; optional metadata is not an authentication
+source and must never be sourced from an HTTP request header.
+
 ### Fail-closed behavior
 
 The sidecar rejects the request if either required metadata field is absent, empty, non-string, or invalid.
