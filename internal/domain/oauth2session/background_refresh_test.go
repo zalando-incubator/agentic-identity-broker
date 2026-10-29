@@ -904,6 +904,49 @@ func TestBackgroundRefresh_DeletedSessionIsNotRecreated(t *testing.T) {
 	assert.Empty(t, logs.events(t, "session.oauth2.refresh_failed"), "a deleted session is not a background failure")
 }
 
+// canonicalProviderRepository adds canonical IDs to operationProviderRepository.
+type canonicalProviderRepository struct {
+	operationProviderRepository
+	canonicalIDs map[id.ServiceID]string
+}
+
+func (r canonicalProviderRepository) GetByCanonicalID(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return nil, errors.New("unexpected canonical ID resolution")
+}
+
+func (r canonicalProviderRepository) GetCanonicalIDs(context.Context, []id.ServiceID) (map[id.ServiceID]string, error) {
+	return r.canonicalIDs, nil
+}
+
+func TestBackgroundRefresh_CountsUnderCanonicalIDWhereSet(t *testing.T) {
+	reader := backgroundMetrics(t)
+	session := backgroundSession(id.NewServiceID(), "canonical-user")
+	service, _, _ := newBackgroundFixture(t, session)
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: session.ServiceID, ClientID: "public-client", Secret: model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://provider.example/token"},
+	}
+	service.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(canonicalProviderRepository{
+		operationProviderRepository: operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			return provider, nil
+		}},
+		canonicalIDs: map[id.ServiceID]string{session.ServiceID: "calendar"},
+	}, operationEncryption{}, operationBranchKeyManager{}, nil, false, service.logger)
+	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+		return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+	})
+	pool := newBackgroundRefresher(service, 1)
+	submitBackground(t, pool, context.Background(), session)
+	require.NoError(t, pool.Close(context.Background()))
+
+	triggered := backgroundCounterPoints(t, reader)["proactive_refresh_triggered_total"]
+	require.Len(t, triggered, 1)
+	serviceAttr, _ := triggered[0].Attributes.Value("service_id")
+	assert.Equal(t, "calendar", serviceAttr.AsString())
+	assert.Equal(t, map[string]int64{"calendar/" + string(DetailRefreshRejected): 1}, backgroundFailures(t, reader))
+}
+
 func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardinalityCounters(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

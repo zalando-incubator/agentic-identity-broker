@@ -35,6 +35,7 @@ One row of the health query result.
 | Field | Type | Meaning |
 |---|---|---|
 | `ServiceID` | `id.ServiceID` | Service the sessions belong to |
+| `ServiceCanonicalID` | `string` | The service's canonical ID, empty when it has none or no longer exists (FR-030) |
 | `AccessExpiry` | `AccessExpiryClass` | Class of the access-token expiry |
 | `RefreshUsable` | `bool` | Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`) |
 | `Count` | `int` | Number of sessions in this group, `> 0` |
@@ -71,6 +72,7 @@ The result of one classification, built per export cycle and not retained.
 | Field | Type | Invariant |
 |---|---|---|
 | `Counts` | `map[id.ServiceID]map[SessionHealthKey]int` | Every service present has all eight `(expiry, refreshable)` combinations, zero-filled (FR-019). Services with no sessions are absent. |
+| `CanonicalIDs` | `map[id.ServiceID]string` | Canonical ID of each service in `Counts` that has one; the gauge uses it as `service_id` (FR-030) |
 
 Built from the groups by summing counts per `(service, expiry, refreshable)`. Validation: a group with `Count <= 0` or an unknown `AccessExpiry` is an adapter contract violation and fails the cycle.
 

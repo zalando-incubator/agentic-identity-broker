@@ -702,6 +702,26 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		})
 	}
 
+	t.Run("H12 groups carry the canonical ID of a bound service that has one", func(t *testing.T) {
+		repo := NewInMemoryUserSessionRepository()
+		providers := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(repo)
+		canonical := testProvider(svc)
+		canonicalID := "calendar"
+		canonical.CanonicalID = &canonicalID
+		require.NoError(t, providers.Create(context.Background(), canonical))
+		uncanonical := testProvider(other)
+		uncanonical.ClientID = "other-client-id"
+		require.NoError(t, providers.Create(context.Background(), uncanonical))
+		require.NoError(t, repo.Create(context.Background(), session(svc, &after, refresh, &later)))
+		require.NoError(t, repo.Create(context.Background(), session(other, &after, refresh, &later)))
+		got, err := repo.CountSessionsByExpiry(context.Background(), threshold, now)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []storage.SessionExpiryGroup{
+			{ServiceID: svc, ServiceCanonicalID: canonicalID, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
+			{ServiceID: other, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
+		}, got)
+	})
+
 	t.Run("H9 expired context", func(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()

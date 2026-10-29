@@ -1,6 +1,6 @@
 # Contract: Observability
 
-**Feature**: `053-session-auto-refresh` | FR-017 to FR-024, FR-027 to FR-029, SR-007 | Research R10 to R13
+**Feature**: `053-session-auto-refresh` | FR-017 to FR-024, FR-027 to FR-030, SR-007 | Research R10 to R13
 
 These names become a compatibility surface once released. All instruments use the global MeterProvider (ADR 011) on meter `oauth2session`. Nothing is exposed on `/metrics` or `/health`.
 
@@ -20,6 +20,8 @@ These names become a compatibility surface once released. All instruments use th
 | `session_sweep_failed_total` | `triggered_by="sweep"`, `service_id`, `failure_detail` | Unchanged |
 | `proactive_refresh_triggered_total` | `triggered_by="background"`, `service_id` | Unchanged |
 | `proactive_refresh_failed_total` | `triggered_by="background"`, `service_id`, `failure_detail` | Unchanged |
+
+`service_id` on these counters and on `oauth2_sessions` is the service's canonical ID when one is set, otherwise its UUID (FR-030). Releases before FR-030 export the UUID for every service, so queries that match the UUID of a service with a canonical ID must switch to the canonical ID. The counters look the canonical ID up when they record and use the UUID when the lookup fails. The background triggered counter is recorded by the worker that runs the refresh, so the lookup stays off the token exchange.
 
 `failure_detail` is the `ErrorDetail` of the failure's error metadata, the value that `session.oauth2.refresh_failed` logs as `failure_detail`. `session_sweep_skipped_total` and `proactive_refresh_dropped_total` keep `triggered_by` only. This supersedes the single-attribute rule in the [029 observability contract](../../029-proactive-token-refresh/contracts/observability.md).
 

@@ -1,6 +1,6 @@
 # Contract: Ports, domain services, and handler changes
 
-**Feature**: `053-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024 | Research R9, R11 to R13
+**Feature**: `053-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024, FR-030 | Research R9, R11 to R13
 
 ## 1. New port: `UserSessionHealthRepository` (`internal/ports/storage.go`)
 
@@ -19,8 +19,8 @@ type UserSessionHealthRepository interface {
 
 | Adapter | Implementation |
 |---|---|
-| PostgreSQL (`internal/adapters/storage/postgres/user_session.go`) | The single `GROUP BY` query from research R9, run with `SelectContext` under the caller's context, which `token_refresh.health_metrics.query_timeout` bounds; `storage.timeouts.read` does not apply. Errors go through `wrapError`. A `CASE` label outside the four known values is an `ErrorKindUnknown` storage error. |
-| Memory (`internal/adapters/storage/memory/user_session.go`) | Under `RLock`, apply the same predicates to each stored session with the supplied `threshold` and `now`. Return `ErrorKindTimeout` when `ctx.Err() != nil`. |
+| PostgreSQL (`internal/adapters/storage/postgres/user_session.go`) | The single `GROUP BY` query from research R9, with a `LEFT JOIN` on `thirdparty_oauth2_services` for `canonical_id` (FR-030), run with `SelectContext` under the caller's context, which `token_refresh.health_metrics.query_timeout` bounds; `storage.timeouts.read` does not apply. Errors go through `wrapError`. A `CASE` label outside the four known values is an `ErrorKindUnknown` storage error. |
+| Memory (`internal/adapters/storage/memory/user_session.go`) | Under `RLock`, apply the same predicates to each stored session with the supplied `threshold` and `now`. After releasing it, read canonical IDs from the bound provider repository. Return `ErrorKindTimeout` when `ctx.Err() != nil`. |
 
 Compile-time assertions `var _ ports.UserSessionHealthRepository = (*...)(nil)` go in both adapters. `storage.Adapter` (`internal/adapters/storage/factory.go`) gains a `SessionHealth()` accessor, wired for both backends.
 
@@ -39,6 +39,7 @@ Compile-time assertions `var _ ports.UserSessionHealthRepository = (*...)(nil)` 
 | H9 | canceled context | timeout-kind storage error |
 | H10 | access expiry equal to now | `expired` |
 | H11 | access expiry in the past, usable refresh token | `expired`, refresh usable |
+| H12 | sessions of a service with a canonical ID and of one without (memory: provider repository bound) | `ServiceCanonicalID` is the canonical ID, empty for the other service |
 
 PostgreSQL cases run under `//go:build integration` with `setupMigratedAdapter` and `insertTestService` (`just test-integration-infra`).
 
@@ -78,7 +79,7 @@ Callback behavior:
 1. `now := m.now()`, `threshold := now.Add(lookahead)`.
 2. Run `CountSessionsByExpiry` under `context.WithTimeout(ctx, queryTimeout)`.
 3. On error, or if a group fails classification, observe nothing. Log `session health query failed` at WARN with `error_kind` (the storage error kind) and return `nil`.
-4. Otherwise, build the snapshot, zero-fill all eight `(expiry, refreshable)` combinations for every service present, and observe one point per `(service_id, expiry, refreshable)` with exactly those three attributes.
+4. Otherwise, build the snapshot, zero-fill all eight `(expiry, refreshable)` combinations for every service present, and observe one point per `(service_id, expiry, refreshable)` with exactly those three attributes. `service_id` is the group's canonical ID when it has one, otherwise its UUID (FR-030).
 
 Unit tests (`health_metrics_test.go`, ManualReader pattern from `sweep_test.go:262-266`):
 - classification table for all eight group shapes

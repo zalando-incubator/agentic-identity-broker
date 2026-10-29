@@ -60,9 +60,30 @@ func ClassifySessionHealth(group storage.SessionExpiryGroup) (SessionHealthKey, 
 	return key, nil
 }
 
-// SessionHealthSnapshot holds per-service session counts for every gauge series.
+// serviceIDAttribute is the service_id metric attribute: the service's canonical ID when it has
+// one, otherwise its UUID. Canonical IDs are unique and never UUID-shaped, so values cannot collide.
+func serviceIDAttribute(serviceID id.ServiceID, canonicalID string) attribute.KeyValue {
+	if canonicalID != "" {
+		return attribute.String("service_id", canonicalID)
+	}
+	return attribute.String("service_id", serviceID.String())
+}
+
+// lookupServiceIDAttribute reads the canonical ID for serviceIDAttribute and falls back to the UUID
+// when the read fails. It ignores caller cancellation so that a canceled refresh keeps its value.
+func (s *OAuth2SessionService) lookupServiceIDAttribute(ctx context.Context, serviceID id.ServiceID) attribute.KeyValue {
+	canonicalIDs, err := s.providerService.CanonicalIDs(context.WithoutCancel(ctx), []id.ServiceID{serviceID})
+	if err != nil {
+		return serviceIDAttribute(serviceID, "")
+	}
+	return serviceIDAttribute(serviceID, canonicalIDs[serviceID])
+}
+
+// SessionHealthSnapshot holds per-service session counts for every gauge series and the
+// canonical ID of each service that has one.
 type SessionHealthSnapshot struct {
-	Counts map[id.ServiceID]map[SessionHealthKey]int
+	Counts       map[id.ServiceID]map[SessionHealthKey]int
+	CanonicalIDs map[id.ServiceID]string
 }
 
 // SessionHealthMetrics publishes the oauth2_sessions gauge. Each metric collection runs one
@@ -102,7 +123,7 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 	if err != nil {
 		return SessionHealthSnapshot{}, err
 	}
-	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthKey]int)}
+	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthKey]int), CanonicalIDs: make(map[id.ServiceID]string)}
 	for _, group := range groups {
 		if group.Count <= 0 {
 			return SessionHealthSnapshot{}, fmt.Errorf("session expiry group count %d must be positive", group.Count)
@@ -117,6 +138,9 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 			snapshot.Counts[group.ServiceID] = series
 		}
 		series[key] += group.Count
+		if group.ServiceCanonicalID != "" {
+			snapshot.CanonicalIDs[group.ServiceID] = group.ServiceCanonicalID
+		}
 	}
 	return snapshot, nil
 }
@@ -133,7 +157,7 @@ func (m *SessionHealthMetrics) observe(ctx context.Context, observer metric.Obse
 		return nil
 	}
 	for serviceID, series := range snapshot.Counts {
-		service := attribute.String("service_id", serviceID.String())
+		service := serviceIDAttribute(serviceID, snapshot.CanonicalIDs[serviceID])
 		for _, expiry := range sessionHealthExpiries {
 			for _, refreshable := range []bool{true, false} {
 				key := SessionHealthKey{Expiry: expiry, Refreshable: refreshable}

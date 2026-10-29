@@ -195,6 +195,31 @@ func TestSessionHealthMetricsObservesZeroFilledSeriesPerService(t *testing.T) {
 	assert.LessOrEqual(t, time.Until(call.deadline), time.Second)
 }
 
+func TestSessionHealthMetricsUsesCanonicalIDAsServiceIDWhereSet(t *testing.T) {
+	reader := installMeterReader(t)
+	calendar, tickets := id.NewServiceID(), id.NewServiceID()
+	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) {
+		return []storage.SessionExpiryGroup{
+			{ServiceID: calendar, ServiceCanonicalID: "calendar", AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
+			{ServiceID: calendar, ServiceCanonicalID: "calendar", AccessExpiry: storage.AccessExpiryExpired, Count: 1},
+			{ServiceID: tickets, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
+		}, nil
+	}}
+	logger, _ := healthLogger()
+	metrics, err := oauth2session.NewSessionHealthMetrics(repo, 5*time.Minute, time.Second, logger)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = metrics.Close() })
+
+	points, ok := collectHealth(t, reader)
+	require.True(t, ok, "oauth2_sessions must be exported")
+	got := map[string]int64{}
+	for _, p := range points {
+		got[p.service] += p.value
+	}
+	assert.Equal(t, map[string]int64{"calendar": 3, tickets.String(): 1}, got, "a service without a canonical ID keeps its UUID")
+	assert.Len(t, points, 16, "eight series per service with sessions")
+}
+
 func TestSessionHealthMetricsReportsNoPointsWhenQueryFails(t *testing.T) {
 	tests := []struct {
 		name     string
