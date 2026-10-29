@@ -65,11 +65,35 @@ Outcomes once `redirect_uri` is validated. All are redirects to the client's `re
 | A requested service's usability cannot be verified (transient provider or storage failure) | `error=temporarily_unavailable` |
 | All requested services satisfied, local or CIMD agent | Existing code issuance. The code records the granted virtual scopes and their bindings. |
 | All requested services satisfied, proxy agent | Existing upstream `302`. The upstream `scope` has every virtual scope removed and is omitted when empty. |
+| Continuation `session_token` is valid but a virtual scope no longer resolves to its sealed UUID | `error=invalid_scope`; no code or upstream redirect. |
+
+**Consent continuation parameter (Proposed, API-CONSENT)**: `session_token` is an optional opaque
+JWE query parameter on `/oauth2/authorize`, used only for the server-built post-Save continuation.
+The server authenticates expiry, principal and agent again, compares the request (excluding only
+`session_token`) against the sealed `original_url`, and uses the sealed request and bindings.
+Invalid, expired or request/user/agent-mismatched context is rejected by existing invalid-session
+handling; it never falls back to fresh unbound resolution. Re-resolve every scope and compare UUIDs
+before code issuance or upstream redirect, even when grant submission just succeeded. Re-entering
+consent preserves the original bindings/expiry. Consume this parameter locally; never forward it
+upstream or to the client callback. Initial requests without it retain initial resolution behavior.
 
 ## 3. `POST /oauth2/token`: local `authorization_code` and `refresh_token` (API-LOCAL-SCOPES)
 
 `OAuth2TokenResponse.scope` and the local access-token JWT `scope` claim both equal the granted
-scope set. That set includes granted virtual scopes in their requested form.
+scope set. That set includes granted virtual scopes in their requested form. On refresh it is the
+requested subset of the predecessor's current `Scope`, or that current `Scope` when omitted.
+Successful narrowing persists the same narrowed successor `Scope`; all original service bindings
+remain inherited as an assurance-only set, not permission to re-grant removed scopes. Every refresh
+checks all bindings against current grant-derived effective provider scopes, even bindings whose
+scope was dropped. Later scope-less refresh cannot restore removed scopes.
+
+Three-step example: (1) code exchange returns `openid offline_access
+https://broker.example.com/sessions/github`; (2) refresh with `scope=openid offline_access`
+returns `200` with `scope: "openid offline_access"`, a JWT with that same scope and a successor
+refresh token whose `Scope` is narrowed but whose GitHub binding is retained; (3) scope-less refresh
+of that successor returns only `openid offline_access` after rechecking GitHub. If GitHub is now
+unusable, step 3 returns non-consuming `invalid_scope`. Explicitly requesting the removed GitHub
+scope is widening and also returns non-consuming `invalid_scope`.
 
 Spec Journey 1, Step 8:
 
@@ -84,8 +108,8 @@ rotated nor revoked**:
 
 | Condition | Status | Body |
 |---|---|---|
-| Request `scope` contains a virtual scope that was not originally granted | 400 | `{"error":"invalid_scope","error_description":"scope <scope> requires interactive authorization"}` |
-| A granted virtual scope no longer resolves, resolves to another service, is no longer eligible, is uncovered, or is definitively unusable. This holds whether `scope` is omitted or narrowed. | 400 | `{"error":"invalid_scope","error_description":"scope <scope> is no longer satisfied; interactive authorization required"}` |
+| Request `scope` contains a virtual scope absent from the predecessor's current `Scope`, including a previously removed scope | 400 | `{"error":"invalid_scope","error_description":"scope <scope> requires interactive authorization"}` |
+| An originally bound virtual scope no longer resolves, resolves to another service, is no longer eligible, is uncovered, or is definitively unusable for the grant-derived effective provider scopes. This holds whether request `scope` is omitted or narrowed, including assurance-only bindings retained after narrowing. | 400 | `{"error":"invalid_scope","error_description":"scope <scope> is no longer satisfied; interactive authorization required"}` |
 | Usability of a granted virtual scope cannot be verified | 500 | `{"error":"server_error"}` |
 
 Existing revoked-grant handling (`invalid_grant`) and replay and rotation semantics are unchanged.
@@ -126,18 +150,29 @@ requested_service_coverage:
         type: string
         enum: [usable, missing, unusable, unavailable]
         description: |
-          Verified session usability (`unavailable` = could not be verified now; retry).
+          Baseline session usability for configured required scopes (empty baseline for
+          require_all_scopes or agents without explicit requirements). Not proof of a live
+          selection; selected candidate contributions must also be usable.
+          unavailable means could not be verified now; retry.
       covering_permission_sets:
         type: array
         items:
           type: object
-          required: [permission_set_id, supplied_required_scopes]
+          required: [permission_set_id, supplied_required_scopes, usability]
           properties:
             permission_set_id: {type: string, format: uuid}
             supplied_required_scopes:
               type: array
               items: {type: string}
               description: Subset of `required_scopes` this set supplies for the service.
+            usability:
+              type: string
+              enum: [usable, missing, unusable, unavailable]
+              description: |
+                Usability for this candidate's effective provider-scope contribution, against
+                the same verified session snapshot as the baseline. Intersect with the fixed
+                required-scope ceiling only for an explicit fixed-scope requirement; otherwise
+                use the full candidate contribution. Does not expose raw permission-set scopes.
 ```
 
 Example fragment for spec Journey 1, Step 5:
@@ -146,12 +181,19 @@ Example fragment for spec Journey 1, Step 5:
 {"requested_service_ids":["880e8400-e29b-41d4-a716-446655440010"],
  "requested_service_coverage":[{"service_id":"880e8400-e29b-41d4-a716-446655440010","required_scopes":["repo","user:email"],"usability":"unusable",
    "covering_permission_sets":[
-     {"permission_set_id":"770e8400-e29b-41d4-a716-446655440001","supplied_required_scopes":["repo","user:email"]},
-     {"permission_set_id":"770e8400-e29b-41d4-a716-446655440003","supplied_required_scopes":["repo"]}]}]}
+     {"permission_set_id":"770e8400-e29b-41d4-a716-446655440001","supplied_required_scopes":["repo","user:email"],"usability":"unusable"},
+     {"permission_set_id":"770e8400-e29b-41d4-a716-446655440003","supplied_required_scopes":["repo"],"usability":"unusable"}]}]}
 ```
 
-`services[].connectionStatus` for a requested service is `connected` only when its usability is
-`usable`. The enum does not change.
+For live selections, Save requires selection/definition and required-scope coverage, baseline
+`usability: usable`, and `usability: usable` on every selected candidate contribution. Unselected
+unusable candidates never block Save. The union of these contributions equals exchange's effective
+scopes, including `require_all_scopes` and agents without explicit requirements. Switching toggles
+recomputes the gate locally; login/refresh invalidates and refetches the verified snapshot. The
+submission rechecks fresh server-side state rather than trusting these flags.
+
+`services[].connectionStatus` describes usability for the saved selection's effective scopes, not
+an arbitrary unsaved selection or all candidates. The enum does not change.
 
 ## 6. `POST /api/consent/agents/{agent-id}/grants`: requested-service enforcement (API-CONSENT)
 
@@ -163,7 +205,13 @@ A new `400` case applies only when `session_token` seals requested services:
 
 The grant is not created or replaced, and `redirect_url` is not returned. Existing errors keep
 their precedence. The new check runs after the existing structural validation and before
-persistence.
+persistence. Compute usability for the submitted selection's effective provider scopes (the same
+union/ceiling as exchange), never merely empty configured required scopes.
+
+On success, `redirect_url` is the server-built sealed `original_url` plus
+`&session_token=<same JWE>` (using `?` if needed). The browser follows it unchanged. The authorization
+endpoint independently revalidates the protected bindings after this round trip (§2); validating
+only at Save is insufficient. No browser-submitted service UUIDs replace the sealed map.
 
 ## 7. `GET /api/third-party/sessions/{service}`: service session detail (API-SESSION-DETAIL)
 

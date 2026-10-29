@@ -76,15 +76,19 @@ comparisons stable. A client that requested the UUID form keeps working after a 
 
 ## R3 — Session usability check (FR-008, DEC-003)
 
-**Decision**: Add `OAuth2SessionService.CheckServiceUsability(ctx, principal, serviceID, requiredScopes)`.
-It reuses `GetValidAccessToken`: a valid access token, or a single-flight, locked refresh of an
-expired one. It then checks the stored session scopes against the required scopes and classifies
-the outcome:
+**Decision**: Add `OAuth2SessionService.CheckServiceUsability(ctx, principal, serviceID, effectiveScopes)`.
+`effectiveScopes` is the provider-scope set computed by the same selected-grant/ceiling rule as
+exchange (R4), not merely the configured `required_scopes`. It reuses `GetValidAccessToken`: a
+valid access token, or a single-flight, locked refresh of an expired one. It then checks the stored
+session scopes against `effectiveScopes` and the established client identity, and classifies the
+outcome:
 
 - `usable`
 - `missing`
-- `unusable_definitive` (refresh rejected, refresh unavailable or expired, scopes insufficient, or
-  established client identity mismatch)
+- `unusable_definitive` (access expired and refresh rejected, unavailable or expired; or effective
+  scopes insufficient; or established client identity mismatch). A valid access token with sufficient
+  effective scopes and matching identity is `usable` even without a refresh token or with an expired
+  refresh token; no refresh is attempted in that case.
 - `unverifiable_transient` (provider 5xx, 429, network error, storage error, or cancellation)
 
 The authorization endpoint, consent detail, grant submission, and local refresh recheck all use
@@ -139,11 +143,26 @@ The following domain services consume it:
 covered by one of the agent's declared permission sets. This matches the token-exchange eligibility
 rule in `resolveEffectiveScopes`.
 
-**Coverage**: The service must be included in at least one selected grant entry. The union of
-selected permission-set scopes for that service, intersected with the requirement ceiling, must
-cover the requirement's `required_scopes`. With `require_all_scopes`, the service only needs to be
-included. This is the existing token-exchange rule, extracted so that authorization, consent, and
-exchange cannot drift.
+**Coverage and effective scopes**: Compute `U`, the union of provider scopes from the agent's
+selected permission sets that define and include this service. With an explicit requirement and
+`require_all_scopes: false`, `E = U ∩ required_scopes`; otherwise (all-scopes or no explicit service
+requirements), `E = U`. Preserve exchange's structural-reference, service-inclusion/definition,
+requirement-exclusion and empty-intersection denials. Explicit fixed-scope coverage additionally
+requires `required_scopes ⊆ E`; all-scopes/no-requirements coverage requires inclusion and definition,
+not a fabricated empty required-scope ceiling. Session usability always requires `E ⊆ session.Scopes`.
+Thus empty configured `required_scopes` never erases a nonempty permission-set union. Authorization,
+consent submission and local refresh pass `E` to R3, just as exchange does.
+
+For live consent selection, compute each candidate set's contribution `E_i` with this same ceiling.
+Check the session once (including any eligible refresh), then classify every `E_i` against that same
+verified session snapshot. Return each candidate's `usability`, plus its existing
+`supplied_required_scopes`. The service-level usability checks the fixed configured required scopes
+(or the empty baseline for all-scopes/no-requirements); it is not proof of an unsaved selection.
+Save requires the baseline usable, at least one defining candidate selected, required-scope coverage,
+and `usable` for every selected candidate's contribution. Since `E = union(E_i)`, this checks the
+live selection without exposing raw permission-set scopes or adding a request on every toggle.
+Unselected unusable candidates do not block Save; selecting one immediately does. Submission and
+authorize re-entry recompute `E` and verify current usability server-side, never trusting UI flags.
 
 **Rationale**: Principle VI rejects anemic handlers and logic leakage. Four contexts need the same
 invariant, and one owner prevents divergence (SR-001).
@@ -167,11 +186,24 @@ a grant is active:
    - proxy agents get the upstream URL built from the request scope with every virtual scope
      removed. The `scope` parameter is omitted when nothing remains.
 
-On consent continuation, the sealed IDs are checked against a fresh resolution of `original_url`'s
-scope. A mismatch, an expired token, the wrong agent, or the wrong user fails closed (SR-002).
+On grant submission, validate the sealed IDs/bindings against a fresh resolution of `original_url`.
+After Save, return a server-built `redirect_url` consisting of that original authorize URL plus
+`session_token=<the same JWE>`. The browser follows it as an opaque URL. On authorize re-entry,
+authenticate the JWE again (original 10-minute expiry, principal and agent), compare every original
+request parameter with the sealed `original_url` after removing only `session_token`, and use the
+sealed request and bindings as authority. Fresh resolution must reproduce the bound UUIDs before
+local code issuance or proxy redirect. Never discard bindings and treat this continuation as a new
+initial resolution. Reassignment after Save but before re-entry therefore returns `invalid_scope`
+and issues no code or upstream redirect. Forged, expired or request/user/agent-mismatched context
+uses the existing invalid-session error handling without issuing a code (SR-002).
+The continuation parameter is consumed locally and never forwarded upstream or to the client callback;
+returning to consent retains the same bindings and original expiry rather than renewing the TTL.
 
-**Rationale**: The design reuses the existing JWE and `original_url` round trip (ADR 016). It adds
-no new state transport.
+**Rationale**: Reuse the existing JWE and `original_url` round trip (ADR 016), including the browser
+re-entry, rather than inventing browser-authoritative IDs or another state store.
+
+**Alternative**: Return the plain original URL after validating Save. Rejected because bindings
+would be lost before the final authorization decision.
 
 ## R6 — Local refresh (FR-012, FR-020, API-LOCAL-SCOPES)
 
@@ -181,12 +213,28 @@ request and before `PopulateTokenEndpointResponse`, which rotates the token:
 1. **Widening check**: Any requested virtual scope that is not in the stored granted set causes
    `invalid_scope` with "scope <s> requires interactive authorization".
 2. **Recheck**: For every granted virtual scope, the broker resolves the binding again, then checks
-   eligibility, coverage, and usability through `servicescope.Evaluate`. This applies whether
-   `scope` is omitted or narrowed.
+   eligibility, coverage, and effective-scope usability through `servicescope.Evaluate`. Iterate all
+   immutable binding keys, including ones no longer in the current `Scope` after narrowing. This
+   applies whether `scope` is omitted or narrowed.
 
 A definitive failure returns `invalid_scope`, and a transient one returns `server_error`. Neither
 rotates or revokes the refresh token. An existing revoked-grant error keeps its current
 `invalid_grant` handling.
+
+**Successful narrowing (Proposed, API-LOCAL-SCOPES)**: Request `scope` must be a subset of the
+predecessor's current `Scope`. The response `scope` and access-token claim equal that subset, and
+the successor refresh row's `Scope` also equals it. A scope-less request instead uses the
+predecessor's current `Scope`. The entire `ServiceScopeBindings` map is inherited unchanged as a
+continuing-service assurance set, even for scopes removed from `Scope`. It cannot grant a removed
+scope again. Every later refresh rechecks all retained bindings; re-requesting a removed scope is
+widening and fails without consumption. Code validation keeps bindings within its granted `Scope`;
+refresh validation permits assurance-only bindings and successor creation enforces exact map
+inheritance and scope subset. No second column is needed.
+
+**Rationale for narrowing**: Durable narrowing preserves least privilege while retaining FR-012's
+continuing-service checks. The main alternative, keeping full successor `Scope`, would restore
+dropped scopes on the next scope-less refresh. Dropping bindings with scopes would evade the
+continuing-service check. Neither is chosen.
 
 `client_credentials` requests that contain a virtual scope return `invalid_scope`, because there is
 no user whose sessions could be checked.
@@ -284,21 +332,26 @@ existing clients.
   `[]` when the request has no token or no requested service:
   - `requested_service_ids: [uuid]`;
   - `requested_service_coverage: [{service_id, required_scopes, usability, covering_permission_sets:
-    [{permission_set_id, supplied_required_scopes}]}]`.
+    [{permission_set_id, supplied_required_scopes, usability}]}]`.
 
   The UI decides "selected sets cover the required scopes" from the union of
   `supplied_required_scopes` over the user's live selection. Raw permission-set scopes stay out of
   `permission_sets[].service_scopes`, which the current contract omits on purpose. The coverage
   object exposes only the agent's required scopes, which `services[].requiredScopes` already
-  publishes.
-- For requested services, `services[].connectionStatus` is `connected` only when
-  `CheckServiceUsability` returns `usable`. The existing enum does not change.
+  publishes. Each candidate's `usability` verifies its effective contribution against the same
+  session snapshot (R4). Live Save gating combines the baseline and selected candidates' usability;
+  it cannot infer all-scopes usability from empty `required_scopes`.
+- For requested services, `services[].connectionStatus` reflects usability for the current saved
+  selection's effective scopes. The existing enum does not change; Save separately evaluates the
+  live selection, so an unselected failing candidate does not force an unnecessary login.
   `requested_service_coverage[].usability` (`usable`, `missing`, `unusable`, or `unavailable`)
   lets the UI distinguish "log in" from "temporarily unavailable, retry".
 - `POST /api/consent/agents/{id}/grants?session_token=…` rejects a submission with
   `400 {"error":"requested service not satisfied","message":"…<service ids>…"}` when any requested
   service is uncovered, lacks required-scope coverage, or is unusable. It neither changes the grant
-  nor returns `redirect_url`.
+  nor returns `redirect_url`. Success returns the original authorize URL plus the same sealed
+  `session_token`; the authorization service revalidates it independently after the browser round
+  trip, including binding identity and current effective-scope usability (R5).
 
 **Rationale**: The IDs are derived on the server from the sealed context (SR-002). The UI and the
 server share the same coverage rule. No raw scope catalog is newly exposed.
