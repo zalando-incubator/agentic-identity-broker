@@ -1,12 +1,14 @@
-# Contract (Proposed): AuthZEN Discovery and Access Evaluation
+# Contract (Accepted): AuthZEN Discovery and Access Evaluation
 
-**Status**: **Proposed**. Maintainer `mjungsbluth` endorsed the contract as written here in the
-2026-10-28 `/speckit-plan` review (Principles IV and X, spec API-002): the strict members (R10),
-the plain-UUID anchor, denial form (a), the error mapping, and the `1.1.0` deprecation marker.
-That review used a stale version baseline; the corrected `1.2.0` proposal in §3 is not a recorded approval.
-Sign-off is approval items API-1–API-3 in the plan; `api/enduser/openapi.yaml` changes only after it. API-003 items marked **Verify** must still be checked against the final
-AuthZEN Authorization API 1.0 text before the OpenAPI is frozen. Any conflict found goes back to
-the stakeholder.
+**Status**: **Accepted** under approval items API-1–API-3 (👍 on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>) and
+applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification against the AuthZEN 1.0
+source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
+requires receivers to ignore unknown request fields. Following the user's direction in the
+implementation session, unknown members, `properties` and other `context` members are ignored
+instead of rejected (ADR 045 §1). Error bodies keep `ErrorResponse`. That revision of API-2 needs the
+maintainer's confirmation during review. The schemas below keep the original proposal for
+traceability; the OpenAPI is authoritative.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.

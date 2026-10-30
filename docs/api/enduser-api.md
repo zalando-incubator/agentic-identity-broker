@@ -2,6 +2,8 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
+When token exchange is configured, it also serves the AuthZEN delegation PDP. See [AuthZEN Delegation Evaluation](authzen-evaluation.md).
+
 ## CIMD Client Authentication
 
 In local or hybrid mode with CIMD enabled, a pre-registered CIMD client can authenticate at the token endpoint with `private_key_jwt`. The client signs a short-lived assertion with a key from its metadata document. The broker requires a fresh assertion for each authorization-code exchange and refresh request.

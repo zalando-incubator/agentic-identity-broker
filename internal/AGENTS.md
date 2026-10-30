@@ -44,7 +44,7 @@ domain/
   server/          Server lifecycle configuration
   storage/         Domain data models and endpoint discovery
   thirdparty/      Third-party OAuth2 provider management
-  tokenexchange/   RFC 8693 token exchange and CEL evaluation
+  tokenexchange/   RFC 8693 token exchange, shared DelegationResolver, AuthZEN AccessEvaluationService, CEL
   trustanchor/     Trust-anchor key-source resolution and local key-set validation
   urivalidation/   Redirect and resource URI validation
 

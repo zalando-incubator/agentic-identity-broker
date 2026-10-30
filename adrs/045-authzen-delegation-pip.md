@@ -1,17 +1,16 @@
 # ADR 045: AuthZEN Delegation Policy Information Point
 
-**Status**: Proposed (draft; awaiting maintainer sign-off on the pipeline's approval comment)
-**Date**: 2026-10-29
+**Status**: Accepted (approved by mjungsbluth on 2026-10-30: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937); revised in the same PR on 2026-10-30, see §1 and Revision history
+**Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
 **Supersedes in part**: ADR 028 (enabled-mode OPA input schema and request ordering only)
 **Extends**: ADR 033 (deferred-finalization seam), ADR 009 (caller CEL reuse), ADR 012 (separate cache)
 **Feature**: `specs/054-authzen-delegation-pip`
 
-This file is the feature-local draft. The implementation phase records the maintainer's approval
-in the Status line and moves the file to `adrs/045-authzen-delegation-pip.md`, after rechecking
-that 045 is still the next unused number. Under Principle II, the draft may be revised in this PR
-until it merges; the final ADR and the code must agree.
+The maintainer approved all eleven approval items (API-1–API-6, ADR-1, D-1–D-4) with a 👍 on
+the pipeline approval comment for commit `a5042d5`. Under Principle II this ADR may still be
+revised in the same PR before it merges; the final ADR and the code must agree.
 
 ## Context
 
@@ -42,7 +41,13 @@ Authorization API 1.0 Access Evaluation endpoint, and ExtProc to consume it with
   denial is HTTP 200 `decision: false` with `reason_admin.code` and `reason_user.consent_url`.
   Request, credential, caller-policy, and dependency failures keep HTTP 400/401/403/500 and are
   never represented as decisions.
-- Request members are strict: unknown members, `properties`, and `context.actor` return 400.
+- Request members follow the AuthZEN 1.0 HTTPS binding, which requires receivers to ignore
+  unknown fields: unknown members, AuthZEN `properties`, and `context` members other than `agent`
+  are ignored. The supported values are required exactly (`subject.type` is the JWT token-type
+  URN, `action.name` the token-exchange grant-type URN, `resource.type` `protected_resource`),
+  and a present `context` must be an object whose `agent`, when present, is an Agent UUID string.
+  Ignored members never influence the decision; the delegation is always resolved from the
+  verified subject token alone.
 
 ### 2. Caller authorization reuses ADR 009 CEL unchanged
 
@@ -145,5 +150,16 @@ are defined by the standard and are a documented exception to general REST namin
   token exists.
 - Policies can key on canonical IDs instead of deployment UUIDs.
 - Gateways other than ExtProc can consume the endpoint.
-- API-003 verification against the final AuthZEN 1.0 text must happen before the OpenAPI is
-  frozen; a conflict with the decisions above returns to the maintainer.
+- The AuthZEN 1.0 discovery member names, well-known path insertion (between host and path),
+  request identification and the implementation-defined decision `context` were verified against
+  the standard's source text before the OpenAPI was frozen.
+
+## Revision history
+
+- **2026-10-30 (same PR, before merge)**: API-003 verification found that AuthZEN 1.0 requires
+  receivers to ignore unknown request fields, which conflicts with the approved strict rejection
+  (research R10). Following the user's direction in the implementation session, §1 now ignores
+  unknown members and `properties`. Error bodies keep the approved `ErrorResponse` object; the
+  standard's "error message string" is interpreted as a JSON body carrying an error message.
+  This revision of the approved contract item API-2 needs the maintainer's confirmation during
+  review.

@@ -110,6 +110,16 @@ oauth2_authorization_server:
 Use it with `just dev-docker` or `just compose-up`. `docker-compose.yml` sets
 `IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml`.
 
+### `configs/config.extproc.docker.yaml` (ExtProc)
+
+The standalone ExtProc service owns its `EXTPROC_` configuration (ADR 011); Compose mounts this
+file at `/app/config.yaml`. It contains a commented `delegation_context` block for the opt-in
+broker delegation context ([ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-authzen-delegation-pip.md)). The broker adds no
+configuration keys for the AuthZEN endpoints, and `charts/agentic-identity-broker/` is unchanged
+because it does not deploy ExtProc. Enabling delegation context requires the broker's
+`server.enduser.public_url` to equal the identifier ExtProc expects and to be reachable from the
+ExtProc container. See [ExtProc delegation context configuration](configuration.md#extproc-delegation-context-configuration).
+
 ### Why the files differ
 
 - **Native development:** `just run` uses `localhost` or `127.0.0.1`. Services are not in a
