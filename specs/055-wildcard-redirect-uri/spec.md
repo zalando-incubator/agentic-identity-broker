@@ -60,8 +60,15 @@ An operator can rely on a wildcard registration to accept only HTTPS callbacks i
 **Step 2 - Authorize from preview 123**: Alice's preview starts an authorization request with its concrete callback URI.
 
 ```http
-GET /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fpreview-pr-123.app-test.example.com%2Fapi%2Foidc%2Fcallback&state=pr-123 HTTP/1.1
+GET /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fpreview-pr-123.app-test.example.com%2Fapi%2Foidc%2Fcallback&state=pr-123&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
 Host: broker.example.test
+```
+
+Alice has an active grant, so the broker returns the authorization code to the concrete callback URI.
+
+```http
+HTTP/1.1 302 Found
+Location: https://preview-pr-123.app-test.example.com/api/oidc/callback?code=authorization-code&state=pr-123
 ```
 
 **Step 3 - Authorize from preview 456, stable test, sandbox, and staging**: The other deployments make equivalent requests with their own concrete `redirect_uri` and `state` values. Each callback keeps the same HTTPS scheme and `/api/oidc/callback` path.
