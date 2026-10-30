@@ -78,7 +78,7 @@ jobs:
           {
             echo "docs=$(match '^(docs/|api/|assets/docusaurus/)')"
             echo "helm=$(match '^(charts/|tests/integration/helm_chart_test\.go$|tests/e2e/fixtures/oauth2-secret-file-values\.yaml$|\.github/workflows/ci\.yml$|go\.(mod|sum)$)')"
-            echo "workflows=$(match '^(\.github/(workflows/|scripts/speckit-|actionlint\.yaml$|aw/actions-lock\.json$|dependabot\.yml)|\.agents/skills/speckit-)')"
+            echo "workflows=$(match '^(\.github/(workflows/|scripts/speckit-|actionlint\.yaml$|zizmor\.yml$|aw/actions-lock\.json$|dependabot\.yml)|\.agents/skills/speckit-)')"
             echo "deps=$(match '(^|/)(go\.mod|go\.sum|package(-lock)?\.json)$')"
             # "code" = anything that is not purely documentation.
             if grep -Evq "$DOCS_ONLY" changed.txt; then echo "code=true"; else echo "code=false"; fi
