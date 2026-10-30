@@ -1034,7 +1034,8 @@ test("a blocked implementation resumes under its approval although it changed th
   })), /changed after the approval/);
 });
 
-test("implementation may tick and add tasks, but only after it started and never in the reviewed spec or plan", async () => {
+test("implementation may tick and add tasks, but only after it started and never in the reviewed spec or plan", async (t) => {
+  preparationIO(t);
   const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
   const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
   const partial = comment(result("implement", { status: "blocked", next_step: "Install ginkgo" }), { id: 60 });
