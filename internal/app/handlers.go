@@ -58,6 +58,10 @@ type EnduserHandlers struct {
 	OAuth2Token     *enduser.OAuth2TokenHandler
 	OAuth2Metadata  *enduser.OAuth2MetadataHandler
 
+	// AuthZEN delegation PIP handlers; nil unless token exchange is configured
+	AuthZENConfiguration *enduser.AuthZENConfigurationHandler
+	AuthZENEvaluation    *enduser.AuthZENEvaluationHandler
+
 	// Approval handlers for /api/approvals routes
 	ApprovalCreate       *approval.CreateHandler
 	ApprovalGet          *approval.GetHandler

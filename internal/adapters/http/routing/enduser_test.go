@@ -142,6 +142,9 @@ func TestSetupEnduserRoutes_ReservesProtocolNamespaces(t *testing.T) {
 		{name: "unknown OAuth2 route", method: http.MethodGet, path: "/oauth2/not-a-route", status: http.StatusNotFound},
 		{name: "unknown discovery route", method: http.MethodGet, path: "/.well-known/not-a-route", status: http.StatusNotFound},
 		{name: "unknown health route", method: http.MethodGet, path: "/health/not-a-route", status: http.StatusNotFound},
+		{name: "disabled AuthZEN discovery", method: http.MethodGet, path: "/.well-known/authzen-configuration", status: http.StatusNotFound},
+		{name: "disabled AuthZEN evaluation", method: http.MethodPost, path: "/access/v1/evaluation", status: http.StatusNotFound},
+		{name: "reserved access namespace GET", method: http.MethodGet, path: "/access/v1/evaluation", status: http.StatusNotFound},
 		{name: "unsupported OAuth2 method", method: http.MethodPost, path: "/oauth2/authorize", status: http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
@@ -279,4 +282,27 @@ func newGrantRequest(t *testing.T, agentID string) *http.Request {
 		"/api/consent/agents/"+agentID+"/grants",
 		bytes.NewReader(postBody),
 	)
+}
+
+func TestSetupEnduserRoutes_RegistersAuthZENRoutesOnlyWithHandlers(t *testing.T) {
+	t.Parallel()
+
+	router := chi.NewRouter()
+	routing.SetupEnduserRoutes(router, &app.EnduserHandlers{
+		AuthZENConfiguration: enduserhttp.NewAuthZENConfigurationHandler("https://broker.example.com"),
+		AuthZENEvaluation:    &enduserhttp.AuthZENEvaluationHandler{},
+	}, routing.EnduserRouteConfig{Logger: slog.Default()})
+
+	discovery := httptest.NewRecorder()
+	router.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration", nil))
+	require.Equal(t, http.StatusOK, discovery.Code)
+	require.JSONEq(t, `{"policy_decision_point":"https://broker.example.com","access_evaluation_endpoint":"https://broker.example.com/access/v1/evaluation"}`, discovery.Body.String())
+
+	evaluation := httptest.NewRecorder()
+	router.ServeHTTP(evaluation, httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", nil))
+	require.Equal(t, http.StatusUnauthorized, evaluation.Code, "the route must reach the evaluation handler, which requires a bearer assertion")
+
+	wrongMethod := httptest.NewRecorder()
+	router.ServeHTTP(wrongMethod, httptest.NewRequest(http.MethodGet, "/access/v1/evaluation", nil))
+	require.Equal(t, http.StatusMethodNotAllowed, wrongMethod.Code)
 }

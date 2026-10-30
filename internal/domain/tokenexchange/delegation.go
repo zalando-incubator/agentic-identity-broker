@@ -26,6 +26,9 @@ type DelegationRequest struct {
 	Resource        string
 	GrantType       string
 	Scope           string
+	// ExpectedAgentID is an optional consistency anchor, compared after the agent is
+	// loaded and before any grant is read. Exchange never sets it.
+	ExpectedAgentID *id.AgentID
 }
 
 // Delegation is the outcome of a successful resolution: every invariant of exchange
@@ -206,6 +209,10 @@ func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest)
 		return nil, NewServerErrorWithCause("failed to lookup agent", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentRepositoryUnavailable))
 	}
 	registeredAgentID = agent.ID
+	if req.ExpectedAgentID != nil && *req.ExpectedAgentID != agent.ID {
+		return nil, NewInvalidRequestError("context.agent does not match the agent resolved from the subject token").
+			WithCause(ErrAgentAnchorMismatch).WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+	}
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	stage = StageGrantAuthorization
 	grant, err = r.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
