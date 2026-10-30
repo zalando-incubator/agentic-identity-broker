@@ -1,0 +1,52 @@
+# ExtProc configuration with broker delegation context (AuthZEN, ADR 045)
+#
+# When delegation_context.enabled is true, ExtProc discovers the identity broker's
+# AuthZEN Policy Decision Point at startup and asks POST /access/v1/evaluation for a
+# fresh delegation permit before every OPA decision. Policies then read
+# input.context.principal, agent, resource, grant and permission_sets (including
+# canonical IDs) instead of deployment-specific UUIDs.
+#
+# Every failure is closed: a delegation denial returns 403 with the consent URL, a
+# broker failure or an expired permit returns 503. Delegation context requires
+# authorization.enabled. Disabled mode (the default) is unchanged.
+
+grpc:
+  bind: "0.0.0.0"
+  port: 50051
+  max_concurrent_streams: 100
+
+oauth2:
+  token_endpoint: "https://identity-broker.example.com/oauth2/token"
+  issuer: "https://upstream-oauth2.example.com"
+  client_id: "${EXTPROC_OAUTH2_CLIENT_ID}"
+  client_secret: "${EXTPROC_OAUTH2_CLIENT_SECRET}"
+  client_assertion_type: "id_token"
+  exchange_timeout: 5s
+
+log:
+  level: info
+  format: json
+
+authorization:
+  enabled: true
+  policy:
+    path: "/etc/extproc/policy.rego"
+    package: "aib.extproc.authz"
+    decision: "result"
+  default_decision: "deny"
+  evaluation_timeout: 100ms
+
+delegation_context:
+  # Opt in. Default: false.
+  enabled: true
+  # Expected AuthZEN PDP identifier, compared exactly with the discovered
+  # policy_decision_point before any credential is sent.
+  # Default (empty): the origin of oauth2.token_endpoint
+  # (https://identity-broker.example.com here). Set it explicitly when the broker's
+  # public URL has a path prefix, for example https://example.com/broker.
+  policy_decision_point: ""
+  # Timeout for discovery and each evaluation request. Default: 5s.
+  request_timeout: 5s
+  # Upper bound on permit reuse. The broker caps max-age at 60 s and at the grant
+  # expiry; ExtProc uses min(max-age, max_staleness). Default: 60s.
+  max_staleness: 60s

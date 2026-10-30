@@ -38,6 +38,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
 const (
@@ -80,13 +81,16 @@ type ApprovalGate interface {
 // headers phase and evaluate OPA in the body phase; header-only requests do the reverse.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
-	cfg             *extprocconfig.Config
-	exchanger       Exchanger
-	authorizer      authorization.Authorizer
-	approvalGate    ApprovalGate
-	logger          *slog.Logger
-	requestCounter  metric.Int64Counter
-	requestDuration metric.Float64Histogram
+	cfg          *extprocconfig.Config
+	exchanger    Exchanger
+	authorizer   authorization.Authorizer
+	approvalGate ApprovalGate
+	// delegationResolver is nil unless delegation_context is enabled.
+	delegationResolver DelegationResolver
+	now                func() time.Time
+	logger             *slog.Logger
+	requestCounter     metric.Int64Counter
+	requestDuration    metric.Float64Histogram
 }
 
 // requestState holds per-stream state accumulated from the RequestHeaders phase
@@ -101,8 +105,19 @@ type requestState struct {
 	principal             string
 	agentID               string
 	agentSessionID        string
-	requestContext        context.Context
-	finishObservation     func(Diagnostic)
+	// delegation is the enabled-mode permit; policy may use it only before its Deadline.
+	delegation        *delegation.Result
+	requestContext    context.Context
+	finishObservation func(Diagnostic)
+}
+
+// policyContext is the OPA context for body and batch decisions: permit-derived in enabled
+// mode, the exchange snapshot otherwise.
+func (st *requestState) policyContext() authorization.ContextInput {
+	if st.delegation != nil {
+		return contextInputFromDelegation(st.delegation, st.agentSessionID)
+	}
+	return authorization.ContextInput{GrantedPermissionSetsAvailable: st.grantedPermissionSets != nil, GrantedPermissionSets: st.grantedPermissionSets, AgentSessionID: st.agentSessionID}
 }
 
 type tokenExchangeInput struct {
@@ -151,6 +166,7 @@ func NewServer(cfg *extprocconfig.Config, exchanger Exchanger, logger *slog.Logg
 		logger:          logger,
 		requestCounter:  requestCounter,
 		requestDuration: requestDuration,
+		now:             defaultNow,
 	}
 }
 
@@ -520,7 +536,19 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		return passThrough(), state
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
+	var exchangeResult ExchangeResult
+	var exchErr error
+	if s.delegationEnabled() {
+		var delegationErr error
+		exchangeResult, state.delegation, delegationErr, exchErr = s.exchangeAndResolve(ctx, logger, input.subjectToken, resourceURI)
+		if delegationErr != nil {
+			response, failure := delegationFailureResponse(delegationErr)
+			diagnostic = failure
+			return response, nil
+		}
+	} else {
+		exchangeResult, exchErr = s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
+	}
 	if exchErr != nil {
 		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
@@ -564,7 +592,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, state.policyContext())
 	if buildErr != nil {
 		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -577,6 +605,11 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
+	if state.delegation != nil {
+		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+			return response
+		}
+	}
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
 		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
@@ -627,16 +660,26 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		}()
 	}
 
-	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers, state.targetServerName)
+	contextInput := authorization.ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: state.agentSessionID}
+	if s.delegationEnabled() {
+		result, delegationErr := s.resolveDelegation(ctx, logger, state.subjectToken, state.resourceURI)
+		if delegationErr != nil {
+			var response *extprocv3.ProcessingResponse
+			response, diagnostic = delegationFailureResponse(delegationErr)
+			return response
+		}
+		if response, expired := s.delegationExpired(ctx, logger, result); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			return response
+		}
+		contextInput = contextInputFromDelegation(result, state.agentSessionID)
+	}
+	opaInput, buildErr := authorization.BuildOPAInputHeadersOnlyWithContext(state.protocol, state.headers, state.targetServerName, contextInput)
 	if buildErr != nil {
 		diagnostic = NewDiagnostic(StageRequestValidation, DetailRequestMalformed)
 		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for header-only request — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
-	}
-	if contextInput, ok := opaInput["context"].(authorization.ContextInput); ok {
-		contextInput.AgentSessionID = state.agentSessionID
-		opaInput["context"] = contextInput
 	}
 
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
@@ -678,7 +721,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
-	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, state.policyContext())
 	if err != nil {
 		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -702,6 +745,11 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			denied = true
 			denyReasons = append(denyReasons, "failed to parse batch element")
 			continue
+		}
+		if state.delegation != nil {
+			if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+				return response
+			}
 		}
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
