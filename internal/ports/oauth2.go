@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -239,10 +240,13 @@ func (m *SessionCIMDMetadata) Validate() error {
 
 // AuthorizationSession is the port-local DTO returned by SessionTokenValidator.
 type AuthorizationSession struct {
-	AgentID      id.AgentID
-	Principal    id.Principal
-	OriginalURL  string
-	CIMDMetadata *SessionCIMDMetadata
+	AgentID              id.AgentID
+	Principal            id.Principal
+	OriginalURL          string
+	CIMDMetadata         *SessionCIMDMetadata
+	RequestedServiceIDs  []id.ServiceID
+	ServiceScopeBindings map[string]id.ServiceID
+	ExpiresAt            time.Time
 }
 
 // SessionTokenValidator validates JWE authorization session tokens.
