@@ -331,6 +331,25 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ---
 
+## Phase 7: User Story 4 - Refresh Outcomes Per Service in Metrics (Priority: P2)
+
+**Goal**: `service_id` on the sweep refreshed and failed counters and the background triggered and failed counters, plus `failure_detail` on both failed counters (FR-027 to FR-029).
+
+**Independent Test**: T062 passes. The sweep and background refresh unit tests pass.
+
+### Tests for User Story 4
+
+- [X] T062 [US4] Add US4-S1 and US4-S2 to `tests/e2e/session_metrics_test.go`. Confirm both are red before T064 and T065.
+- [X] T063 [P] [US4] Make `sweepMetrics` in `internal/domain/oauth2session/sweep_test.go` and `assertBackgroundMetrics` in `internal/domain/oauth2session/background_refresh_test.go` assert each instrument's attribute keys per FR-027 to FR-029. Assert the `service_id` and `failure_detail` values for failed candidates in the existing failure tables.
+
+### Implementation for User Story 4
+
+- [X] T064 [US4] In `internal/domain/oauth2session/sweep.go`, record the refreshed and failed counters with `service_id`, and the failed counter also with `failure_detail` from the failure metadata. Leave the skipped counter unchanged.
+- [X] T065 [US4] In `internal/domain/oauth2session/background_refresh.go`, record the triggered and failed counters with `service_id`, and the failed counter also with `failure_detail`. Leave the dropped counter unchanged.
+- [X] T066 [P] [US4] Update the metrics table and example queries in `docs/operations/session-sweep.md`, the session metrics paragraph in `ARCHITECTURE.md`, `contracts/observability.md`, and add a superseded note to `specs/029-proactive-token-refresh/contracts/observability.md`.
+
+---
+
 ## 🔒 Phase N: Constitution Compliance Verification
 
 #### Design Phase Verification
