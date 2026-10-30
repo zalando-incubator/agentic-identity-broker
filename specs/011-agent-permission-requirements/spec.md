@@ -35,6 +35,7 @@ An administrator needs to define which third-party services an agent requires (m
 5. **Given** an existing agent, **When** the administrator updates it via PUT `/api/agents/{agent-id}` with modified service requirements, **Then** the system replaces the entire service requirements configuration with the new definition
 6. **Given** a service requirement referencing a non-existent service_id, **When** the request is processed, **Then** the system returns HTTP 400 with error indicating the invalid service reference
 7. **Given** a service requirement with scopes not defined in the referenced service, **When** the request is processed, **Then** the system returns HTTP 400 with error listing the invalid scope names
+8. **Given** a service requirement with an empty `required_scopes` and `require_all_scopes` false for a service that defines scopes, **When** the request is processed (POST or PUT), **Then** the system returns HTTP 400 with an error naming the service, because the empty list would act as an empty scope ceiling at token exchange (see spec 019 FR-013); the same shape for a service that defines no scopes is accepted
 
 ---
 
@@ -136,7 +137,7 @@ When the user completes the consent flow (by clicking "Approve" or equivalent bu
 - **User's session expires during consent flow**: If the user's third-party session expires while on the consent screen, the session status is re-validated on approval. If a mandatory session has expired, approval fails with an error prompting the user to re-authenticate with the required service.
 - **Circular service dependencies**: Not applicable as service requirements are a flat list without dependency relationships between services.
 - **Scope removed from third-party service configuration**: If a scope that agents require is removed from the service configuration, the agent's requirement validation fails at authorization time. Administrators receive an error when updating the service, warning about agents that depend on the scope being removed.
-- **Empty required_scopes array**: When a service requirement has an empty required_scopes array, only the session existence is checked, not specific scopes.
+- **Empty required_scopes array**: Accepted only for a service that defines no scopes; then only the session existence is checked. For a service that defines scopes the requirement must list `required_scopes` or set `require_all_scopes`, because spec 019 FR-013 applies `required_scopes` as a scope ceiling at token exchange and an empty ceiling would deny every exchange (FR-004a).
 - **User declines consent**: When the user clicks a "Decline" button (if present) or closes the consent screen, no redirect is issued and no grant is created. The OAuth2 flow cannot proceed until the user grants consent.
 - **redirect_uri with fragment or query parameters**: The system preserves the complete redirect_uri including any query parameters when redirecting after approval, allowing the OAuth2 flow to resume with all original parameters intact.
 
@@ -151,6 +152,7 @@ When the user completes the consent flow (by clicking "Approve" or equivalent bu
 - **FR-003**: System MUST validate that `service_id` references an existing ThirdPartyOAuth2Service at creation/update time
 - **FR-003a**: System MUST reject service requirements where the same service_id appears more than once (duplicate service validation error)
 - **FR-004**: System MUST validate that all `required_scopes` exist in the referenced service's scope configuration
+- **FR-004a**: System MUST reject a service requirement whose `required_scopes` is empty and whose `require_all_scopes` is false when the referenced service defines one or more scopes, returning HTTP 400 with an error naming the service. An empty `required_scopes` remains valid for a service that defines no scopes.
 - **FR-005**: Admin API endpoint `POST /api/admin/agents` MUST accept service_requirements in the request body
 - **FR-006**: Admin API endpoint `PUT /api/admin/agents/{agent-id}` MUST accept service_requirements in the request body
 - **FR-007**: Admin API endpoint `GET /api/admin/agents/{agent-id}` MUST return service_requirements with resolved service display names

@@ -779,6 +779,13 @@ The fields:
   required. Mandatory sets stop authorization until a user grants them. Optional sets let
   an agent continue without the access. See
   [delegation and consent](/docs/concepts/delegation-and-consent#mandatory-vs-optional-requirements).
+- `service_requirements` — Optional `{service_id, requirement_type, required_scopes,
+  require_all_scopes}` entries. Every listed service must be covered by one of the agent's
+  permission sets. `required_scopes` is the per-agent ceiling applied to the granted
+  permission-set scopes at token exchange. For a service that defines scopes, list at least
+  one scope or set `require_all_scopes: true`; an empty list is rejected, because it would
+  deny every token exchange for that service. Omit `required_scopes` only for a service that
+  defines no scopes.
 - `client_id` — Optional. Use it only for an agent that uses an upstream OAuth2 client ID.
   Omit it for agents identified in another way.
 - `external_id` — Optional external governance identifier, such as a URN. Several agents can share one external ID.

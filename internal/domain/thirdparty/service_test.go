@@ -3811,3 +3811,82 @@ func TestThirdpartyOAuth2ProviderService_DiscoveredBranchKeyFailureAuditsSafely(
 	assert.Equal(t, "internal_failure", entry["failure_code"])
 	assert.NotContains(t, logs.String(), marker)
 }
+
+func TestThirdpartyOAuth2ProviderService_ValidateServiceRequirements_EmptyScopesOnScopedService(t *testing.T) {
+	mockRepo := new(MockRepository)
+	mockEnc := new(MockEncryption)
+	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+
+	ctx := context.Background()
+	svcID := id.NewServiceID()
+	entity := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          svcID,
+		DisplayName: "GitHub",
+		Scopes:      []model.OAuthScope{{ScopeValue: "repo"}, {ScopeValue: "user:email"}},
+		Secret:      model.NewEncryptedSecret([]byte("ciphertext")),
+	}
+	mockRepo.On("Get", ctx, svcID).Return(entity, nil)
+
+	serviceReqs := []storage.ServiceRequirement{
+		{ServiceID: svcID, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{}},
+	}
+
+	err := svc.ValidateServiceRequirements(ctx, serviceReqs)
+	require.Error(t, err)
+
+	var storageErr *storage.StorageError
+	require.True(t, errors.As(err, &storageErr))
+	assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+	assert.Contains(t, storageErr.Message, "GitHub")
+	assert.Contains(t, storageErr.Message, "required_scopes")
+	assert.Contains(t, storageErr.Message, "require_all_scopes")
+	assert.Contains(t, storageErr.Message, "index 0")
+	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_ValidateServiceRequirements_EmptyScopesOnScopelessService(t *testing.T) {
+	mockRepo := new(MockRepository)
+	mockEnc := new(MockEncryption)
+	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+
+	ctx := context.Background()
+	svcID := id.NewServiceID()
+	entity := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          svcID,
+		DisplayName: "Corporate IdP",
+		Secret:      model.NewEncryptedSecret([]byte("ciphertext")),
+	}
+	mockRepo.On("Get", ctx, svcID).Return(entity, nil)
+
+	serviceReqs := []storage.ServiceRequirement{
+		{ServiceID: svcID, RequirementType: storage.RequirementTypeMandatory},
+	}
+
+	err := svc.ValidateServiceRequirements(ctx, serviceReqs)
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_ValidateServiceRequirements_RequireAllScopesOnScopedService(t *testing.T) {
+	mockRepo := new(MockRepository)
+	mockEnc := new(MockEncryption)
+	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+
+	ctx := context.Background()
+	svcID := id.NewServiceID()
+	entity := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          svcID,
+		DisplayName: "GitHub",
+		Scopes:      []model.OAuthScope{{ScopeValue: "repo"}},
+		Secret:      model.NewEncryptedSecret([]byte("ciphertext")),
+	}
+	mockRepo.On("Get", ctx, svcID).Return(entity, nil)
+
+	serviceReqs := []storage.ServiceRequirement{
+		{ServiceID: svcID, RequirementType: storage.RequirementTypeOptional, RequireAllScopes: true},
+	}
+
+	err := svc.ValidateServiceRequirements(ctx, serviceReqs)
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}

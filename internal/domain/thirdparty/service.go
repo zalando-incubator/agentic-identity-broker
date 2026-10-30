@@ -987,9 +987,10 @@ func (s *ThirdpartyOAuth2ProviderService) ListProtectedResources(ctx context.Con
 	return s.repo.ListProtectedResources(ctx, serviceID)
 }
 
-// ValidateServiceRequirements validates that all service_ids in the requirements exist and
-// that all required_scopes are valid for the referenced service. This enforces referential
-// integrity between agents and their declared service requirements.
+// ValidateServiceRequirements validates that all service_ids in the requirements exist,
+// that all required_scopes are valid for the referenced service, and that a requirement
+// without require_all_scopes lists at least one scope when the service defines scopes.
+// This enforces referential integrity between agents and their declared service requirements.
 //
 // Uses the repository directly to avoid unnecessary secret decryption — only Scopes and
 // DisplayName are needed for validation.
@@ -1021,6 +1022,21 @@ func (s *ThirdpartyOAuth2ProviderService) ValidateServiceRequirements(
 		serviceScopes := make(map[string]bool)
 		for _, scope := range entity.Scopes {
 			serviceScopes[scope.ScopeValue] = true
+		}
+
+		// An empty ceiling on a scoped service removes every permission-set scope at
+		// exchange time (spec 019 FR-013), so the shape is only valid for scope-less services.
+		if !sr.RequireAllScopes && len(sr.RequiredScopes) == 0 && len(serviceScopes) > 0 {
+			s.logger.Warn("empty required_scopes for scoped service",
+				"service_id", sr.ServiceID,
+				"service_name", entity.DisplayName,
+				"index", i)
+			return storage.NewStorageError(
+				"ValidateServiceRequirements",
+				storage.ErrorKindValidation,
+				nil,
+				"service "+entity.DisplayName+" defines scopes; set required_scopes or require_all_scopes (index "+strconv.Itoa(i)+")",
+			)
 		}
 
 		for _, requiredScope := range sr.RequiredScopes {

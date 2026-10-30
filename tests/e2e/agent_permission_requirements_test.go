@@ -381,6 +381,69 @@ var _ = Describe("Agent Permission Requirements", func() {
 			})
 		})
 
+		// Scenario 8: spec.md User Story 1, Scenario 8
+		// Spec: An empty required_scopes list is only valid for a service that defines no scopes
+		Context("with an empty required_scopes list for a service that defines scopes", func() {
+			zeroCeilingRequirement := func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{
+						"service_id":         githubService.ID,
+						"requirement_type":   "optional",
+						"require_all_scopes": false,
+						// required_scopes omitted: the exchange would treat this as an empty ceiling
+					},
+				}
+			}
+
+			It("should return HTTP 400 naming the service on POST /api/agents", func() {
+				agentPayload := map[string]interface{}{
+					"client_id":            "test-agent-8",
+					"display_name":         "Test Agent 8",
+					"description":          "Test agent",
+					"service_requirements": zeroCeilingRequirement(),
+					"permission_sets": []map[string]interface{}{
+						{"permission_set_id": githubPSID.String(), "requirement_type": "mandatory"},
+					},
+				}
+				body, _ := json.Marshal(agentPayload)
+
+				resp, err := adminServer.AuthenticatedPOST("/api/agents", adminPrincipal, "application/json", bytes.NewReader(body))
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+				errResp, err := readJSONResponse(resp)
+				Expect(err).ToNot(HaveOccurred(), "Response should be valid JSON")
+				Expect(errResp["message"]).To(ContainSubstring("GitHub"))
+				Expect(errResp["message"]).To(ContainSubstring("require_all_scopes"))
+			})
+
+			It("should return HTTP 400 naming the service on PUT /api/agents/{agent-id}", func() {
+				agent := fixtures.ValidAgent()
+				err := testStorage.Agents().Create(context.Background(), agent)
+				Expect(err).ToNot(HaveOccurred(), "Failed to create test agent")
+
+				updatePayload := map[string]interface{}{
+					"client_id":            agent.ClientID,
+					"display_name":         agent.DisplayName,
+					"description":          agent.Description,
+					"service_requirements": zeroCeilingRequirement(),
+					"permission_sets": []map[string]interface{}{
+						{"permission_set_id": githubPSID.String(), "requirement_type": "mandatory"},
+					},
+				}
+				body, _ := json.Marshal(updatePayload)
+
+				resp, err := adminServer.DirectRequest("PUT", fmt.Sprintf("/api/agents/%s", agent.ID), adminPrincipal,
+					map[string]string{"Content-Type": "application/json"}, bytes.NewReader(body))
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+				errResp, err := readJSONResponse(resp)
+				Expect(err).ToNot(HaveOccurred(), "Response should be valid JSON")
+				Expect(errResp["message"]).To(ContainSubstring("GitHub"))
+			})
+		})
+
 		// Scenario 7: spec.md User Story 1, Scenario 7
 		// Spec: Scopes not defined in service should be rejected
 		Context("with invalid scopes", func() {

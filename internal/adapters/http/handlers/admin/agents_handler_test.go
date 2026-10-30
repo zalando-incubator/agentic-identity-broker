@@ -1325,6 +1325,41 @@ func TestAgentsHandler_FR019_CoverageInvariant(t *testing.T) {
 		mockPS.AssertExpectations(t)
 	})
 
+	t.Run("rejects omitted required_scopes for a scoped service", func(t *testing.T) {
+		mockRepo := new(MockAgentRepository)
+		mockServiceRepo := new(MockProviderRepository)
+		mockPS := new(MockPermissionSetValidator)
+		handler := newAgentsHandlerForFR019Test(mockRepo, mockServiceRepo, mockPS, logger)
+		scopedService := &model.ThirdpartyOAuth2ProviderEntity{
+			ID:          serviceAID,
+			DisplayName: "Scoped Service",
+			Scopes:      []model.OAuthScope{{ScopeValue: "read", Description: "Read"}},
+		}
+		mockServiceRepo.On("Get", mock.Anything, serviceAID).Return(scopedService, nil)
+		mockPS.On("ValidateIDs", mock.Anything, mock.Anything).Return(nil)
+		mockPS.On("GetByIDs", mock.Anything, mock.Anything).Return([]*storage.PermissionSet{{
+			ID: psID1,
+			ServiceScopes: []storage.ServiceScope{{
+				ServiceID:       serviceAID,
+				Scopes:          []string{"read"},
+				RequirementType: storage.RequirementTypeMandatory,
+			}},
+		}}, nil)
+		rawBody := fmt.Sprintf(`{
+			"client_id": "zero-ceiling-agent",
+			"display_name": "Zero Ceiling Agent",
+			"description": "Lists a scoped service without scopes",
+			"service_requirements": [{"service_id": %q, "requirement_type": "optional"}],
+			"permission_sets": [{"permission_set_id": %q, "requirement_type": "mandatory"}]
+		}`, serviceAID.String(), psID1.String())
+		w := httptest.NewRecorder()
+		handler.CreateAgent(w, httptest.NewRequest(http.MethodPost, "/api/agents", strings.NewReader(rawBody)))
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "Scoped Service")
+		mockRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+	})
+
 	t.Run("creates an agent with omitted required_scopes for a scope-less service", func(t *testing.T) {
 		mockRepo := new(MockAgentRepository)
 		mockServiceRepo := new(MockProviderRepository)
