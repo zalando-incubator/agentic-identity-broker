@@ -6,7 +6,7 @@ on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] -- Maintainer-gated; host steps only execute default-branch code.
     types: [labeled]
   issue_comment: # zizmor: ignore[dangerous-triggers] -- Maintainer commands are data; PR code only runs in the worker sandbox.
-    types: [created]
+    types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
   pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
     types: [submitted]
 
@@ -23,8 +23,10 @@ jobs:
       (github.event_name == 'issues' && github.event.label.name == 'speckit:specify') ||
       (github.event_name == 'pull_request_target' &&
         (github.event.label.name == 'speckit:plan-execution' || github.event.label.name == 'speckit:implement')) ||
-      (github.event_name == 'issue_comment' && github.event.comment.user.type == 'User' &&
-        startsWith(github.event.comment.body, '/speckit-')) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.comment.user.type == 'User' &&
+        (startsWith(github.event.comment.body, '/speckit-') || startsWith(github.event.comment.body, '/architecture-review'))) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.sender.type == 'User' &&
+        github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
         startsWith(github.event.review.body, '/speckit-'))
     runs-on: ubuntu-latest
@@ -39,6 +41,7 @@ jobs:
       pr: ${{ steps.route.outputs.pr }}
       comment: ${{ steps.route.outputs.comment }}
       review: ${{ steps.route.outputs.review }}
+      proposal: ${{ steps.route.outputs.proposal }}
       error: ${{ steps.route.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -387,10 +390,12 @@ jobs:
               throw error;
             }
 
-  # A completed implementation gets its architectural review in the same run; the review comment stays visible.
+  # A completed implementation, or a maintainer's /architecture-review, gets the architectural review in this run.
   review:
     needs: [route, implement, verify]
-    if: always() && needs.implement.result == 'success' && needs.verify.result == 'success'
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'review' || (needs.implement.result == 'success' && needs.verify.result == 'success'))
     permissions:
       actions: read
       contents: read
@@ -399,6 +404,7 @@ jobs:
     uses: ./.github/workflows/architecture-review.lock.yml
     with:
       pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'review' && needs.route.outputs.comment || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
@@ -406,8 +412,184 @@ jobs:
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
+  # The review's buckets decide what follows: automatic fixes now, a proposal for the rest.
+  reviewed:
+    needs: review
+    if: always() && needs.review.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      auto: ${{ steps.status.outputs.auto }}
+      error: ${{ steps.status.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the review and find automatic fixes
+        id: status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_COMMENT: ${{ needs.review.outputs.comment_id }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/architecture-review-automation.cjs');
+            try {
+              const review = await verify({ github, context, comment: process.env.REVIEW_COMMENT });
+              core.setOutput('auto', String(review.items.some((item) => item.bucket === 'auto')));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # Automatic fixes stay out of contracts, ADRs, schema, and the approved design; the worker's push scope enforces it.
+  fix:
+    needs: [route, reviewed]
+    if: always() && needs.reviewed.result == 'success' && needs.reviewed.outputs.auto == 'true'
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-remediate-review.lock.yml
+    with:
+      phase: remediate-review
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # Ticked proposal items are the maintainer's sign-off for exactly those changes.
+  apply:
+    needs: route
+    if: needs.route.outputs.action == 'apply'
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-apply-review.lock.yml
+    with:
+      phase: apply-review
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      proposal: ${{ fromJSON(needs.route.outputs.proposal) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  verified:
+    needs: [fix, apply]
+    if: always() && (needs.fix.result == 'success' || needs.apply.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.verify.outputs.error }}
+    steps:
+      - name: Checkout trusted verifier only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the remediation result and current PR artifacts
+        id: verify
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.fix.result == 'success' && needs.fix.outputs.comment_id || needs.apply.outputs.comment_id }}
+          RESULT_PHASE: ${{ needs.fix.result == 'success' && 'remediate-review' || 'apply-review' }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: process.env.RESULT_PHASE });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # One re-review per run keeps the loop bounded; what it still flags goes to the maintainer.
+  rereview:
+    needs: [route, verified]
+    if: always() && needs.verified.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      focus: >-
+        Verify that the findings of the previous architecture review are resolved by the remediation commits,
+        and check those commits for new concerns. Keep the review of unchanged code brief.
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # The proposal comment: a maintainer ticks items and Apply, and the pipeline applies them in a new run.
+  proposals:
+    needs: [route, review, reviewed, fix, rereview]
+    if: >-
+      always() && (needs.rereview.result == 'success' ||
+        (needs.reviewed.result == 'success' && needs.fix.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      comment_id: ${{ steps.publish.outputs.comment_id }}
+      recommendation: ${{ steps.publish.outputs.recommendation }}
+      questions: ${{ steps.publish.outputs.questions }}
+      error: ${{ steps.publish.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the remediation proposal
+        id: publish
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_COMMENT: ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id || needs.review.outputs.comment_id }}
+        with:
+          script: |
+            const { publishProposals } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const result = await publishProposals({ github, context, review: process.env.REVIEW_COMMENT });
+              for (const [key, value] of Object.entries(result)) core.setOutput(key, String(value));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
   report:
-    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals, review]
+    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals,
+      review, reviewed, fix, verified, apply, rereview, proposals]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5

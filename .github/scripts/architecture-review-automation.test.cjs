@@ -29,10 +29,17 @@ function commandEvent(entry, issue = { number: 42, pull_request: {} }) {
   return { action: "created", issue, comment: entry };
 }
 
+function finding(overrides = {}) {
+  return {
+    id: "F1", severity: "YELLOW", dimension: "ubiquitous-language", bucket: "proposed", title: "Overlap",
+    change: "Rename ApprovalSession to reuse UserSession", alternative: "Keep both and document the difference", ...overrides,
+  };
+}
+
 function state(overrides = {}) {
   return {
     run: "100/1", pr: 42, head, recommendation: "DISCUSS", summary: "One concern",
-    findings: { RED: 0, YELLOW: 1, GREEN: 0 }, failed: [], ...overrides,
+    findings: { RED: 0, YELLOW: 1, GREEN: 0 }, failed: [], items: [finding()], ...overrides,
   };
 }
 
@@ -133,7 +140,7 @@ function draft(overrides = {}) {
   ].join("\n");
   return {
     recommendation: "DISCUSS", summary: "One naming overlap to discuss",
-    findings: [{ severity: "YELLOW", dimension: "ubiquitous-language", title: "Overlap" }],
+    findings: [finding()],
     dimensions: Object.fromEntries(dimensions.map((name) => [name, "assessed"])),
     body, ...overrides,
   };
@@ -186,6 +193,29 @@ test("commands on issues, closed, merged, or fork pull requests fail visibly for
     await assert.rejects(route(fixture("issue_comment", commandEvent(command("/architecture-review")), { pr })),
       /open pull request from this repository/);
   }
+});
+
+test("Spec Kit's managed draft PRs are left to the Spec Kit pipeline", async () => {
+  const pr = {
+    draft: true, body: "<!-- speckit-issue: 7 -->", user: { login: "github-actions[bot]", type: "Bot" },
+    head: { ref: "speckit/issue-7", sha: head, repo: { full_name: "example/broker" } },
+  };
+  const f = fixture("issue_comment", commandEvent(command("/architecture-review")), { pr });
+  assert.deepEqual(await route(f), { action: "noop" });
+  const ready = fixture("issue_comment", commandEvent(command("/architecture-review")), { pr: { ...pr, draft: false } });
+  assert.deepEqual(await route(ready), { action: "review", pr: 42, comment: 20 });
+});
+
+test("a calling workflow may pass the review focus, but a command comment wins", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => undefined);
+  const written = {};
+  t.mock.method(fs, "writeFileSync", (name, content) => { written[path.basename(String(name))] = JSON.parse(content); });
+  const f = fixture("issue_comment", {}, { comments: [command("/architecture-review sessions")] });
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "  Verify the remediation " } })).focus,
+    "Verify the remediation");
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20", focus: "ignored" } })).focus, "sessions");
+  await assert.rejects(prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "x".repeat(2001) } }), /Invalid review focus/);
+  assert.equal(written["context.json"].focus, "sessions");
 });
 
 test("prepare writes the compact context and PR details with changed files and ADR provenance", async (t) => {
@@ -250,17 +280,29 @@ test("prepare fails closed for non-maintainers, ineligible PRs, and forged comma
   assert.equal(data.focus, "");
 });
 
-test("results need every dimension, consistent severities, and head-pinned links", () => {
-  assert.deepEqual(validateResult(draft(), context), { failed: [], counts: { RED: 0, YELLOW: 1, GREEN: 0 } });
+test("results need every dimension, consistent severities, remediation buckets, and head-pinned links", () => {
+  assert.deepEqual(validateResult(draft(), context), {
+    run: "100/1", pr: 42, head, recommendation: "DISCUSS", summary: "One naming overlap to discuss",
+    findings: { RED: 0, YELLOW: 1, GREEN: 0 }, failed: [], items: [finding()],
+  });
   const reject = (overrides, pattern) => assert.throws(() => validateResult(draft(overrides), context), pattern);
   reject({ recommendation: "LGTM" }, /Invalid recommendation/);
   reject({ summary: "a\nb" }, /one-line summary/);
-  reject({ findings: Array(8).fill(draft().findings[0]) }, /at most 7/);
-  reject({ findings: [{ severity: "ORANGE", dimension: "otel-parity", title: "x" }] }, /Invalid finding/);
-  reject({ findings: [{ severity: "RED", dimension: "unknown", title: "x" }] }, /Invalid finding/);
+  reject({ findings: Array(8).fill(finding()) }, /at most 7/);
+  reject({ findings: [finding({ id: "x" })] }, /Invalid review item id/);
+  reject({ findings: [finding(), finding()] }, /Invalid review item id/);
+  reject({ findings: [finding({ severity: "ORANGE" })] }, /Invalid review item F1/);
+  reject({ findings: [finding({ dimension: "unknown" })] }, /Invalid review item F1/);
+  reject({ findings: [finding({ bucket: "maybe" })] }, /Invalid review item F1/);
+  reject({ findings: [finding({ bucket: "note" })] }, /needs a remediation bucket/);
+  reject({ findings: [finding({ bucket: "auto", change: undefined })] }, /needs a one-line recommended change/);
+  reject({ findings: [finding({ bucket: "question", question: undefined })] }, /needs a one-line question/);
+  reject({ findings: [finding({ alternative: "a\nb" })] }, /invalid alternative/);
+  reject({ findings: [finding({ title: "x".repeat(201) })] }, /Invalid review item F1/);
+  reject({ findings: ["F1"] }, /Invalid finding/);
   reject({ dimensions: { "otel-parity": "assessed" } }, /Every analysis dimension/);
   reject({ dimensions: { ...draft().dimensions, "otel-parity": "skipped" } }, /Every analysis dimension/);
-  reject({ findings: [{ severity: "RED", dimension: "adr-compliance", title: "Second mechanism" }] }, /requires REQUEST CHANGES/);
+  reject({ findings: [finding({ severity: "RED", dimension: "adr-compliance", title: "Second mechanism" })] }, /requires REQUEST CHANGES/);
   reject({ findings: [], recommendation: "REQUEST CHANGES", body: draft().body.replace("**DISCUSS**", "**REQUEST CHANGES**") },
     /needs at least one/);
   reject({ findings: [], recommendation: "APPROVE", dimensions: { ...draft().dimensions, "otel-parity": "failed" },
@@ -288,7 +330,7 @@ test("the result command appends the machine-readable state to the published com
   assert.ok(comment.startsWith("## 🏗️ Architectural Review\n"));
   assert.ok(comment.endsWith("\n<!-- architecture-review: " + JSON.stringify({
     run: "100/1", pr: 42, head, recommendation: "DISCUSS", summary: "One naming overlap to discuss",
-    findings: { RED: 0, YELLOW: 1, GREEN: 0 }, failed: [],
+    findings: { RED: 0, YELLOW: 1, GREEN: 0 }, failed: [], items: [finding()],
   }) + " -->\n"));
   fs.writeFileSync(path.join(root, "result.json"), JSON.stringify(draft({ recommendation: "APPROVE" })));
   assert.throws(() => runCommand(root, "result"), /must state the recommendation/);
@@ -302,6 +344,8 @@ test("review parsing requires the trusted workflow footer, one valid marker, and
   assert.equal(parseReview(review(state({ head: "short" }))), null);
   assert.equal(parseReview(review(state({ recommendation: "LGTM" }))), null);
   assert.equal(parseReview(review(state({ failed: ["nope"] }))), null);
+  assert.equal(parseReview(review(state({ items: [] }))), null);
+  assert.equal(parseReview(review(state({ items: [finding({ bucket: "note" })] }))), null);
   const entry = review();
   assert.equal(parseReview({ ...entry, body: entry.body.replace("example/broker/architecture-review", "other/broker/architecture-review") }), null);
   assert.equal(parseReview({ ...entry, body: entry.body.replace("/architecture-review -->", "/speckit-analyze -->") }), null);

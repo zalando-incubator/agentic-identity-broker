@@ -2,8 +2,10 @@ const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const phases = ["clarify", "plan", "tasks", "analyze", "remediate", "reanalyze", "implement"];
-const commands = ["specify", "clarify", "plan", "implement"];
+const phases = ["clarify", "plan", "tasks", "analyze", "remediate", "reanalyze", "implement", "remediate-review", "apply-review"];
+const reviewPhases = ["remediate-review", "apply-review"];
+const codePhases = ["implement", ...reviewPhases];
+const commands = ["specify", "clarify", "plan", "implement", "architecture-review"];
 const reviewCommands = ["clarify", "plan"];
 const documents = ["spec.md", "plan.md", "tasks.md"];
 const marker = "## Spec Kit result";
@@ -11,16 +13,28 @@ const directory = "/tmp/gh-aw/speckit";
 const approvalKinds = { api: "API", adr: "ADR", decision: "Decision" };
 const approvalMarker = /^<!-- speckit-approval: (\{.*\}) -->$/m;
 const reviewMarker = /^<!-- architecture-review: (\{.*\}) -->$/m;
+const proposalMarker = /^<!-- speckit-proposal: (\{.*\}) -->$/m;
+const applyBox = "**Apply the selected items**";
 const statusMarker = "<!-- speckit-status -->";
 const commitNotice = /^Commit pushed: \[`([0-9a-f]{7,40})`\]\((https:\/\/github\.com\/\S+?\/commit\/[0-9a-f]{40})\)/;
 const blocking = ["CRITICAL", "HIGH"];
 const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
-  "implement", "verify", "approvals"];
+  "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+const reviewJobs = ["review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
 const labels = {
   clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze", remediate: "Remediate",
-  reanalyze: "Reanalyze", implement: "Implement",
+  reanalyze: "Reanalyze", implement: "Implement", "remediate-review": "Fix", "apply-review": "Apply",
 };
-const running = { clarify: "Clarifying the specification", plan: "Planning", implement: "Implementing" };
+const running = {
+  clarify: "Clarifying the specification", plan: "Planning", implement: "Implementing",
+  review: "Reviewing the architecture", apply: "Applying the approved remediation",
+};
+const reviewDimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
+  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability"];
+const reviewSeverities = { RED: "🔴", YELLOW: "🟡", GREEN: "🟢" };
+const reviewRecommendations = { APPROVE: "✅", DISCUSS: "🟡", "REQUEST CHANGES": "🔴" };
+const reviewBuckets = ["auto", "proposed", "question", "note"];
+const maxReviewItems = 7;
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -110,8 +124,12 @@ function actionsBot(user) {
 }
 
 function parseCommand(body) {
-  const match = typeof body === "string" && body.match(/^\/speckit-([a-z]+)(?=\s|$)([\s\S]*)$/);
-  return match ? { phase: match[1], argument: match[2].trim() } : null;
+  const match = typeof body === "string" && body.match(/^\/(?:speckit-([a-z]+)|(architecture-review))(?=\s|$)([\s\S]*)$/);
+  return match ? { phase: match[1] || match[2], argument: match[3].trim() } : null;
+}
+
+function commandName(phase) {
+  return phase === "architecture-review" ? "/architecture-review" : `/speckit-${phase}`;
 }
 
 function parseResult(comment) {
@@ -120,7 +138,7 @@ function parseResult(comment) {
   const sections = body.split(marker);
   if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
       sections.length > 2) return null;
-  const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement)) -->$/m);
+  const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement|remediate-review|apply-review)) -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
   const blocks = [...sections[sections.length - 1].matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
   if (blocks.length !== 1) return null;
@@ -324,13 +342,18 @@ async function route({ github, context }) {
   const source = isReview ? payload.review :
     eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
   const command = source?.user?.type === "User" && source.user.login === context.actor && parseCommand(source.body);
-  if ((!isIssue && !isLabel && !command) ||
+  // A maintainer ticking boxes in the remediation proposal edits the bot's comment; the sender is the maintainer.
+  const isEdit = eventName === "issue_comment" && payload.action === "edited" && actionsBot(payload.comment?.user) &&
+    payload.sender?.type === "User" && payload.sender.login === context.actor &&
+    proposalMarker.test(payload.comment.body || "");
+  if ((!isIssue && !isLabel && !command && !isEdit) ||
       !await maintainer(github, repo, context.actor)) return { action: "noop" };
   if (isIssue) return routeIssue(github, repo, payload.issue, 0);
+  if (isEdit) return routeProposal(github, repo, payload);
   if (command) {
-    if (!commands.includes(command.phase)) throw new Error(`Unsupported Spec Kit command: /speckit-${command.phase}`);
+    if (!commands.includes(command.phase)) throw new Error(`Unsupported Spec Kit command: ${commandName(command.phase)}`);
     if (isReview && !reviewCommands.includes(command.phase)) {
-      throw new Error(`/speckit-${command.phase} runs in a pull request comment, not a review`);
+      throw new Error(`${commandName(command.phase)} runs in a pull request comment, not a review`);
     }
     const onPR = isReview || Boolean(payload.issue.pull_request);
     if (command.phase === "specify") {
@@ -338,7 +361,7 @@ async function route({ github, context }) {
       if (command.argument) throw new Error("/speckit-specify takes no argument; edit the issue instead");
       return routeIssue(github, repo, payload.issue, payload.comment.id);
     }
-    if (!onPR) throw new Error(`/speckit-${command.phase} runs on a Spec Kit pull request`);
+    if (!onPR) throw new Error(`${commandName(command.phase)} runs on a Spec Kit pull request`);
   }
   const number = command && !isReview ? payload.issue.number : payload.pull_request.number;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
@@ -347,6 +370,7 @@ async function route({ github, context }) {
   const entries = await reports(github, repo, number);
   const comment = command && !isReview ? payload.comment.id : 0;
   const routed = (action) => ({ action, issue, pr: number, comment, ...(isReview ? { review: payload.review.id } : {}) });
+  if (command?.phase === "architecture-review") return routed("review");
   if (command?.phase === "clarify") {
     const pending = latest(entries, ["clarify"]);
     if (!isReview && pending?.result.status === "waiting") {
@@ -390,6 +414,7 @@ async function prepare({ github, context, inputs }) {
     const previous = {
       tasks: ["plan"], analyze: ["tasks"],
       remediate: ["analyze"], reanalyze: ["remediate"], implement: ["analyze", "reanalyze"],
+      "remediate-review": codePhases, "apply-review": codePhases,
     }[inputs.phase];
     if (inputs.phase === "plan") {
       data.previous = requireSpecification(entries, current.hashes);
@@ -399,14 +424,20 @@ async function prepare({ github, context, inputs }) {
       if (inputs.phase === "implement" && data.previous?.phase !== "reanalyze") {
         throw new Error("Independent reanalysis is required before implementation");
       }
+      if (reviewPhases.includes(inputs.phase) && !data.previous) {
+        throw new Error("A completed implementation is required before remediation");
+      }
       const required = inputs.phase === "tasks" ? ["spec.md", "plan.md"] :
-        inputs.phase === "implement" ? reviewedDocuments(entries, upstream) : documents;
+        codePhases.includes(inputs.phase) ? reviewedDocuments(entries, upstream) : documents;
       requireResult(data.previous, required, current.hashes, {
         clean: inputs.phase === "implement",
         run: ["tasks", "analyze", "remediate", "reanalyze"].includes(inputs.phase) ? run : undefined,
       });
       if (inputs.phase === "implement") {
         data.approval = await approval(github, context.repo, pr, current.feature, upstream.comment, entries);
+      }
+      if (reviewPhases.includes(inputs.phase)) {
+        data.review = await reviewContext(github, context, pr, inputs);
       }
     }
     Object.assign(data, { pr: pr.number, head: pr.head.sha, branch: pr.head.ref, feature: current.feature });
@@ -461,7 +492,7 @@ async function verify({ github, context, comment, phase }) {
   // Blocking reanalysis findings are not a verification failure: the approvals job withdraws the approval
   // comment, the report lists the findings, and routing to implementation still requires a clean reanalysis.
   requireResult(result, phase === "clarify" ? ["spec.md"] : documents, current.hashes);
-  if (phase === "implement" && /^\s*-\s+\[ \]\s+T\d+/m.test(current.files[`${current.feature}/tasks.md`])) {
+  if (codePhases.includes(phase) && /^\s*-\s+\[ \]\s+T\d+/m.test(current.files[`${current.feature}/tasks.md`])) {
     throw new Error("Implementation left unfinished tasks");
   }
   return result;
@@ -573,6 +604,187 @@ function runURL(repo, id) {
   return `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${id}`;
 }
 
+function reviewText(value, limit) {
+  return typeof value === "string" && value.trim() && value.length <= limit && !/[\r\n]/.test(value);
+}
+
+// The architecture review's machine-readable state, produced by its worker and consumed by the remediation phases.
+function validateReviewState(state) {
+  if (!/^\d+\/\d+$/.test(state.run) || !/^[0-9a-f]{40}$/.test(state.head) ||
+      !Number.isSafeInteger(state.pr) || state.pr <= 0 || !Object.hasOwn(reviewRecommendations, state.recommendation) ||
+      typeof state.summary !== "string" || !state.findings || typeof state.findings !== "object" ||
+      Object.keys(reviewSeverities).some((severity) => !Number.isSafeInteger(state.findings[severity])) ||
+      !Array.isArray(state.failed) || state.failed.some((name) => !reviewDimensions.includes(name))) {
+    throw new Error("Invalid architecture review state");
+  }
+  if (!Array.isArray(state.items) || state.items.length > maxReviewItems) {
+    throw new Error(`Review items must list at most ${maxReviewItems} findings`);
+  }
+  const ids = new Set();
+  for (const item of state.items) {
+    if (!item || typeof item !== "object" || !/^F\d+$/.test(item.id) || ids.has(item.id)) throw new Error("Invalid review item id");
+    ids.add(item.id);
+    if (!Object.hasOwn(reviewSeverities, item.severity) || !reviewDimensions.includes(item.dimension) ||
+        !reviewBuckets.includes(item.bucket) || !reviewText(item.title, 200)) {
+      throw new Error(`Invalid review item ${item.id}`);
+    }
+    if (item.severity !== "GREEN" && item.bucket === "note") {
+      throw new Error(`Review item ${item.id} needs a remediation bucket: auto, proposed, or question`);
+    }
+    if (["auto", "proposed"].includes(item.bucket) && !reviewText(item.change, 600)) {
+      throw new Error(`Review item ${item.id} needs a one-line recommended change`);
+    }
+    if (item.alternative !== undefined && !reviewText(item.alternative, 600)) {
+      throw new Error(`Review item ${item.id} has an invalid alternative`);
+    }
+    if (item.bucket === "question" && !reviewText(item.question, 600)) {
+      throw new Error(`Review item ${item.id} needs a one-line question`);
+    }
+  }
+  for (const severity of Object.keys(reviewSeverities)) {
+    if (state.findings[severity] !== state.items.filter((item) => item.severity === severity).length) {
+      throw new Error("Review finding counts do not match the listed items");
+    }
+  }
+  return state;
+}
+
+// Only the review worker's safe output carries the workflow footer, so an agent comment cannot pose as a review.
+function parseReview(comment) {
+  const body = comment.body || "";
+  const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)$/);
+  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
+  const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/architecture-review -->$/m);
+  if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
+  if (body.match(new RegExp(reviewMarker.source, "gm"))?.length !== 1) return null;
+  try {
+    const state = validateReviewState(JSON.parse(body.match(reviewMarker)[1]));
+    return state.pr === Number(issue[3]) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function latestReview(comments, head) {
+  return comments.map((comment) => ({ comment, review: parseReview(comment) }))
+    .filter((entry) => entry.review && entry.review.head === head).sort((a, b) => b.comment.id - a.comment.id)[0];
+}
+
+function parseProposal(comment) {
+  const body = comment.body || "";
+  if (!actionsBot(comment.user) || body.includes("<!-- gh-aw-agentic-workflow:") ||
+      body.match(new RegExp(proposalMarker.source, "gm"))?.length !== 1) return null;
+  let state;
+  try {
+    state = JSON.parse(body.match(proposalMarker)[1]);
+  } catch {
+    return null;
+  }
+  if (!Number.isSafeInteger(state.review) || state.review <= 0 || !/^[0-9a-f]{40}$/.test(state.head) ||
+      !state.items || typeof state.items !== "object" || Array.isArray(state.items) ||
+      Object.entries(state.items).some(([id, finding]) => !/^P\d+$/.test(id) || !/^F\d+$/.test(finding))) return null;
+  const selected = [];
+  for (const [, mark, id] of body.matchAll(/^- \[([ xX])\] \*\*(P\d+)\*\*/gm)) {
+    if (!Object.hasOwn(state.items, id) || selected.includes(id)) return null;
+    if (mark !== " ") selected.push(id);
+  }
+  const apply = new RegExp(`^- \\[[xX]\\] ${applyBox.replace(/\*/g, "\\*")}`, "m").test(body);
+  return { review: state.review, head: state.head, items: state.items, selected, apply };
+}
+
+// Ticking a checkbox is the only edit a maintainer makes to the proposal; anything else is ignored.
+function checkboxEdit(from, to) {
+  const normalize = (text) => typeof text === "string" && text.replace(/^- \[[xX]\]/gm, "- [ ]");
+  return Boolean(normalize(from)) && normalize(from) === normalize(to);
+}
+
+async function routeProposal(github, repo, payload) {
+  let comment;
+  try {
+    ({ data: comment } = await github.rest.issues.getComment({ ...repo, comment_id: payload.comment.id }));
+  } catch (error) {
+    if (error.status === 404) return { action: "noop" };
+    throw error;
+  }
+  const proposal = parseProposal(comment);
+  if (!proposal || !checkboxEdit(payload.changes?.body?.from, comment.body) || !proposal.apply) return { action: "noop" };
+  if (!proposal.selected.length) throw new Error("Tick at least one item before ticking Apply");
+  const number = payload.issue.number;
+  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
+  const issue = managedPR(pr, repo);
+  if (!issue) return { action: "noop" };
+  if (pr.head.sha !== proposal.head) {
+    throw new Error("The pull request changed after the proposal. Comment `/architecture-review` to review the current commit");
+  }
+  return { action: "apply", issue, pr: number, comment: 0, proposal: comment.id };
+}
+
+async function reviewContext(github, context, pr, inputs) {
+  const { repo } = context;
+  const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: pr.number, per_page: 100 });
+  if (inputs.phase === "apply-review") {
+    const { data: comment } = await github.rest.issues.getComment({ ...repo, comment_id: Number(inputs.proposal) });
+    const proposal = parseProposal(comment);
+    if (!proposal || !proposal.apply || !proposal.selected.length || !comment.issue_url?.endsWith(`/issues/${pr.number}`)) {
+      throw new Error("Comment is not an applicable remediation proposal");
+    }
+    if (proposal.head !== pr.head.sha) throw new Error("The pull request changed after the proposal");
+    const source = comments.find((entry) => entry.id === proposal.review);
+    const review = source && parseReview(source);
+    if (!review || review.head !== pr.head.sha) throw new Error("The proposal's architecture review is missing or stale");
+    const items = proposal.selected.map((id) => review.items.find((item) => item.id === proposal.items[id])).filter(Boolean);
+    if (items.length !== proposal.selected.length) throw new Error("The proposal selects findings the review does not list");
+    return {
+      url: source.html_url, items,
+      proposal: { id: comment.id, url: comment.html_url, selected: proposal.selected, approver: context.actor, at: comment.updated_at },
+    };
+  }
+  const entry = latestReview(comments, pr.head.sha);
+  if (!entry) throw new Error("No architecture review exists for the current commit");
+  const items = entry.review.items.filter((item) => item.bucket === "auto");
+  if (!items.length) throw new Error("The architecture review has nothing to remediate automatically");
+  return { url: entry.comment.html_url, items };
+}
+
+// The proposal lists what the latest review leaves to the maintainer; a later review replaces it.
+async function publishProposals({ github, context, review }) {
+  const { repo } = context;
+  if (!Number.isSafeInteger(Number(review)) || Number(review) <= 0) throw new Error("Worker did not publish a review comment");
+  const { data: posted } = await github.rest.issues.getComment({ ...repo, comment_id: Number(review) });
+  const state = parseReview(posted);
+  if (!state || state.run.split("/")[0] !== String(context.runId)) throw new Error("Review provenance does not match this run");
+  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: state.pr });
+  if (!managedPR(pr, repo)) throw new Error("Review is not on a managed draft PR");
+  if (pr.head.sha !== state.head) throw new Error("The pull request changed while it was reviewed");
+  for (const stale of await botComments(github, repo, pr.number, (body) => proposalMarker.test(body))) {
+    await github.rest.issues.deleteComment({ ...repo, comment_id: stale.id });
+  }
+  const actionable = state.items.filter((item) => ["auto", "proposed"].includes(item.bucket));
+  const questions = state.items.filter((item) => item.bucket === "question");
+  const result = { comment_id: "", recommendation: state.recommendation, questions: questions.length };
+  if (!actionable.length && !questions.length) return result;
+  const items = {};
+  const lines = actionable.map((item, index) => {
+    const id = `P${index + 1}`;
+    items[id] = item.id;
+    return `- [${item.bucket === "auto" ? "x" : " "}] **${id}** ${reviewSeverities[item.severity]} ${quoted(item.title)}.` +
+      `${item.bucket === "auto" ? " Automatic fix, untick to skip." : ""} Recommended: ${quoted(item.change)}` +
+      `${item.alternative ? ` Alternative: ${quoted(item.alternative)}` : ""}`;
+  });
+  const commit = `\`${pr.head.sha.slice(0, 7)}\``;
+  const body = ["## Spec Kit remediation proposal", "",
+    ...(actionable.length ? [
+      `The [architecture review](${posted.html_url}) of commit ${commit} needs your decision on the items below. ` +
+        `Tick the items to apply, then tick ${applyBox}. The pipeline applies them, pushes, and reviews the result. ` +
+        "Unticked items stay open.", "", ...lines, `- [ ] ${applyBox}`,
+    ] : [`The [architecture review](${posted.html_url}) of commit ${commit} left only open questions.`]),
+    ...(questions.length ? ["", "Open questions, answered with `/speckit-plan <decision>`:",
+      ...questions.map((item) => `- ${reviewSeverities[item.severity]} **${quoted(item.title)}**: ${quoted(item.question)}`)] : []),
+    "", `<!-- speckit-proposal: ${JSON.stringify({ review: posted.id, head: pr.head.sha, items })} -->`, ""];
+  const { data } = await github.rest.issues.createComment({ ...repo, issue_number: pr.number, body: body.join("\n") });
+  return { ...result, comment_id: String(data.id) };
+}
+
 function runOf(result) {
   return result.run.split("/")[0];
 }
@@ -610,11 +822,12 @@ function current(entries) {
   return stages;
 }
 
-function progress(stages, { active, approve }) {
+function progress(stages, { active, approve, review }) {
   const reached = active ? phases.indexOf(active) : -1;
   const steps = [["Specify", "✅"]];
   for (const phase of phases) {
     if (phase === "implement") steps.push(["Approve", approve || "○"]);
+    if (phase === "remediate-review") steps.push(["Review", review || "○"]);
     const icon = phase === active ? "⏳" : reached >= 0 && phases.indexOf(phase) > reached ? "○" :
       stages[phase] ? outcome(stages[phase].result) : "○";
     steps.push([labels[phase], icon]);
@@ -633,16 +846,28 @@ function agentComments(comments, repo, run) {
     !reviewMarker.test(entry.body || ""));
 }
 
-// The architecture review follows a completed implementation in the same run; its comment is the worker's own.
-function reviewLines(review, repo, number) {
-  if (!review || review.result === "skipped") return [];
-  const id = Number(review.outputs?.comment_id);
-  if (review.result === "success" && id) {
-    return ["", `Architecture review: [read the review](https://github.com/${repo.owner}/${repo.repo}/pull/${number}#issuecomment-${id}). ` +
-      "Resolve its 🔴 and 🟡 findings before marking the pull request ready, or comment " +
-      "`/speckit-implement <guidance>` to address them."];
+// The architecture review and its remediation run in the same pipeline; their comments are the workers' own.
+function reviewLines(needs, repo, number) {
+  const final = ["rereview", "review"].map((name) => needs[name]).find((job) => job && job.result !== "skipped");
+  if (!final) return [];
+  const url = (id) => `https://github.com/${repo.owner}/${repo.repo}/pull/${number}#issuecomment-${id}`;
+  const id = Number(final.outputs?.comment_id);
+  if (final.result !== "success" || !id) {
+    return ["", "Architecture review did not complete. Comment `/architecture-review` to run it again."];
   }
-  return ["", "Architecture review did not complete. Comment `/architecture-review` to run it again."];
+  const proposals = needs.proposals?.result === "success" ? needs.proposals.outputs || {} : {};
+  const recommendation = Object.hasOwn(reviewRecommendations, proposals.recommendation) ? proposals.recommendation : null;
+  const lines = ["", `Architecture review${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
+  const proposal = Number(proposals.comment_id);
+  if (proposal) {
+    lines.push("", `Decide the remaining items in the [remediation proposal](${url(proposal)}): tick each item to apply, ` +
+      `then tick ${applyBox}. The pipeline applies them, pushes, and reviews the result.`);
+  }
+  if (Number(proposals.questions)) lines.push("", "Answer its open questions with `/speckit-plan <decision>`.");
+  if (!proposal && !Number(proposals.questions) && recommendation === "APPROVE") {
+    lines.push("", "Nothing is left to remediate.");
+  }
+  return lines;
 }
 
 function runTable(entries, comments, repo, run) {
@@ -699,6 +924,12 @@ async function publishStatus(github, repo, number, title, sections) {
   return data;
 }
 
+// The latest review of the current commit gives the Review step its icon; an older review no longer counts.
+function reviewIcon(state) {
+  const entry = state && latestReview(state.comments, state.pr.head.sha);
+  return entry ? reviewRecommendations[entry.review.recommendation] : "○";
+}
+
 // The status comment replaces itself on every run, so the PR always ends with one summary of the phase and the next step.
 async function announce({ github, context, needs }) {
   const { repo } = context;
@@ -707,11 +938,12 @@ async function announce({ github, context, needs }) {
   const action = created ? "clarify" : needs.route?.outputs?.action;
   if (!running[action] || !number || !await maintainer(github, repo, context.actor)) return null;
   const state = await pullRequestState(github, repo, number);
-  const approve = action === "implement" ? "✅" : "○";
+  const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
+  const active = action === "apply" ? "apply-review" : action === "review" ? undefined : action;
   // Runs queue per triggering issue or PR number, so only a run started on this PR holds back its later commands.
   const queued = [context.payload.pull_request?.number, context.payload.issue?.number].includes(number);
   return publishStatus(github, repo, number, `⏳ ${running[action]}`, [
-    state ? [progress(state.stages, { active: action, approve })] : [], [
+    state ? [progress(state.stages, { active, approve, review: action === "review" ? "⏳" : reviewIcon(state) })] : [], [
     `Started by \`${context.actor}\`. Follow the [workflow run](${runURL(repo, context.runId)}).` +
       (queued ? " Commands posted now wait until this run finishes." : ""),
   ]]);
@@ -767,12 +999,15 @@ async function report({ github, context, needs }) {
     lines = [
       quoted(stopped.result.next_step || "Read the phase report."), "",
       stopped.result.phase === "implement" ? "Then comment `/speckit-implement` to resume." :
-        "Then comment `/speckit-plan <decision>`, or `/speckit-clarify <change>` to change the specification.", "",
+        reviewPhases.includes(stopped.result.phase) ? "Then comment `/architecture-review` to review the current commit again." :
+          "Then comment `/speckit-plan <decision>`, or `/speckit-clarify <change>` to change the specification.", "",
       details(stopped),
     ];
   } else if (failed) {
     title = `⛔ \`${failed[0]}\` failed`;
-    lines = ["The job failed before publishing a result. Check the workflow run, then repeat the command."];
+    lines = [reviewJobs.includes(failed[0]) ?
+      "The architecture review step failed before publishing. Check the workflow run, then comment `/architecture-review` to run it again." :
+      "The job failed before publishing a result. Check the workflow run, then repeat the command."];
   } else if (findings.length) {
     title = `⚠️ ${findings.length} blocking finding${findings.length === 1 ? "" : "s"}`;
     lines = [
@@ -785,8 +1020,7 @@ async function report({ github, context, needs }) {
   } else if (stages.implement?.result.status === "complete") {
     title = "✅ Implementation complete";
     approve = "✅";
-    lines = ["Review the changes, then mark the pull request ready for review.", "", details(stages.implement),
-      ...reviewLines(needs.review, repo, number)];
+    lines = ["Review the changes, then mark the pull request ready for review.", "", details(stages.implement)];
   } else if (reanalysis) {
     ({ title, lines, icon: approve } = await readiness(github, repo, state, reanalysis));
   } else if (stages.clarify?.result.status === "waiting") {
@@ -802,8 +1036,9 @@ async function report({ github, context, needs }) {
     title = "Waiting for a command";
     lines = ["Comment `/speckit-plan [guidance]` to continue the pipeline."];
   }
+  if (!error && !failed && !stopped) lines.push(...reviewLines(needs, repo, number));
   const data = await publishStatus(github, repo, number, title, [
-    state ? [progress(stages, { approve })] : [],
+    state ? [progress(stages, { approve, review: reviewIcon(state) })] : [],
     ["### Next step", "", ...lines],
     runTable(entries, state?.comments || [], repo, run),
     earlierRuns(entries, repo, run),
@@ -845,7 +1080,7 @@ function writeResult() {
     if (fs.existsSync(file)) files[file] = localFile(file);
   }
   if (!files[`${feature}/spec.md`]) throw new Error("Feature specification is missing");
-  if (context.phase === "implement" && draft.status === "complete") {
+  if (codePhases.includes(context.phase) && draft.status === "complete") {
     if (/^\s*-\s+\[ \]\s+T\d+/m.test(files[`${feature}/tasks.md`] || "") ||
         !draft.checks?.includes("just check") ||
         !draft.checks.some((command) => /^just (test[\w-]*|web-test|cdk-test|verify)(\s|$)/.test(command))) {
@@ -915,7 +1150,8 @@ function selectFeature() {
 
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
-  continuesToPlan,
+  continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
+  reviewDimensions,
 };
 
 if (require.main === module) {
