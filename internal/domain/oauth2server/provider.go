@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -36,6 +37,7 @@ type Provider struct {
 	clientAssertions clientAssertionAuthenticator
 	accessStrategy   *JWXAccessTokenStrategy
 	refreshStrategy  *RandomRefreshTokenStrategy
+	serviceScopes    *servicescope.Resolver
 
 	config *fosite.Config
 	logger *slog.Logger
@@ -223,6 +225,21 @@ func (p *Provider) HandleAuthorize(
 	codeChallengeMethod string,
 	principal id.Principal,
 ) (code string, err error) {
+	return p.handleAuthorize(ctx, clientID, redirectURI, responseType, scope, state, codeChallenge, codeChallengeMethod, principal, nil)
+}
+
+func (p *Provider) handleAuthorize(
+	ctx context.Context,
+	clientID string,
+	redirectURI string,
+	responseType string,
+	scope string,
+	state string,
+	codeChallenge string,
+	codeChallengeMethod string,
+	principal id.Principal,
+	bindings map[string]id.ServiceID,
+) (code string, err error) {
 	defer func() { err = translateFositeError(err) }()
 
 	fositeClient, err := p.fositeStorage.GetClient(ctx, clientID)
@@ -254,8 +271,12 @@ func (p *Provider) HandleAuthorize(
 	}
 
 	scopes := fosite.Arguments(oauth2.SplitScope(scope))
+	granted, err := p.grantedBindings(scopes, bindings)
+	if err != nil {
+		return "", err
+	}
 	for _, requestedScope := range scopes {
-		if !oauth2.IsScopeAllowed(agent.AllowedScopes, requestedScope) {
+		if !p.isBrokerScope(requestedScope) && !oauth2.IsScopeAllowed(agent.AllowedScopes, requestedScope) {
 			return "", fosite.ErrInvalidScope.WithHintf("scope %q is not allowed for this client", requestedScope)
 		}
 	}
@@ -266,6 +287,7 @@ func (p *Provider) HandleAuthorize(
 			fosite.AuthorizeCode: time.Now().Add(60 * time.Second),
 		},
 	}
+	setSessionBindings(session, granted)
 
 	parsedRedirectURI, _ := url.Parse(redirectURI)
 
@@ -364,6 +386,11 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 	}
 	if err := p.pkceHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
 		return nil, err
+	}
+	if holder, ok := fositeClient.(agentHolder); ok {
+		if err := p.verifyBoundServices(ctx, sessionBindings(req.GetSession()), holder.getAgent()); err != nil {
+			return nil, err
+		}
 	}
 
 	fositeResp := fosite.NewAccessResponse()
