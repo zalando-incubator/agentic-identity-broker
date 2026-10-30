@@ -72,7 +72,7 @@ func TestAgent_Validate(t *testing.T) {
 				RedirectURIs:   []string{"javascript://oauth/callback"},
 				PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeOptional}},
 			},
-			wantErr: "redirect_uris[0] must be an https URI",
+			wantErr: "redirect_uris[0] invalid: invalid redirect URI registration",
 		},
 		{
 			name: "mixed-case callback rejected at its index",
@@ -322,6 +322,19 @@ func TestAgent_ValidateRedirectURIRegistration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgent_ValidateRedirectURIRegistrationPreservesReason(t *testing.T) {
+	agent := &Agent{
+		DisplayName:  "Wildcard Validation Agent",
+		Description:  "Agent used to validate redirect URI registrations",
+		RedirectURIs: []string{"https://preview*.app-*.*.com/api/oidc/callback"},
+	}
+
+	err := agent.ValidateForCreate()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "redirect_uris[0]")
+	assert.ErrorContains(t, err, "wildcard cannot replace a registrable-domain or public-suffix label")
 }
 
 func TestAgent_Copy(t *testing.T) {
