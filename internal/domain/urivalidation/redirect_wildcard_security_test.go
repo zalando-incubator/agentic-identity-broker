@@ -24,8 +24,8 @@ func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 		{"rejects invalid IDNA label", "https://preview*.app-*.xn--/api/oidc/callback", true},
 		{"rejects invalid DNS label character", "https://preview*.app-*.exa_mple.com/api/oidc/callback", true},
 		{"rejects trailing dot in wildcard hostname", "https://preview*.app-*.example.com./api/oidc/callback", true},
-		{"rejects wildcard outside hostname", "https://preview.example.com/*", true},
-		{"rejects wildcard in query", "https://preview.example.com/callback?target=*", true},
+		{"accepts exact HTTPS registration with wildcard in path", "https://preview.example.com/*", false},
+		{"accepts exact HTTPS registration with wildcard in query", "https://preview.example.com/callback?target=*", false},
 		{"accepts wildcard in one subdomain label", "https://*.example.com/callback", false},
 		{"rejects non-loopback HTTP registration", "http://preview*.example.com/callback", true},
 		{"rejects fragment", "https://preview*.example.com/callback#fragment", true},
@@ -67,6 +67,14 @@ func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
 				t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", test.registered, test.incoming)
 			}
 		})
+	}
+}
+
+func TestMatchesAgentRedirectURIPunycodeLiteralLabel(t *testing.T) {
+	registered := "https://*.xn--bcher-kva.example.com/callback"
+	incoming := "https://foo.b\u00fccher.example.com/callback"
+	if !MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = false, want true", registered, incoming)
 	}
 }
 

@@ -116,10 +116,19 @@ func ValidateAgentRedirectURIRegistration(raw string) error {
 	}
 
 	u, ok := parseRedirectURI(raw)
-	if !ok || u.Scheme != "https" {
+	if !ok {
 		return errors.New("wildcard redirect URI must be a valid HTTPS URI")
 	}
 	host := u.Hostname()
+	if !strings.Contains(host, "*") {
+		if IsValidRedirectURI(raw) || IsValidPrivateUseRedirectURI(raw) {
+			return nil
+		}
+		return errors.New("invalid redirect URI registration")
+	}
+	if u.Scheme != "https" {
+		return errors.New("wildcard redirect URI must be a valid HTTPS URI")
+	}
 	if host == "" || strings.Count(raw, "*") != strings.Count(host, "*") {
 		return errors.New("wildcard is allowed only in the HTTPS hostname")
 	}
@@ -307,7 +316,7 @@ func normalizedWildcardLabels(host string, wildcard bool) ([]wildcardLabel, erro
 	for index, literal := range parts {
 		if literal != "" {
 			var err error
-			labels, err = appendNormalizedWildcardLiteral(labels, literal)
+			labels, err = appendNormalizedWildcardLiteral(labels, literal, index > 0, index < len(parts)-1)
 			if err != nil {
 				return nil, err
 			}
@@ -343,12 +352,16 @@ func validateWildcardPatternLength(labels []wildcardLabel) error {
 	return err
 }
 
-func appendNormalizedWildcardLiteral(labels []wildcardLabel, literal string) ([]wildcardLabel, error) {
+func appendNormalizedWildcardLiteral(labels []wildcardLabel, literal string, leftWildcard, rightWildcard bool) ([]wildcardLabel, error) {
 	literalParts := strings.Split(literal, ".")
 	for index, part := range literalParts {
 		if part != "" {
-			// A wildcard can split a label, so frame each literal fragment for IDNA lookup validation.
-			asciiPart, err := idna.Lookup.ToASCII("x" + part + "x")
+			completeLabel := (index > 0 || !leftWildcard) && (index < len(literalParts)-1 || !rightWildcard)
+			idnaPart := part
+			if !completeLabel {
+				idnaPart = "x" + part + "x"
+			}
+			asciiPart, err := idna.Lookup.ToASCII(idnaPart)
 			if err != nil {
 				return nil, err
 			}
@@ -358,9 +371,11 @@ func appendNormalizedWildcardLiteral(labels []wildcardLabel, literal string) ([]
 			}
 			// IDNA can map Unicode separators to dots; preserve those as label boundaries.
 			normalizedLabels := strings.Split(strings.ToLower(unicodePart), ".")
-			normalizedLabels[0] = strings.TrimPrefix(normalizedLabels[0], "x")
-			lastNormalizedLabel := len(normalizedLabels) - 1
-			normalizedLabels[lastNormalizedLabel] = strings.TrimSuffix(normalizedLabels[lastNormalizedLabel], "x")
+			if !completeLabel {
+				normalizedLabels[0] = strings.TrimPrefix(normalizedLabels[0], "x")
+				lastNormalizedLabel := len(normalizedLabels) - 1
+				normalizedLabels[lastNormalizedLabel] = strings.TrimSuffix(normalizedLabels[lastNormalizedLabel], "x")
+			}
 			for labelIndex, normalizedPart := range normalizedLabels {
 				lastLabel := len(labels) - 1
 				lastPart := len(labels[lastLabel].parts) - 1
