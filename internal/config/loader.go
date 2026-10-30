@@ -70,6 +70,10 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		credentialFiles = yamlCredentialFiles
 	}
 
+	if value, present := os.LookupEnv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION"); present && value == "" {
+		l.v.Set(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), "")
+	}
+
 	// Phase 4: Expand environment variables (User Story 2)
 	if err := l.expandEnvVars(); err != nil {
 		return nil, err
@@ -306,6 +310,7 @@ func (l *Loader) setDefaults() {
 	// Operators can override it to match whatever audience their JWTs carry.
 	l.v.SetDefault(configutil.Key("token_exchange", "expected_audience"), tokenexchange.DefaultBrokerAudience)
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
@@ -493,6 +498,10 @@ func (l *Loader) loadYAML(skipCredentialFiles bool) (map[string]ports.Credential
 			Source:   "yaml",
 			Err:      err,
 		}
+	}
+
+	if err := validateImpersonationCategoryShape(data); err != nil {
+		return nil, err
 	}
 
 	var credentialFiles map[string]ports.CredentialFileBinding
@@ -841,6 +850,12 @@ func (l *Loader) bindFlags() error {
 		if flag.Changed {
 			cliKeys = append(cliKeys, credentialFilesConfigKey)
 		}
+	}
+
+	if l.cmd.Flags().Changed("token_exchange.claim_extraction.agent_subject_expression") {
+		expression, _ := l.cmd.Flags().GetString("token_exchange.claim_extraction.agent_subject_expression")
+		l.v.Set(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), expression)
+		cliKeys = append(cliKeys, "token_exchange.claim_extraction.agent_subject_expression")
 	}
 
 	// Record CLI source if any flags were set

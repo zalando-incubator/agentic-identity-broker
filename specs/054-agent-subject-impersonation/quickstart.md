@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-agent-subject-impersonation` | **Plan**: [plan.md](plan.md)
 
-This guide records implementation progress and the checks required for delivery. **Delivery is blocked: application behavior and the 12-scenario acceptance suite are not implemented.** Contract details are in [contracts/](contracts/) and [data-model.md](data-model.md).
+The approved broker behavior, chart support and all 12 acceptance scenarios are implemented. **Delivery remains blocked by T072: the full `just verify` gate has security-scan termination and existing dependency findings.** Do not merge, mark ready, or deploy on the strength of the passing feature checks alone.
 
 ## Implementation record
 
@@ -23,122 +23,110 @@ The pipeline supplied approval by **mjungsbluth**, at **2026-10-29T13:35:38Z**, 
 | A9 | Default equal-claim rejection for legacy, mapped/unsigned human and trusted external issuer tokens |
 | A10 | End-User API 2.0.0 replacement on existing routes, collision migration and blocking version/behavior checks |
 
-ADR relocation: `adr-045-draft.md` now resides at [adrs/045-agent-subject-impersonation.md](../../adrs/045-agent-subject-impersonation.md), with the exact approving login/date/URL in Status. This relocation record resolves the implementation-frozen spec/plan's draft links. Existing ADRs were not amended. `spec.md` and `plan.md` remain unchanged.
+ADR relocation: `adr-045-draft.md` now resides at [adrs/045-agent-subject-impersonation.md](../../adrs/045-agent-subject-impersonation.md), with the exact approving login/date/URL in Status. This record resolves the implementation-frozen spec/plan's draft links. Existing ADRs were not amended. `spec.md` and `plan.md` remain unchanged.
 
-### Completed design and documentation
+### Delivered behavior
 
-- T002: feature `specs/054-agent-subject-impersonation` remains selected; plan, research, model, contracts and journeys were reconciled without selecting another feature.
-- T004–T005: ADR indexed in `AGENTS.md`; architecture and glossaries describe classification, separate eligibility, resolved identity, audit, target-derived minting, preserved human state, detection replacement, performance and the two proposed human-state observation boundaries. No boundary instrumentation has been implemented yet.
-- T006: category contract retains the exact CFG-001 matrix and YAML-only rule-list boundary. U1's detector contract now names `IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION` and `--token_exchange.claim_extraction.agent_subject_expression`, explicit CLI > environment > YAML > evaluator-default precedence, unchanged flag behavior and explicit-empty fallback. Added T073–T074 for real production root registration/bindings and test-first precedence/no-YAML coverage; no scope or approval expansion.
-- T007: complete local-mode agent example, concrete human/dual alternatives, explicit human setting in the existing example, example index and detector example. Runtime loader/startup verification remains outstanding.
-- T010: canonical End-User OpenAPI declares 2.0.0 and includes C2–C4 descriptions and synthetic request/claim/denial examples. The actual checked-out baseline was 1.1.0, rather than the design artifacts' 1.0.0; the approved major-version replacement still applies. Admin OpenAPI is unchanged. Architecture records this baseline distinction and the existing-route strategy.
-- T011: model reconfirms no new persistence; migration/new-adapter tasks remain inapplicable subject to final-diff review.
-- T012: Journeys 1–3 agree with the signed target UUID, reserved equal claims without a category claim, existing actor, human consent, and default/compliant/non-matching/error detector outcomes. No specification change was needed; API-004 still excludes UI work.
-- T047–T048: configuration, rendered token endpoint, concepts and reference now document eligibility, detector transports/default/replacement/failures, collision migration, audit/diagnostics and cross-links. These documents describe the approved contract, not verified application delivery.
+- Classification uses only a verified signed raw string `sub` and exact target UUID equality, after all principal extractions succeed. Eligibility is a separate rule gate. Omission remains human-only; signed collisions do not acquire a human fallback, even with delegation. Eligible agents skip delegation and credential-email extraction, mint the target UUID, and retain the verified actor.
+- Human delegation failures remain terminal and retain the existing consent URI. Unsigned subjects remain human under ADR 031, including exact-text subjects and rules listing `agent`. ADR 034 audience guards, signed-role controls, scope checks and proxy/hybrid rejection are unchanged.
+- YAML shape validation runs before Viper's weak decoding, retaining omission versus explicit null and rejecting non-string/list shapes. The typed YAML decoder also resolves aliases/merges; lookup follows Viper's case-insensitive key convention. Startup/domain validation enforces 1–2 distinct case-sensitive `human`/`agent` entries. No unsigned startup guard was added.
+- The detector compiles once at startup over `subject_token`, accepts only static `bool`/`dyn`, enforces the existing evaluation timeout, and fails closed on errors/non-boolean output. An override replaces the guarded default entirely. Only third-party exchange invokes detection, after security-context finalization and before agent extraction, authorization, resource resolution or human state.
+- U1 is resolved through real production Cobra registration and explicit loader bindings. The flag is `--token_exchange.claim_extraction.agent_subject_expression`; the environment variable is `IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION`. CLI > environment > YAML > evaluator default; unchanged flags do not shadow lower sources. Explicit empty CLI/environment selects the guarded evaluator default. Tests cover no YAML file/key and conflicting sources.
+- Audit adds only `subject_category` after classification and uses the represented subject. Diagnostics distinguish category ineligibility and third-party unsupported subjects. T075 corrects the handler's sanitization mapping to the already-approved C2/C3 fixed descriptions, without exposing internal error text or changing nonmatching human descriptions.
+- The mint strategy and its CEL context require no production change. Nil credential email yields no claim without an email policy; `principal.email` still produces `""`, and a literal policy email remains policy-owned. Reserved `sub`, `agent_id` and actor attribution cannot be overwritten by policy. Issuer, signing, TTL, scope and policy-owned audience remain unchanged.
 
-### Executed checks and semantic-red evidence
+### Semantic-red evidence before behavior
 
-All commands below ran at the supplied PR head plus this session's design/test changes; they do not prove the unimplemented feature works.
+Run `41041966247/1` resumed at `1bed8c333d74cfa00f296d6a976abdad251d6a4f`. Go 1.27.3, Ginkgo, Helm and golangci-lint were available; the earlier missing-tool blockers are resolved. Existing ignores already cover build/test/dependency artifacts. The requirements checklist has 16 checked items and no unchecked items; its markers were not changed.
 
-| Command | Actual outcome |
+Before any chart or broker behavior change, only the two DTO fields necessary to compile acceptance tests were added. The complete feature suite compiled and ran **12 scenarios: 4 passed, 8 failed, zero pending**:
+
+| Scenario | Initial observable outcome |
 | --- | --- |
-| `just check` | Exit 0 before and after the test edit. The repository falls back to `go vet` because `golangci-lint` is absent; this is **not** evidence that the linter ran. |
-| `just test` | Exit 0 both at baseline and after all edits. Fast package tests exclude the top-level integration/E2E suites. |
-| `TMPDIR=/tmp/gh-aw/agent go test ./tests/integration/ -run TestHelm` | T008 compiled and executed with Helm present, exit 1 with **seven semantic failures**: all four explicit valid category lists (`human`, `agent`, dual, reversed dual) and empty/guarded/replacing detector settings are rejected as unknown schema properties. Omission and invalid-input cases already pass. These are expected feature-red results, not Helm skips. No production chart behavior was changed. |
-| `just test-e2e-backend` | Frontend TypeScript/Vite build succeeded; runner then exited 1 because `ginkgo` is not installed/on PATH. No backend acceptance specs ran. |
-| `just verify` | Exit 127 in `security`: OSV `querybatch` failed TLS hostname validation (`x509: certificate is not valid for any names`). This is an external validation failure, not a vulnerability finding or successful security gate. No TLS/network policy was changed or bypassed. The command stopped before its later suites. |
+| US1.1, US1.2, US2.2 | Agent issuance incorrectly required human delegation instead of returning a signed token |
+| US2.1, US2.4 | Signed-target collisions were accepted or acquired consent recovery instead of category denial |
+| US2.5 | Direct startup incorrectly accepted an empty category list |
+| US3.2 | Agent-only mismatches incorrectly offered human consent recovery |
+| US3.4 | Completed sampled HTTP trace existed, but its positive human control had no required grant-boundary span |
+| US1.3, US2.3, US3.1, US3.3 | Existing credential, delegation, policy and runtime-error protections already passed |
 
-The requirements checklist has 16 checked items and no unchecked items; its markers were not changed. No all-scenario acceptance-red evidence exists. T009 chart behavior and all broker behavior must remain deferred until T013–T017 supply it. The Helm tests intentionally remain red in this partial progress patch; do not skip them or call this feature complete.
+Helm tests separately compiled/executed with Helm installed and showed **seven semantic schema failures** before chart changes: all four explicit valid category lists and empty/guarded/replacing detector settings were rejected as unknown properties. After T009, Helm passed and the complete feature suite was rerun, still **4 passed / 8 failed**, before broker foundation work.
 
-### Outstanding work and technical blockers
+| Tasks | Further test-first evidence and green result |
+| --- | --- |
+| T019–T024 | YAML-shape, startup-value and direct-rule tables failed because invalid values were accepted. Layered validation turned them green. An additional case-insensitive-key regression failed before its lookup correction; YAML merge handling already passed. Loader/direct-startup acceptance also verifies omission and both dual orders. |
+| T022/T025 | Detector tables failed on equality, replacing expressions, startup syntax/type rejection, runtime non-boolean/errors and timeout; diagnostic details were initially reduced to `internal_unclassified`. All pass after detector/catalogue implementation. |
+| T026–T027 | Real consent/session services with recording repository fakes preserved outcomes but lacked the two required child spans on success/missing/error returns. Instrumentation turned these tests green; parent/context propagation, attribute/event absence, no-op tracing and cancellation are verified. |
+| T028–T029/T032–T033 | Classification/eligibility and issuance tests failed on exact signed classification, delegation calls, target-derived extraction and skipped email evaluation. They now pass, including mapped-principal isolation and signed credential email input. |
+| T030/T034 | Agent mint/normal-human compatibility characterization passed without changing `strategies.go`; no artificial failure or policy-email suppression was introduced. |
+| T031/T035 | Classified success/denial/error log tables lacked `subject_category`; the minimal audit addition turned them green. Early-failure identity behavior and the attribute allowlist remain covered. |
+| T037–T042/T045 | Matrix/rule-order, unsigned exact-text, extraction/security and existing no-match/terminal-denial protections characterize approved behavior; additional production corrections were unnecessary. Existing protections were not deliberately broken. |
+| T043–T044 | Verified equal-claim subjects reached failing agent extraction instead of the required category rejection, and the dynamic detector returned the wrong failure detail. Detection now runs first, preserving finalized actor/calling-peer capture and zero grant/session calls. Equal-claim broker human-collision and trusted-external shapes are covered; the detector cannot distinguish their historical issuance path. |
+| T073–T074 | The real root-command test first failed missing flag registration, then failed CLI/environment precedence and no-file cases, then failed explicit-empty environment behavior. All transport/default tables now pass. |
+| T076 | Detector-only configuration silently bypassed the existing claim-extraction startup activation guard. A production Builder regression failed before adding the new field to that guard; it now requires the existing external client-assertion trust anchor instead of ignoring the detector. |
+| T075 | Unit/HTTP checks exposed the handler's generic description in place of C2/C3. Fixed diagnostic-based mappings now return exactly `impersonation not permitted` and `agent-subject tokens cannot be exchanged for third-party service tokens`. |
 
-- **T003, T013–T017, T070–T071:** provide the workflow's configured Ginkgo executable on the agent PATH and `golangci-lint` at the repository-required version. The supplied head has neither. The instruction not to rerun `just install-tools` without a feature tool-version change was honored. Author and run all 12 mapped acceptance scenarios; none have been authored in this session. Missing CLI tooling is not evidence that any scenario passed.
-- **T009, T018–T046, T073–T074:** feature chart/config/domain/mint-characterization/audit/detection/observation implementation remains undone. It is deferred behind the mandatory all-scenario acceptance-red gate, not waived. U1 contract/task scheduling is resolved, but its production bindings and tests are not.
-- **T049–T069:** finish integration evidence, startup/example checks and every final compliance task after behavior is implemented; no final verification checkbox is checked for document-only evidence.
-- **T072:** restore valid TLS access for the configured OSV query service through the approved runner setup. Rerun the unmodified `just verify`; do not disable certificate validation, skip security, or suppress the failed check. Any later missing dependencies must likewise be reported rather than bypassed.
+Additional characterization tests expand coverage without changing acceptance expectations. Final test fixtures use a fresh concrete storage adapter and broker lifecycle for each US3.4 detector/state variant; assertion changes only strengthen startup round-trip and exact C2 checks. There are exactly 12 scenario-referenced `It()` blocks, no pending markers, vacuous assertions or red-phase annotations.
 
-No new maintainer sign-off item is needed for the recorded progress. Existing A1–A10 approval remains the scope boundary.
+### Acceptance results
 
-## Prerequisites
+| Scenario | Final evidence |
+| --- | --- |
+| US1.1 | Signed output verified against published JWKS; `sub == agent_id == target UUID`, no category/email claim or consent URI; no target-human grants/sessions before or after |
+| US1.2 | Distinct actor/client/target attribution, plus actor equal to represented target while retaining `act` |
+| US1.3 | Invalid client and actor signatures independently rejected, no token/consent recovery |
+| US2.1 | All six category/rule combinations, including same-text active human delegation; ineligible cases have exact C2 envelope |
+| US2.2 | Dual rule issues for agent without delegation and human with delegation |
+| US2.3 | Missing/expired human delegation remains denied with consent URI, including other-agent UUID/noncanonical/alias subjects |
+| US2.4 | Omission keeps human behavior but rejects signed exact-target requests both without and with delegation |
+| US2.5 | Every invalid shape/value fails before traffic through loader/direct production bootstrap; valid orders/omission round-trip; unsigned rule listing agent starts |
+| US3.1 | CEL denial issues no token, irrespective of upstream authorization |
+| US3.2 | Missing/invalid/noncanonical/alias/cross-agent subjects and unresolved targets issue no token |
+| US3.3 | Runtime policy failure returns terminal `500 server_error`, no consent URI or human state |
+| US3.4 | All four detector variants in both absent/same-text-human-state conditions pass the observation checkpoints below |
 
-- The maintainer's 👍 on the pipeline approval comment covering every item in [plan.md](plan.md#approval-items): ADR 045 (A1), the configuration and OpenAPI contracts (A2–A5), the decisions A6–A9, and the End-User API 2.0.0 major contract/migration proposal A10. The first implementation task records the supplied `context.approval` (approving maintainers, dates, and pipeline comment URL) in [ADR 045](../../adrs/045-agent-subject-impersonation.md), then moves it into `adrs/`. Record its final path and all A1–A10 approval coverage here; keep `spec.md` and `plan.md` unchanged during implementation.
-- FR-011, SR-005, FR-012, SC-005, and CFG-005 in `spec.md` are aligned with the C4 replacement semantics (spec Clarifications, session 2026-10-28, maintainer command `6480240156`; research R5 *Consequence*).
-- Go toolchain and `just`, per the repository README. Run `just install-tools` once.
-- The default E2E tests use in-memory storage, so no Docker is needed.
+US3.4 captures sampled, uniquely request-correlated completed HTTP spans via production `BuildAppWithTracerProvider` and the concrete storage adapter. Positive human controls demonstrate a grant-boundary span for missing delegation and both grant/session spans for resource-covering delegation plus a usable session. Each default/compliant/`false` fixture runs controls; the dynamic-error fixture uses a sequential otherwise-identical default-detector control broker, then captures its own failing HTTP trace. Providers and propagators are restored and brokers/providers drained in cleanup. No E2E repository spies, private-field injection, reflection or custom DI were introduced.
 
-## Blocking delivery order and compatibility evidence
+- **Default and compliant override:** `403 access_denied`, exact C3 description/diagnostic, no `error_uri`, zero grant/session boundary spans and provider/refresh calls, with/without same-text human state.
+- **Dynamic `subject_token.sub`:** `500 server_error`, no consent URI, zero human-state boundary spans/provider calls in both states. Unit tests separately cover evaluation errors/timeouts.
+- **Replacing `false`:** no agent-subject description/diagnostic; absent human state produces the existing missing-grant error, consent URI and grant span. Matching usable human state produces both boundary spans. This is positive evidence of continuation, not a claim of categorical isolation or supported third-party agent identity.
+- Human-state snapshots remain unchanged; zero-read claims rely on correlated spans and positive controls, not snapshots/provider counts alone.
 
-The steps below are delivery requirements, not passing-check claims. The implementation record above distinguishes completed work from the remaining gates.
+### Executed validation
 
-1. T001 must record supplied approval covering A1–A10. A10 treats the baseline End-User API 1.0.0 as released absent evidence of an unreleased contract and proposes 2.0.0 on existing routes. See [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md) for the rationale, alternative and migration requirements. T010 applies the versioned OpenAPI and architecture strategy before production behavior.
-2. T008 writes/runs Helm tests red; T013–T017 then write/compile/run all 12 acceptance scenarios with semantic-red evidence. No Helm schema/template or broker behavior may precede this all-scenario gate. Only necessary DTO/type compilation scaffolding is permitted.
-3. T009 (Phase 2g) implements chart behavior after both red gates, runs Helm green, and reruns the acceptance suite to record remaining broker semantic failures before foundation work. Keep task IDs stable and follow dependencies rather than numeric order.
-4. T030 characterizes unchanged email policy behavior: `Email=nil` means no credential-derived input; no email-emitting policy means no output `email`; `{"email": principal.email}` means `email: ""`; a literal policy-supplied email remains allowed. Record those results, not an unconditional email-suppression claim.
-5. T048 publishes the End-User API 2.0.0 migration guide. T053/T058/T059 verify actual `info.version`, architecture strategy, migration guide and approval coverage, both incompatible A8/A9 denials, and unchanged nonmatching human behavior. T070–T072 run all acceptance/regression/full gates before delivery. Record the evidence here during implementation; do not claim readiness when consumers or checks remain blocked.
+Commands ran with `TMPDIR=/tmp/gh-aw/agent` for permitted temporary storage. Focused runs used Ginkgo's `--no-color -v`; filtering excludes unrelated specs, not feature scenarios.
 
-## 1. Static checks and fast tests
+| Command | Actual final outcome |
+| --- | --- |
+| `just check` | Pass: formatting, `go vet` and actual golangci-lint, zero lint issues |
+| `just test` | Pass: fast/package tests with race detection |
+| `go test ./internal/domain/impersonation/... ./internal/domain/oauth2server/... ./internal/domain/tokenexchange/... ./internal/config/... ./internal/adapters/http/enduser/... -cover` | Pass: 89.3%, 86.3%, 96.5%, 88.5%, 88.2% respectively |
+| `go test ./tests/integration/ -run TestHelm` | Pass with Helm installed and all feature schema/render cases executed, not skipped |
+| `just test-integration` | Pass: default self-contained integration suites; this is not the infrastructure-backed/full gate |
+| `ginkgo -v --focus 'Agent-Subject Impersonation' ./tests/e2e/` | Pass: 12/12, zero pending |
+| `ginkgo -v --focus 'OAuth2 User Impersonation\|Local Mode Token Exchange' ./tests/e2e/` | Pass: 43/43 existing regression specs unchanged |
+| `just test-e2e-backend` | Pass: frontend build and 923 functional backend specs, zero failures/pending; standard recipe excludes 10 performance-labelled specs |
+| `just verify` | **Fail**: initial and final attempts exited 137 when govulncheck was killed (final gosec: zero issues). An intervening standalone run completed gosec/govulncheck, then OSV exited 1 with 20 known vulnerabilities across 11 packages (1 Critical, 4 High, 9 Medium, 3 Low, 3 Unknown). Later full-gate stages did not run. |
+
+### Compliance and remaining blocker
+
+- Existing End-User OpenAPI is `2.0.0`. Architecture, accepted/indexed ADR 045, migration guide, configuration/concept/reference documentation and complete synthetic examples describe the same approved contract. C1 remains withdrawn; no new request category or token claim was added. Existing Admin API/routes remain unchanged.
+- No new dependency, persisted entity, repository, SQL or migration was added. Migration/apply/rollback/new-PostgreSQL-adapter work remains N/A. No frontend/design-system/Wireloom/Playwright change, third-party machine-identity support or unrelated refactor is included. Existing frontend build ran as part of the backend recipe.
+- T072 is the only unchecked task. The security findings are in unchanged `go.mod`, `web/package-lock.json` and `assets/docusaurus/package-lock.json`, not new feature dependencies. They were not verified/exploited, suppressed or fixed through unrelated scope expansion. No issue was created.
+- **Maintainer action:** provide sufficient runner resources for the unmodified govulncheck scan and resolve the dependency-security findings through a separately authorized dependency update, then rerun `just verify` in its supported environment, including its later infrastructure/ExtProc/frontend gates. This sandbox does not support Docker-in-Docker; missing later infrastructure must also remain a blocker, not a skipped success. Do not waive security or reduce validation. No new feature API/ADR/decision sign-off is requested.
+
+## Reproduction
 
 ```bash
+export TMPDIR=/tmp/gh-aw/agent
 just check
 just test
-```
-
-Expected: everything passes. The mint tables additionally distinguish no-policy email absence from policy-emitted empty-string/literal email without credential propagation. The new unit tables cover `classifySubject`, category eligibility, rule invariants, YAML shape validation, agent-subject minting (`sub == agent_id`, no category claim), `CELEvaluator.IsAgentSubject` with the default and replacing override expressions, rule invariants accepting an unsigned rule that lists `agent`, the token-exchange rejection, and handler audit fields.
-
-## 2. Acceptance journeys (E2E)
-
-```bash
-ginkgo -v --focus "Agent-Subject Impersonation" ./tests/e2e/
-```
-
-Expected: 12 passing specs, one per scenario US1.1–US3.4 (mapping in [plan.md](plan.md#scenario-mapping)). Key observable outcomes:
-
-| Journey | Check |
-| --- | --- |
-| 1 (US1.1–1.3) | `200`. The decoded token has `sub == agent_id ==` the target UUID, no `subject_category` claim, and `act` with the actor issuer and identity. No `UserGrant` exists before or after. An invalid client or actor signature produces no token. |
-| 2 (US2.1–2.5) | The Journey 2 matrix holds. A human without delegation gets `403` with `error_uri`. Exact equality on a human-only rule (explicit or omitted) gets `403` with no `error_uri`, with or without a delegation for the same text. Invalid `allowed_subject_categories` shapes and values fail startup. |
-| 3 (US3.1–3.4) | An unauthorized or unresolved agent gets no token. With `agent_subject_expression` at its default, and again with Journey 3 Step 3's compliant override, the third-party exchange of the agent token gets `403` with the agent-subject description, with and without a human grant and session for the same UUID text. The session's provider is never called. With `false` and valid extraction/authorization/resource fixtures, no human state yields the existing missing-grant `403 access_denied`, grant-missing diagnostic, consent `error_uri`, and grant boundary span. Matching resource-covering human grant and usable session yields both grant/session boundary spans. Both omit the agent-subject description/diagnostic; neither requires automatic success or isolation. With the detection-error override `subject_token.sub`, the response is `500 server_error` and no human state is consulted. |
-
-### Required US3.4 read-access evidence
-
-T026–T027 must implement and validate the plan's Human-state observation boundary before negative span assertions count as evidence. Capture the two production spans `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` through existing `BuildAppWithTracerProvider(storage, tp)` / `NewInMemoryTracerProvider()`, with telemetry/traces enabled and the concrete production storage adapter. No E2E storage/port spy can be injected through this bootstrap.
-
-For each exchange, use a unique sampled W3C trace header and require the completed HTTP server span before checking for zero child boundary spans. Use bounded completion/flush, filtering by that trace ID; never use recorder-wide totals. Demonstrate the grant span with an ordinary human missing-grant control, and both spans with an ordinary human resource-covering grant/usable-session control. Run these controls in each default/compliant/`false` broker; the `subject_token.sub` error broker uses a sequential otherwise-identical default-detector control broker as described in the plan, while requiring its own failing HTTP trace. No non-string subject fixture or weakened credential validation is permitted. Drain/close each broker and restore the prior global provider/propagator.
-
-Record the control results, correlated zero-boundary-span assertions and zero mock-provider/refresh calls for agent-token default/compliant/error requests. A missing HTTP/control span is an observation failure, not proof of no reads. Unchanged storage state and zero provider calls alone are insufficient. Also record the positive `false` checkpoints in the Journey 3 row above. Unit repository fakes supplement, but never replace, this complete HTTP evidence.
-
-## 3. Human-behavior regression
-
-```bash
-ginkgo -v --focus "OAuth2 User Impersonation|Local Mode Token Exchange" ./tests/e2e/
-```
-
-Expected: all existing specs pass unchanged (US2.4, FR-006).
-
-## 4. Startup validation by hand
-
-Put each invalid value from [contracts/impersonation-config.yaml](contracts/impersonation-config.yaml) into a copy of `examples/config/impersonation-agent-subject.yaml`, then start the broker:
-
-```bash
-IDENTITY_BROKER_CONFIG_PATH=/tmp/gh-aw/agent/agent-subject.yaml ./bin/agentic-identity-broker
-```
-
-Expected: the process exits before listening. The error names `oauth2_authorization_server.impersonation.rules[0].allowed_subject_categories`. Removing the key starts the broker human-only.
-
-Repeat with an invalid `token_exchange.claim_extraction.agent_subject_expression` from [contracts/token-exchange-agent-subject-config.yaml](contracts/token-exchange-agent-subject-config.yaml), such as a syntax error or `'agent'`, whose static type is a string. Expected: startup fails. `subject_token.sub` is statically `dyn`, so it starts but fails closed with `500 server_error` at exchange time. Removing the key starts the broker with the default `sub == agent_id` detection.
-
-## 5. Helm contract
-
-```bash
 go test ./tests/integration/ -run TestHelm
-```
-
-Expected: the chart accepts `allowed_subject_categories: [agent]` and renders it verbatim into `config.yaml`. The schema rejects `[]`, `[machine]`, and duplicates. `tokenExchange.claimExtraction.agentSubjectExpression` renders as `agent_subject_expression` only when set, and the rendered config omits it otherwise. Helm must be installed and these cases must execute; a skip when Helm is unavailable is not a successful feature validation.
-
-## 6. Full gate
-
-```bash
+ginkgo -v --focus 'Agent-Subject Impersonation' ./tests/e2e/
+ginkgo -v --focus 'OAuth2 User Impersonation|Local Mode Token Exchange' ./tests/e2e/
+just test-integration
+just test-e2e-backend
 just verify
 ```
 
-Expected: passes, with E2E as the final layer.
+The final command must pass before feature delivery. Configuration contracts are in [contracts/](contracts/); review the End-User API 2.0.0 consumer migration section in `docs/api/enduser-api.md` before rollout. Consumers that are not ready must defer deployment rather than weaken controls or use a non-matching detector as a compatibility fix.

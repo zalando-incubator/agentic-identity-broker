@@ -88,6 +88,7 @@ func NewService(
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
 // (FR-012). It never contains credential values, key material, or wholesale claims (SC-005).
 type AuditRecord struct {
+	SubjectCategory          SubjectCategory
 	Outcome                  string   // "success" or the OAuth2 error code
 	TargetAgentID            string   // resolved target agent identity, when available
 	SelectedRule             string   // rule name (matched rule, or furthest-evaluated on access_denied)
@@ -149,6 +150,7 @@ type ruleResult struct {
 	failure  *tokenexchange.TokenExchangeError // set when the rule did not match (fall-through)
 	abort    *tokenexchange.TokenExchangeError // set on terminal fail-closed error
 
+	category    SubjectCategory
 	client      string
 	actor       string
 	subject     string
@@ -220,9 +222,17 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 	res.subject = subjectID
+	res.category = classifySubject(subjectUnverified, subjectClaims, targetAgent.ID)
+	if res.category == SubjectCategoryAgent {
+		res.subject = targetAgent.ID.String()
+	}
+	if !rule.allows(res.category) {
+		res.failure = categoryIneligible()
+		return res
+	}
 
 	var email *string
-	if extractor := subjectRole.email; extractor != nil {
+	if extractor := subjectRole.email; res.category == SubjectCategoryHuman && extractor != nil {
 		// FR-006a: a caller-controlled unverified-subject email is mintable only when the rule's
 		// authorization predicate binds subject_token.email; a signed-subject email (from a verified
 		// issuer) requires no such binding.
@@ -248,28 +258,30 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 
-	delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
-	if err != nil {
-		res.abort = originError(ctx, serverError("user delegation verification failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
-		return res
-	}
-	switch delegationStatus {
-	case ports.UserDelegationActive:
-	case ports.UserDelegationMissing:
-		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
-			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing))
-		return res
-	case ports.UserDelegationExpired:
-		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
-			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired))
-		return res
-	default:
-		res.abort = originError(ctx, serverError("user delegation verification returned an unknown status"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
-		return res
+	if res.category == SubjectCategoryHuman {
+		delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
+		if err != nil {
+			res.abort = originError(ctx, serverError("user delegation verification failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
+			return res
+		}
+		switch delegationStatus {
+		case ports.UserDelegationActive:
+		case ports.UserDelegationMissing:
+			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
+				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing))
+			return res
+		case ports.UserDelegationExpired:
+			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
+				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired))
+			return res
+		default:
+			res.abort = originError(ctx, serverError("user delegation verification returned an unknown status"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
+			return res
+		}
 	}
 
 	token, err := s.issuer.IssueImpersonationToken(ctx, ports.ImpersonationMintInput{
-		Subject:     subjectID,
+		Subject:     res.subject,
 		Email:       email,
 		Actor:       actorID,
 		ActorIssuer: actorIssuer.issuerURI,
@@ -362,6 +374,7 @@ func successAudit(targetAgentID string, res *ruleResult) AuditRecord {
 		PrivilegedClientIdentity: res.client,
 		ActorIdentity:            res.actor,
 		SubjectIdentity:          res.subject,
+		SubjectCategory:          res.category,
 	}
 }
 
@@ -377,6 +390,7 @@ func failureAudit(targetAgentID string, res *ruleResult, err *tokenexchange.Toke
 		record.PrivilegedClientIdentity = res.client
 		record.ActorIdentity = res.actor
 		record.SubjectIdentity = res.subject
+		record.SubjectCategory = res.category
 	}
 	return record
 }

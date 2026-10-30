@@ -921,6 +921,14 @@
                         "minLength": 1,
                         "description": "Unique, operator-facing rule name (CR-003)"
                       },
+                      "allowed_subject_categories": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "uniqueItems": true,
+                        "items": {"type": "string", "enum": ["human", "agent"]},
+                        "description": "Omission defaults to human only. Signed exact-target subjects require agent eligibility."
+                      },
                       "roles": {
                         "type": "object",
                         "additionalProperties": false,
@@ -1202,6 +1210,10 @@
               "additionalProperties": false,
               "description": "Claim extraction expressions",
               "properties": {
+                "agentSubjectExpression": {
+                  "type": "string",
+                  "description": "Optional replacing CEL detector. Empty uses guarded sub == agent_id. Preserve broker-token matching; a non-matching override removes categorical rejection and same-text human credential isolation. Evaluation failures fail closed."
+                },
                 "principalExpression": {
                   "type": "string",
                   "description": "CEL expression to extract the user principal from subject_token"

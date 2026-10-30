@@ -1,5 +1,7 @@
 package tokenexchange
 
+const DefaultAgentSubjectExpression = "has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id"
+
 // RFC 8693 Token Exchange Constants
 // These constants define grant types, token types, and other RFC 8693 parameters
 

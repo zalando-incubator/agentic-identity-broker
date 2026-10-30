@@ -529,6 +529,8 @@ broker:
     #   # CR-002: non-empty, ordered; first-match.
     #   rules:
     #     - name: "internal-gateway-prod"
+    #       # -- Optional distinct human/agent list (1–2 entries). Omission means [human].
+    #       allowed_subject_categories: [human]
     #       # CR-003: client_assertion, actor, and subject are all required.
     #       roles:
     #         client_assertion:
@@ -649,6 +651,13 @@ broker:
       jwksFile: ""
 
     claimExtraction:
+      # -- Optional replacing CEL detector. Empty/omitted uses the guarded default below.
+      # has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+      # Compile/type errors fail startup; runtime errors/timeouts/non-boolean results fail closed.
+      # Overrides must preserve broker agent-token matching, e.g. keep the default as a disjunct.
+      # A non-matching override (such as false) removes categorical rejection and protection
+      # against access to same-text human credentials. Equal-claim human/external tokens also match.
+      agentSubjectExpression: ""
       # -- CEL expression to extract the user principal from subject_token.
       # Default: "subject_token.sub"
       principalExpression: "subject_token.sub"

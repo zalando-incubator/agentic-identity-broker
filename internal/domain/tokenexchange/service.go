@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -229,6 +231,15 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	callingPeer, _ := clientAssertionJWT.Subject()
 	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
 
+	isAgent, err := s.celEvaluator.IsAgentSubject(subjectTokenClaims)
+	if err != nil {
+		return nil, err
+	}
+	if isAgent {
+		return nil, NewAccessDeniedError("agent-subject tokens cannot be exchanged for third-party service tokens").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailSubjectCategoryUnsupported))
+	}
+
 	// Step 5: Extract agent_id from subject_token via CEL
 	agentID, err := s.celEvaluator.ExtractAgentID(subjectTokenClaims)
 	if err != nil {
@@ -297,7 +308,9 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
-	grant, err = s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access")
+	grant, err = s.consentService.VerifyAgentAccess(grantCtx, id.Principal(principal), agent.ID)
+	grantSpan.End()
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
@@ -342,7 +355,9 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// Per T075: invalid_grant if session doesn't exist
 	// Per T076: invalid_grant if both tokens are expired
 	stage = StageSessionLookup
-	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, id.Principal(principal), service.ID)
+	sessionCtx, sessionSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.get_valid_access_token")
+	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(sessionCtx, id.Principal(principal), service.ID)
+	sessionSpan.End()
 	if err != nil {
 		diagnostic := sessionDiagnostic(err)
 		if diagnostic.Outcome() == OutcomeReauthRequired {

@@ -158,6 +158,64 @@ func TestGenerateImpersonationToken_NoScopeRetainsEmptyJWTClaim(t *testing.T) {
 	assert.Empty(t, scope)
 }
 
+func TestGenerateAgentSubjectTokenClaims(t *testing.T) {
+	svc, _ := newStrategyTestSigningKeyService()
+	ctx := context.Background()
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now())
+	require.NoError(t, err)
+	target := testImpersonationTarget()
+	for _, tc := range []struct {
+		name, policy string
+		email        *string
+	}{
+		{name: "no policy"},
+		{name: "no email policy", policy: `{"aud": "https://policy.example.com"}`},
+		{name: "empty principal email", policy: `{"email": principal.email}`, email: func() *string { s := ""; return &s }()},
+		{name: "literal policy email", policy: `{"email": "policy@example.com"}`, email: func() *string { s := "policy@example.com"; return &s }()},
+		{name: "reserved claims", policy: `{"sub": "wrong", "agent_id": "wrong", "act": "wrong"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var evaluator *TokenClaimsEvaluator
+			if tc.policy != "" {
+				evaluator, err = NewTokenClaimsEvaluator(tc.policy)
+				require.NoError(t, err)
+			}
+			strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, evaluator, testSlogger())
+			require.NoError(t, err)
+			tokenString, err := strategy.GenerateImpersonationToken(ctx, ports.ImpersonationMintInput{
+				Subject: target.ID.String(), TargetAgent: target, Actor: "actor", ActorIssuer: "https://actor.example.com", Scopes: []string{"read"},
+			})
+			require.NoError(t, err)
+			jwks, err := svc.BuildJWKS(ctx)
+			require.NoError(t, err)
+			claims, err := jwt.Parse([]byte(tokenString), jwt.WithKeySet(jwks))
+			require.NoError(t, err)
+			subject, _ := claims.Subject()
+			require.Equal(t, target.ID.String(), subject)
+			agent, err := jwt.Get[string](claims, "agent_id")
+			require.NoError(t, err)
+			require.Equal(t, subject, agent)
+			require.False(t, claims.Has("subject_category"))
+			if tc.email == nil {
+				require.False(t, claims.Has("email"))
+			} else {
+				email, err := jwt.Get[string](claims, "email")
+				require.NoError(t, err)
+				require.Equal(t, *tc.email, email)
+			}
+			actor, err := jwt.Get[map[string]any](claims, "act")
+			require.NoError(t, err)
+			require.Equal(t, "actor", actor["sub"])
+			issued, _ := claims.IssuedAt()
+			expires, _ := claims.Expiration()
+			require.Equal(t, time.Hour, expires.Sub(issued))
+			scope, err := jwt.Get[string](claims, "scope")
+			require.NoError(t, err)
+			require.Equal(t, "read", scope)
+		})
+	}
+}
+
 func TestGenerateImpersonationToken_RequiresTargetAgent(t *testing.T) {
 	strategy, err := NewJWXAccessTokenStrategy(nil, "https://issuer.example.com", time.Hour, nil, testSlogger())
 	require.NoError(t, err)

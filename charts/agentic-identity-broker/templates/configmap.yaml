@@ -238,6 +238,9 @@ data:
       claim_extraction:
         principal_expression: {{ .claimExtraction.principalExpression | quote }}
         agent_id_expression: {{ .claimExtraction.agentIdExpression | quote }}
+        {{- with .claimExtraction.agentSubjectExpression }}
+        agent_subject_expression: {{ . | quote }}
+        {{- end }}
       authorization:
         type: {{ .authorization.type | quote }}
         cel:

@@ -235,6 +235,44 @@ func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 	}
 }
 
+func TestAgentSubjectRejectionDescription(t *testing.T) {
+	for _, tc := range []struct {
+		detail      tokenexchange.FailureDetail
+		description string
+	}{
+		{tokenexchange.DetailSubjectCategoryUnsupported, "agent-subject tokens cannot be exchanged for third-party service tokens"},
+		{tokenexchange.DetailSubjectCategoryIneligible, "impersonation not permitted"},
+	} {
+		t.Run(string(tc.detail), func(t *testing.T) {
+			err := tokenexchange.NewAccessDeniedError("untrusted internal description").WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, tc.detail))
+			require.Equal(t, tc.description, tokenExchangeErrorDescription(err))
+		})
+	}
+}
+
+func TestLogImpersonationSubjectCategory(t *testing.T) {
+	for _, outcome := range []string{"success", "access_denied", "server_error"} {
+		t.Run(outcome, func(t *testing.T) {
+			var buf bytes.Buffer
+			handler := &OAuth2TokenHandler{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+			handler.logImpersonationDecision(context.Background(), impersonation.AuditRecord{
+				Outcome: outcome, SubjectCategory: impersonation.SubjectCategoryAgent,
+				SubjectIdentity: "represented-agent", ActorIdentity: "actor", PrivilegedClientIdentity: "client",
+			})
+			var event map[string]any
+			require.NoError(t, json.Unmarshal(buf.Bytes(), &event))
+			require.Equal(t, "agent", event["subject_category"])
+			require.Equal(t, "represented-agent", event["subject_identity"])
+			require.Equal(t, "actor", event["actor_identity"])
+			require.Equal(t, "client", event["privileged_client_identity"])
+			allowed := map[string]bool{"time": true, "level": true, "msg": true, "event": true, "outcome": true, "target_agent_id": true, "rule": true, "issuer_roles": true, "privileged_client_identity": true, "actor_identity": true, "subject_identity": true, "subject_category": true, "oauth_error_code": true, "request_id": true}
+			for key := range event {
+				require.True(t, allowed[key], "unexpected attribute %s", key)
+			}
+		})
+	}
+}
+
 func TestLogImpersonationDecision_FailureOmitsUnavailableIdentities(t *testing.T) {
 	var buf bytes.Buffer
 	handler := &OAuth2TokenHandler{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
