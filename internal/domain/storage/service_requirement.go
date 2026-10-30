@@ -16,7 +16,7 @@ import (
 // Domain invariants:
 // - ServiceID must be a valid UUID
 // - RequirementType must be "mandatory" or "optional"
-// - RequiredScopes may be empty when the service does not use scopes
+// - RequiredScopes may be empty only when the service defines no scopes or RequireAllScopes is true
 // - RequiredScopes must be empty when RequireAllScopes is true
 // - Each scope name must be non-empty
 type ServiceRequirement struct {

@@ -3057,7 +3057,9 @@ components:
             type: string
           description: |
             Optional OAuth2 scopes the agent requires from this service. Must be empty when
-            `require_all_scopes` is true. Omit or provide an empty array for a scope-less service.
+            `require_all_scopes` is true. Omit or provide an empty array only for a service that
+            defines no scopes; for a service that defines scopes, list at least one of them or set
+            `require_all_scopes`, otherwise the request is rejected with 400.
             Supplied scopes are case-sensitive and must match service definitions.
           example:
             - repo
@@ -3097,7 +3099,9 @@ components:
             type: string
           description: |
             Optional OAuth2 scopes the agent requires from this service. Must be empty when
-            `require_all_scopes` is true. Omit or provide an empty array for a scope-less service.
+            `require_all_scopes` is true. Omit or provide an empty array only for a service that
+            defines no scopes; for a service that defines scopes, list at least one of them or set
+            `require_all_scopes`, otherwise the request is rejected with 400.
             Supplied scopes must exist in the referenced service's scope definitions.
           example:
             - repo

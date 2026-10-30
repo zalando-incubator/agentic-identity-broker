@@ -295,7 +295,7 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 | `grant_service_requirement_excluded` | Nonempty agent service requirements exclude the included, defined service. |
 | `grant_scope_intersection_empty` | The explicit agent ceiling removes every scope from a nonempty permission-set union. |
 
-`grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
+`grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly. The admin API rejects an empty `required_scopes` for a service that defines scopes, so `grant_scope_intersection_empty` with an empty ceiling only occurs for agents stored before that rule or for services that gained scopes after the agent was registered; re-consent cannot change that outcome, the agent owner must update the service requirement.
 
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
 Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
