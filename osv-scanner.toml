@@ -1,28 +1,23 @@
 [[IgnoredVulns]]
-id = "GO-2026-4883"
-reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
-
-[[IgnoredVulns]]
-id = "GO-2026-5617"
-reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
-
-[[IgnoredVulns]]
-id = "GO-2026-5668"
-reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
-
-[[IgnoredVulns]]
-id = "GO-2026-5746"
-reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
-
-[[IgnoredVulns]]
-id = "GO-2026-4887"
-reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
-
-[[IgnoredVulns]]
 id = "GO-2026-5932"
 reason = "The repository does not import the unmaintained golang.org/x/crypto/openpgp packages affected by this advisory."
 
 [[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
-ignoreUntil = 2026-11-07T00:00:00Z
-reason = "No patched braces release exists. Docusaurus requires Chokidar 3 glob support; patterns come only from repository-controlled documentation paths and plugin configuration, not HTTP input. The deployed site contains static assets only. Reassess when this exception expires."
+id = "GHSA-4w3g-jfj2-cw2q"
+ignoreUntil = 2026-11-30T00:00:00Z
+reason = "No patched go-jose v3 release exists; it is pulled in only by ory/fosite v0.49.0 (latest). The broker builds fosite requests itself and never calls fosite's HTTP request parsers (client_assertion, request objects), and its JWTs use lestrrat-go/jwx, so no untrusted JWE reaches go-jose. govulncheck reports no reachable symbols. Reassess when this exception expires."
+
+[[IgnoredVulns]]
+id = "GHSA-mgcc-cww5-fp2q"
+ignoreUntil = 2026-11-30T00:00:00Z
+reason = "No patched go-jose v3 release exists; it is pulled in only by ory/fosite v0.49.0 (latest). The broker builds fosite requests itself and never calls fosite's HTTP request parsers (client_assertion, request objects), and its JWTs use lestrrat-go/jwx, so no untrusted JWK reaches go-jose. govulncheck reports no reachable symbols. Reassess when this exception expires."
+
+[[IgnoredVulns]]
+id = "GHSA-vvm8-gf78-28g4"
+ignoreUntil = 2026-11-30T00:00:00Z
+reason = "No patched go-jose v3 release exists; it is pulled in only by ory/fosite v0.49.0 (latest). The broker builds fosite requests itself and never calls fosite's HTTP request parsers (client_assertion, request objects), and its JWTs use lestrrat-go/jwx, so no untrusted JSON reaches go-jose. govulncheck reports no reachable symbols. Reassess when this exception expires."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-11-30T00:00:00Z
+reason = "No patched deepmerge release exists. It is reached only through @svgr/plugin-svgo during the Docusaurus build, merging repository-controlled SVGO configuration, never attacker input. The deployed site contains static assets only. Reassess when this exception expires."

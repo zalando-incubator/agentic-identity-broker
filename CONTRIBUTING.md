@@ -61,10 +61,12 @@ Commit the corresponding lockfile when changing an override. Verify both site bu
 instrumented frontend build (`VITE_COVERAGE=1 npm run build --prefix web`). The frontend's
 js-yaml 4 override removes the unpatched sprintf-js dependency from coverage tooling.
 
-The root `osv-scanner.toml` temporarily excludes `GHSA-vfj7-8cjw-p6xm` until 2026-11-07.
-No patched braces release exists, and Docusaurus requires Chokidar 3's glob support. Its
-patterns are repository-controlled; the deployed documentation is static. Reassess this
-exception at expiry or if documentation tooling starts accepting untrusted patterns.
+The root `osv-scanner.toml` temporarily excludes three go-jose v3 advisories and one deepmerge
+advisory until 2026-11-30. Neither package has a patched release. go-jose v3 arrives only through
+ory/fosite, whose HTTP request parsers the broker does not call; deepmerge runs only on
+repository-controlled SVGO configuration during the documentation build. Reassess these
+exceptions at expiry, when fosite moves to go-jose v4, or if either path starts accepting
+untrusted input.
 
 Both commands must pass before you open a pull request.
 
