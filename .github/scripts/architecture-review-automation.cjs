@@ -3,6 +3,8 @@ const { managedPR, validateReviewState, parseReview, reviewDimensions } = requir
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
+// Safe outputs strip HTML comments from agent comments, so the state travels in a visible JSON block.
+const marker = "## Architecture review result";
 const statusMarker = "<!-- architecture-review-status -->";
 const severities = ["RED", "YELLOW", "GREEN"];
 const recommendations = ["APPROVE", "DISCUSS", "REQUEST CHANGES"];
@@ -151,6 +153,9 @@ function validateResult(draft, context) {
     run: context.run, pr: context.pr, head: context.head, recommendation: draft.recommendation,
     summary: draft.summary.trim(), findings: counts, failed, items,
   });
+  if (failed.length > 1) {
+    throw new Error("More than one unassessed dimension cannot be published; report the blocker instead");
+  }
   if (failed.length && draft.recommendation === "APPROVE") {
     throw new Error("A review with unassessed dimensions cannot approve");
   }
@@ -167,7 +172,9 @@ function validateResult(draft, context) {
     if (!body.includes(`\n${section}`)) throw new Error(`The review body is missing the "${section}" section`);
   }
   if (!body.includes(`**${draft.recommendation}**`)) throw new Error("The review body must state the recommendation");
-  if (/<!-- (?:architecture-review|gh-aw|speckit)/.test(body)) throw new Error("The review body must not contain reserved markers");
+  if (/<!-- (?:architecture-review|gh-aw|speckit)/.test(body) || body.includes(marker)) {
+    throw new Error("The review body must not contain reserved markers");
+  }
   const prefix = `https://github.com/${context.repository}/blob/`;
   for (const match of body.matchAll(/https:\/\/github\.com\/[^/\s)]+\/[^/\s)]+\/blob\/([^/\s)]+)\//g)) {
     if (!match[0].startsWith(prefix) || match[1] !== context.head) {
@@ -185,7 +192,8 @@ function writeResult() {
   const draft = JSON.parse(fs.readFileSync(`${directory}/result.json`, "utf8"));
   const state = validateResult(draft, context);
   fs.writeFileSync(`${directory}/comment.md`,
-    [draft.body.trimEnd(), "", `<!-- architecture-review: ${JSON.stringify(state)} -->`, ""].join("\n"));
+    [draft.body.trimEnd(), "", "<details><summary>Review state</summary>", "", marker,
+      "```json", JSON.stringify(state, null, 2), "```", "", "</details>", ""].join("\n"));
 }
 
 async function verify({ github, context, comment }) {
