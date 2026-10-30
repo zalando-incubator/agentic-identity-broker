@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -2075,4 +2077,40 @@ func tokenAcquisitionError(ctx context.Context, operation Operation, cause error
 		return failure
 	}
 	return failure.WithMetadata(failure.Metadata().WithDependency(dependency))
+}
+
+// ServiceSessionSnapshot verifies the principal's session for one service through
+// GetValidAccessToken, so an expired access token is refreshed once under the existing
+// single-flight and row locking. Only a provider invalid_grant persists unusability, through
+// the existing refresh-expiry marker; transient failures write nothing.
+func (s *OAuth2SessionService) ServiceSessionSnapshot(ctx context.Context, principal id.Principal, serviceID id.ServiceID) servicescope.SessionSnapshot {
+	session, _, err := s.GetValidAccessToken(ctx, principal, serviceID)
+	if err != nil {
+		return servicescope.SessionSnapshot{Usability: usabilityFromError(err)}
+	}
+	return servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: slices.Clone(session.Scope)}
+}
+
+// CheckServiceUsability reports whether the session can supply effectiveScopes now.
+func (s *OAuth2SessionService) CheckServiceUsability(ctx context.Context, principal id.Principal, serviceID id.ServiceID, effectiveScopes []string) servicescope.Usability {
+	return s.ServiceSessionSnapshot(ctx, principal, serviceID).For(effectiveScopes)
+}
+
+func usabilityFromError(err error) servicescope.Usability {
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) {
+		return servicescope.UsabilityUnverifiableTransient
+	}
+	switch operationErr.Metadata().Detail() {
+	case DetailSessionMissing:
+		return servicescope.UsabilityMissing
+	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable, DetailRefreshRejected:
+		return servicescope.UsabilityUnusableDefinitive
+	case DetailCredentialSourceUnavailable:
+		var sourceErr *model.CredentialSourceError
+		if errors.As(err, &sourceErr) && (sourceErr.Reason == model.CredentialSourceReasonIdentityMismatch || sourceErr.Reason == model.CredentialSourceReasonIdentityMissing) {
+			return servicescope.UsabilityUnusableDefinitive
+		}
+	}
+	return servicescope.UsabilityUnverifiableTransient
 }
