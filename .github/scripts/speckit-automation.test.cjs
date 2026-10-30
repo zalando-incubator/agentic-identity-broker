@@ -1169,9 +1169,19 @@ test("published results name the next step when blocked and list approval items 
   }, extra);
   listed.run();
   assert.deepEqual(listed.published("analyze").approvals, [{ kind: "api", title: "Adds a path", location: `${contract}:2` }]);
-  const stopped = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step: "Decide X" }, extra);
+  for (const next_step of [
+    "Decide X, then rerun T001–T009 in order and record the evidence at quickstart.md:12",
+    "1. Decide X\nThen rerun",
+    [1, 2, 3, 4, 5, 6].map((n) => `${n}. Step ${n}`).join("\n"),
+    `1. ${"x".repeat(300)}`,
+  ]) {
+    const prose = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step }, extra);
+    assert.throws(prose.run, /numbered list of at most 5 actions/);
+  }
+  const steps = "1. Decide X in `spec.md:12`\n2. Allow `openid.net` for the implement workflow";
+  const stopped = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step: steps }, extra);
   stopped.run();
-  assert.equal(stopped.published("phase").next_step, "Decide X");
+  assert.equal(stopped.published("phase").next_step, steps);
   const done = resultCommand({ phase: "remediate" }, { status: "complete", report: "Done", next_step: "Ignored" }, extra);
   done.run();
   assert.equal(done.published("phase").next_step, undefined);
