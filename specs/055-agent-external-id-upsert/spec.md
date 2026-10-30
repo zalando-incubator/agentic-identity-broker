@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Draft — one product question needs clarification; no implementation approval recorded.
+**Status**: Draft — clarification complete; proposed API decisions await maintainer sign-off; no implementation approval recorded.
 
 **Input**: Issue #334, “Admin API: unique agent external_id and idempotent create-or-update”. The supplied feature description is reproduced below.
 
@@ -43,6 +43,12 @@
 
 This specification proposes superseding [feature 054](../054-agent-external-id-filter/spec.md)'s non-uniqueness clarification, FR-011, and related descriptions of multiple matches. It retains that feature's exact matching, selector validation, list shape, and presentation contract. The earlier specification is not edited in this phase.
 
+## Clarifications
+
+### Session 2026-10-30
+
+- Q: When collection PUT updates an existing agent, what happens to omitted optional fields and explicit nulls? → A: **Proposed (approval item API-OMISSION)**: Preserve omitted `client_id` and `canonical_id`; replace the other managed definition fields. Omitted or null optional metadata URLs become absent; omitted, null, or empty optional arrays become empty. Explicit `canonical_id: null` removes the canonical ID. Reject `client_id: null` with `400 validation failed`, because the reused `AgentCreateRequest` does not allow it; a supplied nonempty client ID replaces the existing value. Body `external_id` still follows FR-007. This resolves FR-012 and completes US1.5–US1.7. Rationale: preserves established identities under ADR 017 while following the existing update path's replacement of metadata and collections, without broadening the create schema. Main alternative: preserve every omitted optional field (handoff option A), which would introduce new patch-like behavior for metadata and collections; full replacement including client ID (option B) would require superseding ADR 017. Planning must register API-OMISSION with authoritative details at FR-012 and its field-policy table. This recommendation is not maintainer approval.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario has a stable identifier (`US1.1`, etc.) for a later 1:1 E2E test mapping under Constitution Principle XIII. Migration scenarios also require real PostgreSQL integration coverage. This phase specifies behavior; it does not create or run implementation tests.
@@ -61,7 +67,9 @@ A governance sync job submits an agent definition under the registry's external 
 2. **Given** US1.1 succeeded, **When** the same job replays the identical request without an intervening change, **Then** the broker returns `200 OK` with the same representation, including the same `id`, `created_at`, and `updated_at`, and a lookup returns exactly one agent.
 3. **Given** the agent from US1.1 exists, **When** the job submits the same definition with a changed display name, **Then** the broker returns `200 OK` with the new name, unchanged `id` and `created_at`, an advanced `updated_at`, and the next lookup shows the new name.
 4. **Given** no agent holds the selected external ID, **When** two first calls submit the same valid definition concurrently, **Then** exactly one call creates the agent and returns `201`, the other returns `200`, both identify the same agent, and the subsequent filtered list contains exactly that one agent.
-5. **Given** the selected agent exists, **When** the job omits an optional field previously set on that agent, **Then** its resulting state follows the omission decision in FR-012. This scenario remains incomplete until Q1 is answered.
+5. **Given** the selected agent has client and canonical IDs, metadata URLs, and optional collections, **When** the job submits the required definition while omitting all optional body attributes, **Then** the broker preserves both IDs and the selected external ID, removes the metadata URLs, empties the optional collections, replaces the supplied permission declarations, and advances `updated_at` only if the effective definition changes. Replaying that request returns the unchanged representation and timestamps.
+6. **Given** the selected agent has a canonical ID and optional metadata and collections, **When** the job explicitly supplies null for those nullable fields, **Then** the canonical ID and metadata become absent, the optional collections become empty, and the client ID, external ID, UUID, creation time, and unrelated grants remain unchanged. A replay is a no-op.
+7. **Given** the selected agent has a client ID, **When** the job sends `client_id: null` to collection PUT, **Then** the broker returns `400 validation failed` and changes no data or timestamps. A supplied valid nonempty client ID instead replaces it under the existing conflict rules; explicit clearing remains available through the existing ID-addressed update contract.
 
 ---
 
@@ -134,7 +142,7 @@ The HTTP exchanges below propose the issue's new contract; the current OpenAPI d
 
 **Shared cast**: Sync job `ai-registry-sync@example.com`, authenticated by an admin proxy at `broker-admin.example.com`; Research Assistant UUID `550e8400-e29b-41d4-a716-446655440000`, canonical ID `research-assistant`, external ID `urn:example:ai-registry:agent:7f3a9c`; Data Analyst UUID `660e8400-e29b-41d4-a716-446655440001`, canonical ID `data-analyst`, external ID `urn:example:ai-registry:agent:1b44e0`. Permission set `github-read` has UUID `a1b2c3d4-e5f6-7890-abcd-ef1234567890`. IDs and principals are synthetic; all times are 2026-10-30 UTC.
 
-### Journey 1 — Sync creates, retries, and changes one agent (US1.1–US1.4; US4.3)
+### Journey 1 — Sync creates, retries, and changes one agent (US1.1–US1.7; US4.3)
 
 **Step 1 — Initial configuration and state**
 
@@ -213,6 +221,70 @@ Vary: Prefer
 ```
 
 **Observable result**: One registry entry maps to one stable broker agent. Three calls produced one creation, one no-op, and one real update. No client ID was invented.
+
+**Omission/null subflow — separate fixture for US1.5–US1.7**
+
+This independent fixture uses Research Assistant's synthetic UUID and external ID, but does not change the state consumed by Journey 2. Initially at 08:00:00 it has canonical ID `research-assistant`, client ID `research-upstream`, all three metadata URLs set to distinct HTTPS URLs under `https://example.com/research/`, redirect URI `https://agent.example.com/callback`, allowed scope `openid`, client URI `https://agent.example.com/client.json`, a valid service requirement covered by `github-read`, and the mandatory `github-read` permission declaration. Existing grants reference its UUID.
+
+At 09:10:00, the job sends only the required definition, omitting optional body fields:
+
+```http
+PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: ai-registry-sync@example.com
+Content-Type: application/json
+Prefer: reference-id=canonical
+
+{"display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}]}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Preference-Applied: reference-id=canonical
+Vary: Prefer
+
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:10:00Z"}
+```
+
+Both identities survive, the metadata and optional collections are cleared, and the permission declaration remains. Repeating this exact exchange at 09:10:05 returns `200` with the identical body, including `updated_at: 2026-10-30T09:10:00Z`.
+
+At 09:11:00, the job explicitly clears the canonical alias and supplies null for optional metadata and collections:
+
+```http
+PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: ai-registry-sync@example.com
+Content-Type: application/json
+Prefer: reference-id=canonical
+
+{"canonical_id":null,"governance_url":null,"user_documentation_url":null,"agent_interface_url":null,"service_requirements":null,"redirect_uris":null,"allowed_scopes":null,"client_uris":null,"display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}]}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Preference-Applied: reference-id=canonical
+Vary: Prefer
+
+{"id":"550e8400-e29b-41d4-a716-446655440000","client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:11:00Z"}
+```
+
+Repeating at 09:11:05 is a no-op with that same body and timestamp. Empty optional collections use the existing Agent presentation; optional omitted response fields do not imply preservation of their former contents. US1.6 also exercises explicit nulls starting from populated metadata and collections, rather than only from this already-cleared state.
+
+At 09:12:00, the job tries a null client ID, which is not a valid `AgentCreateRequest`:
+
+```http
+PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: ai-registry-sync@example.com
+Content-Type: application/json
+
+{"client_id":null,"display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}]}
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"validation failed","message":"client_id must be a nonempty string when supplied"}
+```
+
+**Observable result**: The rejected request leaves the 09:11:00 state and all grants unchanged. A valid nonempty replacement client ID is allowed subject to FR-010; clearing it still uses ID-addressed PUT, not collection PUT. Omitted identities are preserved, whereas optional metadata and collections are replaced, exactly as FR-012 proposes.
 
 ### Journey 2 — Lookup confirms synchronization without changing the list contract (US4.1–US4.2)
 
@@ -392,7 +464,18 @@ The schema change succeeds. The three agent UUIDs, permission declarations, and 
 - **FR-009 (R9)**: Concurrent valid first PUTs with the same external ID MUST create exactly one agent. For identical definitions, one response MUST be `201` and the rest `200`, all identifying the same stable UUID. The complete desired definition MUST be applied coherently; failures MUST NOT leave partial data.
 - **FR-010 (R10)**: Existing canonical-ID conflicts and configuration-dependent client-ID conflicts MUST remain `409` on both PUT branches. Existing validation and uniqueness of other agent attributes and references, including client URIs, remain in force. The operation MUST honor `Prefer: reference-id=canonical` for nested references without changing UUID identity or persisted relationships.
 - **FR-011 (R11)**: GET's feature 054 behavior MUST remain unchanged except that valid filters can now match at most one agent. Results remain arrays (`[]` or one Agent). The literal empty query value remains `400`; omitted filter remains the unfiltered list; exact matching, errors, and reference preferences remain unchanged.
-- **FR-012**: [NEEDS CLARIFICATION: On the update branch of collection PUT, do omitted optional AgentCreateRequest attributes preserve existing values or remove/reset them as a complete desired-state replacement? Specify how client_id and canonical_id omissions behave in light of ADR 017's client_id preservation rule, and how explicitly nullable fields behave.]
+- **FR-012 (Proposed; API-OMISSION)**: Collection PUT MUST reconcile the supplied definition using the following field policy on the update branch. It is a replacement of managed metadata and collections, with preservation of omitted client and canonical identities, not a general patch or unconditional full replacement. On creation, omitted identities and metadata are absent and omitted optional collections are empty; the same null validation applies. No client ID is generated. No-op comparison MUST use the resulting effective definition after applying this policy, so preservation and absent/empty optional input forms do not themselves advance `updated_at`.
+
+  | Fields | Omitted on update | Explicit null | Supplied non-null value |
+  | --- | --- | --- | --- |
+  | `client_id` | Preserve existing value (ADR 017) | Reject with `400 validation failed` under `AgentCreateRequest`; no mutation | Replace with a validated nonempty string; existing conflict rules apply |
+  | `canonical_id` | Preserve existing value | Remove canonical ID | Replace with a validated string; existing conflict rules apply |
+  | `external_id` | Use decoded selector | Reject with `400 invalid external_id` | Must equal decoded selector (FR-007) |
+  | `governance_url`, `user_documentation_url`, `agent_interface_url` | Remove existing value | Remove existing value | Replace with validated URL |
+  | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | Replace with empty collection | Replace with empty collection | Replace entire collection, including explicit `[]`; existing reference and attribute validation applies |
+  | `display_name`, `description`, `permission_sets` | Reject as missing required input | Reject under existing validation contract | Replace; permission declarations remain nonempty and valid |
+
+  The operation MUST NOT remove or reassign grants or other relationships outside the managed definition. Clearing an established client ID remains possible only through the existing ID-addressed update's nullable request contract; this operation does not broaden `AgentCreateRequest`.
 - **FR-013**: Failures in validation, identity conflict, or persistence MUST NOT create a partial agent, alter the selected agent, or change another agent. Uniqueness and replay behavior MUST agree between memory and PostgreSQL storage.
 
 ### Domain Model
@@ -479,25 +562,8 @@ Planning must update the existing External ID glossary entry and relevant archit
 - Existing `client_id` conflicts are configuration-dependent: `oauth2_authorization_server.multi_agent_client.enabled: true` still permits shared client IDs. This feature does not tighten that separate policy.
 - Nonempty external-ID write validation beyond the issue's explicit empty-string rule retains existing behavior; the new selector uses the full spec 054 rules. Migration must not silently rewrite other legacy values. Any additional write-validation tightening must be proposed explicitly during planning.
 - The required `permission_sets` array remains nonempty. Tests and examples must use existing permission sets, not empty placeholder declarations.
-- Q1 is intentionally unresolved: neither complete replacement nor preservation of all omitted fields is silently authorized. Any deviation from a merged Accepted ADR requires an approved superseding ADR under Constitution Principle II.
+- FR-012 is the proposed omission/null policy resolved in this clarification session, not implementation approval. It preserves ADR 017's omitted-client-ID guarantee; no superseding ADR is needed for that policy. Planning must carry its externally visible semantics into the reviewed contract and Approval Items.
 - Replay equivalence is based on unchanged agent state, not JSON whitespace or member order. Broader normalization of collection ordering is not introduced here.
-
-## Clarification Handoff
-
-### Q1 — Omitted optional fields on the update branch
-
-**Context**: FR-012; the goal says “desired state” and the body is `AgentCreateRequest`, while the existing update contract preserves omitted optional fields and ADR 017 requires preserving an omitted client ID on update.
-
-**What we need to know**: Which omission/null policy should collection PUT use when an agent already exists?
-
-| Option | Answer | Implications |
-| --- | --- | --- |
-| A | Preserve omitted optional fields; retain existing explicit-null semantics for fields whose request schema allows null. | Aligns with existing update behavior and client-ID preservation; clients must explicitly clear nullable fields rather than rely on omission. |
-| B | Replace the managed definition, removing/resetting omitted optional fields, including client ID and canonical ID. | Matches full desired-state replacement but may remove established identity/configuration and requires resolving ADR 017 through an approved superseding decision if applicable. |
-| C | Preserve omitted identity fields (`client_id`, `canonical_id`) but replace other optional definition fields; explicitly document nullable-field behavior. | Avoids unintended identity removal but introduces a field-specific contract that must be reviewed and tested. |
-| Custom | Specify omission and null behavior for each affected field. | Provide a policy precise enough to complete US1.5, HTTP examples for that flow, and the later API approval. |
-
-**Your choice**: Pending the separate clarification session. This unanswered product question does not block publishing the draft specification, but the affected checklist items remain incomplete.
 
 ## Out of Scope
 
@@ -506,4 +572,4 @@ Planning must update the existing External ID glossary entry and relevant archit
 - Changing external-ID exact matching, source-system scoping, adding patterns, pagination, or sorting.
 - Changing client-ID sharing configuration or canonical-ID syntax.
 - New frontend, end-user API, OAuth2, or ExtProc behavior.
-- Implementation, plan, tasks, ADR acceptance, and recording approval in this specify phase.
+- Implementation, plan, tasks, ADR acceptance, and recording approval in this clarification phase.
