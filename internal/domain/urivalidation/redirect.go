@@ -177,16 +177,19 @@ func ValidateAgentRedirectURIRegistration(raw string) error {
 
 // MatchesAgentRedirectURI matches an incoming callback against an Agent registration.
 func MatchesAgentRedirectURI(registered, incoming string) bool {
-	if !strings.Contains(registered, "*") {
+	registeredURL, registeredOK := parseRedirectURI(registered)
+	if !registeredOK {
+		return false
+	}
+	if !strings.Contains(registeredURL.Hostname(), "*") {
 		return MatchesRedirectURI(registered, incoming)
 	}
 	if ValidateAgentRedirectURIRegistration(registered) != nil || strings.Contains(incoming, "*") || !IsValidRedirectURI(incoming) {
 		return false
 	}
 
-	registeredURL, registeredOK := parseRedirectURI(registered)
 	incomingURL, incomingOK := parseRedirectURI(incoming)
-	if !registeredOK || !incomingOK || registeredURL.Scheme != "https" || incomingURL.Scheme != "https" {
+	if !incomingOK || registeredURL.Scheme != "https" || incomingURL.Scheme != "https" {
 		return false
 	}
 	if registeredURL.Port() != incomingURL.Port() {
