@@ -97,6 +97,22 @@ maintainability), and consolidates their findings into a single review comment w
 recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
 edits or pushes code. A new review folds the previous one.
 
+On a Spec Kit draft PR, `/architecture-review` and the automatic review after
+`/speckit-implement` go one step further. Each finding carries a remediation bucket:
+
+- **auto**: the pipeline applies the fix in the same run, with a worker that cannot push
+  changes under `api/`, `adrs/`, `migrations/`, or `specs/`, then reviews the result again.
+- **proposed**: the fix changes a contract, an ADR, persisted data, or a design choice with a
+  real alternative. The pipeline posts a **Spec Kit remediation proposal** comment with one
+  checkbox per item and the recommended change. Tick the items to apply, then tick
+  **Apply the selected items**; the pipeline applies them, pushes, and reviews again. The
+  ticks are the sign-off for exactly those items.
+- **question**: the reviewer needs knowledge only the author or a maintainer has. Answer with
+  `/speckit-plan <decision>`.
+
+The status comment links the latest review and proposal and names the next step. A new
+review replaces the proposal, so items left unticked stay open until the next review.
+
 ### Backend
 
 Follow hexagonal architecture:
