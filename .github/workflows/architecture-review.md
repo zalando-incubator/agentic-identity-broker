@@ -11,6 +11,9 @@ on:
       comment:
         type: number
         default: 0
+      focus:
+        type: string
+        default: ""
 engine: pi
 model: copilot/claude-opus-5.5
 checkout:
@@ -52,6 +55,7 @@ steps:
     run: |
       mkdir -p /tmp/gh-aw/architecture-review
       cp .github/scripts/architecture-review-automation.cjs /tmp/gh-aw/architecture-review/automation.cjs
+      cp .github/scripts/speckit-automation.cjs /tmp/gh-aw/architecture-review/speckit-automation.cjs
   - name: Fetch pull request context and check prerequisites
     uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
     env:
@@ -165,6 +169,23 @@ Read every sub-agent's section and JSON result. Then:
 - Rank the remaining findings by architectural severity: 🔴 first, then 🟡,
   then 🟢. Keep at most 7 as **Top Findings**. Lower-ranked findings stay in
   their dimension's section.
+- Give each Top Finding an id (`F1`, `F2`, ...) and a remediation bucket. The
+  Spec Kit pipeline applies `auto` items without asking, lists `proposed`
+  items for a maintainer to tick, and shows `question` items for an answer:
+  - `auto`: the fix is unambiguous, stays inside the pull request's approved
+    scope, needs no choice between alternatives, and touches none of
+    `api/**`, `adrs/**`, `migrations/**`, or the Spec Kit feature's `spec.md`
+    and `plan.md`. Examples: add the spans the package's other handlers have,
+    add the missing journey test, fold a duplicated validation into the
+    existing helper, add the glossary entry. Write the `change` in one line.
+  - `proposed`: a concrete fix exists, but it changes an API contract, an ADR,
+    persisted data, or a design choice with a real alternative. Write the
+    recommended `change` and the main `alternative`, one line each.
+  - `question`: no concrete fix is possible without knowledge only the author
+    or a maintainer has. Write the `question` in one line.
+  - `note`: 🟢 observations only. A 🔴 or 🟡 finding always gets one of the
+    three buckets above.
+  When in doubt between `auto` and `proposed`, choose `proposed`.
 - Derive the recommendation from the findings. Any 🔴 finding means
   **REQUEST CHANGES**. Only 🟡 or 🟢 findings mean **DISCUSS**, unless the 🟡
   findings are so minor that **APPROVE** is honest. No findings and every
@@ -186,7 +207,23 @@ Write `/tmp/gh-aw/architecture-review/result.json`:
   "summary": "DISCUSS: 2 🟡 findings on session naming and OTel parity.",
   "recommendation": "DISCUSS",
   "findings": [
-    { "severity": "YELLOW", "dimension": "ubiquitous-language", "title": "ApprovalSession duplicates UserSession" }
+    {
+      "id": "F1",
+      "severity": "YELLOW",
+      "dimension": "ubiquitous-language",
+      "title": "ApprovalSession duplicates UserSession",
+      "bucket": "proposed",
+      "change": "Reuse UserSession for approval state and drop the ApprovalSession type",
+      "alternative": "Keep ApprovalSession and document in the glossary how it differs"
+    },
+    {
+      "id": "F2",
+      "severity": "YELLOW",
+      "dimension": "otel-parity",
+      "title": "approval handler lacks the package's spans",
+      "bucket": "auto",
+      "change": "Start a span in the approval handler as the other enduser handlers do"
+    }
   ],
   "dimensions": {
     "ubiquitous-language": "assessed",
@@ -204,10 +241,12 @@ Write `/tmp/gh-aw/architecture-review/result.json`:
 
 `summary` is one line of at most 200 characters that states the recommendation
 and the finding counts. `recommendation` is `APPROVE`, `DISCUSS`, or
-`REQUEST CHANGES`. `findings` lists the Top Findings in order, with `severity`
-`RED`, `YELLOW`, or `GREEN` and the dimension that raised each. `dimensions`
-reports every dimension as `assessed` or `failed`. `body` is the complete
-comment in the output format.
+`REQUEST CHANGES`. `findings` lists the Top Findings in order, each with its
+`id`, `severity` `RED`, `YELLOW`, or `GREEN`, the `dimension` that raised it,
+its `bucket`, and the one-line `change` with an optional `alternative` for
+`auto` and `proposed` items or the `question` for question items. Every line
+is at most 600 characters. `dimensions` reports every dimension as `assessed`
+or `failed`. `body` is the complete comment in the output format.
 
 Run `node /tmp/gh-aw/architecture-review/automation.cjs result`. It validates
 the result against these rules and writes
@@ -310,7 +349,10 @@ Findings:
 ````
 
 The `Data Authority` section is the only optional one. Every other section
-heading must be present, even when its content is a single "✅" line.
+heading must be present, even when its content is a single "✅" line. Start
+each Top Finding with its id, for example `1. 🟡 **F1: [TITLE]**`, and end it
+with `Remediation: automatic`, `Remediation: proposal`, or
+`Remediation: question` to match its bucket.
 
 ## Important Guidelines
 
