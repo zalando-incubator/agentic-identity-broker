@@ -216,7 +216,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 045).
 	if cfg.DelegationContext.Enabled {
-		resolver, err := newDelegationResolver(sigCtx, cfg, exchanger)
+		resolver, err := delegation.NewResolverFromConfig(sigCtx, cfg, exchanger)
 		if err != nil {
 			return err
 		}
@@ -267,24 +267,6 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	logger.Info("ExtProc Token Exchange Service stopped")
 	return nil
-}
-
-// newDelegationResolver discovers the configured PDP without credentials and builds the
-// permit resolver. Any discovery failure stops startup instead of silently disabling it.
-func newDelegationResolver(ctx context.Context, cfg *extprocconfig.Config, assertions delegation.AssertionProvider) (*delegation.Resolver, error) {
-	httpClient, err := httpclient.New(cfg, cfg.DelegationContext.RequestTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize delegation context HTTP client: %w", err)
-	}
-	metadata, err := delegation.Discover(ctx, httpClient, cfg.DelegationContext.PolicyDecisionPoint, cfg.OAuth2.TLS.AllowHTTP)
-	if err != nil {
-		return nil, err
-	}
-	client, err := delegation.NewClient(httpClient, metadata, assertions, cfg.DelegationContext.MaxStaleness)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize delegation context client: %w", err)
-	}
-	return delegation.NewResolver(client, cfg.DelegationContext.MaxStaleness), nil
 }
 
 // initLogger creates a structured slog.Logger from the service configuration.

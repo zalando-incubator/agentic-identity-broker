@@ -298,9 +298,13 @@ func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
 		resolve func(h *delegationHarness) (delegation.Result, error)
 		status  int
 	}{
-		"denial":           {func(*delegationHarness) (delegation.Result, error) { return delegation.Result{}, &delegation.DeniedError{Code: "grant_expired", ConsentURL: consentURL} }, 403},
-		"resolution error": {func(*delegationHarness) (delegation.Result, error) { return delegation.Result{}, &delegation.Error{Category: delegation.CategoryTimeout} }, 503},
-		"expired permit":   {func(h *delegationHarness) (delegation.Result, error) { return samplePermit(h.clock.Now()), nil }, 503},
+		"denial": {func(*delegationHarness) (delegation.Result, error) {
+			return delegation.Result{}, &delegation.DeniedError{Code: "grant_expired", ConsentURL: consentURL}
+		}, 403},
+		"resolution error": {func(*delegationHarness) (delegation.Result, error) {
+			return delegation.Result{}, &delegation.Error{Category: delegation.CategoryTimeout}
+		}, 503},
+		"expired permit": {func(h *delegationHarness) (delegation.Result, error) { return samplePermit(h.clock.Now()), nil }, 503},
 	} {
 		t.Run(name+" stops before policy and exchange", func(t *testing.T) {
 			var h *delegationHarness
