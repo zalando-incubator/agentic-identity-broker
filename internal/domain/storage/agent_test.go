@@ -72,7 +72,7 @@ func TestAgent_Validate(t *testing.T) {
 				RedirectURIs:   []string{"javascript://oauth/callback"},
 				PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeOptional}},
 			},
-			wantErr: "redirect_uris[0] must be an https URI",
+			wantErr: "redirect_uris[0] invalid: invalid redirect URI registration",
 		},
 		{
 			name: "mixed-case callback rejected at its index",
@@ -277,6 +277,64 @@ func TestAgent_ValidateForCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgent_ValidateRedirectURIRegistration(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr bool
+	}{
+		{"accepts preview wildcard registration", "https://preview*.app-*.example.com/api/oidc/callback", false},
+		{"preserves exact HTTPS IP callback", "https://192.0.2.1/callback", false},
+		{"preserves exact single-label HTTPS callback", "https://internal/callback", false},
+		{"rejects wildcarded public suffix", "https://preview*.app-*.example.*/api/oidc/callback", true},
+		{"rejects wildcarded registrable domain", "https://preview*.app-*.*.com/api/oidc/callback", true},
+		{"rejects wildcard replacing full host", "https://*/api/oidc/callback", true},
+		{"accepts exact HTTPS callback with wildcard in path", "https://preview.example.com/*", false},
+		{"accepts exact HTTPS callback with wildcard in query", "https://preview.example.com/callback?target=*", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			agent := &Agent{
+				DisplayName:  "Wildcard Validation Agent",
+				Description:  "Agent used to validate redirect URI registrations",
+				RedirectURIs: []string{test.uri},
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
+			}
+
+			err := agent.ValidateForCreate()
+			if test.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			agent.ID = id.NewAgentID()
+			err = agent.Validate()
+			if test.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAgent_ValidateRedirectURIRegistrationPreservesReason(t *testing.T) {
+	agent := &Agent{
+		DisplayName:  "Wildcard Validation Agent",
+		Description:  "Agent used to validate redirect URI registrations",
+		RedirectURIs: []string{"https://preview*.app-*.*.com/api/oidc/callback"},
+	}
+
+	err := agent.ValidateForCreate()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "redirect_uris[0]")
+	assert.ErrorContains(t, err, "wildcard cannot replace a registrable-domain or public-suffix label")
 }
 
 func TestAgent_Copy(t *testing.T) {

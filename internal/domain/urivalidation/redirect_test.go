@@ -100,6 +100,7 @@ func TestIsRegisteredRedirectURI(t *testing.T) {
 		want     bool
 	}{
 		{"web URI comes from client list", []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
+		{"client-list wildcard stays exact", []string{"https://preview*.app-*.example.com/callback"}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
 		{"loopback port may vary", []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
 		{"private-use in both lists", []string{callback}, []string{callback}, callback, true},
 		{"private-use only in client list", []string{callback}, nil, callback, false},
@@ -114,6 +115,42 @@ func TestIsRegisteredRedirectURI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.client, tt.agent, tt.incoming))
+		})
+	}
+}
+
+func TestMatchesAgentRedirectURI(t *testing.T) {
+	pattern := "https://preview*.app-*.example.com/api/oidc/callback"
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+		want       bool
+	}{
+		{"matches PR preview labels", pattern, "https://preview-pr-123.app-test.example.com/api/oidc/callback", true},
+		{"matches zero-character wildcard suffix", pattern, "https://preview.app-test.example.com/api/oidc/callback", true},
+		{"matches different wildcard labels", pattern, "https://preview.app-sandbox.example.com/api/oidc/callback", true},
+		{"does not cross a private public suffix boundary", "https://*.*.amazonaws.com/callback", "https://bucket.s3.amazonaws.com/callback", false},
+		{"does not cross hostname labels", pattern, "https://preview-pr-123.extra.app-test.example.com/api/oidc/callback", false},
+		{"does not match another domain", pattern, "https://preview-pr-123.app-test.example.net/api/oidc/callback", false},
+		{"scheme remains exact", pattern, "http://preview-pr-123.app-test.example.com/api/oidc/callback", false},
+		{"path remains exact", pattern, "https://preview-pr-123.app-test.example.com/other/callback", false},
+		{"port remains exact", "https://preview*.app-*.example.com:8443/api/oidc/callback", "https://preview-pr-123.app-test.example.com/api/oidc/callback", false},
+		{"query remains exact", "https://preview*.app-*.example.com/callback?mode=one", "https://preview-pr-123.app-test.example.com/callback?mode=two", false},
+		{"exact HTTPS URI remains exact", "https://client.example.com/callback", "https://client.example.com/callback", true},
+		{"exact HTTPS URI still rejects a different path", "https://client.example.com/callback", "https://client.example.com/other", false},
+		{"literal star in HTTPS path remains exact", "https://client.example.com/callback/*", "https://client.example.com/callback/*", true},
+		{"literal star in HTTPS query remains exact", "https://client.example.com/callback?target=*", "https://client.example.com/callback?target=*", true},
+		{"private-use URI remains exact", "com.example.app:/oauth2redirect/example-provider", "com.example.app:/oauth2redirect/example-provider", true},
+		{"loopback HTTP still ignores port", "http://localhost/callback", "http://localhost:43127/callback", true},
+		{"incoming URI cannot contain a wildcard", pattern, "https://preview-*.app-test.example.com/api/oidc/callback", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.want {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.want)
+			}
 		})
 	}
 }

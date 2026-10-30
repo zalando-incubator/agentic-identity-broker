@@ -1137,6 +1137,26 @@ func TestService_HandleAuthorization_RedirectURIValidation(t *testing.T) {
 			wantAction:   "redirect_to_consent",
 		},
 		{
+			name:         "opaque Agent host wildcard is accepted",
+			redirectURIs: []string{"https://preview*.app-*.example.com/api/oidc/callback"},
+			requestURI:   "https://preview-pr-123.app-test.example.com/api/oidc/callback",
+			wantAction:   "redirect_to_consent",
+		},
+		{
+			name:          "opaque Agent host wildcard does not cross hostname labels",
+			redirectURIs:  []string{"https://preview*.app-*.example.com/api/oidc/callback"},
+			requestURI:    "https://preview-pr-123.extra.app-test.example.com/api/oidc/callback",
+			wantAction:    "error",
+			wantErrorCode: "invalid_redirect_uri",
+		},
+		{
+			name:          "malformed stored wildcard fails closed",
+			redirectURIs:  []string{"https://preview*.app-*.example.*/api/oidc/callback"},
+			requestURI:    "https://preview-pr-123.app-test.example.com/api/oidc/callback",
+			wantAction:    "error",
+			wantErrorCode: "invalid_redirect_uri",
+		},
+		{
 			name:         "registered private-use URI is accepted",
 			redirectURIs: []string{"github-app://oauth/callback"},
 			requestURI:   "github-app://oauth/callback",

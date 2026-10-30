@@ -2675,6 +2675,8 @@ components:
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
             Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            An HTTPS entry may use `*` in one or more subdomain labels. Each wildcard matches characters within one label and never matches a dot. The public suffix and effective registrable domain must remain literal; scheme, port, path, and query remain exact. Wildcard registrations with an IP-literal probe host, a single-label host, or an unclassifiable host are rejected. This restriction applies only to wildcard registrations; exact HTTPS entries retain existing validation.
+            For example, `https://preview*.app-*.example.com/api/oidc/callback` matches `https://preview-pr-123.app-test.example.com/api/oidc/callback`.
             The port is ignored when matching loopback `http` URIs.
             An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
             It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
@@ -2828,6 +2830,8 @@ components:
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
             Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            An HTTPS entry may use `*` in one or more subdomain labels. Each wildcard matches characters within one label and never matches a dot. The public suffix and effective registrable domain must remain literal; scheme, port, path, and query remain exact. Wildcard registrations with an IP-literal probe host, a single-label host, or an unclassifiable host are rejected. This restriction applies only to wildcard registrations; exact HTTPS entries retain existing validation.
+            For example, `https://preview*.app-*.example.com/api/oidc/callback` matches `https://preview-pr-123.app-test.example.com/api/oidc/callback`.
             The port is ignored when matching loopback `http` URIs.
             An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
             It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
@@ -2976,6 +2980,8 @@ components:
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
             Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            An HTTPS entry may use `*` in one or more subdomain labels. Each wildcard matches characters within one label and never matches a dot. The public suffix and effective registrable domain must remain literal; scheme, port, path, and query remain exact. Wildcard registrations with an IP-literal probe host, a single-label host, or an unclassifiable host are rejected. This restriction applies only to wildcard registrations; exact HTTPS entries retain existing validation.
+            For example, `https://preview*.app-*.example.com/api/oidc/callback` matches `https://preview-pr-123.app-test.example.com/api/oidc/callback`.
             The port is ignored when matching loopback `http` URIs.
             An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
             It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
