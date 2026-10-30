@@ -1,0 +1,152 @@
+name: Architecture Review Assisted
+
+on:
+  issue_comment: # zizmor: ignore[dangerous-triggers] -- Maintainer commands are data; PR code only runs in the worker sandbox.
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: architecture-review-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  route:
+    if: >-
+      github.event.issue.pull_request && github.event.comment.user.type == 'User' &&
+      startsWith(github.event.comment.body, '/architecture-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.route.outputs.action }}
+      pr: ${{ steps.route.outputs.pr }}
+      comment: ${{ steps.route.outputs.comment }}
+      error: ${{ steps.route.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Check automation guards
+        run: node --test .github/scripts/architecture-review-automation.test.cjs
+      - name: Authorize and route
+        id: route
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { route } = require('./.github/scripts/architecture-review-automation.cjs');
+            try {
+              const result = await route({ github, context });
+              for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+              core.info(`Architecture review route: ${result.action}`);
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  acknowledge:
+    needs: route
+    if: >-
+      always() && (needs.route.result == 'failure' || (needs.route.result == 'success' && needs.route.outputs.action != 'noop'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: React to the maintainer command
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ROUTE_RESULT: ${{ needs.route.result }}
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo,
+              comment_id: context.payload.comment.id,
+              content: process.env.ROUTE_RESULT === 'success' ? 'eyes' : 'confused',
+            });
+
+  review:
+    needs: route
+    if: needs.route.outputs.action == 'review'
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # The worker's safe output is the review; this trusted job confirms it belongs to this run and the reviewed head.
+  verify:
+    needs: review
+    if: always() && needs.review.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.verify.outputs.error }}
+    steps:
+      - name: Checkout trusted verifier only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the published review
+        id: verify
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_COMMENT: ${{ needs.review.outputs.comment_id }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/architecture-review-automation.cjs');
+            try {
+              await verify({ github, context, comment: process.env.REVIEW_COMMENT });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  report:
+    needs: [route, review, verify]
+    if: always() && needs.route.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the status comment on failure
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const { report } = require('./.github/scripts/architecture-review-automation.cjs');
+            await report({ github, context, needs: JSON.parse(process.env.NEEDS) });

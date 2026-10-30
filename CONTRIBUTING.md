@@ -84,6 +84,22 @@ For new features, follow this workflow using [Speckit](https://speckit.org/):
 4. Implement according to the plan
 5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
 
+### Architecture Review
+
+Maintainers can request an automated architectural review of any open pull request from
+this repository by commenting `/architecture-review`, optionally followed by a focus such
+as `/architecture-review session lifecycle`. The workflow in
+`.github/workflows/architecture-review-assisted.yml` checks the commenter's permission,
+then runs `.github/workflows/architecture-review.md`: one lead agent briefs eight
+sub-agents, one per analysis dimension (ubiquitous language, hexagonal compliance, ADR
+compliance, data authority, coupling and cohesion, OTel parity, E2E test quality, and
+maintainability), and consolidates their findings into a single review comment with a
+recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
+edits or pushes code. A new review folds the previous one.
+
+The Spec Kit pipeline runs the same review automatically after `/speckit-implement`
+completes and links it from the status comment.
+
 ### Backend
 
 Follow hexagonal architecture:

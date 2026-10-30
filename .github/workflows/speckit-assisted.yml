@@ -387,8 +387,27 @@ jobs:
               throw error;
             }
 
+  # A completed implementation gets its architectural review in the same run; the review comment stays visible.
+  review:
+    needs: [route, implement, verify]
+    if: always() && needs.implement.result == 'success' && needs.verify.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
   report:
-    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals]
+    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals, review]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
