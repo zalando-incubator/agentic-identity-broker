@@ -1,9 +1,10 @@
-# actionlint v1.7.12 predates these Actions fields. gh-aw validates the workers.
+# actionlint v1.7.12 predates gh-aw's concurrency queue and job.workflow_ref fields.
+# Only these field errors are ignored; all other checks remain enabled.
 paths:
   .github/workflows/speckit-assisted.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
-  .github/workflows/speckit-*.lock.yml:
+  .github/workflows/*.lock.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
       - '^property "workflow_(repository|sha|ref|file_path)" is not defined in object type'

@@ -1,0 +1,7 @@
+# gh-aw generates this lock file. Keep the exception separate from generated output.
+# The /grumpy trigger requires write/admin/maintainer access; the agent is read-only,
+# and review writes use safe outputs after threat detection. Recheck on regeneration.
+rules:
+  dangerous-triggers:
+    ignore:
+      - 'grumpy-reviewer.lock.yml:58:3'
