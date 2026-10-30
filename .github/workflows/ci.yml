@@ -482,7 +482,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh extension install github/gh-aw --pin v0.92.0
-          gh aw compile speckit-specify speckit-phase speckit-plan speckit-analyze speckit-implement architecture-review --strict --no-emit --no-check-update
+          gh aw compile speckit-specify speckit-phase speckit-plan speckit-analyze speckit-implement speckit-remediate-review speckit-apply-review architecture-review --strict --no-emit --no-check-update
           gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
       - name: zizmor
         uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1

@@ -45,7 +45,7 @@ steps:
         const { prepare } = require('/tmp/gh-aw/speckit/automation.cjs');
         await prepare({ github, context, inputs: JSON.parse(process.env.SPECKIT_INPUTS) });
   - name: Set up Go for implementation
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
     with:
       go-version-file: go.mod
@@ -56,13 +56,13 @@ steps:
   # The agent sandbox inherits XDG_RUNTIME_DIR from the runner but cannot write
   # to it, so shebang recipes such as `just check` need another script directory.
   - name: Give just a writable script directory
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
       mkdir -p /tmp/gh-aw/just
       echo "JUST_TEMPDIR=/tmp/gh-aw/just" >> "$GITHUB_ENV"
   # Restore only: the agent can write to $HOME, so this job must never save a cache that CI restores.
   - name: Restore CI development tools
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
     with:
       path: |
@@ -75,20 +75,20 @@ steps:
   # The agent sandbox mounts an empty home with an allowlist of tool directories
   # that excludes ~/go, so Go tools must live in ~/.local/bin to stay on its PATH.
   - name: Put Go tools where the agent sandbox can run them
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
       mkdir -p "$HOME/.local/bin"
       echo "GOBIN=$HOME/.local/bin" >> "$GITHUB_ENV"
       echo "$HOME/.local/bin" >> "$GITHUB_PATH"
   # Playwright's system dependencies need root, which the agent sandbox does not have.
   - name: Install development tools
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
       if [ -d "$HOME/go/bin" ]; then cp -a "$HOME/go/bin/." "$GOBIN/"; fi
       just install-tools
   # A cache hit skips `playwright install --with-deps`, and the cache holds no system packages.
   - name: Install Playwright system dependencies
-    if: inputs.phase == 'implement'
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
       driver="$(find "$HOME/.cache/ms-playwright-go" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
       "$driver/node" "$driver/package/cli.js" install-deps

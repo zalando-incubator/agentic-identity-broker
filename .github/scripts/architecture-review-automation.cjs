@@ -1,12 +1,9 @@
 const fs = require("node:fs");
+const { managedPR, validateReviewState, parseReview, reviewDimensions } = require("./speckit-automation.cjs");
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
-// Safe outputs strip HTML comments from agent comments, so the state travels in a visible JSON block.
-const marker = "## Architecture review result";
 const statusMarker = "<!-- architecture-review-status -->";
-const dimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
-  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability"];
 const severities = ["RED", "YELLOW", "GREEN"];
 const recommendations = ["APPROVE", "DISCUSS", "REQUEST CHANGES"];
 const sections = ["### Executive Summary", "### Top Findings", "### Concept Map", "### Hexagonal Compliance",
@@ -15,6 +12,7 @@ const sections = ["### Executive Summary", "### Top Findings", "### Concept Map"
 const pipeline = ["route", "review", "verify"];
 const maxFindings = 7;
 const maxBody = 60000;
+const maxFocus = 2000;
 
 function parseCommand(body) {
   const match = typeof body === "string" && body.match(/^\/architecture-review(?=\s|$)([\s\S]*)$/);
@@ -48,6 +46,7 @@ function runURL(repo, id) {
   return `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${id}`;
 }
 
+// Spec Kit's own pipeline reviews its managed draft PRs, so that it can remediate the findings afterwards.
 async function route({ github, context }) {
   const { payload, repo, eventName } = context;
   const source = eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
@@ -55,6 +54,7 @@ async function route({ github, context }) {
   if (!command || !await maintainer(github, repo, context.actor)) return { action: "noop" };
   if (!payload.issue?.pull_request) throw new Error("/architecture-review runs on a pull request, not an issue");
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: payload.issue.number });
+  if (managedPR(pr, repo)) return { action: "noop" };
   if (!eligible(pr, repo)) throw new Error("/architecture-review runs on an open pull request from this repository");
   return { action: "review", pr: pr.number, comment: source.id };
 }
@@ -96,6 +96,10 @@ async function prepare({ github, context, inputs }) {
   if (Number(inputs.comment)) {
     data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
     data.focus = data.command.argument;
+  } else if (inputs.focus) {
+    // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's re-review after remediation.
+    if (typeof inputs.focus !== "string" || inputs.focus.length > maxFocus) throw new Error("Invalid review focus");
+    data.focus = inputs.focus.trim();
   }
   const files = await github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number: pr.number, per_page: 100 });
   const changed = files.map((file) => ({
@@ -128,25 +132,25 @@ function validateResult(draft, context) {
   if (!Array.isArray(draft.findings) || draft.findings.length > maxFindings) {
     throw new Error(`Findings must list at most ${maxFindings} items`);
   }
-  for (const finding of draft.findings) {
-    if (!severities.includes(finding?.severity) || !dimensions.includes(finding.dimension) ||
-        typeof finding.title !== "string" || !finding.title.trim() || finding.title.length > 200 ||
-        /[\r\n]/.test(finding.title)) {
-      throw new Error("Invalid finding");
-    }
-  }
   const status = draft.dimensions;
   if (!status || typeof status !== "object" || Array.isArray(status) ||
-      Object.keys(status).length !== dimensions.length ||
-      dimensions.some((name) => !["assessed", "failed"].includes(status[name]))) {
+      Object.keys(status).length !== reviewDimensions.length ||
+      reviewDimensions.some((name) => !["assessed", "failed"].includes(status[name]))) {
     throw new Error("Every analysis dimension must be reported as assessed or failed");
   }
-  const failed = dimensions.filter((name) => status[name] === "failed");
+  const failed = reviewDimensions.filter((name) => status[name] === "failed");
+  const items = draft.findings.map((finding) => {
+    if (!finding || typeof finding !== "object") throw new Error("Invalid finding");
+    const item = { id: finding.id, severity: finding.severity, dimension: finding.dimension, bucket: finding.bucket, title: finding.title };
+    for (const key of ["change", "alternative", "question"]) if (finding[key] !== undefined) item[key] = finding[key];
+    return item;
+  });
   const counts = Object.fromEntries(severities.map((severity) =>
-    [severity, draft.findings.filter((finding) => finding.severity === severity).length]));
-  if (failed.length > 1) {
-    throw new Error("More than one unassessed dimension cannot be published; report the blocker instead");
-  }
+    [severity, items.filter((item) => item.severity === severity).length]));
+  const state = validateReviewState({
+    run: context.run, pr: context.pr, head: context.head, recommendation: draft.recommendation,
+    summary: draft.summary.trim(), findings: counts, failed, items,
+  });
   if (failed.length && draft.recommendation === "APPROVE") {
     throw new Error("A review with unassessed dimensions cannot approve");
   }
@@ -163,9 +167,7 @@ function validateResult(draft, context) {
     if (!body.includes(`\n${section}`)) throw new Error(`The review body is missing the "${section}" section`);
   }
   if (!body.includes(`**${draft.recommendation}**`)) throw new Error("The review body must state the recommendation");
-  if (/<!-- (?:architecture-review|gh-aw)/.test(body) || body.includes(marker)) {
-    throw new Error("The review body must not contain reserved markers");
-  }
+  if (/<!-- (?:architecture-review|gh-aw|speckit)/.test(body)) throw new Error("The review body must not contain reserved markers");
   const prefix = `https://github.com/${context.repository}/blob/`;
   for (const match of body.matchAll(/https:\/\/github\.com\/[^/\s)]+\/[^/\s)]+\/blob\/([^/\s)]+)\//g)) {
     if (!match[0].startsWith(prefix) || match[1] !== context.head) {
@@ -175,50 +177,15 @@ function validateResult(draft, context) {
   if (failed.length && !body.includes("not assessed")) {
     throw new Error("The review body must say which dimensions were not assessed");
   }
-  return { failed, counts };
+  return state;
 }
 
 function writeResult() {
   const context = JSON.parse(fs.readFileSync(`${directory}/context.json`, "utf8"));
   const draft = JSON.parse(fs.readFileSync(`${directory}/result.json`, "utf8"));
-  const { failed, counts } = validateResult(draft, context);
-  const state = {
-    run: context.run, pr: context.pr, head: context.head, recommendation: draft.recommendation,
-    summary: draft.summary.trim(), findings: counts, failed,
-  };
+  const state = validateResult(draft, context);
   fs.writeFileSync(`${directory}/comment.md`,
-    [draft.body.trimEnd(), "", "<details><summary>Review state</summary>", "", marker,
-      "```json", JSON.stringify(state, null, 2), "```", "", "</details>", ""].join("\n"));
-}
-
-function validateState(state) {
-  if (!/^\d+\/\d+$/.test(state.run) || !/^[0-9a-f]{40}$/.test(state.head) ||
-      !Number.isSafeInteger(state.pr) || state.pr <= 0 || !recommendations.includes(state.recommendation) ||
-      typeof state.summary !== "string" || !state.findings || typeof state.findings !== "object" ||
-      severities.some((severity) => !Number.isSafeInteger(state.findings[severity])) ||
-      !Array.isArray(state.failed) || state.failed.some((name) => !dimensions.includes(name))) {
-    throw new Error("Invalid architecture review state");
-  }
-  return state;
-}
-
-// Only the worker's safe output carries the workflow footer, so an agent comment cannot pose as a review.
-function parseReview(comment) {
-  const body = comment.body || "";
-  const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)$/);
-  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
-  const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/architecture-review -->$/m);
-  if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
-  const sections = body.split(marker);
-  if (sections.length !== 2) return null;
-  const blocks = [...sections[1].matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
-  if (blocks.length !== 1) return null;
-  try {
-    const state = validateState(JSON.parse(blocks[0][1]));
-    return state.pr === Number(issue[3]) ? state : null;
-  } catch {
-    return null;
-  }
+    [draft.body.trimEnd(), "", `<!-- architecture-review: ${JSON.stringify(state)} -->`, ""].join("\n"));
 }
 
 async function verify({ github, context, comment }) {
@@ -267,7 +234,7 @@ async function report({ github, context, needs }) {
   return data;
 }
 
-module.exports = { parseCommand, eligible, route, prepare, validateResult, parseReview, verify, report, dimensions };
+module.exports = { parseCommand, eligible, route, prepare, validateResult, parseReview, verify, report, dimensions: reviewDimensions };
 
 if (require.main === module) {
   if (process.argv[2] === "result") {
