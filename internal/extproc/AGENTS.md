@@ -97,7 +97,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `NewOPAAuthorizer(cfg, logger)` | Path mode compiles Rego at startup. Config-file mode denies access until the bundle is ready. |
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
 | `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata; omit fields irrelevant to the request type |
-| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
+| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available`, token-bound `granted_permission_sets`, and the exchange response's `principal` and `agent_id` when present. Header-only inputs never carry `principal` or `agent_id` |
 | `OPADecision` struct | Policy output: `Action string` (`"allow"`, `"deny"`, or `"approval_required"`), `Reasons []string`, optional `ApprovalContext` |
 | `ParseDecision(any)` | Type-safe extraction of `action` and `reasons` from the OPA result map |
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once; `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |

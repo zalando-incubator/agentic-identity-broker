@@ -2092,6 +2092,85 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 	assert.Equal(t, []string{first, second}, seenElementBodies)
 }
 
+// Spec 055 FR-001 to FR-004: OPA sees the identity from the token-exchange response
+// on every evaluation after the exchange, and never on header-only evaluations.
+func TestServer_OPA_ContextCarriesExchangedIdentity(t *testing.T) {
+	const (
+		principal = "alice@example.com"
+		agentID   = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	)
+	start := func(t *testing.T, result server.ExchangeResult) (extprocv3.ExternalProcessorClient, func() []authorization.ContextInput) {
+		t.Helper()
+		var mu sync.Mutex
+		var contexts []authorization.ContextInput
+		auth := &mockAuthorizer{
+			evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				contextInput, ok := input["context"].(authorization.ContextInput)
+				require.True(t, ok, "OPA input must carry a ContextInput")
+				contexts = append(contexts, contextInput)
+				return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+			},
+		}
+		exchanger := &mockExchanger{
+			exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return result, nil
+			},
+		}
+		client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+		t.Cleanup(cleanup)
+		return client, func() []authorization.ContextInput {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]authorization.ContextInput(nil), contexts...)
+		}
+	}
+	identity := server.ExchangeResult{Token: "exchanged-token", Principal: principal, AgentID: agentID}
+	toolCall := `{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"get_user","arguments":{}}}`
+
+	t.Run("standalone body", func(t *testing.T) {
+		client, contexts := start(t, identity)
+		sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(toolCall))
+
+		require.Len(t, contexts(), 1)
+		assert.Equal(t, principal, contexts()[0].Principal)
+		assert.Equal(t, agentID, contexts()[0].AgentID)
+	})
+
+	t.Run("every batch element", func(t *testing.T) {
+		client, contexts := start(t, identity)
+		sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte("["+toolCall+","+toolCall+"]"))
+
+		require.Len(t, contexts(), 2)
+		for _, contextInput := range contexts() {
+			assert.Equal(t, principal, contextInput.Principal)
+			assert.Equal(t, agentID, contextInput.AgentID)
+		}
+	})
+
+	t.Run("omitted when the exchange returns none", func(t *testing.T) {
+		client, contexts := start(t, server.ExchangeResult{Token: "exchanged-token"})
+		sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(toolCall))
+
+		require.Len(t, contexts(), 1)
+		encoded, err := json.Marshal(contexts()[0])
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), `"principal"`)
+		assert.NotContains(t, string(encoded), `"agent_id"`)
+	})
+
+	t.Run("omitted on header-only evaluation", func(t *testing.T) {
+		client, contexts := start(t, identity)
+		_, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{":method": "GET"}, "mcp")
+		require.NoError(t, err)
+
+		require.Len(t, contexts(), 1)
+		assert.Empty(t, contexts()[0].Principal)
+		assert.Empty(t, contexts()[0].AgentID)
+	})
+}
+
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
 func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	var evaluateCalls int
