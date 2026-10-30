@@ -172,7 +172,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 		Expect(body["error"]).To(Equal("invalid_grant"))
 		recoveryURI := config.Server.EndUser.PublicURL + "/api/third-party/" + githubID.String() + "/oauth2/authorize?redirect_uri=" +
-			url.QueryEscape(config.Server.EndUser.PublicURL+"/sessions")
+			url.QueryEscape(config.Server.EndUser.PublicURL+"/sessions/"+githubID.String())
 		Expect(body["error_uri"]).To(Equal(recoveryURI))
 
 		mockUpstream.WithRefreshToken("account-b-refresh")
