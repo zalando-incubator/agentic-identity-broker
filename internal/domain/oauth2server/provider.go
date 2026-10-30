@@ -476,6 +476,9 @@ func (p *Provider) HandleRefreshToken(
 	if err := p.refreshHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
 		return nil, err
 	}
+	if err := narrowRefreshScope(req, scope); err != nil {
+		return nil, err
+	}
 
 	fositeResp := fosite.NewAccessResponse()
 	if err := p.refreshHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
