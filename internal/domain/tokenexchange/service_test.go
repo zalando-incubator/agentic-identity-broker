@@ -1872,6 +1872,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
 			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
+			assert.Equal(t, "https://broker.example.com/sessions/"+fixture.serviceID.String(), tokenErr.Scope(), "grant denials after service resolution name the service scope")
 			assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 			assert.Equal(t, AuthorizationRef{
 				AgentID:            fixture.agentID,
@@ -2133,7 +2134,8 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			assert.Equal(t, tt.wantCode, tokenErr.Code())
 			if tt.wantReauthURI {
 				assert.Equal(t, 400, tokenErr.HTTPStatus())
-				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2F"+fixture.serviceID.String(), tokenErr.ErrorURI())
+				assert.Equal(t, "https://broker.example.com/sessions/"+fixture.serviceID.String(), tokenErr.Scope())
 			} else {
 				assert.Equal(t, 500, tokenErr.HTTPStatus())
 				assert.Empty(t, tokenErr.ErrorURI())
@@ -2573,7 +2575,8 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				assert.Equal(t, tc.wantStatus, tokenErr.HTTPStatus())
 				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 				if tc.wantCode == "invalid_grant" {
-					assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+					assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2F"+fixture.serviceID.String(), tokenErr.ErrorURI())
+					assert.Equal(t, "https://broker.example.com/sessions/"+fixture.serviceID.String(), tokenErr.Scope())
 				}
 				if tc.wantCause != nil {
 					assert.ErrorIs(t, err, tc.wantCause)

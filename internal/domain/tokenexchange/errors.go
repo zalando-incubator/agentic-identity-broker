@@ -27,9 +27,13 @@ type TokenExchangeError struct {
 	cause error
 
 	// errorURI is the RFC 6749 §5.2 error_uri. Recoverable provider-session errors
-	// point to the resolved service's authorization URL with a fixed /sessions return.
+	// point to the resolved service's authorization URL returning to its service page.
 	// It is empty when no recovery URL is available.
 	errorURI string
+
+	// scope is the resolved service's current Virtual Service Scope. It is set only on
+	// errors that carry errorURI and occur after the resource resolved to a service.
+	scope string
 
 	diagnostic    Diagnostic
 	service       ServiceRef
@@ -261,5 +265,17 @@ func (e *TokenExchangeError) WithObservation(diagnostic Diagnostic, service Serv
 	clone.diagnostic = diagnostic
 	clone.service = service
 	clone.authorization = authorization
+	return &clone
+}
+
+// Scope returns the Virtual Service Scope of the resolved service on recoverable errors.
+func (e *TokenExchangeError) Scope() string {
+	return e.scope
+}
+
+// WithScope returns a copy of the error naming the resolved service's Virtual Service Scope.
+func (e *TokenExchangeError) WithScope(scope string) *TokenExchangeError {
+	clone := *e
+	clone.scope = scope
 	return &clone
 }

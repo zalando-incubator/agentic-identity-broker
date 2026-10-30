@@ -169,6 +169,7 @@ func NewTokenExchangeService(
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
 	var serviceRef ServiceRef
+	var serviceScope string
 	var registeredAgentID id.AgentID
 	var grant *storage.UserGrant
 	stage := StageRequestValidation
@@ -187,6 +188,9 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		var sessionErr *oauth2session.OperationError
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) && !errors.As(err, &sessionErr) {
 			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
+		}
+		if serviceScope != "" && tokenErr.ErrorURI() != "" {
+			tokenErr = tokenErr.WithScope(serviceScope)
 		}
 		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(registeredAgentID, grant))
 	}()
@@ -267,6 +271,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err).WithDiagnostic(NewDiagnostic(stage, DetailResourceRepositoryUnavailable))
 	}
 	serviceRef = ServiceRef{ID: service.ID}
+	serviceScope = s.oauth2SessionService.ServiceScope(service)
 
 	// Step 9: Verify user has granted agent access to service (T059-T065)
 	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
@@ -347,7 +352,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		diagnostic := sessionDiagnostic(err)
 		if diagnostic.Outcome() == OutcomeReauthRequired {
 			return nil, NewInvalidGrantError("provider session is missing or unusable; re-authentication required").
-				WithCause(err).WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).WithDiagnostic(diagnostic)
+				WithCause(err).WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service)).WithDiagnostic(diagnostic)
 		}
 		return nil, NewServerErrorWithCause("failed to get valid access token", err).WithDiagnostic(diagnostic)
 	}
@@ -368,7 +373,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		if len(missingScopes) > 0 {
 			return nil, NewInvalidGrantError("provider session does not cover required scopes; re-authentication required").
-				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).WithDiagnostic(NewDiagnostic(stage, DetailSessionScopeInsufficient))
+				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service)).WithDiagnostic(NewDiagnostic(stage, DetailSessionScopeInsufficient))
 		}
 	}
 
