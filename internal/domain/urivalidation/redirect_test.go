@@ -139,6 +139,8 @@ func TestMatchesAgentRedirectURI(t *testing.T) {
 		{"query remains exact", "https://preview*.app-*.example.com/callback?mode=one", "https://preview-pr-123.app-test.example.com/callback?mode=two", false},
 		{"exact HTTPS URI remains exact", "https://client.example.com/callback", "https://client.example.com/callback", true},
 		{"exact HTTPS URI still rejects a different path", "https://client.example.com/callback", "https://client.example.com/other", false},
+		{"literal star in HTTPS path remains exact", "https://client.example.com/callback/*", "https://client.example.com/callback/*", true},
+		{"literal star in HTTPS query remains exact", "https://client.example.com/callback?target=*", "https://client.example.com/callback?target=*", true},
 		{"loopback HTTP still ignores port", "http://localhost/callback", "http://localhost:43127/callback", true},
 		{"incoming URI cannot contain a wildcard", pattern, "https://preview-*.app-test.example.com/api/oidc/callback", false},
 	}
