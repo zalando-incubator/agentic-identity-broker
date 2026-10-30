@@ -20,7 +20,7 @@ Encryption rules: See `.claude/skills/aws-crypto-go/SKILL.md`.
 
 ### HTTP (`http/`)
 
-[ADR 004: Dual-Server Isolation](../../adrs/004-dual-server-isolation.md) defines the
+[ADR 20251215-120200: Dual-Server Isolation](../../adrs/20251215-120200-dual-server-isolation.md) defines the
 end-user `:8000` server and the admin `:14000` server.
 
 | Package | Purpose |
@@ -42,7 +42,7 @@ end-user `:8000` server and the admin `:14000` server.
 `httprc` resources refresh upstream data in the background. The adapter implements `ports.JWKSPort`.
 `published_adapter.go` provides the broker aggregated JWKS to in-process consumers.
 
-Trust anchors can use a local key set instead of a remote `jwks_uri` ([ADR 040](../../adrs/040-trust-anchor-local-key-sets.md)). Every adapter below implements `ports.JWKSPort`, and the domain validates each local document with `trustanchor.ParseLocalKeySet`.
+Trust anchors can use a local key set instead of a remote `jwks_uri` ([ADR 20261016-120000](../../adrs/20261016-120000-trust-anchor-local-key-sets.md)). Every adapter below implements `ports.JWKSPort`, and the domain validates each local document with `trustanchor.ParseLocalKeySet`.
 
 | Type | Purpose |
 |---|---|

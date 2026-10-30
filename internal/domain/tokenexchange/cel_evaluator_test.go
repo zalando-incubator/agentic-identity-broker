@@ -728,7 +728,7 @@ func validTokenExchangeConfig(_ *testing.T) CELEvaluatorConfig {
 	}
 }
 
-// --- T028: resolveAgentIdByClientId CEL function tests (Feature 021 US2) ---
+// --- T028: resolveAgentIdByClientId CEL function tests (Feature 20260320-120000 US2) ---
 
 // TestCELEvaluator_ResolveAgentIdByClientId_CorrectResult verifies that when
 // ResolveAgentIDByClientID is non-nil, the resolveAgentIdByClientId CEL function is

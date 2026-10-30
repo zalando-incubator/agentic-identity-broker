@@ -472,5 +472,5 @@ go test -bench=. -benchmem ./internal/adapters/storage/mybackend/
 
 - Current Memory Adapter: `internal/adapters/storage/memory/`
 - PostgreSQL Adapter: `internal/adapters/storage/postgres/`
-- Storage Architecture ADR: `adrs/004-storage-layer-architecture.md`
+- Storage Architecture ADR: `adrs/20251215-120300-storage-layer-architecture.md`
 - Security Checklist: `SECURITY.md`

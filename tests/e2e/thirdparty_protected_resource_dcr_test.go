@@ -269,7 +269,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			newProvider(fixtures.ConfidentialDCRProtectedResource())
 		})
 
-		// US2-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S1 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should persist one registered identity usable for account connection", Label("protected-resource-discovery"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", ""))
 			Expect(service).To(HaveKeyWithValue("issuer_uri", scenario.IssuerURLs[0]))
@@ -287,7 +287,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			Expect(provider.RegistrationCount()).To(Equal(1))
 		})
 
-		// US2-S5 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S5 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should send one explicit resource on authorization exchange and renewal", Label("protected-resource-discovery"), func() {
 			const audience = "https://files.example.test/api"
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", audience))
@@ -308,7 +308,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			Expect(provider.RegistrationCount()).To(Equal(1))
 		})
 
-		// US2-S6 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S6 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should read the explicit audience separately from its discovery URL", Label("protected-resource-discovery"), func() {
 			const audience = "https://files.example.test/api"
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", audience))
@@ -318,7 +318,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			Expect(audience).NotTo(Equal(scenario.ResourceURL))
 		})
 
-		// US2-S7 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S7 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should prefer confidential registration over advertised public registration", Label("protected-resource-discovery"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", ""))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "client_secret_basic"))
@@ -333,7 +333,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			Expect(registrations[0].Form["token_endpoint_auth_method"]).To(Equal([]string{"client_secret_basic"}))
 		})
 
-		// US2-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S10 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should register the broker name without changing service display name", Label("protected-resource-discovery"), func() {
 			Expect(scenario.ClientName).To(Equal("Example Platform"))
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", ""))
@@ -359,7 +359,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			newProvider(fixtures.PublicDCRProtectedResource())
 		})
 
-		// US2-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S2 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should connect a public client with PKCE and no secret", Label("protected-resource-discovery"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Public MCP", ""))
 			dcrConnect(enduser, client, principal, service["id"].(string))
@@ -377,7 +377,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			Expect(codes[0].BasicAuthPresent).To(BeFalse())
 		})
 
-		// US2-S8 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S8 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should register a public-only client with mandatory S256 PKCE", Label("protected-resource-discovery"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Public MCP", ""))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "none"))
@@ -407,7 +407,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			newProvider(dcrPostOnlyScenario())
 		})
 
-		// US2-S4 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S4 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should renew for exactly its configured resource with POST authentication", Label("protected-resource-discovery"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "POST MCP", ""))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "client_secret_post"))
@@ -442,7 +442,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			newProvider(fixtures.ConfidentialDCRProtectedResource())
 		})
 
-		// US2-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S3 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should renew with its confidential identity after an actual restart", Label("protected-resource-discovery", "docker"), func() {
 			service := dcrPostService(admin, principal, dcrDiscoveryRequest(scenario, "Files MCP", ""))
 			serviceID := service["id"].(string)
@@ -481,7 +481,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			newProvider(fixtures.ConfidentialDCRProtectedResource())
 		})
 
-		// US2-S9 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US2-S9 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should keep the issuer-scoped identities usable for both services", Label("protected-resource-discovery"), func() {
 			firstScenario := scenario
 			firstProvider := provider

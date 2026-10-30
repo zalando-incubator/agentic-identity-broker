@@ -424,14 +424,14 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S1 rejects each nonexistent required file before provider authentication", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "not_found", removeCredentialFailurePath)
 			}
 		})
 
-		// US3-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S3 rejects each empty required file without stored or previous-value fallback", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "empty", func(path string) {
@@ -441,7 +441,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S4 rejects each whitespace-only required file without fallback", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "empty", func(path string) {
@@ -451,7 +451,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S5 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S5 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S5 rejects each broken symlink while keeping the other projected-volume file usable", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "not_found", func(path string) {
@@ -461,7 +461,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S6 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S6 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S6 loses neither source requirement after a successful connection", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFailure(subject, "not_found", removeCredentialFailurePath)
@@ -474,7 +474,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S8 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S8 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S8 uses restored current values on the next connection and refresh without updating registration", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFailure(subject, "not_found", removeCredentialFailurePath)
@@ -494,7 +494,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S10 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S10 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S10 rejects directory targets for either required file before authentication", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "not_regular", func(path string) {
@@ -504,7 +504,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S12 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S12 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S12 rejects either regular file above 65536 bytes before trimming or authentication", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFirstUseFailure(subject, "too_large", func(path string) {
@@ -517,7 +517,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 	})
 
 	Context("when a fresh broker rejects unavailable mandatory files", func() {
-		// US3-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S2 fails closed on actual permission denial for each file and restores permissions during cleanup", func() {
 			for _, subject := range subjects {
 				startCredentialFailureProcess(subject)
@@ -530,7 +530,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S7 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S7 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S7 restarts a fresh broker and rejects each unavailable source before its first successful read", func() {
 			for _, subject := range subjects {
 				first := startCredentialFailureServer(subject)
@@ -553,7 +553,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S11 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S11 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S11 promptly rejects FIFO, Unix socket, and device targets for each file with bounded process cleanup", func() {
 			for _, subject := range subjects {
 				startCredentialFailureProcess(subject)
@@ -599,7 +599,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 			}
 		})
 
-		// US3-S9 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US3-S9 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US3-S9 preserves safe generic responses and distinct source/provider events through real RFC8693 automatic refresh", func() {
 			for _, subject := range subjects {
 				exerciseCredentialFileFailure(subject, "not_found", removeCredentialFailurePath)
@@ -618,7 +618,7 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 				expectCredentialProviderRejection(subject, "refresh", func() (*http.Response, error) {
 					return credentialFailureRefresh(subject)
 				})
-				// The rejected refresh token is recorded as expired (spec 013 US5-S4).
+				// The rejected refresh token is recorded as expired (spec 20260115-120000 US5-S4).
 				// Clear the marker so the automatic refresh reaches the provider again.
 				session, err := subject.journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(subject.journey.Principal), subject.serviceID)
 				Expect(err).NotTo(HaveOccurred())

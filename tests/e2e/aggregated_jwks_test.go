@@ -77,7 +77,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			}
 		})
 
-		// Scenario 1.1 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.1 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("returns only local signing keys", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -92,7 +92,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(kids).ToNot(ContainElement("test-key"))
 		})
 
-		// FR-029 from specs/046-cimd-upstream-client/spec.md
+		// FR-029 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("excludes CIMD client-authentication keys while retaining token-signing keys", func() {
 			cimdKID := seedCIMDClientAuthenticationKey(testStorage)
 			tokenSigningKey, err := testStorage.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
@@ -103,7 +103,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(extractKids(jwks)).ToNot(ContainElement(cimdKID))
 		})
 
-		// Scenario 1.7 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.7 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("never exposes private key material", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -123,7 +123,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			}
 		})
 
-		// Scenario 1.8 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.8 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("includes Cache-Control: public, max-age=300", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -169,7 +169,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			}
 		})
 
-		// Scenario 1.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("republishes only upstream keys", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -182,7 +182,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(extractKids(jwks)).To(ConsistOf("test-key"))
 		})
 
-		// Scenario 1.8 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.8 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("includes Cache-Control: public, max-age=300", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -192,7 +192,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.Header.Get("Cache-Control")).To(ContainSubstring("max-age=300"))
 		})
 
-		// Scenario 1.6 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.6 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("validates an upstream-issued token with the broker-hosted JWKS", func() {
 			upstreamToken, err := helpers.SignTestJWT(
 				helpers.NewJWTClaims().
@@ -250,7 +250,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			}
 		})
 
-		// Scenario 1.3 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.3 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("returns union of local and upstream keys", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -265,7 +265,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(len(keys)).To(BeNumerically(">=", 2))
 		})
 
-		// Scenario 1.4 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.4 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("validates a locally-issued token with the broker-hosted JWKS", func() {
 			agent := fixtures.LocalAgent()
 			Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
@@ -305,7 +305,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(validateJWTWithJWKS(accessToken, fetchBrokerJWKS(server.BaseURL()))).To(Succeed())
 		})
 
-		// Scenario 1.8 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.8 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("includes Cache-Control: public, max-age=300", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -315,7 +315,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.Header.Get("Cache-Control")).To(ContainSubstring("max-age=300"))
 		})
 
-		// Scenario 1.5 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.5 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("validates an upstream-issued token with the broker-hosted JWKS", func() {
 			upstreamToken, err := helpers.SignTestJWT(
 				helpers.NewJWTClaims().
@@ -329,7 +329,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(validateJWTWithJWKS(upstreamToken, fetchBrokerJWKS(server.BaseURL()))).To(Succeed())
 		})
 
-		// FR-029 from specs/046-cimd-upstream-client/spec.md
+		// FR-029 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("retains token and upstream keys while excluding CIMD client-authentication keys", func() {
 			cimdKID := seedCIMDClientAuthenticationKey(testStorage)
 			tokenSigningKey, err := testStorage.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
@@ -344,7 +344,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 	// ==================== User Story 2: Discovery Advertises Broker-Hosted JWKS ====================
 
 	Describe("discovery endpoint includes jwks_uri in all modes", func() {
-		// Scenario 2.1 from specs/032-aggregated-jwks/spec.md
+		// Scenario 2.1 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("local mode discovery includes jwks_uri", func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
@@ -369,7 +369,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(body["jwks_uri"].(string)).To(ContainSubstring("/oauth2/jwks.json"))
 		})
 
-		// Scenario 2.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 2.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("proxy mode discovery includes jwks_uri pointing to broker endpoint", func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
@@ -400,7 +400,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(jwksURI).ToNot(ContainSubstring(mockUpstream.URL()))
 		})
 
-		// Scenario 2.3 from specs/032-aggregated-jwks/spec.md
+		// Scenario 2.3 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("hybrid mode discovery includes jwks_uri", func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
@@ -428,7 +428,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(body["jwks_uri"].(string)).To(ContainSubstring("/oauth2/jwks.json"))
 		})
 
-		// Scenario 2.4 from specs/032-aggregated-jwks/spec.md
+		// Scenario 2.4 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("proxy mode jwks_uri from discovery resolves to upstream keys", func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
@@ -473,7 +473,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 	// ==================== User Story 3: Fail-Closed Upstream JWKS Availability ====================
 
 	Describe("upstream unavailability", func() {
-		// Scenario 3.1 from specs/032-aggregated-jwks/spec.md
+		// Scenario 3.1 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("proxy mode fails startup when upstream metadata is unreachable", func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
@@ -485,7 +485,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to discover OAuth2 server metadata"))
 		})
 
-		// Scenario 3.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 3.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("hybrid mode fails startup when upstream metadata is unreachable", func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
@@ -497,7 +497,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(err.Error()).To(ContainSubstring("failed to discover OAuth2 server metadata"))
 		})
 
-		// Scenario 3.3 from specs/032-aggregated-jwks/spec.md
+		// Scenario 3.3 from specs/20260604-120000-aggregated-jwks/spec.md
 		// Full-stack test: upstream is discoverable but its JWKS endpoint returns errors.
 		// The adapter is created (non-nil) but GetKeySet fails at runtime.
 		It("proxy mode returns 503 when upstream JWKS endpoint returns errors", func() {
@@ -523,7 +523,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
 		})
 
-		// Edge case from specs/032-aggregated-jwks/spec.md — malformed upstream JWKS is treated as unavailable.
+		// Edge case from specs/20260604-120000-aggregated-jwks/spec.md — malformed upstream JWKS is treated as unavailable.
 		It("proxy mode returns 503 when upstream JWKS is malformed JSON", func() {
 			malformedUpstream := helpers.NewMockUpstreamWithMalformedJWKS()
 			defer malformedUpstream.Close()
@@ -547,7 +547,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
 		})
 
-		// Scenario 3.4 from specs/032-aggregated-jwks/spec.md
+		// Scenario 3.4 from specs/20260604-120000-aggregated-jwks/spec.md
 		// Full-stack test: hybrid mode does not serve partial key set when upstream fails.
 		It("hybrid mode returns 503 when upstream JWKS endpoint returns errors (no partial set)", func() {
 			brokenUpstream := helpers.NewMockUpstreamWithBrokenJWKS()
@@ -577,7 +577,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
 		})
 
-		// Scenario 3.5 from specs/032-aggregated-jwks/spec.md
+		// Scenario 3.5 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("local mode starts without upstream and JWKS is available", func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
@@ -607,7 +607,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 	// ==================== Observability ====================
 
 	Describe("health endpoint component status", func() {
-		// OB-002 from specs/032-aggregated-jwks/spec.md
+		// OB-002 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("reports upstream_jwks as degraded after hybrid upstream refresh failures", func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 
@@ -645,7 +645,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 	// ==================== User Story 4: Duplicate Key ID Detection ====================
 
 	Describe("kid conflict detection", func() {
-		// Scenario 4.1 from specs/032-aggregated-jwks/spec.md
+		// Scenario 4.1 from specs/20260604-120000-aggregated-jwks/spec.md
 		// Full-stack test: provision a local signing key, then build a hybrid app with
 		// a mock upstream serving the same kid. The real service detects the conflict.
 		It("hybrid mode returns 503 when kid conflict is detected", func() {
@@ -691,7 +691,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
 		})
 
-		// Scenario 4.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 4.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("hybrid mode publishes all keys when no kid conflict exists", func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
@@ -729,7 +729,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			}
 		})
 
-		// Scenario 4.3 from specs/032-aggregated-jwks/spec.md
+		// Scenario 4.3 from specs/20260604-120000-aggregated-jwks/spec.md
 		// Full-stack test: kid conflict detected at startup via builder's PublishJWKS check.
 		It("returns 503 when kid conflict was detected at startup", func() {
 			testStorage, err := storageFactory.NewTestStorage()
@@ -774,7 +774,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusServiceUnavailable))
 		})
 
-		// Scenario 4.4 from specs/032-aggregated-jwks/spec.md
+		// Scenario 4.4 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("returns 503 when runtime upstream refresh introduces kid conflict", func() {
 			rotatingUpstream := helpers.NewRotatingJWKSUpstream("runtime-upstream-kid")
 			defer rotatingUpstream.Close()

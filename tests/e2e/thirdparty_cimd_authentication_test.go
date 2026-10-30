@@ -145,7 +145,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			}
 		})
 
-		// US3-S1 from specs/046-cimd-upstream-client/spec.md
+		// US3-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("identifies the broker with its metadata URL and S256 PKCE", Label("cimd-upstream-client"), func() {
 			authorizationURL := initiateConnect(enduserServer, principal, service.ID)
 
@@ -160,7 +160,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			Expect(observations.AuthorizationRequests[0].PKCEValidated).To(BeTrue())
 		})
 
-		// US3-S2 from specs/046-cimd-upstream-client/spec.md
+		// US3-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("exchanges the authorization code with a signed client assertion", Label("cimd-upstream-client"), func() {
 			response := completeConnect(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -176,7 +176,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			Expect(request.SecretAuthenticationReject).To(BeFalse())
 		})
 
-		// US3-S3 from specs/046-cimd-upstream-client/spec.md
+		// US3-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("refreshes with a signed assertion and replaces encrypted tokens", Label("cimd-upstream-client"), func() {
 			response := completeConnect(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -207,7 +207,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			Expect(refreshRequest.SecretAuthenticationReject).To(BeFalse())
 		})
 
-		// US3-S4 from specs/046-cimd-upstream-client/spec.md
+		// US3-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("fails closed when the provider rejects its client assertion", Label("cimd-upstream-client"), func() {
 			upstream.WithTokenError("invalid_client")
 
@@ -271,7 +271,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 				}
 			})
 
-			// US3-S5 from specs/046-cimd-upstream-client/spec.md
+			// US3-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 			It("keeps public and static client behavior unchanged", Label("cimd-upstream-client"), func() {
 				response := completeConnect(enduserServer, principal, staticService.ID)
 				Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -311,7 +311,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			})
 		})
 
-		// US3-S6 from specs/046-cimd-upstream-client/spec.md
+		// US3-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("sends exactly one valid JWT-bearer assertion pair", Label("cimd-upstream-client"), func() {
 			response := completeConnect(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -368,7 +368,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 				}
 			})
 
-			// US3-S8 from specs/046-cimd-upstream-client/spec.md
+			// US3-S8 from specs/20260917-120000-cimd-upstream-client/spec.md
 			It("keeps CIMD and token signing keys in separate domains", Label("cimd-upstream-client"), func() {
 				response := completeConnect(enduserServer, principal, service.ID)
 				Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -462,7 +462,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			}
 		})
 
-		// US3-S7 from specs/046-cimd-upstream-client/spec.md
+		// US3-S7 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("uses its dedicated CIMD identity and keys in proxy mode", Label("cimd-upstream-client"), func() {
 			response := completeConnect(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))

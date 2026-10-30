@@ -1,5 +1,5 @@
 -- Migration: Drop agents table
--- Feature: 006-domain-model-apis
+-- Feature: 20251217-120000-domain-model-apis
 -- Description: Drops the agents table and associated indexes
 
 -- Drop indexes

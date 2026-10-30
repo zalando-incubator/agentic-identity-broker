@@ -2,15 +2,15 @@
 
 Read changed tests and adjacent READMEs before you write a test. Use `tests/e2e/README.md` for broker HTTP E2E patterns. It is historical. Use the current test tree for feature coverage.
 
-Read [007-e2e-testing-with-ginkgo.md](../../adrs/007-e2e-testing-with-ginkgo.md). This ADR binds the E2E test architecture.
+Read [20260106-120000-e2e-testing-with-ginkgo.md](../../adrs/20260106-120000-e2e-testing-with-ginkgo.md). This ADR binds the E2E test architecture.
 
 ## Constitution Principle XIII — Mandatory Rules
 
 1. **Spec-to-test mapping**: Map each `It()` to one acceptance scenario.
    Read it from `specs/<feature>/spec.md`. A shared `Describe` comment can map one scenario when it clearly covers that block.
 2. **Spec traceability**: Add a nearby comment with the actual scenario identifier.
-   For example: `// US1-S1 from specs/024-approval-api-ui/spec.md`.
-   You can also use `// Scenario 1 from specs/036-canonical-resource-ids/spec.md`.
+   For example: `// US1-S1 from specs/20260327-120000-approval-api-ui/spec.md`.
+   You can also use `// Scenario 1 from specs/20260813-120000-canonical-resource-ids/spec.md`.
 3. **Production bootstrap**: Use `app.Builder` and production DI. Do not use custom test implementations.
 4. **Observe production behavior**: Use production constructors and externally visible behavior for startup and readiness assertions.
 

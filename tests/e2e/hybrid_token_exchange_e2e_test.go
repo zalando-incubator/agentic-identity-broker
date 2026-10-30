@@ -238,7 +238,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		return resp
 	}
 
-	// Scenario 1.5 from specs/032-aggregated-jwks/spec.md
+	// Scenario 1.5 from specs/20260604-120000-aggregated-jwks/spec.md
 	It("should accept upstream-issued subject tokens in hybrid mode", func() {
 		resp := postTokenExchange(tokenFixtures.SubjectToken, tokenFixtures.ClientAssertion)
 		defer func() { _ = resp.Body.Close() }()
@@ -250,7 +250,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		Expect(body["access_token"]).To(Equal("github-token-xyz"))
 	})
 
-	// Scenario 1.4 from specs/032-aggregated-jwks/spec.md
+	// Scenario 1.4 from specs/20260604-120000-aggregated-jwks/spec.md
 	It("should accept locally-issued subject tokens in hybrid mode", func() {
 		localSubjectToken := mintLocalSubjectToken()
 
@@ -264,7 +264,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		Expect(body["access_token"]).To(Equal("github-token-xyz"))
 	})
 
-	// Scenario US1-S5 from specs/013-token-exchange/spec.md
+	// Scenario US1-S5 from specs/20260115-120000-token-exchange/spec.md
 	It("should reject locally-issued client assertions in hybrid mode", func() {
 		localClientAssertion := mintLocalSubjectToken()
 
@@ -392,7 +392,7 @@ var _ = Describe("Token Exchange Client-Assertion JWKS Override", func() {
 		return resp
 	}
 
-	// Scenario US7-S3 from specs/013-token-exchange/spec.md
+	// Scenario US7-S3 from specs/20260115-120000-token-exchange/spec.md
 	It("uses the explicit client-assertion JWKS when the issuer equals the upstream", func() {
 		now := time.Now()
 		assertion, err := mockJWKS.SignJWT(map[string]any{

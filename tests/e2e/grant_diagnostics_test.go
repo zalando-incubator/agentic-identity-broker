@@ -543,7 +543,7 @@ var _ = Describe("Grant Denial Classification", func() {
 		fixture = newGrantDiagnosticsFixture()
 	})
 
-	// GD-C1 from specs/013-token-exchange/spec.md.
+	// GD-C1 from specs/20260115-120000-token-exchange/spec.md.
 	DescribeTable("[GD-C1] preserves the OAuth denial and classifies the authorization limit before session retrieval",
 		func(configure func(*grantDiagnosticsFixture), detail string) {
 			configure(fixture)
@@ -595,7 +595,7 @@ var _ = Describe("Grant Observation Context", func() {
 		fixture = newGrantDiagnosticsFixture()
 	})
 
-	// GD-O1 from specs/013-token-exchange/spec.md.
+	// GD-O1 from specs/20260115-120000-token-exchange/spec.md.
 	DescribeTable("[GD-O1] observes only resolved agent and found-grant metadata without changing the wire response",
 		func(configure func(*grantDiagnosticsFixture), status int, detail string, registeredAgent, foundGrant bool) {
 			configure(fixture)
@@ -711,7 +711,7 @@ var _ = Describe("Grant Deletion Outcomes", func() {
 		fixture = newGrantDiagnosticsFixture()
 	})
 
-	// GD-D1 from specs/013-token-exchange/spec.md.
+	// GD-D1 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-D1] returns 204 then 404 for grant revocation and records one minimal successful revoke", func() {
 		path := "/api/consent/agents/" + fixture.Agent.ID.String() + "/grants"
 		fixture.Delete(fixture.Enduser, path, http.StatusNoContent)
@@ -726,7 +726,7 @@ var _ = Describe("Grant Deletion Outcomes", func() {
 		Expect(records[0]["grant_id"]).To(Equal(fixture.Grant.ID.String()))
 	})
 
-	// GD-D1 from specs/013-token-exchange/spec.md.
+	// GD-D1 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-D1] keeps existing and absent agent deletes at 204 with one domain deletion record", func() {
 		fixture.Delete(fixture.Enduser, "/api/consent/agents/"+fixture.Agent.ID.String()+"/grants", http.StatusNoContent)
 		fixture.Logs.Reset()
@@ -741,7 +741,7 @@ var _ = Describe("Grant Deletion Outcomes", func() {
 		Expect(records[0]["agent_id"]).To(Equal(fixture.Agent.ID.String()))
 	})
 
-	// GD-D1 from specs/013-token-exchange/spec.md.
+	// GD-D1 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-D1] keeps existing and absent unused permission-set deletes at 204 with one domain deletion record", func() {
 		fixture.Delete(fixture.Enduser, "/api/consent/agents/"+fixture.Agent.ID.String()+"/grants", http.StatusNoContent)
 		fixture.Delete(fixture.Admin, "/api/agents/"+fixture.Agent.ID.String(), http.StatusNoContent)
@@ -769,7 +769,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		fixture.SeedSession(fixture.S0, []string{})
 	})
 
-	// GD-S1 from specs/013-token-exchange/spec.md.
+	// GD-S1 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-S1] correlates missing consent, one creation, and a successful exchange with the stored grant", func() {
 		Expect(fixture.Storage.UserGrants().Delete(context.Background(), fixture.Grant.ID)).To(Succeed())
 		fixture.AssertLifecycleExchange(fixture.S1, nil, "grant_missing")
@@ -788,7 +788,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_created"}), "exchange must not create a duplicate lifecycle event")
 	})
 
-	// GD-S2 from specs/013-token-exchange/spec.md.
+	// GD-S2 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-S2] records observed coverage changes but not identical consent or a rejected empty POST", func() {
 		before, err := fixture.Storage.UserGrants().Get(context.Background(), fixture.Grant.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -819,7 +819,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		fixture.AssertLifecycleExchange(fixture.S1, stored, "")
 	})
 
-	// GD-S3 from specs/013-token-exchange/spec.md.
+	// GD-S3 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-S3] audits real admin definition changes and diagnoses their coverage limits without changing the user grant", func() {
 		grant, err := fixture.Storage.UserGrants().Get(context.Background(), fixture.Grant.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -942,7 +942,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated", "permission_set_updated"}))
 	})
 
-	// GD-S4 from specs/013-token-exchange/spec.md.
+	// GD-S4 from specs/20260115-120000-token-exchange/spec.md.
 	It("[GD-S4] preserves rejected empty consent, audits the deleted snapshot once, and omits absent-delete audits", func() {
 		grant, err := fixture.Storage.UserGrants().Get(context.Background(), fixture.Grant.ID)
 		Expect(err).NotTo(HaveOccurred())

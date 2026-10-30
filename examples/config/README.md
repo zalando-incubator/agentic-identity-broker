@@ -395,8 +395,8 @@ OAuth2 Authorization Server proxy configuration. Demonstrates:
 **Key Features:**
 - RFC 6749 compliant OAuth2 Authorization Code flow
 - RFC 8414 OAuth2 metadata discovery (/.well-known/oauth-authorization-server)
-- Integration with broker's consent UI (Feature 007)
-- Agent registry validation (Feature 006)
+- Integration with broker's consent UI (Feature 20251217-120100)
+- Agent registry validation (Feature 20251217-120000)
 - TLS certificate validation enforced (no self-signed certificates)
 - Audit logging for authorization requests
 - Multi-agent client sharing: optional `multi_agent_client` block allows multiple agents to share one upstream OAuth2 application
@@ -419,7 +419,7 @@ multi_agent_client:
 
 ### `cimd.yaml` — Client ID Metadata Document (CIMD) Configuration
 
-Annotated configuration example for the CIMD feature (Feature 028). Demonstrates the `cimd` block nested inside `oauth2_authorization_server`:
+Annotated configuration example for the CIMD feature (Feature 20260421-120000). Demonstrates the `cimd` block nested inside `oauth2_authorization_server`:
 - `enabled` — enable URL-based `client_id` support (default: `false`)
 - `fetch_timeout` / `max_response_bytes` — fetch safety limits
 - `cache.max_ttl` / `cache.min_ttl` — operator TTL bounds for cached documents
@@ -884,13 +884,13 @@ See [docs/configuration.md](../../docs/configuration.md) for the complete list.
 
 ### ADR Reference
 
-[ADR 011](../../adrs/011-opentelemetry-provider-pattern.md) documents the app-layer OTel provider pattern, `otelchi` library choice, and context-based span propagation approach.
+[ADR 20260301-120000](../../adrs/20260301-120000-opentelemetry-provider-pattern.md) documents the app-layer OTel provider pattern, `otelchi` library choice, and context-based span propagation approach.
 
 ## See Also
 
 - [Configuration Guide](../../docs/configuration.md) - Comprehensive documentation
-- [ADR 002](../../adrs/002-configuration-libraries.md) - Library selection rationale
-- [ADR 011](../../adrs/011-opentelemetry-provider-pattern.md) - OpenTelemetry provider pattern
+- [ADR 20251215-120000](../../adrs/20251215-120000-configuration-libraries.md) - Library selection rationale
+- [ADR 20260301-120000](../../adrs/20260301-120000-opentelemetry-provider-pattern.md) - OpenTelemetry provider pattern
 - [Architecture](../../ARCHITECTURE.md) - Configuration subsystem architecture
 
 ### `approvals.yaml`

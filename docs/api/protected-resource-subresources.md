@@ -1,6 +1,6 @@
 # Protected Resource Subresources API
 
-> **Implemented API — Feature 035.** The admin server implements this protected-resource
+> **Implemented API — Feature 20260812-120000.** The admin server implements this protected-resource
 API and full-service update behavior. [`api/admin/openapi.yaml`](../../api/admin/openapi.yaml)
 is the canonical API definition.
 

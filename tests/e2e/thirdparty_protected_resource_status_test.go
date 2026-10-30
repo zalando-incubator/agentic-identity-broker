@@ -295,7 +295,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 			service = create(request)
 		})
 
-		// US4-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S1 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should report credential-free ready status without provider traffic", Label("protected-resource-discovery"), func() {
 			serviceID := service["id"].(string)
 			callsBefore := len(provider.Calls())
@@ -326,7 +326,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 			Expect(provider.Calls()).To(HaveLen(before))
 		})
 
-		// US4-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S2 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should preserve active settings, ETag and sessions after failed refresh", Label("protected-resource-discovery"), func() {
 			serviceID := service["id"].(string)
 			connect(serviceID, providerClient)
@@ -346,7 +346,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		})
 
 		Context("and the issuer republishes its endpoints", func() {
-			// US4-S4 from specs/050-oauth2-protected-resource-discovery/spec.md
+			// US4-S4 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 			It("should refresh endpoints while retaining the same client identity", Label("protected-resource-discovery"), func() {
 				serviceID := service["id"].(string)
 				before, _ := readService(serviceID)
@@ -378,7 +378,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		Context("and a failed refresh is followed by a PostgreSQL restart", func() {
 			BeforeEach(func() { usePostgres = true })
 
-			// US4-S5 from specs/050-oauth2-protected-resource-discovery/spec.md
+			// US4-S5 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 			It("should retain failed status and renew with the persisted credential", Label("protected-resource-discovery", "docker"), func() {
 				serviceID := service["id"].(string)
 				connect(serviceID, providerClient)
@@ -413,7 +413,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		})
 
 		Context("and the resource audience was derived", func() {
-			// US4-S6 from specs/050-oauth2-protected-resource-discovery/spec.md
+			// US4-S6 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 			It("should replace the derived audience with a newly verified resource", Label("protected-resource-discovery"), func() {
 				serviceID := service["id"].(string)
 				newResource := strings.TrimSuffix(scenario.ResourceURL, "/mcp") + "/mcp-v2"
@@ -442,7 +442,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		Context("and an administrator chose a different token audience", func() {
 			BeforeEach(func() { override = "https://files.example.test/api" })
 
-			// US4-S7 from specs/050-oauth2-protected-resource-discovery/spec.md
+			// US4-S7 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 			It("should retain the explicit audience when refreshing without an override", Label("protected-resource-discovery"), func() {
 				serviceID := service["id"].(string)
 				response := update(serviceID, serviceRequest(scenario.ResourceURL))
@@ -463,7 +463,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 				assertRefreshCall(override, updated["client_id"].(string))
 			})
 
-			// US4-S8 from specs/050-oauth2-protected-resource-discovery/spec.md
+			// US4-S8 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 			It("should restore the verified resource when replacement parameters omit it", Label("protected-resource-discovery"), func() {
 				serviceID := service["id"].(string)
 				request := serviceRequest(scenario.ResourceURL)
@@ -486,7 +486,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 				}
 			})
 		})
-		// US4-S9 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S9 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should protect connected sessions when the token audience changes", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
 			serviceID := service["id"].(string)
 			resourceB := verifiedResourceB()
@@ -562,7 +562,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 			assertRejected(manual, false)
 		})
 
-		// US4-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S10 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject an old audience callback before exchanging its code", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
 			serviceID := service["id"].(string)
 			resourceB := verifiedResourceB()
@@ -605,7 +605,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 			Expect(provider.Calls()).To(ContainElement(And(HaveField("Path", "/token"), HaveField("Form", HaveKeyWithValue("resource", []string{resourceB})))))
 		})
 
-		// US4-S11 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S11 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should distinguish pinned and derived audiences with equal URLs", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
 			serviceID := service["id"].(string)
 			resourceA, resourceB := scenario.ResourceURL, verifiedResourceB()
@@ -661,7 +661,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 			config.Security.SkipThirdpartyHTTPSValidation = true
 		})
 
-		// US4-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US4-S3 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should report not applicable without changing manual account connections", Label("protected-resource-discovery"), func() {
 			fixture := fixtures.PublicClientService()
 			request := map[string]any{

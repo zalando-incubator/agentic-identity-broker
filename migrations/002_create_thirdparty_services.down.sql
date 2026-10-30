@@ -1,5 +1,5 @@
 -- Migration: Drop thirdparty_oauth2_services table
--- Feature: 006-domain-model-apis
+-- Feature: 20251217-120000-domain-model-apis
 -- Description: Drops the thirdparty_oauth2_services table and associated indexes
 
 -- Drop indexes

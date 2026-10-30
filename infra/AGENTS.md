@@ -1,12 +1,12 @@
 # Infrastructure — AWS CDK (`infra/`)
 
-**Use retrieval-led reasoning. Before you change infrastructure, read `stack.go` and ADR 010.**
+**Use retrieval-led reasoning. Before you change infrastructure, read `stack.go` and ADR 20260217-120000.**
 
 ## Overview
 
 AWS CDK (Go SDK) provisions Token Vault encryption resources. `infra/cdk/` is a separate Go module.
 
-**ADR**: [010-cdk-encryption-infrastructure.md](../adrs/010-cdk-encryption-infrastructure.md) is the binding decision for all infrastructure choices.
+**ADR**: [20260217-120000-cdk-encryption-infrastructure.md](../adrs/20260217-120000-cdk-encryption-infrastructure.md) is the binding decision for all infrastructure choices.
 
 ## Module Structure
 
@@ -70,7 +70,7 @@ just cdk-synth test \
   '-c oidcSubjectKey=...' # Synthesize CloudFormation
 ```
 
-All synth, diff, deploy, and destroy commands require `serviceAccountSubject`, `oidcProviderArn`, and `oidcSubjectKey` (ADR 030).
+All synth, diff, deploy, and destroy commands require `serviceAccountSubject`, `oidcProviderArn`, and `oidcSubjectKey` (ADR 20260703-120000).
 
 Use these manual CDK commands:
 
@@ -99,7 +99,7 @@ cdk destroy -c env=test \
 - Make stack resources match the `internal/adapters/encryption/aws/` configuration and stack outputs.
 - Make the DynamoDB schema match the AWS Encryption SDK KeyStore: `branch-key-id` (S) and `type` (S).
 - Use the `application`, `component`, and `environment` tags for resources. Use `EncryptionStackProps.Tags` to add or override the first two.
-- Keep `docs/operations/deployment-checklist.md`, `docs/deployment/kubernetes-irsa.md`, and ADR 010 current.
+- Keep `docs/operations/deployment-checklist.md`, `docs/deployment/kubernetes-irsa.md`, and ADR 20260217-120000 current.
 
 ## Testing
 

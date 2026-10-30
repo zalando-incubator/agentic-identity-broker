@@ -82,7 +82,7 @@ var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorL
 	}
 
 	Context("an inline key set or a key-set file", func() {
-		// US5-S1 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US5-S1 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("derives the principal for GET /api/me with an inline source and, separately, with a file source", func() {
 			By("verifying with an inline key set")
 			startEnduser(signedConfig(func(jwt *ports.JWTConfig) {
@@ -101,7 +101,7 @@ var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorL
 	})
 
 	Context("separate key sets on the admin and end-user servers", func() {
-		// US5-S4 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US5-S4 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("derives the admin principal only from a JWT signed by the admin server's own key set", func() {
 			operator := helpers.NewLocalES256Key("admin-proxy-2026-10")
 			path := env.trust.WriteFile("mesh-jwks.json", helpers.PublicKeySet(mesh))
@@ -136,7 +136,7 @@ var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorL
 	})
 
 	Context("signature verification disabled or without a key source", func() {
-		// US5-S2 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US5-S2 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup when verification none is combined with jwks or with jwks_file", func() {
 			unsigned := func(configure func(*ports.JWTConfig)) *ports.Config {
 				config := fixtures.UnsignedJWTConfig()
@@ -158,7 +158,7 @@ var _ = Describe("Local key sets for JWT pre-authentication", Label(trustAnchorL
 			}), jwtAnchorPath+": verification 'none' and jwks_file are mutually exclusive")
 		})
 
-		// US5-S3 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US5-S3 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup when verification jwks has no key source, as it does today", func() {
 			env.expectStartupFailure(signedConfig(func(*ports.JWTConfig) {}),
 				jwtAnchorPath+": failed to create JWT authenticator")

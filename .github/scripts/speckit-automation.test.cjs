@@ -19,7 +19,7 @@ const {
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
-const spec = "specs/042-example";
+const spec = "specs/20260910-120000-example";
 const files = {
   [`${spec}/spec.md`]: "Feature requirements",
   [`${spec}/plan.md`]: "Technical plan",
@@ -487,7 +487,7 @@ test("PR metadata selects feature artifacts without requiring an ignored pointer
   const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
   const clarification = [comment(result("clarify"))];
   const markerPR = fixture("pull_request_target", payload, {
-    pr: { body: "<!-- speckit-issue: 7 -->\n<!-- speckit-feature: specs/042-example -->" },
+    pr: { body: "<!-- speckit-issue: 7 -->\n<!-- speckit-feature: specs/20260910-120000-example -->" },
     comments: clarification,
     missingPointer: true,
   });
@@ -495,7 +495,7 @@ test("PR metadata selects feature artifacts without requiring an ignored pointer
   assert(!markerPR.contentReads.includes(".specify/feature.json"));
 
   const linkPR = fixture("pull_request_target", payload, {
-    pr: { body: "<!-- speckit-issue: 7 -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/042-example/spec.md" },
+    pr: { body: "<!-- speckit-issue: 7 -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/20260910-120000-example/spec.md" },
     comments: clarification,
     missingPointer: true,
   });
@@ -517,11 +517,11 @@ test("invalid and duplicate feature metadata fail closed instead of reading a po
   const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
   for (const metadata of [
     "<!-- speckit-feature: ../../other -->",
-    "<!-- speckit-feature: specs/042-example -->\n<!-- speckit-feature: specs/043-other -->",
+    "<!-- speckit-feature: specs/20260910-120000-example -->\n<!-- speckit-feature: specs/20260914-120000-other -->",
     "Specification: https://github.com/example/broker/blob/speckit/issue-7/../../spec.md",
     "<!-- speckit-feature:  -->",
     "<!-- speckit-feature: -->",
-    "<!-- speckit-feature:  -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/042-example/spec.md",
+    "<!-- speckit-feature:  -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/20260910-120000-example/spec.md",
     "Specification: https://github.com/example/broker/blob/speckit/issue-7//spec.md",
   ]) {
     const f = fixture("pull_request_target", payload, {
@@ -1056,10 +1056,10 @@ test("implementation may tick and add tasks, but only after it started and never
 test("the approval comment lists each item with a pinned link, replaces the previous one, and binds the reviewed state", async () => {
   const head = "a".repeat(40);
   const contract = `${spec}/contracts/api.yaml`;
-  const extra = { [contract]: "openapi: 3.1.0\npaths:\n  /token:\n    post: {}\n", "adrs/044-agent.md": "# ADR 044\nStatus: Proposed\n" };
+  const extra = { [contract]: "openapi: 3.1.0\npaths:\n  /token:\n    post: {}\n", "adrs/20261022-120000-agent.md": "# ADR 20261022-120000\nStatus: Proposed\n" };
   const approvals = [
     { kind: "api", title: "Adds | the token @team claim <b>", location: `${contract}:3-4` },
-    { kind: "adr", title: "Accept ADR 044 for C:\\agents", location: "adrs/044-agent.md:2" },
+    { kind: "adr", title: "Accept ADR 20261022-120000 for C:\\agents", location: "adrs/20261022-120000-agent.md:2" },
   ];
   const reanalysis = comment(result("reanalyze", { approvals }), { id: 13 });
   const f = fixture("pull_request_target", {}, { comments: [reanalysis, approvalComment({ reanalysis: 12 }, { id: 40 })], extra });
@@ -1069,9 +1069,9 @@ test("the approval comment lists each item with a pinned link, replaces the prev
   const { body } = f.created[0];
   assert.match(body, /React with 👍 to approve all 2 items below for commit `aaaaaaa`/);
   assert.ok(body.includes(`| A1 | API | Adds \\| the token @​team claim &lt;b> | [\`${contract}:3-4\`](https://github.com/example/broker/blob/${head}/${contract}#L3-L4) |`));
-  assert.ok(body.includes(`| A2 | ADR | Accept ADR 044 for C:\\\\agents | [\`adrs/044-agent.md:2\`](https://github.com/example/broker/blob/${head}/adrs/044-agent.md#L2) |`));
+  assert.ok(body.includes(`| A2 | ADR | Accept ADR 20261022-120000 for C:\\\\agents | [\`adrs/20261022-120000-agent.md:2\`](https://github.com/example/broker/blob/${head}/adrs/20261022-120000-agent.md#L2) |`));
   assert.deepEqual(JSON.parse(body.match(/<!-- speckit-approval: (.*) -->/)[1]), {
-    reanalysis: 13, head, items: 2, tree: "tree-1", files: { "adrs/044-agent.md": `blob:${extra["adrs/044-agent.md"]}` },
+    reanalysis: 13, head, items: 2, tree: "tree-1", files: { "adrs/20261022-120000-agent.md": `blob:${extra["adrs/20261022-120000-agent.md"]}` },
   });
   const approved = { ...posted, user: { login: "github-actions[bot]", type: "Bot" }, updated_at: "2026-10-28T10:00:00Z" };
   assert.equal((await route(fixture("issue_comment", commandEvent(command("/speckit-implement")), {

@@ -107,7 +107,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		}
 	})
 
-	// Scenario US1-S3, US2-S3 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US1-S3, US2-S3 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("returns 204 when grant exists and is owned by principal", func() {
 		// Given: An active grant exists for (principal, agent)
 		// When: Principal sends DELETE request for their grant
@@ -120,7 +120,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusNoContent))
 	})
 
-	// Scenario Edge: not-found from specs/022-revoke-agent-consent/spec.md
+	// Scenario Edge: not-found from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("returns 404 when no grant exists for the principal+agent", func() {
 		// Given: anotherAgent has no grant for this principal
 		// When: Principal sends DELETE for a non-existent grant
@@ -133,7 +133,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
 	})
 
-	// Scenario SR-001, Edge from specs/022-revoke-agent-consent/spec.md
+	// Scenario SR-001, Edge from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("returns 404 when grant exists for different principal", func() {
 		// Given: The grant is owned by DefaultPrincipal
 		// When: AnotherPrincipal sends DELETE for the same agent
@@ -146,7 +146,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
 	})
 
-	// Scenario SR-001 from specs/022-revoke-agent-consent/spec.md
+	// Scenario SR-001 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("returns 401 when no principal header is present", func() {
 		// Given: No X-Remote-User header is included
 		// When: Unauthenticated DELETE request is sent
@@ -159,7 +159,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 	})
 
-	// Scenario API validation from specs/022-revoke-agent-consent/spec.md
+	// Scenario API validation from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("returns 400 when agent-id is not a valid UUID", func() {
 		// Given: An authenticated principal
 		// When: DELETE request is sent with a non-UUID agent-id
@@ -173,7 +173,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 	})
 
-	// Scenario US1-S4, US2-S3 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US1-S4, US2-S3 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("removes grant from list after successful revocation", func() {
 		// Given: An active grant exists for (principal, agent)
 
@@ -232,7 +232,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 			}
 		})
 
-		// Scenario US3-S1 from specs/022-revoke-agent-consent/spec.md
+		// Scenario US3-S1 from specs/20260320-120100-revoke-agent-consent/spec.md
 		It("token exchange is rejected after grant is revoked", func() {
 			// Given: User revokes consent for the agent
 			revokeResp, err := tokenExchangeServer.DirectRequest("DELETE", agentPath, principal, nil, nil)
@@ -264,7 +264,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 			Expect(tokenResp).To(matchers.HaveStatusCode(http.StatusForbidden))
 		})
 
-		// Scenario US3-S2 from specs/022-revoke-agent-consent/spec.md
+		// Scenario US3-S2 from specs/20260320-120100-revoke-agent-consent/spec.md
 		It("immediate token exchange re-attempt is rejected", func() {
 			// Given: Token exchange succeeds while grant is active
 			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("github-token-pre-revoke")

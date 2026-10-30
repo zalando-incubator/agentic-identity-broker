@@ -1,5 +1,5 @@
 -- Migration: Create thirdparty_oauth2_services table
--- Feature: 006-domain-model-apis
+-- Feature: 20251217-120000-domain-model-apis
 -- Description: Creates the table for storing third-party OAuth2 service configurations
 
 CREATE TABLE IF NOT EXISTS thirdparty_oauth2_services (

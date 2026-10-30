@@ -395,4 +395,4 @@ No external test dependencies (Ginkgo, Gomega, etc.) are imported by fixtures.
 - `/tests/e2e/bootstrap/` - Server and storage setup (volatile layer)
 - `/tests/e2e/helpers/` - HTTP and mock server utilities
 - `/tests/e2e/matchers/` - Custom Gomega matchers
-- `/specs/009-oauth2-auth-server/spec.md` - Acceptance scenarios mapped to E2E tests
+- `/specs/20251222-120100-oauth2-auth-server/spec.md` - Acceptance scenarios mapped to E2E tests

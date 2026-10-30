@@ -396,7 +396,7 @@ func tokenExchangeMetadata(fields map[string]*structpb.Value) *corev3.Metadata {
 // tokenExchangeMetadataWithProtocol builds token-exchange metadata with an
 // agentgateway protocol field. When protocol == "mcp", it also sets a default
 // mcp_server field, since mcp_server is mandatory for MCP requests once OPA
-// authorization is enabled (spec 044 FR-004). Tests that need to exercise the
+// authorization is enabled (spec 20260916-120000 FR-004). Tests that need to exercise the
 // absent-mcp_server rejection path must build metadata without this helper's
 // default (see TestServer_OPA_AbsentMCPServerMetadata_Returns403).
 func tokenExchangeMetadataWithProtocol(fields map[string]*structpb.Value, protocol string) *corev3.Metadata {
@@ -3873,7 +3873,7 @@ func TestServer_Process_TransportFailuresRetainRequestContext(t *testing.T) {
 
 // tokenExchangeMetadataWithMCPServer builds valid token-exchange metadata for the "mcp"
 // protocol, additionally setting agentgateway's mcp_server field. This is agentgateway
-// routing metadata, not an MCP protocol field (spec 044).
+// routing metadata, not an MCP protocol field (spec 20260916-120000).
 func tokenExchangeMetadataWithMCPServer(mcpServer string) *corev3.Metadata {
 	metadata := tokenExchangeMetadataWithProtocol(tokenExchangeMetadataFields(
 		structpb.NewStringValue(testSubjectToken),
@@ -3883,7 +3883,7 @@ func tokenExchangeMetadataWithMCPServer(mcpServer string) *corev3.Metadata {
 	return metadata
 }
 
-// Spec 044: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
+// Spec 20260916-120000: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
 // in the body phase.
 func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.T) {
 	var seenTargetServerName string
@@ -3917,8 +3917,8 @@ func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.
 	assert.Equal(t, "github-mcp", seenTargetServerName)
 }
 
-// Spec 044 FR-004: absent mcp_server metadata for an MCP-protocol request MUST be
-// rejected with 403, mirroring how absent protocol metadata is rejected (spec 020
+// Spec 20260916-120000 FR-004: absent mcp_server metadata for an MCP-protocol request MUST be
+// rejected with 403, mirroring how absent protocol metadata is rejected (spec 20260314-120100
 // FR-003). Neither the authorizer nor the exchanger must be invoked.
 func TestServer_OPA_AbsentMCPServerMetadata_Returns403(t *testing.T) {
 	auth := &mockAuthorizer{
@@ -3967,7 +3967,7 @@ func TestServer_OPA_AbsentMCPServerMetadata_Returns403(t *testing.T) {
 	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
 }
 
-// Spec 044: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
+// Spec 20260916-120000: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
 // for header-only requests too.
 func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testing.T) {
 	var seenTargetServerName string
@@ -3997,7 +3997,7 @@ func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testin
 	assert.Equal(t, "github-mcp", seenTargetServerName)
 }
 
-// Spec 044 Edge Case (batch requests): every element in a JSON-RPC batch must receive
+// Spec 20260916-120000 Edge Case (batch requests): every element in a JSON-RPC batch must receive
 // the identical mcp.target_server_name value, sourced once from the agentgateway
 // metadata at the headers phase.
 func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing.T) {

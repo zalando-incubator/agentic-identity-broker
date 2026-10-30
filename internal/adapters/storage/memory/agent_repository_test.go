@@ -83,7 +83,7 @@ func TestAgentRepository_Create(t *testing.T) {
 		assert.Contains(t, err.Error(), "already exists")
 	})
 
-	t.Run("duplicate client_id allowed (Feature 021: multiple agents share one upstream client_id)", func(t *testing.T) {
+	t.Run("duplicate client_id allowed (Feature 20260320-120000: multiple agents share one upstream client_id)", func(t *testing.T) {
 		repo := NewAgentRepository()
 		agent1 := &storage.Agent{
 			ClientID:       ptr.To(id.ClientID("shared-upstream-client")),
@@ -101,7 +101,7 @@ func TestAgentRepository_Create(t *testing.T) {
 		err := repo.Create(ctx, agent1)
 		require.NoError(t, err)
 
-		// Feature 021: duplicate client_id must NOT return an error
+		// Feature 20260320-120000: duplicate client_id must NOT return an error
 		err = repo.Create(ctx, agent2)
 		require.NoError(t, err, "multiple agents may share the same upstream client_id")
 	})
@@ -242,7 +242,7 @@ func TestAgentRepository_Update(t *testing.T) {
 	})
 
 	t.Run("client_id shared on update (multi-agent mode)", func(t *testing.T) {
-		// Feature 021: the repo no longer enforces client_id uniqueness on update.
+		// Feature 20260320-120000: the repo no longer enforces client_id uniqueness on update.
 		// Uniqueness is the app handler's responsibility (checkClientIDUniqueness).
 		// Multiple agents may share the same upstream client_id.
 		repo := NewAgentRepository()
@@ -443,7 +443,7 @@ func TestAgentRepository_Delete_Concurrent(t *testing.T) {
 func TestAgentRepository_MultipleAgentsShareClientID(t *testing.T) {
 	ctx := context.Background()
 
-	// Regression test for the byClientID 1:1 index bug (Feature 021):
+	// Regression test for the byClientID 1:1 index bug (Feature 20260320-120000):
 	// When two agents share a ClientID and one is updated to use a new ClientID,
 	// delete(byClientID, oldClientID) removes the *entire* index entry, making the
 	// other agent invisible via GetByClientID even though its ClientID is unchanged.
@@ -466,7 +466,7 @@ func TestAgentRepository_MultipleAgentsShareClientID(t *testing.T) {
 		err := repo.Create(ctx, alpha)
 		require.NoError(t, err)
 
-		// Feature 021: duplicate client_id is allowed
+		// Feature 20260320-120000: duplicate client_id is allowed
 		err = repo.Create(ctx, beta)
 		require.NoError(t, err, "multiple agents may share the same upstream client_id")
 

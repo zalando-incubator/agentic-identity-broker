@@ -2,7 +2,7 @@ package e2e_test
 
 // Permission Sets E2E Acceptance Tests (019)
 //
-// This file implements all 25 acceptance scenarios from specs/019-permission-sets/spec.md.
+// This file implements all 25 acceptance scenarios from specs/20260314-120000-permission-sets/spec.md.
 // Following Constitution Principle XIII: 1:1 spec-to-test mapping.
 //
 // Each It() block maps to exactly ONE acceptance scenario.
@@ -177,7 +177,7 @@ var _ = Describe("Permission Sets (019)", func() {
 	// ===========================================================================
 
 	Describe("US1: Admin Manages Permission Sets", func() {
-		// US1.S1 from specs/019-permission-sets/spec.md
+		// US1.S1 from specs/20260314-120000-permission-sets/spec.md
 		It("creates a permission set and returns its generated ID", func() {
 			// US1.S1
 			body := map[string]interface{}{
@@ -204,7 +204,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(result["name"]).To(Equal("GitHub Read Access"))
 		})
 
-		// US1.S2 from specs/019-permission-sets/spec.md
+		// US1.S2 from specs/20260314-120000-permission-sets/spec.md
 		It("returns name, description, and service_scope entries for GET by ID", func() {
 			// US1.S2
 			// Create first
@@ -243,7 +243,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(scopes).To(HaveLen(1))
 		})
 
-		// US1.S3 from specs/019-permission-sets/spec.md
+		// US1.S3 from specs/20260314-120000-permission-sets/spec.md
 		It("reflects updated values after PUT with modified scopes", func() {
 			// US1.S3
 			createBody := map[string]interface{}{
@@ -289,7 +289,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(scopeList).To(HaveLen(2))
 		})
 
-		// US1.S4 from specs/019-permission-sets/spec.md
+		// US1.S4 from specs/20260314-120000-permission-sets/spec.md
 		It("removes the permission set and returns 404 on subsequent GET", func() {
 			// US1.S4
 			createBody := map[string]interface{}{
@@ -328,7 +328,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(getResp.StatusCode).To(Equal(http.StatusNotFound))
 		})
 
-		// US1.S5 from specs/019-permission-sets/spec.md
+		// US1.S5 from specs/20260314-120000-permission-sets/spec.md
 		It("rejects DELETE with 409 when permission set is referenced by an agent", func() {
 			// US1.S5
 			createBody := map[string]interface{}{
@@ -379,7 +379,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(errBody["message"]).To(ContainSubstring("agent"))
 		})
 
-		// US1.S6 from specs/019-permission-sets/spec.md
+		// US1.S6 from specs/20260314-120000-permission-sets/spec.md
 		It("filters permission set list by service_id", func() {
 			// US1.S6
 			// Create two permission sets: one for GitHub, one for Google
@@ -502,7 +502,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			agentID = agentData["id"].(string)
 		})
 
-		// US2.S1 from specs/019-permission-sets/spec.md
+		// US2.S1 from specs/20260314-120000-permission-sets/spec.md
 		It("renders mandatory sets locked and optional sets togglable on consent screen", func() {
 			// US2.S1 — consent-info returns permission_sets with correct requirement_type
 			resp, err := enduserServer.AuthenticatedGET(
@@ -527,7 +527,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(second["requirement_type"]).To(Equal("optional"))
 		})
 
-		// US2.S2 from specs/019-permission-sets/spec.md
+		// US2.S2 from specs/20260314-120000-permission-sets/spec.md
 		It("displays human-readable description without raw OAuth2 scope strings", func() {
 			// US2.S2 — permission_set.description present; no raw scopes in top-level response
 			resp, err := enduserServer.AuthenticatedGET(
@@ -562,7 +562,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			}
 		})
 
-		// US2.S3 from specs/019-permission-sets/spec.md
+		// US2.S3 from specs/20260314-120000-permission-sets/spec.md
 		It("omits connect button for service with an active session", func() {
 			// US2.S3 — active_session_service_ids includes the service when the user has an active session
 			// Seed an active session for the GitHub service.
@@ -587,7 +587,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(activeIDs).To(ContainElement(githubServiceID), "github service must appear in active_session_service_ids")
 		})
 
-		// US3.S6 from specs/019-permission-sets/spec.md
+		// US3.S6 from specs/20260314-120000-permission-sets/spec.md
 
 		It("discloses the assigned permission-set scope union for a require-all-scopes requirement", func() {
 			ps1Resp, err := adminServer.DirectRequest(
@@ -674,7 +674,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(serviceRequirements).ToNot(BeEmpty(), "expected at least one service requirement")
 		})
 
-		// US2.S5 from specs/019-permission-sets/spec.md
+		// US2.S5 from specs/20260314-120000-permission-sets/spec.md
 		It("updates optional card checked state on toggle without affecting service connections", func() {
 			// US2.S5 — consent grant stores both mandatory + user-selected optional IDs
 			// FR-020: Seed active sessions for both services so grant submission succeeds.
@@ -700,7 +700,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(gps).To(HaveLen(2))
 		})
 
-		// US2.S6 from specs/019-permission-sets/spec.md
+		// US2.S6 from specs/20260314-120000-permission-sets/spec.md
 		It("renders single mandatory card with approve/decline and no toggling", func() {
 			// US2.S6 — consent-info with only mandatory PS; submission with only mandatory ID succeeds
 			// FR-020: Seed active session for github (the only service in the mandatory PS).
@@ -725,7 +725,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(gps).To(HaveKey(mandatoryPSID))
 		})
 
-		// US2.S7 from specs/019-permission-sets/spec.md
+		// US2.S7 from specs/20260314-120000-permission-sets/spec.md
 		It("enables Approve button when all displayed services have active sessions", func() {
 			// US2.S7 — consent-info returns active_session_service_ids for connected services
 			// When all services in the dynamic set have active sessions, the grant can be submitted.
@@ -787,7 +787,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			validPSID = parsePS(r)["id"].(string)
 		})
 
-		// US3.S1 from specs/019-permission-sets/spec.md
+		// US3.S1 from specs/20260314-120000-permission-sets/spec.md
 		It("persists agent permission_sets list in declaration order", func() {
 			// US3.S1
 			// Create second PS
@@ -834,7 +834,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(second["permission_set_id"]).To(Equal(secondPSID))
 		})
 
-		// US3.S2 from specs/019-permission-sets/spec.md
+		// US3.S2 from specs/20260314-120000-permission-sets/spec.md
 		It("rejects agent registration with non-existent permission_set_id with 400", func() {
 			// US3.S2
 			nonExistentID := "ffffffff-ffff-ffff-ffff-ffffffffffff"
@@ -859,7 +859,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(errResult["message"]).To(ContainSubstring(nonExistentID))
 		})
 
-		// US3.S3 from specs/019-permission-sets/spec.md
+		// US3.S3 from specs/20260314-120000-permission-sets/spec.md
 		It("returns resolved permission set objects with requirement_type in consent-info", func() {
 			// US3.S3
 			agentBody := map[string]interface{}{
@@ -897,7 +897,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(ps["name"]).To(Equal("Valid PS for Agent"))
 		})
 
-		// US3.S4 from specs/019-permission-sets/spec.md
+		// US3.S4 from specs/20260314-120000-permission-sets/spec.md
 		It("returns service_requirements and permission_sets independently in agent response", func() {
 			// US3.S4
 			agentBody := map[string]interface{}{
@@ -933,7 +933,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(psList).To(HaveLen(1))
 		})
 
-		// US3.S5 from specs/019-permission-sets/spec.md
+		// US3.S5 from specs/20260314-120000-permission-sets/spec.md
 		It("rejects agent creation when SR service_id is not covered by any PS with 400 — FR-019", func() {
 			// US3.S5 — FR-019 coverage invariant
 			// Create a second service ID not covered by validPSID
@@ -1027,7 +1027,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			agentID = parsePS(ar)["id"].(string)
 		})
 
-		// US4.S1 from specs/019-permission-sets/spec.md
+		// US4.S1 from specs/20260314-120000-permission-sets/spec.md
 		It("stores granted_permission_sets with per-service inclusion for mandatory + toggled optional IDs", func() {
 			// US4.S1
 			// FR-020: Seed active sessions for both services.
@@ -1057,7 +1057,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(gps).To(HaveKey(optionalPSID))
 		})
 
-		// US4.S1 from specs/019-permission-sets/spec.md
+		// US4.S1 from specs/20260314-120000-permission-sets/spec.md
 		// Verifies that submitting consent stores a UserGrant with granted_permission_sets
 		// (create response and get response). Token exchange with granted_permission_sets
 		// in the response (US4.S2) requires a signed JWT client assertion and is covered
@@ -1109,7 +1109,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(gps).To(HaveKey(optionalPSID))
 		})
 
-		// US4.S2 from specs/019-permission-sets/spec.md
+		// US4.S2 from specs/20260314-120000-permission-sets/spec.md
 		It("includes granted_permission_sets in token exchange response", func() {
 			// US4.S2 — /oauth2/token response includes granted_permission_sets when the grant has PS entries
 			// FR-020: Seed active sessions for both services.
@@ -1189,7 +1189,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(gps).To(HaveKey(mandatoryPSID))
 		})
 
-		// US4.S3 from specs/019-permission-sets/spec.md
+		// US4.S3 from specs/20260314-120000-permission-sets/spec.md
 		It("upserts UserGrant with new granted_permission_sets on re-consent", func() {
 			// US4.S3
 			// FR-020: Seed active sessions for both services before any grant submission.
@@ -1297,7 +1297,7 @@ var _ = Describe("Permission Sets (019)", func() {
 				expectProceed(authorize())
 			})
 
-			// US4.S5 from specs/019-permission-sets/spec.md
+			// US4.S5 from specs/20260314-120000-permission-sets/spec.md
 			It("redirects to consent when an included optional service session was deleted", func() {
 				Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), id.Principal(userPrincipal), id.MustParseServiceID(googleServiceID))).To(Succeed())
 
@@ -1312,7 +1312,7 @@ var _ = Describe("Permission Sets (019)", func() {
 				Expect(detail["active_session_service_ids"]).To(ConsistOf(githubServiceID))
 			})
 
-			// US4.S6 from specs/019-permission-sets/spec.md
+			// US4.S6 from specs/20260314-120000-permission-sets/spec.md
 			It("proceeds after the user deselects the disconnected optional service on consent", func() {
 				Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), id.Principal(userPrincipal), id.MustParseServiceID(googleServiceID))).To(Succeed())
 				consentURL, err := url.Parse(authorize())
@@ -1339,7 +1339,7 @@ var _ = Describe("Permission Sets (019)", func() {
 				expectProceed(authorize())
 			})
 
-			// US4.S7 from specs/019-permission-sets/spec.md
+			// US4.S7 from specs/20260314-120000-permission-sets/spec.md
 			It("does not require consent for a missing session of a service the grant does not include", func() {
 				deselectResp, err := enduserServer.AuthenticatedPOST(
 					fmt.Sprintf("/api/consent/agents/%s/grants", reauthAgentID),
@@ -1356,7 +1356,7 @@ var _ = Describe("Permission Sets (019)", func() {
 				expectProceed(authorize())
 			})
 
-			// US4.S8 from specs/019-permission-sets/spec.md
+			// US4.S8 from specs/20260314-120000-permission-sets/spec.md
 			It("redirects to consent when the provider rejected an included service's refresh token", func() {
 				now := time.Now()
 				rejected := fixtures.ExpiredRefreshableSession(userPrincipal, id.MustParseServiceID(googleServiceID), now)
@@ -1371,7 +1371,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			})
 		})
 
-		// US4.S4 from specs/019-permission-sets/spec.md
+		// US4.S4 from specs/20260314-120000-permission-sets/spec.md
 		It("computes scope union for two permission sets both covering Service A", func() {
 			// US4.S4 — Create two PSets covering same service (GitHub), each with different scopes
 			// FR-020: Seed active session for GitHub (both PSets use the same service).
@@ -1438,7 +1438,7 @@ var _ = Describe("Permission Sets (019)", func() {
 	// ===========================================================================
 
 	Describe("Edge Case: Token Exchange Fails on Insufficient Scopes", func() {
-		// Edge from specs/019-permission-sets/spec.md
+		// Edge from specs/20260314-120000-permission-sets/spec.md
 		It("fails token exchange with descriptive error when UserSession scopes are insufficient", func() {
 			// Edge case: FR-018 — token exchange returns descriptive error when UserSession
 			// does not cover the required scopes from the granted permission sets.

@@ -152,13 +152,13 @@ var _ = Describe("Continuing consent for local refresh", func() {
 					startChain()
 				})
 
-				// S1 from specs/049-fix-refresh-consent/spec.md.
+				// S1 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("rejects refresh after grant deletion", func() {
 					revokeGrant()
 					expectDenied()
 				})
 
-				// S2 from specs/049-fix-refresh-consent/spec.md.
+				// S2 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("does not resurrect the old chain after re-grant", func() {
 					revokeGrant()
 					payload := `{"granted_permission_sets":{"` + fixtures.PlaceholderPermissionSetID.String() + `":["` + fixtures.PlaceholderServiceID.String() + `"]}}`
@@ -170,7 +170,7 @@ var _ = Describe("Continuing consent for local refresh", func() {
 					rotate(issue())
 				})
 
-				// S3 from specs/049-fix-refresh-consent/spec.md.
+				// S3 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("rejects refresh after grant expiration", func() {
 					past := time.Now().Add(-time.Hour)
 					grant.ValidUntil = &past
@@ -178,14 +178,14 @@ var _ = Describe("Continuing consent for local refresh", func() {
 					expectDenied()
 				})
 
-				// S4 from specs/049-fix-refresh-consent/spec.md.
+				// S4 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("rejects the old chain when credential deletion makes the client public", func() {
 					deleteAt(admin, "/api/agents/"+agent.ID.String()+"/client-credentials", "")
 					secret = ""
 					expectDenied()
 				})
 
-				// S5 from specs/049-fix-refresh-consent/spec.md.
+				// S5 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("cannot mint tokens after agent deletion", func() {
 					deleteAt(admin, "/api/agents/"+agent.ID.String(), "")
 					status, body := refresh(token)
@@ -198,7 +198,7 @@ var _ = Describe("Continuing consent for local refresh", func() {
 			Context("public client", func() {
 				BeforeEach(startChain)
 
-				// S6 from specs/049-fix-refresh-consent/spec.md.
+				// S6 from specs/20261012-120000-fix-refresh-consent/spec.md.
 				It("ends public-client refresh authority when consent is deleted", func() {
 					revokeGrant()
 					expectDenied()

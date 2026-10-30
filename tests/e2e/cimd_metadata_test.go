@@ -41,7 +41,7 @@ var _ = Describe("CIMD Authorization Server Metadata", func() {
 		}
 	})
 
-	// Scenario US4.1 from specs/028-cimd-support/spec.md
+	// Scenario US4.1 from specs/20260421-120000-cimd-support/spec.md
 	// Given CIMD is enabled in configuration,
 	// When the metadata endpoint is queried,
 	// Then the response includes client_id_metadata_document_supported: true.
@@ -70,7 +70,7 @@ var _ = Describe("CIMD Authorization Server Metadata", func() {
 		})
 	})
 
-	// Scenario US4.2 from specs/028-cimd-support/spec.md
+	// Scenario US4.2 from specs/20260421-120000-cimd-support/spec.md
 	// Given CIMD is disabled in configuration,
 	// When the metadata endpoint is queried,
 	// Then client_id_metadata_document_supported is absent from the response.

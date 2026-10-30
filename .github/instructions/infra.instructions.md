@@ -6,7 +6,7 @@ applyTo: "infra/**"
 
 Full reference: `infra/AGENTS.md`
 
-**ADR**: `adrs/010-cdk-encryption-infrastructure.md` — binding decision for all infrastructure choices.
+**ADR**: `adrs/20260217-120000-cdk-encryption-infrastructure.md` — binding decision for all infrastructure choices.
 
 ## Module Structure
 

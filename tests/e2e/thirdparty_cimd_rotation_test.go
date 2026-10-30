@@ -233,7 +233,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			setupCIMDService(true)
 		})
 
-		// US4-S1 from specs/046-cimd-upstream-client/spec.md
+		// US4-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should keep the public key location stable before use", Label("cimd-upstream-client"), func() {
 			metadataBefore := readCIMDMetadata()
 			rotatedKey := createCIMDKey(adminServer, "ES256")
@@ -253,7 +253,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			))
 		})
 
-		// US4-S2 from specs/046-cimd-upstream-client/spec.md
+		// US4-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should refresh cached public keys for a newly active assertion", Label("cimd-upstream-client"), func() {
 			Expect(upstream.RefreshClientMetadata(context.Background(), service.ClientID.String())).To(Succeed())
 			Expect(upstream.Observations().CachedKeyIDs).To(ContainElement(initialKeyID))
@@ -272,7 +272,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			))
 		})
 
-		// US4-S4 from specs/046-cimd-upstream-client/spec.md
+		// US4-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should publish a grace key while the previous key signs", Label("cimd-upstream-client"), func() {
 			metadata := readCIMDMetadata()
 			previousKeyIDs := keyIDs(readCIMDJWKS(metadata.JWKSURI))
@@ -288,7 +288,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			Expect(previousKeyIDs).To(ContainElement(observations.TokenRequests[0].AssertionKeyID))
 		})
 
-		// US4-S5 from specs/046-cimd-upstream-client/spec.md
+		// US4-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should sign with an immediately promoted key", Label("cimd-upstream-client"), func() {
 			candidate := createCIMDKey(adminServer, "ES256")
 			Expect(upstream.RefreshClientMetadata(context.Background(), service.ClientID.String())).To(Succeed())
@@ -312,7 +312,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			Expect(testStorage.UserSessions().Create(context.Background(), session)).To(Succeed())
 		})
 
-		// US4-S3 from specs/046-cimd-upstream-client/spec.md
+		// US4-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should fail closed without sending a token request", Label("cimd-upstream-client"), func() {
 			Expect(listCIMDKeys(adminServer)).To(BeEmpty())
 			pendingKeyID := seedCIMDClientAuthenticationKey(testStorage)
@@ -338,7 +338,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			Expect(upstream.Observations().TokenRequests).To(BeEmpty())
 		})
 
-		// US4-S6 from specs/046-cimd-upstream-client/spec.md
+		// US4-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should activate the first generated key immediately", Label("cimd-upstream-client"), func() {
 			Expect(listCIMDKeys(adminServer)).To(BeEmpty())
 			firstKey := createCIMDKey(adminServer, "ES256")
@@ -408,7 +408,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			}
 		})
 
-		// US4-S7 from specs/046-cimd-upstream-client/spec.md
+		// US4-S7 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should isolate CIMD key routes in every server mode", Label("cimd-upstream-client"), func() {
 			for _, mode := range modeServers {
 				var tokenSigningKeysBefore []cimdKeyMetadata
@@ -453,7 +453,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 			setupCIMDService(true)
 		})
 
-		// US4-S8 from specs/046-cimd-upstream-client/spec.md
+		// US4-S8 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should reject non-ES256 generation without publishing a key", Label("cimd-upstream-client"), func() {
 			keysBefore := listCIMDKeys(adminServer)
 			response, err := adminServer.AuthenticatedPOST(

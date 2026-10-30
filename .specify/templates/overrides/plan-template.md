@@ -1,8 +1,8 @@
 # Implementation Plan: [FEATURE]
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Branch**: `[YYYYMMDD-HHMMSS-feature-name]` | **Date**: [DATE] | **Spec**: [link]
 
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Input**: Feature specification from `/specs/[YYYYMMDD-HHMMSS-feature-name]/spec.md`
 
 **Note**: This template is filled in by the `/speckit-plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
 
@@ -38,7 +38,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 
 - [ ] **Domain Model**: Have entities, aggregates, value objects been identified and documented?
 - [ ] **Domain Concepts**: Will new domain terms be added to `ARCHITECTURE.md` Glossary?
-- [ ] **Entity IDs**: For each new domain entity with a UUID primary key, will a typed ID (`type XxxID uuid.UUID`) be added to `internal/domain/id/` via `gen_ids.go` and documented in `internal/domain/id/AGENTS.md`? (ADR 013)
+- [ ] **Entity IDs**: For each new domain entity with a UUID primary key, will a typed ID (`type XxxID uuid.UUID`) be added to `internal/domain/id/` via `gen_ids.go` and documented in `internal/domain/id/AGENTS.md`? (ADR 20260313-120000)
 - [ ] **Configuration Design**: Have all config requirements been identified with YAML examples?
 - [ ] **Config Examples**: Will example YAML snippets be added to examples/config/?
 - [ ] **Helm Deployment Contract**: If configuration changes affect a workload deployed by `charts/agentic-identity-broker/`, will its values, templates, and README be updated? Otherwise, is the standalone binary's accepted ADR boundary documented and kept out of the broker chart?
@@ -62,7 +62,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 - [ ] **End-User Docs**: Will API documentation be rendered in `docs/api/` with examples?
 - [ ] **Migration Testing**: Will migrations be tested (apply/rollback) in PostgreSQL integration tests?
 - [ ] **Hexagonal Architecture**: Does domain logic use ports (interfaces) with clear adapter separation?
-- [ ] **Persistence Patterns**: If adding persistence, will it follow specs/004-persistence-layer/quickstart.md?
+- [ ] **Persistence Patterns**: If adding persistence, will it follow specs/20251215-120100-persistence-layer/quickstart.md?
 
 *If any BLOCKING check fails, stop and clarify requirements. Implementation cannot begin until all preconditions complete.*
 
@@ -71,7 +71,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 ### Documentation (this feature)
 
 ```text
-specs/[###-feature]/
+specs/[YYYYMMDD-HHMMSS-feature]/
 ├── plan.md              # This file (/speckit-plan command output)
 ├── research.md          # Phase 0 output (/speckit-plan command)
 ├── data-model.md        # Phase 1 output (/speckit-plan command)

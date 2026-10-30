@@ -744,7 +744,7 @@ var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 
 	BeforeEach(func() { broker.setFailing(false) })
 
-	// Feature 023 User Story 1 Amendment, Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Challenge through agentgateway
+	// Feature 20260326-120000 User Story 1 Amendment, Scenario 1 (specs/20260326-120000-extproc-mcp-elicitation/spec.md): Challenge through agentgateway
 	It("returns HTTP 403 with an insufficient_scope challenge and the URL elicitation body when the broker requires re-authentication", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		token, err := jwtFixture.MintToken("agentgateway-reauth-scenario-1", time.Now().Add(10*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
@@ -767,7 +767,7 @@ var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 		helpers.ExpectReauthElicitationBody(body, agentgwRecoveryURL, agentgwRecoveryDescription)
 	})
 
-	// Feature 023 User Story 1 Amendment, Scenario 2 (specs/023-extproc-mcp-elicitation/spec.md): mcp-go after initialize
+	// Feature 20260326-120000 User Story 1 Amendment, Scenario 2 (specs/20260326-120000-extproc-mcp-elicitation/spec.md): mcp-go after initialize
 	It("surfaces the challenge to an initialized mcp-go client as a typed URL elicitation error", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		token, err := jwtFixture.MintToken("agentgateway-reauth-scenario-2", time.Now().Add(10*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
@@ -781,7 +781,7 @@ var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 		Expect(elicitation.Elicitations[0].URL).To(Equal(agentgwRecoveryURL))
 	})
 
-	// Feature 023 2026-10-26 Amendment, User Story 3 Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Step-up authorization and retry
+	// Feature 20260326-120000 2026-10-26 Amendment, User Story 3 Scenario 1 (specs/20260326-120000-extproc-mcp-elicitation/spec.md): Step-up authorization and retry
 	It("lets a go-sdk client step up through the advertised authorization server and retry successfully", NodeTimeout(2*time.Minute), func(ctx SpecContext) {
 		initial, err := jwtFixture.MintToken("agentgateway-stepup-user", time.Now().Add(10*time.Minute))
 		Expect(err).NotTo(HaveOccurred())

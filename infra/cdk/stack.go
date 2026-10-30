@@ -128,7 +128,7 @@ func NewEncryptionStack(scope constructs.Construct, id string, props *Encryption
 	// Keep documentation in sync:
 	// - docs/operations/deployment-checklist.md
 	// - docs/deployment/kubernetes-irsa.md
-	// - adrs/010-cdk-encryption-infrastructure.md
+	// - adrs/20260217-120000-cdk-encryption-infrastructure.md
 	kmsKey := awskms.NewKey(stack, jsii.String("EncryptionKEK"), &awskms.KeyProps{
 		Description:       jsii.String(fmt.Sprintf("Agentic Identity Broker - Token Vault KEK (%s)", props.Environment)),
 		KeySpec:           awskms.KeySpec_SYMMETRIC_DEFAULT,
@@ -154,7 +154,7 @@ func NewEncryptionStack(scope constructs.Construct, id string, props *Encryption
 	// project name. Keep documentation in sync:
 	// - docs/operations/deployment-checklist.md
 	// - docs/deployment/kubernetes-irsa.md
-	// - adrs/010-cdk-encryption-infrastructure.md
+	// - adrs/20260217-120000-cdk-encryption-infrastructure.md
 	tableName := fmt.Sprintf("AgenticIdentityBrokerBranchKeys-%s", props.Environment)
 	branchKeyTable := awsdynamodb.NewTable(stack, jsii.String("BranchKeyTable"), &awsdynamodb.TableProps{
 		TableName: jsii.String(tableName),

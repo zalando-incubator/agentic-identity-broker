@@ -127,10 +127,10 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 ### 1. Standalone process — isolated ExtProc packages
 
-Do not import `internal/domain/`, `internal/ports/`, or `internal/adapters/` from `internal/extproc/`, except `internal/domain/approval/toolpattern` as authorized by ADR 035 for shared approval-pattern semantics. No other `internal/domain/` package is permitted.
+Do not import `internal/domain/`, `internal/ports/`, or `internal/adapters/` from `internal/extproc/`, except `internal/domain/approval/toolpattern` as authorized by ADR 20260904-120100 for shared approval-pattern semantics. No other `internal/domain/` package is permitted.
 
 The `cmd/extproc-token-exchange/` composition layer can import `internal/ports`.
-It can also import `internal/adapters/telemetry` for OpenTelemetry (ADR 027).
+It can also import `internal/adapters/telemetry` for OpenTelemetry (ADR 20260421-120000).
 Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 
 ### 2. Three port interfaces: Exchanger, Authorizer, and ApprovalGate
@@ -221,11 +221,11 @@ Call `LoadWithCommand()` in `cmd/extproc-token-exchange/root.go`. Do not read co
 
 Envoy ExtProc needs a response type for each phase. Use `StreamedBodyResponse` for request and response bodies.
 
-### 8. Metadata-only token-exchange input (ADR 036)
+### 8. Metadata-only token-exchange input (ADR 20260914-120000)
 
 Both header paths must call `extractTokenExchangeInput()` as the single validation path. Do not restore raw-header extraction, resource-URI construction, fallback, dual-source precedence, or a configuration toggle. Do not log, return, or emit the subject token or rejected resource URI in diagnostics.
 
-See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the input trust boundary only. It does not change the standalone-process boundary in ADR 011 or the token cache in ADR 012.
+See accepted `adrs/20260914-120000-extproc-metadata-token-exchange-input.md`. It changes the input trust boundary only. It does not change the standalone-process boundary in ADR 20260223-120000 or the token cache in ADR 20260223-120200.
 
 ---
 
@@ -310,10 +310,10 @@ It sets `EXTPROC_CONFIG_PATH=/app/config.yaml`.
 
 | Document | Path |
 |---|---|
-| Feature spec | `specs/015-extproc-token-exchange/spec.md` |
-| Implementation plan | `specs/015-extproc-token-exchange/plan.md` |
-| Data model | `specs/015-extproc-token-exchange/data-model.md` |
-| gRPC contract | `specs/015-extproc-token-exchange/contracts/extproc-grpc.md` |
-| Configuration schema | `specs/015-extproc-token-exchange/contracts/configuration.md` |
-| Docker Compose integration | `specs/015-extproc-token-exchange/contracts/docker-compose.md` |
-| Quickstart | `specs/015-extproc-token-exchange/quickstart.md` |
+| Feature spec | `specs/20260223-120000-extproc-token-exchange/spec.md` |
+| Implementation plan | `specs/20260223-120000-extproc-token-exchange/plan.md` |
+| Data model | `specs/20260223-120000-extproc-token-exchange/data-model.md` |
+| gRPC contract | `specs/20260223-120000-extproc-token-exchange/contracts/extproc-grpc.md` |
+| Configuration schema | `specs/20260223-120000-extproc-token-exchange/contracts/configuration.md` |
+| Docker Compose integration | `specs/20260223-120000-extproc-token-exchange/contracts/docker-compose.md` |
+| Quickstart | `specs/20260223-120000-extproc-token-exchange/quickstart.md` |

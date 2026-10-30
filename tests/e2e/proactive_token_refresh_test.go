@@ -210,7 +210,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				release = upstream.WithTokenResponseGate()
 			})
 
-			// US1-S1 from specs/029-proactive-token-refresh/spec.md
+			// US1-S1 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should drop a saturated refresh without delaying due or healthy exchanges", func() {
 				Expect(proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, first, agent)), http.StatusOK)["access_token"]).To(Equal("github-token-xyz"))
 				Expect(proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, second, agent)), http.StatusOK)["access_token"]).To(Equal("github-token-xyz"))
@@ -237,7 +237,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				release = upstream.WithTokenResponseGate()
 			})
 
-			// US1-S2 from specs/029-proactive-token-refresh/spec.md
+			// US1-S2 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should return the old token before committing background renewal", func() {
 				original := storedSession(principal)
 				oldExpiry := *original.AccessTokenExpiresAt
@@ -253,7 +253,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Consistently(func() int { return len(upstream.GetTokenRequests()) }, 200*time.Millisecond).Should(Equal(1))
 			})
 
-			// US2-S3 from specs/015-extproc-token-exchange/spec.md.
+			// US2-S3 from specs/20260223-120000-extproc-token-exchange/spec.md.
 			It("should replace a near-expiry token through broker and ExtProc without extending its lifetime", func() {
 				form := proactiveExchangeForm(upstream, principal, agent)
 				policyPath, err := filepath.Abs("extproc/fixtures/policies/allow_all.rego")
@@ -286,7 +286,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
 			})
 
-			// US1-S3 from specs/029-proactive-token-refresh/spec.md
+			// US1-S3 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should deduplicate concurrent exchanges during an in-flight refresh", func() {
 				form := proactiveExchangeForm(upstream, principal, agent)
 				first := make(chan proactiveExchangeResult, 1)
@@ -333,7 +333,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 		Context("and its refresh token remains valid", func() {
 			BeforeEach(func() { seedSession(fixtures.ExpiredGitHubSessionForPrincipal(principal)) })
 
-			// US2-S1 from specs/029-proactive-token-refresh/spec.md
+			// US2-S1 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should synchronously renew once and log success after persistence", func() {
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusOK)
 				Expect(body["access_token"]).To(Equal("renewed-github-token"))
@@ -352,7 +352,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 		Context("and both stored tokens have expired", func() {
 			BeforeEach(func() { seedSession(fixtures.FullyExpiredSessionForPrincipal(principal, serviceID.String())) })
 
-			// US2-S2 from specs/029-proactive-token-refresh/spec.md
+			// US2-S2 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should require reauthentication without contacting the provider", func() {
 				before := storedSession(principal)
 				oldAccess := bytes.Clone(before.EncryptedAccessToken)
@@ -379,7 +379,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				upstream.WithErrorResponse("invalid_grant")
 			})
 
-			// US2-S3 from specs/029-proactive-token-refresh/spec.md
+			// US2-S3 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should require reauthentication and preserve encrypted session tokens", func() {
 				before := storedSession(principal)
 				access, refresh := bytes.Clone(before.EncryptedAccessToken), bytes.Clone(before.EncryptedRefreshToken)
@@ -430,7 +430,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				seedSession(never)
 			})
 
-			// US3-S1 from specs/029-proactive-token-refresh/spec.md
+			// US3-S1 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should paginate only due sessions and exclude healthy and timeless rows", func() {
 				oldDue := bytes.Clone(storedSession(due).EncryptedAccessToken)
 				healthyExpiry := *storedSession(healthy).AccessTokenExpiresAt
@@ -485,7 +485,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				seedSession(succeedingSession)
 			})
 
-			// US3-S2 from specs/029-proactive-token-refresh/spec.md
+			// US3-S2 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should count expired refresh tokens as failures and continue the sweep", func() {
 				oldFailedRefresh := bytes.Clone(storedSession(failed).EncryptedRefreshToken)
 				oldFailedExpiry := *storedSession(failed).AccessTokenExpiresAt
@@ -550,7 +550,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				release = upstream.WithTokenResponseGate()
 			})
 
-			// US3-S3 from specs/029-proactive-token-refresh/spec.md
+			// US3-S3 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should refresh a shared session only once across concurrent replicas", func() {
 				// Check the route before the first replica waits on the provider gate.
 				preview := proactiveSweepBody(proactiveSweep(admin, `{"lookahead_duration":"PT10M","dry_run":true}`))
@@ -589,7 +589,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				seedSession(fixtures.GitHubSessionForPrincipal(healthy))
 			})
 
-			// US3-S4 from specs/029-proactive-token-refresh/spec.md
+			// US3-S4 from specs/20260507-120000-proactive-token-refresh/spec.md
 			It("should count due sessions without provider calls or writes", func() {
 				principals := []string{first, second, healthy}
 				before := make(map[string]storagedomain.UserSession, len(principals))

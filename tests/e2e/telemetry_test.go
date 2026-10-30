@@ -72,7 +72,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	// US1: Enable Distributed Tracing for Request Debugging
 
 	Context("when tracing is enabled", func() {
-		// Scenario US1-S1 from specs/017-opentelemetry-support/spec.md
+		// Scenario US1-S1 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should emit a trace span for end-user server requests", func() {
 			resp, err := server.PublicGET("/health")
 			Expect(err).ToNot(HaveOccurred())
@@ -84,7 +84,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
 		})
 
-		// Scenario US1-S2 from specs/017-opentelemetry-support/spec.md
+		// Scenario US1-S2 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should emit a trace span for admin server requests with distinct server identification", func() {
 			resp, err := adminServer.PublicGET("/health")
 			Expect(err).ToNot(HaveOccurred())
@@ -135,7 +135,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			}
 		})
 
-		// Scenario US1-S4 from specs/017-opentelemetry-support/spec.md
+		// Scenario US1-S4 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should not emit any trace spans", func() {
 			// Snapshot the recorder before the request. Only spans added AFTER this
 			// snapshot could be caused by the disabled server.
@@ -159,7 +159,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	// US2: Expose Runtime Metrics for Capacity Planning
 
 	Context("when metrics are enabled", func() {
-		// Scenario US2-S3 from specs/017-opentelemetry-support/spec.md
+		// Scenario US2-S3 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should not export metric data when metrics are disabled", func() {
 			// TelemetryEnabledConfig() has Metrics.Enabled=false while Traces.Enabled=true.
 			// This verifies that the app operates normally when only tracing is active:
@@ -177,7 +177,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	// US3: Configurable Telemetry Without Code Changes
 
 	Context("when no telemetry config is present", func() {
-		// Scenario US3-S1 from specs/017-opentelemetry-support/spec.md
+		// Scenario US3-S1 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should start normally with telemetry disabled and no overhead", func() {
 			// Build a dedicated server with DefaultOAuth2Config (Telemetry.Enabled=false).
 			// This is distinct from the BeforeEach server which uses TelemetryEnabledConfig.
@@ -215,7 +215,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	})
 
 	Context("when OTLP gRPC protocol is configured", func() {
-		// Scenario US3-S2 from specs/017-opentelemetry-support/spec.md
+		// Scenario US3-S2 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should initialize a gRPC trace exporter successfully", func() {
 			// TelemetryGRPCConfig has Enabled=true, Protocol="grpc". BuildAppWithTracerProvider
 			// bypasses NewProvider() for the exporter path (covered by TestNewProvider_GRPCInitializes
@@ -246,7 +246,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	})
 
 	Context("when OTLP HTTP protocol is configured", func() {
-		// Scenario US3-S3 from specs/017-opentelemetry-support/spec.md
+		// Scenario US3-S3 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should initialize an HTTP trace exporter successfully", func() {
 			// TelemetryHTTPConfig has Enabled=true, Protocol="http". Same approach as US3-S2:
 			// BuildAppWithTracerProvider bypasses NewProvider() for the exporter path (covered
@@ -277,7 +277,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	})
 
 	Context("when custom resource attributes are configured", func() {
-		// Scenario US3-S4 from specs/017-opentelemetry-support/spec.md
+		// Scenario US3-S4 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should attach custom service name and attributes to all spans", func() {
 			// TelemetryEnabledConfig sets ServiceName="test-broker". The in-memory TracerProvider
 			// used in BeforeEach does not carry resource attributes (those are set by NewProvider()
@@ -343,7 +343,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			}
 		})
 
-		// Scenario US4-S1 from specs/017-opentelemetry-support/spec.md
+		// Scenario US4-S1 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should start successfully and log a warning about the unreachable collector", func() {
 			// Startup success is already asserted in BeforeEach (BuildApp must not error).
 			// This It() verifies the app serves requests normally after startup.
@@ -353,7 +353,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			Expect(resp.StatusCode).To(Equal(200))
 		})
 
-		// Scenario US4-S2 from specs/017-opentelemetry-support/spec.md
+		// Scenario US4-S2 from specs/20260228-120000-opentelemetry-support/spec.md
 		It("should continue serving requests normally with no latency impact", func() {
 			// Send multiple requests to verify continuous availability with an unreachable
 			// OTLP endpoint. The OTel SDK handles buffering and export retries internally.

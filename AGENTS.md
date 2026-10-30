@@ -13,7 +13,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 ### Architecture & Decisions
 
 `ARCHITECTURE.md` | Source of truth for system design
-`adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
+`adrs/YYYYMMDD-HHMMSS-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
 `.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
 
 ### Section-Specific Agent Context
@@ -43,9 +43,9 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 ### Specs (Feature Requirements)
 
-`specs/NNN-<name>/spec.md` | Feature requirements + acceptance scenarios
-`specs/NNN-<name>/plan.md` | Implementation approach
-`specs/NNN-<name>/tasks.md` | Trackable task list
+`specs/YYYYMMDD-HHMMSS-<name>/spec.md` | Feature requirements + acceptance scenarios
+`specs/YYYYMMDD-HHMMSS-<name>/plan.md` | Implementation approach
+`specs/YYYYMMDD-HHMMSS-<name>/tasks.md` | Trackable task list
 `.specify/templates/overrides/spec-template.md` | Spec template: required sections, including concrete example journeys (Principle XIV)
 `.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
 `.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
@@ -124,47 +124,47 @@ See Principle II in `.specify/memory/constitution.md`.
 
 | ADR | File | Decision |
 |---|---|---|
-| 002 | `adrs/002-configuration-libraries.md` | Viper + Cobra + godotenv config |
-| 003 | `adrs/003-chi-framework.md` | chi v5 HTTP router |
-| 004 | `adrs/004-dual-server-isolation.md` | errgroup dual-server :8000/:14000 |
-| 004 | `adrs/004-storage-layer-architecture.md` | Hexagonal storage, ISP repos, sqlx |
-| 005 | `adrs/005-spa-serving-pattern.md` | Embedded SPA with history API fallback |
-| 006 | `adrs/006-frontend-stack.md` | React 19 + Vite + Tailwind + Vitest |
-| 007 | `adrs/007-e2e-testing-with-ginkgo.md` | Ginkgo v2 BDD E2E tests |
-| 008 | `adrs/008-encryption-context-optimization.md` | EncryptionContext = `service_id` only |
-| 008 | `adrs/008-token-exchange-jwks-adapter-pattern.md` | JWKS adapter with jwx jwk.Cache |
-| 009 | `adrs/009-cel-for-authorization-policies.md` | cel-go for authorization + JWT claims |
-| 009 | `adrs/009-envelope-encryption-design.md` | Three-layer envelope: KEK→BranchKey→DEK |
-| 009 | `adrs/009-separate-migration-docker-image.md` | Separate migration Docker image |
-| 010 | `adrs/010-cdk-encryption-infrastructure.md` | AWS CDK for encryption IaC |
-| 011 | `adrs/011-extproc-standalone-binary.md` | ExtProc as standalone binary |
-| 011 | `adrs/011-opentelemetry-provider-pattern.md` | OpenTelemetry provider pattern |
-| 012 | `adrs/012-encryption-layer-separation.md` | Encryption layer separation |
-| 012 | `adrs/012-extproc-in-memory-token-cache.md` | ExtProc in-memory token cache |
-| 013 | `adrs/013-strongly-typed-entity-ids.md` | Typed entity IDs (`XxxID`) in `domain/id/` |
-| 014 | `adrs/014-long-poll-listen-notify.md` | Long-poll approval sync via PostgreSQL LISTEN/NOTIFY |
-| 014 | `adrs/014-oauth2-server-mode.md` | OAuth2 authorization server mode |
-| 015 | `adrs/015-cimd-fetcher-architecture.md` | CIMD fetcher architecture |
-| 016 | `adrs/016-authorization-session-anti-spoofing.md` | Authorization session anti-spoofing |
-| 017 | `adrs/017-optional-agent-client-id.md` | Optional/nullable Agent client_id |
-| 018 | `adrs/018-approval-endpoint-auth-boundaries.md` | Endpoint-specific approval authentication boundaries |
-| 027 | `adrs/027-extproc-telemetry-shared-dependency.md` | ExtProc telemetry shared dependency |
-| 028 | `adrs/028-opa-extproc-authorization.md` | OPA authorization in ExtProc via embedded SDK |
-| 029 | `adrs/029-token-exchange-client-assertion-trust-anchor.md` | Dedicated client-assertion trust anchor for token exchange |
-| 030 | `adrs/030-normalize-protected-resources.md` | Normalized, globally unique protected-resource child records |
-| 030 | `adrs/030-vendor-neutral-oidc-trust.md` | Vendor-neutral CDK OIDC trust configuration |
-| 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
-| 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
-| 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
-| 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
-| 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
-| 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
-| 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
-| 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
-| 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
-| 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
-| 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
-| 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 20251215-120000 | `adrs/20251215-120000-configuration-libraries.md` | Viper + Cobra + godotenv config |
+| 20251215-120100 | `adrs/20251215-120100-chi-framework.md` | chi v5 HTTP router |
+| 20251215-120200 | `adrs/20251215-120200-dual-server-isolation.md` | errgroup dual-server :8000/:14000 |
+| 20251215-120300 | `adrs/20251215-120300-storage-layer-architecture.md` | Hexagonal storage, ISP repos, sqlx |
+| 20251218-120000 | `adrs/20251218-120000-spa-serving-pattern.md` | Embedded SPA with history API fallback |
+| 20251218-120100 | `adrs/20251218-120100-frontend-stack.md` | React 19 + Vite + Tailwind + Vitest |
+| 20260106-120000 | `adrs/20260106-120000-e2e-testing-with-ginkgo.md` | Ginkgo v2 BDD E2E tests |
+| 20260116-120000 | `adrs/20260116-120000-encryption-context-optimization.md` | EncryptionContext = `service_id` only |
+| 20260116-120100 | `adrs/20260116-120100-cel-for-authorization-policies.md` | cel-go for authorization + JWT claims |
+| 20260116-120200 | `adrs/20260116-120200-envelope-encryption-design.md` | Three-layer envelope: KEK→BranchKey→DEK |
+| 20260119-120000 | `adrs/20260119-120000-token-exchange-jwks-adapter-pattern.md` | JWKS adapter with jwx jwk.Cache |
+| 20260129-120000 | `adrs/20260129-120000-separate-migration-docker-image.md` | Separate migration Docker image |
+| 20260217-120000 | `adrs/20260217-120000-cdk-encryption-infrastructure.md` | AWS CDK for encryption IaC |
+| 20260223-120000 | `adrs/20260223-120000-extproc-standalone-binary.md` | ExtProc as standalone binary |
+| 20260223-120100 | `adrs/20260223-120100-encryption-layer-separation.md` | Encryption layer separation |
+| 20260223-120200 | `adrs/20260223-120200-extproc-in-memory-token-cache.md` | ExtProc in-memory token cache |
+| 20260301-120000 | `adrs/20260301-120000-opentelemetry-provider-pattern.md` | OpenTelemetry provider pattern |
+| 20260313-120000 | `adrs/20260313-120000-strongly-typed-entity-ids.md` | Typed entity IDs (`XxxID`) in `domain/id/` |
+| 20260315-120000 | `adrs/20260315-120000-opa-extproc-authorization.md` | OPA authorization in ExtProc via embedded SDK |
+| 20260328-120000 | `adrs/20260328-120000-long-poll-listen-notify.md` | Long-poll approval sync via PostgreSQL LISTEN/NOTIFY |
+| 20260328-120100 | `adrs/20260328-120100-oauth2-server-mode.md` | OAuth2 authorization server mode |
+| 20260421-120000 | `adrs/20260421-120000-extproc-telemetry-shared-dependency.md` | ExtProc telemetry shared dependency |
+| 20260425-120000 | `adrs/20260425-120000-cimd-fetcher-architecture.md` | CIMD fetcher architecture |
+| 20260428-120000 | `adrs/20260428-120000-authorization-session-anti-spoofing.md` | Authorization session anti-spoofing |
+| 20260510-120000 | `adrs/20260510-120000-optional-agent-client-id.md` | Optional/nullable Agent client_id |
+| 20260630-120000 | `adrs/20260630-120000-approval-endpoint-auth-boundaries.md` | Endpoint-specific approval authentication boundaries |
+| 20260703-120000 | `adrs/20260703-120000-vendor-neutral-oidc-trust.md` | Vendor-neutral CDK OIDC trust configuration |
+| 20260811-120000 | `adrs/20260811-120000-token-exchange-client-assertion-trust-anchor.md` | Dedicated client-assertion trust anchor for token exchange |
+| 20260813-120000 | `adrs/20260813-120000-normalize-protected-resources.md` | Normalized, globally unique protected-resource child records |
+| 20260825-120100 | `adrs/20260825-120100-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
+| 20260904-120000 | `adrs/20260904-120000-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
+| 20260904-120100 | `adrs/20260904-120100-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 20261007-120000 | `adrs/20261007-120000-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
+| 20261008-120000 | `adrs/20261008-120000-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
+| 20261008-120100 | `adrs/20261008-120100-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 20261008-120200 | `adrs/20261008-120200-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
+| 20261016-120000 | `adrs/20261016-120000-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
+| 20261016-120100 | `adrs/20261016-120100-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
+| 20261022-120000 | `adrs/20261022-120000-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
+| 20261022-120100 | `adrs/20261022-120100-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 20261026-120000 | `adrs/20261026-120000-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 
 ## Domain Glossary
 
@@ -183,7 +183,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
-| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
+| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 20260811-120000 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 

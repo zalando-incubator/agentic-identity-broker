@@ -78,9 +78,9 @@ Root contains only files that a tool requires there or that GitHub/Zalando OSS r
 
 For new features, follow this workflow using [Speckit](https://speckit.org/):
 
-1. Create `specs/NNN-feature-name/spec.md` with requirements
-2. Create `specs/NNN-feature-name/plan.md` with design
-3. Create `specs/NNN-feature-name/tasks.md` with tasks
+1. Create `specs/YYYYMMDD-HHMMSS-feature-name/spec.md` with requirements
+2. Create `specs/YYYYMMDD-HHMMSS-feature-name/plan.md` with design
+3. Create `specs/YYYYMMDD-HHMMSS-feature-name/tasks.md` with tasks
 4. Implement according to the plan
 5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
 

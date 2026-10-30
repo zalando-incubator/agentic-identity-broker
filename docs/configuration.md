@@ -1326,7 +1326,7 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 
 #### jwks, jwks_file, and security.trust_material_dir
 
-**Description**: A trust anchor is an authority whose signed credentials the broker verifies. Each trust anchor takes its public verification keys from one **key set source**: a remote `jwks_uri` (or discovery), an inline `jwks` document, or a `jwks_file` that the broker reads from the trust directory. Inline and file sources need no network-reachable key-publishing service and cause no outbound request. See `adrs/040-trust-anchor-local-key-sets.md`.
+**Description**: A trust anchor is an authority whose signed credentials the broker verifies. Each trust anchor takes its public verification keys from one **key set source**: a remote `jwks_uri` (or discovery), an inline `jwks` document, or a `jwks_file` that the broker reads from the trust directory. Inline and file sources need no network-reachable key-publishing service and cause no outbound request. See `adrs/20261016-120000-trust-anchor-local-key-sets.md`.
 
 The in-scope trust anchors are:
 
@@ -1352,7 +1352,7 @@ The end-user and admin servers' JWT pre-authentication are separate trust anchor
 
 For JWT pre-authentication, `verification: none` is mutually exclusive with every key source (`jwks_uri`, `jwks`, and `jwks_file`).
 
-A local key set is used only by the trust anchor that declares it. The broker never publishes it at `/oauth2/jwks.json` and never uses it to validate subject tokens. Two impersonation trusted issuers that share an `issuer_uri` but declare different key sets each verify against only their own keys. The ADR 029 self-trust check applies to every source. In `proxy` and `hybrid` modes, a client assertion trust anchor with a local key set and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only. In `local` mode, any explicit client-assertion key source requires `issuer_uri`.
+A local key set is used only by the trust anchor that declares it. The broker never publishes it at `/oauth2/jwks.json` and never uses it to validate subject tokens. Two impersonation trusted issuers that share an `issuer_uri` but declare different key sets each verify against only their own keys. The ADR 20260811-120000 self-trust check applies to every source. In `proxy` and `hybrid` modes, a client assertion trust anchor with a local key set and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only. In `local` mode, any explicit client-assertion key source requires `issuer_uri`.
 
 ##### Environment overrides
 
@@ -1604,7 +1604,7 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 #### oauth2_authorization_server.impersonation
 
-**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every rule-authorized request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted subject is used unchanged as the grant principal; this is mandatory for signed and unverified subjects, with no configuration opt-out. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every rule-authorized request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted subject is used unchanged as the grant principal; this is mandatory for signed and unverified subjects, with no configuration opt-out. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 20260825-120000) JWTs.
 
 **Configuration block** (nested under `oauth2_authorization_server`, `local` mode only):
 
@@ -1617,7 +1617,7 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 | `impersonation.rules[].roles.<role>.expected_audience` | string | — | Non-empty string | Yes for signed roles without `audience_requirement: absent` | The `aud` each signed credential for this role must carry. Omit it for an unverified subject (`verification: none`) or when `audience_requirement` is `absent`. |
 | `impersonation.rules[].roles.<role>.audience_requirement` | enum | — | `absent` | No | Signed roles only. `absent` accepts only a credential with no `aud` claim and rejects a credential with an `aud`. It is mutually exclusive with `expected_audience`, forbidden on an unverified subject, and requires the authorization predicate to reference this role (CR-009). |
 | `impersonation.rules[].roles.<role>.principal_expression` | string | — | CEL expression | Yes | CEL extracting a non-empty identity from the role's token. |
-| `impersonation.rules[].roles.subject.verification` | enum | `jwks` | `jwks`, `none` | No | `subject` role only. `jwks` = signed subject validated against a trusted issuer; `none` = unverified unsigned `alg:none` subject JWT under `subject_token_type=urn:ietf:params:oauth:token-type:jwt` (broker profile extension, ADR 031). |
+| `impersonation.rules[].roles.subject.verification` | enum | `jwks` | `jwks`, `none` | No | `subject` role only. `jwks` = signed subject validated against a trusted issuer; `none` = unverified unsigned `alg:none` subject JWT under `subject_token_type=urn:ietf:params:oauth:token-type:jwt` (broker profile extension, ADR 20260825-120000). |
 | `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting the subject's email; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
 | `impersonation.rules[].trusted_issuers` | list | — | Non-empty | Yes (CR-008) | Trust anchors permitted to sign this rule's credentials. |
 | `impersonation.rules[].trusted_issuers[].issuer_uri` | string | — | Valid URI | Yes | Matched against a credential's `iss`. |
@@ -1741,7 +1741,7 @@ The response and minted token contain a non-empty granted scope. The target UUID
 always supply `agent_id` and local CEL `agent.*`, regardless of identifier form. Local policy
 controls `aud`.
 
-**Unverified subject rule** (broker profile extension, ADR 031): The subject role uses
+**Unverified subject rule** (broker profile extension, ADR 20260825-120000): The subject role uses
 `verification: none` and has no `expected_audience`. It does not occur in any issuer
 `signs_roles`. The authorization predicate must reference `subject_token`. It must bind
 `subject_token.email` before the broker mints a caller-provided email:
@@ -1884,4 +1884,4 @@ When tracing is enabled, the following operations emit child spans:
 - Read `ARCHITECTURE.md` for the configuration subsystem architecture.
 - Make sure that each configuration path is absolute or relative to the current working directory.
 - Make sure that `GO_ENV` has the expected environment value.
-- Read `adrs/002-configuration-libraries.md` for the configuration library decision.
+- Read `adrs/20251215-120000-configuration-libraries.md` for the configuration library decision.

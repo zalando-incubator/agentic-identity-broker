@@ -1024,7 +1024,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 
 // TestService_HandleAuthorization_MultiAgentParamInjection tests that the agent UUID
 // is appended to the upstream authorize URL when multi_agent_client is enabled,
-// and is absent when the feature is disabled (Feature 021).
+// and is absent when the feature is disabled (Feature 20260320-120000).
 func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()

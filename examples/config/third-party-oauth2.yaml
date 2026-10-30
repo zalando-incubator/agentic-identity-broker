@@ -3,9 +3,9 @@
 # This configuration file defines settings for OAuth2 session management
 # with third-party services (GitHub, Google, Microsoft, etc.).
 #
-# Feature: Third-Party OAuth2 Session Management (008-thirdparty-oauth2-sessions)
+# Feature: Third-Party OAuth2 Session Management (20251222-120000-thirdparty-oauth2-sessions)
 
-# CIMD service precondition (feature 046, issue #264):
+# CIMD service precondition (feature 20260917-120000, issue #264):
 # If a service has `client_registration: cimd`, set this URL to a stable public HTTPS URL.
 # The broker derives its client identifier URL and metadata document from this URL.
 # Both CIMD public and CIMD confidential services reject an HTTP public URL.
@@ -60,7 +60,7 @@ third_party_oauth2:
   # Select credential_source: filesystem without inline credentials on the service.
   # README.md documents multiple pairs, source precedence, and JSON environment/CLI input.
 
-# Proactive refresh of third-party access tokens (spec 029).
+# Proactive refresh of third-party access tokens (spec 20260507-120000).
 # Token exchange returns a valid token immediately. If it expires within
 # lookahead_duration and has a usable refresh token, the broker submits background
 # refresh without waiting.

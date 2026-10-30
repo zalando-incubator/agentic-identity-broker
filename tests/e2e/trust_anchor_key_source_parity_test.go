@@ -17,7 +17,7 @@ type keySourceOutcome struct {
 	Error  string
 }
 
-// SC-003 from specs/052-inline-jwks-trust-anchors/spec.md: remote, inline, and file key sets
+// SC-003 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md: remote, inline, and file key sets
 // must give identical outcomes for the same credential corpus.
 var _ = Describe("Key source parity for client assertions", Label(trustAnchorParityLabel), func() {
 	outcomeFor := func(source string, makeCredential func(env *trustAnchorEnv) string) keySourceOutcome {

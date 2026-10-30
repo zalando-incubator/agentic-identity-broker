@@ -1,5 +1,5 @@
 -- Migration: Create agents table
--- Feature: 006-domain-model-apis
+-- Feature: 20251217-120000-domain-model-apis
 -- Description: Creates the agents table for storing AI agent configurations
 
 -- Enable UUID extension if not already enabled

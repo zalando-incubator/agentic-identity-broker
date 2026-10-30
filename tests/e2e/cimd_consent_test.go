@@ -96,7 +96,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		}
 	})
 
-	// Scenario 5.1 from specs/028-cimd-support/spec.md
+	// Scenario 5.1 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the authorization request uses a CIMD-based client_id", func() {
 		It("returns cimd_metadata with verified_domain when session_token is provided", func() {
 			now := time.Now()
@@ -141,7 +141,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// Scenario 5.2 from specs/028-cimd-support/spec.md
+	// Scenario 5.2 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when redirect_uri points to localhost", func() {
 		It("returns cimd_metadata with localhost redirect_uri", func() {
 			now := time.Now()
@@ -186,7 +186,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// Scenario 5.3 from specs/028-cimd-support/spec.md
+	// Scenario 5.3 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the authorization request uses a CIMD-based client_id with scope", func() {
 		It("returns cimd_metadata with client_id_url, redirect_uri, and requested_scopes populated", func() {
 			now := time.Now()
@@ -245,7 +245,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// Scenario 5.4 from specs/028-cimd-support/spec.md
+	// Scenario 5.4 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the authorization request uses an opaque (UUID) client_id", func() {
 		It("does not include cimd_metadata in the response", func() {
 			now := time.Now()
@@ -280,9 +280,9 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// T119 Session Edge Cases from specs/028-cimd-support/spec.md
+	// T119 Session Edge Cases from specs/20260421-120000-cimd-support/spec.md
 
-	// Scenario 5.5 from specs/028-cimd-support/spec.md
+	// Scenario 5.5 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when session_token carries an expired authorization session", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
@@ -316,7 +316,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// Scenario 5.6 from specs/028-cimd-support/spec.md
+	// Scenario 5.6 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when session_token is malformed or invalid", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
@@ -341,7 +341,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// Scenario 5.7 from specs/028-cimd-support/spec.md — session_token for wrong agent
+	// Scenario 5.7 from specs/20260421-120000-cimd-support/spec.md — session_token for wrong agent
 	Describe("when session_token refers to a different agent", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
@@ -378,7 +378,7 @@ var _ = Describe("CIMD Consent Screen", func() {
 		})
 	})
 
-	// SR-013 principal isolation from specs/028-cimd-support/spec.md
+	// SR-013 principal isolation from specs/20260421-120000-cimd-support/spec.md
 	Describe("when session_token belongs to a different principal", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()

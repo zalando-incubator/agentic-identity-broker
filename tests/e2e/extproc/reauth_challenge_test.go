@@ -37,7 +37,7 @@ var _ = Describe("ExtProc Re-authentication Challenge", func() {
 		}
 	})
 
-	// Feature 023 User Story 1 Amendment, Scenario 4 (specs/023-extproc-mcp-elicitation/spec.md): Non-MCP protocol
+	// Feature 20260326-120000 User Story 1 Amendment, Scenario 4 (specs/20260326-120000-extproc-mcp-elicitation/spec.md): Non-MCP protocol
 	It("returns the 403 insufficient_scope challenge instead of 503 for non-MCP protocol metadata", func() {
 		const recoveryURL = "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 		env.MockTokenExchange.WithError(http.StatusBadRequest, "invalid_grant").WithErrorURI(recoveryURL)

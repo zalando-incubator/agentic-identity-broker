@@ -221,7 +221,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 
-	// ADR 033 §3: finalize the request security context at the post-validation
+	// ADR 20260703-120100 §3: finalize the request security context at the post-validation
 	// token-exchange seam. The subject-token principal (Actor) and the validated
 	// client_assertion subject (CallingPeer) are both known here. Finalizing before
 	// the authorization decision guarantees a denied exchange still carries
@@ -274,7 +274,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// Only if grant exists but session is missing do we return invalid_grant (no session).
 	//
 	// T059: Agent ID extracted from subject_token (already done in Step 5)
-	// T060 (Feature 021): agentID is the broker-internal agent UUID (resolved by CEL).
+	// T060 (Feature 20260320-120000): agentID is the broker-internal agent UUID (resolved by CEL).
 	// Parse it as UUID and look up by primary key — no GetByClientID needed.
 	stage = StageIdentityResolution
 	parsedAgentID, parseErr := id.ParseAgentID(agentID)

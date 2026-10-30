@@ -94,7 +94,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		}
 	})
 
-	// Scenario 1.1 from specs/034-provider-auth-params/spec.md
+	// Scenario 1.1 from specs/20260720-120000-provider-auth-params/spec.md
 	It("returns configured parameters from create, get, and list", func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(created["authorization_params"]).To(Equal(map[string]interface{}{"business_partner_id": "12345"}))
@@ -115,7 +115,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(services).To(ContainElement(HaveKeyWithValue("authorization_params", map[string]interface{}{"business_partner_id": "12345"})))
 	})
 
-	// Scenario 1.2 from specs/034-provider-auth-params/spec.md
+	// Scenario 1.2 from specs/20260720-120000-provider-auth-params/spec.md
 	It("preserves parameters when update omits them", func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		request := serviceRequest(nil)
@@ -131,7 +131,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(updated["authorization_params"]).To(Equal(map[string]interface{}{"business_partner_id": "12345"}))
 	})
 
-	// Scenario 1.3 from specs/034-provider-auth-params/spec.md
+	// Scenario 1.3 from specs/20260720-120000-provider-auth-params/spec.md
 	It("allows an empty map to clear parameters", func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		request := serviceRequest(map[string]string{})
@@ -183,7 +183,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	// Scenario 2.1 from specs/034-provider-auth-params/spec.md
+	// Scenario 2.1 from specs/20260720-120000-provider-auth-params/spec.md
 	It("adds configured parameters to the upstream authorization and code exchange", func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(completeAuthorization(created, "")["business_partner_id"]).To(ConsistOf("12345"))
@@ -192,7 +192,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(upstream.GetLastRequest().Form.Get("business_partner_id")).To(Equal("12345"))
 	})
 
-	// Scenario 2.2 from specs/034-provider-auth-params/spec.md
+	// Scenario 2.2 from specs/20260720-120000-provider-auth-params/spec.md
 	It("adds no provider parameters for an unconfigured service", func() {
 		created := create(serviceRequest(nil))
 		Expect(completeAuthorization(created, "")).NotTo(HaveKey("business_partner_id"))
@@ -201,7 +201,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(upstream.GetLastRequest().Form.Get("business_partner_id")).To(BeEmpty())
 	})
 
-	// Scenario 2.3 from specs/034-provider-auth-params/spec.md
+	// Scenario 2.3 from specs/20260720-120000-provider-auth-params/spec.md
 	It("ignores conflicting browser parameters", func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(completeAuthorization(created, "&business_partner_id=untrusted")["business_partner_id"]).To(ConsistOf("12345"))
@@ -210,7 +210,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(upstream.GetLastRequest().Form.Get("business_partner_id")).To(Equal("12345"))
 	})
 
-	// Scenario 3.1 from specs/034-provider-auth-params/spec.md
+	// Scenario 3.1 from specs/20260720-120000-provider-auth-params/spec.md
 	It("rejects blank parameter names and values", func() {
 		request := serviceRequest(map[string]string{" ": "value"})
 		body, err := json.Marshal(request)
@@ -221,7 +221,7 @@ var _ = Describe("Provider authorization parameters", func() {
 		Expect(response).To(matchers.HaveStatusCode(http.StatusBadRequest))
 	})
 
-	// Scenario 3.2 from specs/034-provider-auth-params/spec.md
+	// Scenario 3.2 from specs/20260720-120000-provider-auth-params/spec.md
 	It("rejects broker-owned parameter names", func() {
 		request := serviceRequest(map[string]string{"state": "unsafe"})
 		body, err := json.Marshal(request)

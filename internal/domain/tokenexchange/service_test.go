@@ -1358,7 +1358,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 		"PS scopes should flow through directly when agent has no service_requirements")
 }
 
-// --- T029: Agent lookup unit tests (Feature 021 US2) ---
+// --- T029: Agent lookup unit tests (Feature 20260320-120000 US2) ---
 // These tests verify that after T030, the service uses id.ParseAgentID + Get (not GetByClientID).
 // Written before T030 implementation — must FAIL semantically until T030 is implemented.
 

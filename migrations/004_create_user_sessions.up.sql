@@ -1,6 +1,6 @@
 -- Migration: 004_create_user_sessions.up.sql
 -- Purpose: Create user_sessions table for storing OAuth2 session data
--- Feature: 008-thirdparty-oauth2-sessions
+-- Feature: 20251222-120000-thirdparty-oauth2-sessions
 -- Date: 2025-12-23
 
 -- Create user_sessions table

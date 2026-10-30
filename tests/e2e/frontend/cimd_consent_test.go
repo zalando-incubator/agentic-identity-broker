@@ -69,7 +69,7 @@ var _ = Describe("CIMD Consent UI", func() {
 
 	// CS-001: CIMDConsentSummary component — "The application … wants to access …"
 	It("should display CIMD consent summary with client name and access target", func() {
-		// CS-001 from specs/028-cimd-support/spec.md — CIMDConsentSummary component
+		// CS-001 from specs/20260421-120000-cimd-support/spec.md — CIMDConsentSummary component
 		err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), sessionToken)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page")
 
@@ -87,7 +87,7 @@ var _ = Describe("CIMD Consent UI", func() {
 
 	// CS-002: CIMDDomainBadge component — "Verified domain: …"
 	It("should display the verified domain badge for the CIMD client_id URL", func() {
-		// CS-002 from specs/028-cimd-support/spec.md — CIMDDomainBadge component
+		// CS-002 from specs/20260421-120000-cimd-support/spec.md — CIMDDomainBadge component
 		err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), sessionToken)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page")
 
@@ -120,7 +120,7 @@ var _ = Describe("CIMD Consent UI", func() {
 		})
 
 		It("should show a localhost redirect warning alert", func() {
-			// CS-003 from specs/028-cimd-support/spec.md — CIMDLocalhostWarning component
+			// CS-003 from specs/20260421-120000-cimd-support/spec.md — CIMDLocalhostWarning component
 			err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), localhostSessionToken)
 			Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page with localhost session")
 
@@ -139,7 +139,7 @@ var _ = Describe("CIMD Consent UI", func() {
 
 	// CS-004: CIMDAdvancedDetails component — expandable details panel
 	It("should expand CIMD advanced details when the user clicks the disclosure button", func() {
-		// CS-004 from specs/028-cimd-support/spec.md — CIMDAdvancedDetails component
+		// CS-004 from specs/20260421-120000-cimd-support/spec.md — CIMDAdvancedDetails component
 		err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), sessionToken)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page")
 

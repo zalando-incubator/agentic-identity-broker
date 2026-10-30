@@ -35,7 +35,7 @@ const (
 	SourceFile     SourceKind = "file"
 )
 
-// Remote and implicit sources follow ADR 029. File sources default to
+// Remote and implicit sources follow ADR 20260811-120000. File sources default to
 // max(3 × minimum, 1h); JWT pre-authentication keeps its fixed cadence.
 const (
 	DefaultMinRefresh      = 15 * time.Minute

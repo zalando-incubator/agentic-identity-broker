@@ -364,7 +364,7 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 	})
 
 	Context("US1: Exchange From Dynamic Metadata", func() {
-		// 043-extproc-metadata-input: US1-S1 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US1-S1 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("exchanges the JWT-validated raw token for the configured MCP resource", NodeTimeout(time.Minute), func(ctx SpecContext) {
 			mintedJWT, err := jwtFixture.MintToken("metadata-input-us1-s1", time.Now().Add(10*time.Minute))
 			Expect(err).NotTo(HaveOccurred(), "failed to mint US1-S1 metadata gateway JWT")
@@ -393,7 +393,7 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 	})
 
 	Context("US2: Configure Instance Resource", func() {
-		// 043-extproc-metadata-input: US2-S1 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US2-S1 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("exchanges for the resource URL configured in the instance ExtProc policy", NodeTimeout(time.Minute), func(ctx SpecContext) {
 			mintedJWT, err := jwtFixture.MintToken("metadata-input-us2-s1", time.Now().Add(10*time.Minute))
 			Expect(err).NotTo(HaveOccurred(), "failed to mint US2-S1 metadata gateway JWT")

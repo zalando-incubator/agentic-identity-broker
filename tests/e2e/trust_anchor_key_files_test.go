@@ -48,7 +48,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 	}
 
 	Context("a key-set file inside the trust directory", func() {
-		// US2-S1 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S1 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("starts and verifies client assertions with the file's keys", func() {
 			path := env.trust.WriteFile(gatewayKeyFile, helpers.PublicKeySet(env.gateway))
 			env.start(fileConfig(path))
@@ -57,7 +57,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			Expect(exchangeStatus(helpers.NewLocalES256Key("rogue-2026-10"))).To(Equal(http.StatusUnauthorized))
 		})
 
-		// US2-S2 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S2 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup for a missing path and for a directory path, naming the setting and the path", func() {
 			missing := env.trust.File("missing.json")
 			env.expectStartupFailure(fileConfig(missing),
@@ -69,7 +69,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 				fmt.Sprintf("%s: jwks_file %q is not a regular file", clientAssertionPath, directory))
 		})
 
-		// US2-S8 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S8 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("starts with the Kubernetes ..data relative-link layout", func() {
 			path := env.trust.WriteKubernetesLayout(gatewayKeyFile, helpers.PublicKeySet(env.gateway), "2026_10_16_08_50_00.123")
 			env.start(fileConfig(path))
@@ -86,7 +86,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			env.start(fileConfig(path))
 		})
 
-		// US2-S3 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S3 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("applies a replaced file within the refresh bounds and rejects keys the replacement removed", func() {
 			replacement := helpers.NewLocalES256Key("agentgateway-2027-01")
 			Expect(exchangeStatus(env.gateway)).To(Equal(http.StatusOK))
@@ -100,7 +100,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			Expect(env.logRecords("trust anchor key set changed")).ToNot(BeEmpty())
 		})
 
-		// US2-S4 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S4 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("keeps verifying after a corrupt re-read, fails closed after the maximum refresh interval, reports degraded health without logging contents, and recovers", func() {
 			const marker = "FILE-CONTENT-MARKER-7f3a9c"
 			env.trust.SwapKubernetesLayout(gatewayKeyFile, `{"keys":["`+marker, "gen2")
@@ -139,7 +139,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 	})
 
 	Context("key-set paths outside the trust directory", func() {
-		// US2-S5 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S5 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup without opening a file outside the trust directory", func() {
 			fifo := env.trust.File("../outside/config.fifo")
 			Expect(syscall.Mkfifo(fifo, 0o600)).To(Succeed())
@@ -158,7 +158,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			Expect(err.Error()).To(ContainSubstring(outsideMessage(fifo)))
 		})
 
-		// US2-S6 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S6 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup for a .. escape, a relative-link escape, and an absolute link into the trust directory", func() {
 			env.trust.WriteOutsideFile("secret.json", helpers.PublicKeySet(env.gateway))
 
@@ -173,7 +173,7 @@ var _ = Describe("File key sets for the client-assertion trust anchor", Label(tr
 			env.expectStartupFailure(fileConfig(absolute), outsideMessage(absolute))
 		})
 
-		// US2-S7 from specs/052-inline-jwks-trust-anchors/spec.md
+		// US2-S7 from specs/20261012-120100-inline-jwks-trust-anchors/spec.md
 		It("fails startup for jwks_file when no trust directory is configured", func() {
 			path := env.trust.WriteFile(gatewayKeyFile, helpers.PublicKeySet(env.gateway))
 			cfg := fileConfig(path)

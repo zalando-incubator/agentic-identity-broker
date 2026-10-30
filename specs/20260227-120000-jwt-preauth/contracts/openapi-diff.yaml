@@ -1,0 +1,154 @@
+# API Contract Changes: JWT Pre-Authentication & Principal Profile Enrichment
+
+**Feature**: 20260227-120000-jwt-preauth  
+**Date**: 2026-02-27  
+**Affected API**: End-user server (`/api/enduser/openapi.yaml`)  
+**Change Type**: Additive (non-breaking)
+
+---
+
+## Summary
+
+A single additive change to the `UserInfo` schema: a new optional `email` field. No new endpoints. No changes to request schemas. No breaking changes.
+
+---
+
+## Schema Change: UserInfo
+
+### Current Schema
+
+```yaml
+UserInfo:
+  type: object
+  required:
+    - principal
+    - displayName
+  properties:
+    principal:
+      type: string
+      description: 'User''s unique principal identifier from authentication system.
+        Typically an email address or UUID.'
+      example: user@example.com
+    displayName:
+      type: string
+      description: 'Human-readable display name for the user.
+        Used in UI for personalization and identification.'
+      example: Jane Doe
+    pictureUrl:
+      type: string
+      format: uri
+      nullable: true
+      description: 'Optional URL to user''s profile picture or avatar.
+        Should be a publicly accessible HTTPS URL.'
+      example: https://cdn.example.com/users/jane.jpg
+```
+
+### Updated Schema (diff)
+
+```diff
+ UserInfo:
+   type: object
+   required:
+     - principal
+     - displayName
+   properties:
+     principal:
+       type: string
+       description: 'User''s unique principal identifier from authentication system.
+         Typically an email address or UUID.'
+       example: user@example.com
+     displayName:
+       type: string
+       description: 'Human-readable display name for the user.
+         Used in UI for personalization and identification.'
+       example: Jane Doe
++    email:
++      type: string
++      format: email
++      nullable: true
++      description: 'Optional email address extracted from JWT claims.
++        Available when JWT pre-authentication is configured with an email
++        CEL extraction expression. Null when using plain header pre-auth
++        or when the JWT does not contain an email claim.'
++      example: jane.doe@example.com
+     pictureUrl:
+       type: string
+       format: uri
+       nullable: true
+       description: 'Optional URL to user''s profile picture or avatar.
+         Should be a publicly accessible HTTPS URL.'
+       example: https://cdn.example.com/users/jane.jpg
+```
+
+---
+
+## Response Examples
+
+### With JWT pre-auth and profile enrichment
+
+```json
+{
+  "data": {
+    "principal": "auth0|12345",
+    "displayName": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "pictureUrl": "https://cdn.example.com/users/jane.jpg"
+  }
+}
+```
+
+### With JWT pre-auth, partial profile (no picture)
+
+```json
+{
+  "data": {
+    "principal": "auth0|12345",
+    "displayName": "Jane Doe",
+    "email": "jane.doe@example.com"
+  }
+}
+```
+
+### With plain header pre-auth (backward-compatible)
+
+```json
+{
+  "data": {
+    "principal": "user@example.com",
+    "displayName": "user@example.com"
+  }
+}
+```
+
+### With JWT pre-auth, no profile expressions configured
+
+```json
+{
+  "data": {
+    "principal": "auth0|12345",
+    "displayName": "auth0|12345"
+  }
+}
+```
+
+---
+
+## Backward Compatibility Analysis
+
+| Aspect | Impact |
+|--------|--------|
+| **Existing clients** | No impact — `email` is optional/nullable, absent in responses when not extracted |
+| **Existing config** | No impact — `authentication.jwt` block is entirely optional |
+| **Required fields** | Unchanged — `principal` and `displayName` remain required |
+| **Field removal** | None — all existing fields preserved |
+| **Field semantics** | Unchanged — `displayName` still falls back to principal when no JWT enrichment |
+| **Response envelope** | Unchanged — `{"data": ...}` structure preserved |
+
+---
+
+## Notes
+
+- This change adheres to the Zalando RESTful API Guidelines for additive, non-breaking schema evolution
+- The `email` field uses `format: email` for documentation clarity (not enforced at runtime)
+- `nullable: true` follows the existing pattern used by `pictureUrl`
+- API change requires user/stakeholder confirmation per Constitution Principle IV/X (documented in PR)

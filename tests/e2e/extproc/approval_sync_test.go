@@ -18,7 +18,7 @@ import (
 )
 
 var _ = Describe("ExtProc Approval Cache Sync", func() {
-	// US1-S1 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S1 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("creates a pending approval with dual authentication and returns its URL elicitation", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -46,7 +46,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(body.Metadata.AgentSessionID).To(Equal("agent-session"))
 	})
 
-	// FR-013 from specs/026-extproc-approval-sync/spec.md.
+	// FR-013 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("extracts approval session identity from a configured header independently of the MCP session", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		env, _, stop := startApprovalEnvironmentWithSessionHeader(broker, time.Minute, "X-Agent-Session")
@@ -82,7 +82,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(requestBody.Metadata.MCPSessionID).To(Equal("mcp-session"))
 	})
 
-	// US1-S2 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S2 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("refreshes a newly approved record with a targeted principal read before creating again", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -102,7 +102,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(request.Authorization).NotTo(BeEmpty())
 	})
 
-	// US1-S3 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S3 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("forwards a cached session approval in its active agent session", func() {
 		pair := approvalPair("session")
 		sessionID := "agent-session"
@@ -119,7 +119,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// US1-S4 and SC-004 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S4 and SC-004 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("forwards a cached permanent approval in a different agent session without broker calls", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("permanent"))
@@ -133,7 +133,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.Requests()).To(HaveLen(baselineRequests))
 	})
 
-	// US1-S5 and SC-006 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S5 and SC-006 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("consumes a cached once approval and elicits again on the next matching call", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("once"))
@@ -150,7 +150,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(1))
 	})
 
-	// US1-S6 and FR-009 from specs/026-extproc-approval-sync/spec.md.
+	// US1-S6 and FR-009 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("evicts an idle session approval before another call can reuse it", func() {
 		pair := approvalPair("session")
 		oldSessionID := "old-session"
@@ -174,7 +174,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(2))
 	})
 
-	// US2-S1 and SC-003 from specs/026-extproc-approval-sync/spec.md.
+	// US2-S1 and SC-003 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("denies a policy-rejected tool without creating an approval", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -184,7 +184,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// US2-S2 from specs/026-extproc-approval-sync/spec.md.
+	// US2-S2 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("forwards a policy-allowed tool without approval broker calls", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -196,7 +196,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.Requests()).To(HaveLen(baselineRequests))
 	})
 
-	// US2-S3 from specs/026-extproc-approval-sync/spec.md.
+	// US2-S3 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("enters the approval gate only after the permission-set boundary permits the tool", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -206,7 +206,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(1))
 	})
 
-	// US3-S1 and SC-005 from specs/026-extproc-approval-sync/spec.md.
+	// US3-S1 and SC-005 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("serves a pre-seeded permanent approval from bootstrap", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("permanent"))
@@ -222,7 +222,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// US3-S2 from specs/026-extproc-approval-sync/spec.md.
+	// US3-S2 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("starts when bootstrap fails and denies if the later authoritative read also fails", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetBootstrapStatus(http.StatusServiceUnavailable)
@@ -237,7 +237,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// US3-S3 from specs/026-extproc-approval-sync/spec.md.
+	// US3-S3 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("reuses the bootstrap ETag in the first long-poll request", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v42"`)
@@ -253,7 +253,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(request.LongPollTimeout).To(Equal("30"))
 	})
 
-	// US3-S4 from specs/026-extproc-approval-sync/spec.md.
+	// US3-S4 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("performs the first unknown-pair lookup before creating an approval", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -275,7 +275,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(firstCreate).To(BeNumerically(">", firstRead))
 	})
 
-	// US4-S1 from specs/026-extproc-approval-sync/spec.md.
+	// US4-S1 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("immediately re-polls with the same ETag after a 304 response", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v3"`)
@@ -293,7 +293,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(longPolls[1].IfNoneMatch).To(Equal(`"v3"`))
 	})
 
-	// US4-S2 and SC-002 from specs/026-extproc-approval-sync/spec.md.
+	// US4-S2 and SC-002 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("propagates an approved record from the long poll within two seconds", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -310,7 +310,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.TargetedReadCount()).To(Equal(baselineReads))
 	})
 
-	// US4-S3 and SC-007 from specs/026-extproc-approval-sync/spec.md.
+	// US4-S3 and SC-007 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("reconnects after a dropped long-poll connection with the last ETag", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v7"`)
@@ -326,7 +326,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(longPolls[len(longPolls)-1].IfNoneMatch).To(Equal(`"v7"`))
 	})
 
-	// US4-S4 from specs/026-extproc-approval-sync/spec.md.
+	// US4-S4 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("replaces a stale full snapshot so a revoked approval cannot survive", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v1"`, approvalPair("permanent"))
@@ -342,7 +342,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(1))
 	})
 
-	// US5-S5 and SC-010 from specs/026-extproc-approval-sync/spec.md.
+	// US5-S5 and SC-010 from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("selects the later-approved equally specific record regardless of approval ID ordering", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		older, newer := approvalPair("permanent"), approvalPair("permanent")
@@ -362,7 +362,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.TargetedReadCount()).To(Equal(0))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("never fabricates an elicitation when approval creation fails", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetCreateResponse(http.StatusServiceUnavailable, "")
@@ -374,7 +374,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(helpers.ExtractImmediateResponseBody(response)).To(ContainSubstring("approval could not be initiated"))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("uses the broker URL returned by idempotent duplicate creation", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetCreateResponse(http.StatusOK, "https://broker.example/approvals/existing")
@@ -386,7 +386,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(1))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("denies when the broker rejects the request subject token", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetCreateResponse(http.StatusUnauthorized, "")
@@ -398,7 +398,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(1))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("denies batched approval-required calls and instructs a standalone retry", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -412,7 +412,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("denies deferred CIBA decisions without creating an approval", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -422,7 +422,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("denies without broker calls when exchange omits approval identity", func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
@@ -434,7 +434,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 		Expect(broker.CreateCount()).To(Equal(0))
 	})
 
-	// Edge case from specs/026-extproc-approval-sync/spec.md.
+	// Edge case from specs/20260410-120000-extproc-approval-sync/spec.md.
 	It("allows only one same-instance request to consume a once approval", func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("once"))

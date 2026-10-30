@@ -1,5 +1,5 @@
 // Package extproc_test contains the E2E acceptance test suite for the ExtProc Token Exchange Service.
-// Tests validate all 12 acceptance scenarios from specs/015-extproc-token-exchange/spec.md.
+// Tests validate all 12 acceptance scenarios from specs/20260223-120000-extproc-token-exchange/spec.md.
 //
 // This suite is SEPARATE from the main E2E suite and does NOT reuse the existing E2E harness
 // as required by FR-017.

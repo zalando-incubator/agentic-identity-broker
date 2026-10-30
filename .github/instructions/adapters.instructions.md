@@ -19,14 +19,14 @@ Adapters implement port interfaces. Each adapter imports only from `ports/` and 
 | `memory/` | Development/testing — in-memory encryption |
 | `branchkey/` | Shared branch key ID logic (`service_{id}_branch_key`) |
 
-**Encryption rules** (constitution + ADR 009):
+**Encryption rules** (constitution + ADR 20260116-120200):
 - Commitment policy: Always `RequireEncryptRequireDecrypt`
-- Encryption context: Only `{"service_id": "<id>"}` (ADR 008). Never include secrets.
+- Encryption context: Only `{"service_id": "<id>"}` (ADR 20260116-120000). Never include secrets.
 - Hierarchical keyring: Go SDK has no Caching CMM — use Hierarchical Keyring with DynamoDB
 - Explicit wrapping keys: Always specify KMS key ARN. No discovery mode.
 
 ### HTTP (`http/`)
-Dual-server architecture (ADR 004): end-user `:8000` + admin `:14000`.
+Dual-server architecture (ADR 20251215-120200): end-user `:8000` + admin `:14000`.
 
 | Package | Purpose |
 |---|---|

@@ -49,7 +49,7 @@ Keep cross-domain imports narrowly scoped. Read the importing package and its di
 
 ## Trust Anchor Key Sets (`trustanchor/`)
 
-A bounded context with no I/O. It depends only on the standard library and `jwx`. See [ADR 040](../../adrs/040-trust-anchor-local-key-sets.md).
+A bounded context with no I/O. It depends only on the standard library and `jwx`. See [ADR 20261016-120000](../../adrs/20261016-120000-trust-anchor-local-key-sets.md).
 
 - `ResolveKeySetSource()` selects one Key Set Source per trust anchor (`remote`, `inline`, or `file`) and enforces the structural rules: mutually exclusive sources, no refresh bounds with `jwks`, no key source with `verification: none`, and an absolute `jwks_file` inside the Trust Directory.
 - `ParseLocalKeySet()` validates an inline or file document: at most 1 MiB, a JWK Set with at least one key, no symmetric or private keys, approved `alg` values only, and unique `kid` values.

@@ -255,7 +255,7 @@ var _ = Describe("Request Security Context", func() {
 	})
 
 	Context("when an authenticated request crosses the HTTP perimeter", func() {
-		// Scenario 1.1 from specs/033-request-security-context/spec.md
+		// Scenario 1.1 from specs/20260629-120000-request-security-context/spec.md
 		It("should establish trace_id, actor, and client_ip at the perimeter before business logic runs", func() {
 			resp := authenticatedGET("/api/me", map[string]string{"User-Agent": "request-security-context-e2e/1.0"})
 			defer func() { _ = resp.Body.Close() }()
@@ -282,7 +282,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(auditLog).To(HaveKeyWithValue("actor", principal))
 		})
 
-		// Scenario 1.2 from specs/033-request-security-context/spec.md
+		// Scenario 1.2 from specs/20260629-120000-request-security-context/spec.md
 		It("should expose the finalized security context to the downstream service layer", func() {
 			resp := delegatedTokenExchange("", map[string]string{"User-Agent": "request-security-service/1.0"})
 			defer func() { _ = resp.Body.Close() }()
@@ -302,7 +302,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(serviceObservation.RequestTarget).To(Equal("/oauth2/token"))
 		})
 
-		// Scenario 1.3 from specs/033-request-security-context/spec.md
+		// Scenario 1.3 from specs/20260629-120000-request-security-context/spec.md
 		It("should expose the same finalized security context to the repository layer", func() {
 			resp := delegatedTokenExchange("", map[string]string{"User-Agent": "request-security-repository/1.0"})
 			defer func() { _ = resp.Body.Close() }()
@@ -325,7 +325,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(repositoryObservation.RequestTarget).To(Equal(serviceObservation.RequestTarget))
 		})
 
-		// Scenario 1.4 from specs/033-request-security-context/spec.md
+		// Scenario 1.4 from specs/20260629-120000-request-security-context/spec.md
 		It("should attach the security context automatically on public metadata endpoints without endpoint-specific capture code", func() {
 			resp := publicGET("/.well-known/oauth-authorization-server", map[string]string{"User-Agent": "request-security-public/1.0"})
 			defer func() { _ = resp.Body.Close() }()
@@ -342,7 +342,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(requestSecurityString(accessLog, "client_ip")).NotTo(BeEmpty())
 		})
 
-		// Scenario 1.5 from specs/033-request-security-context/spec.md
+		// Scenario 1.5 from specs/20260629-120000-request-security-context/spec.md
 		It("should keep actor and calling_peer separate when a delegated request has a distinct caller", func() {
 			resp := delegatedTokenExchange("", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -410,7 +410,7 @@ var _ = Describe("Request Security Context", func() {
 		const inboundTraceID = "1234567890abcdef1234567890abcdef"
 		const inboundSpanID = "1111111111111111"
 
-		// Scenario 2.1 from specs/033-request-security-context/spec.md
+		// Scenario 2.1 from specs/20260629-120000-request-security-context/spec.md
 		It("should reuse an inbound traceparent as the request trace_id", func() {
 			resp := authenticatedGET("/api/me", map[string]string{
 				"traceparent": fmt.Sprintf("00-%s-%s-01", inboundTraceID, inboundSpanID),
@@ -422,7 +422,7 @@ var _ = Describe("Request Security Context", func() {
 			capturedRecordsForTraceID(inboundTraceID)
 		})
 
-		// Edge case from specs/033-request-security-context/spec.md (Multiple or duplicate inbound trace identifiers)
+		// Edge case from specs/20260629-120000-request-security-context/spec.md (Multiple or duplicate inbound trace identifiers)
 		It("should choose the first valid duplicate traceparent value when multiple identifiers are supplied", func() {
 			const firstValidTraceID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			const secondValidTraceID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -441,7 +441,7 @@ var _ = Describe("Request Security Context", func() {
 			capturedRecordsForTraceID(firstValidTraceID)
 		})
 
-		// Edge case from specs/033-request-security-context/spec.md (Multiple or duplicate inbound trace identifiers)
+		// Edge case from specs/20260629-120000-request-security-context/spec.md (Multiple or duplicate inbound trace identifiers)
 		It("should generate a fresh trace_id when duplicate traceparent values are all invalid", func() {
 			resp := rawGET("/api/me", principal, map[string][]string{
 				"traceparent": {
@@ -457,7 +457,7 @@ var _ = Describe("Request Security Context", func() {
 			capturedRecordsForTraceID(traceID)
 		})
 
-		// Scenario 2.2 from specs/033-request-security-context/spec.md
+		// Scenario 2.2 from specs/20260629-120000-request-security-context/spec.md
 		It("should generate a unique trace_id when none is supplied", func() {
 			resp := authenticatedGET("/api/me", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -468,7 +468,7 @@ var _ = Describe("Request Security Context", func() {
 			capturedRecordsForTraceID(traceID)
 		})
 
-		// Scenario 2.3 from specs/033-request-security-context/spec.md
+		// Scenario 2.3 from specs/20260629-120000-request-security-context/spec.md
 		It("should stamp the same trace_id onto every structured log entry emitted during the request", func() {
 			resp := delegatedTokenExchange("", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -479,7 +479,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(len(records)).To(BeNumerically(">", 1))
 		})
 
-		// Scenario 2.4 from specs/033-request-security-context/spec.md
+		// Scenario 2.4 from specs/20260629-120000-request-security-context/spec.md
 		It("should return the request trace_id in the traceresponse header", func() {
 			resp := authenticatedGET("/api/me", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -491,7 +491,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(accessLog).To(HaveKeyWithValue("trace_id", traceID))
 		})
 
-		// Scenario 2.5 from specs/033-request-security-context/spec.md
+		// Scenario 2.5 from specs/20260629-120000-request-security-context/spec.md
 		It("should keep trace_id bound to its originating actor across concurrent requests", func() {
 			type concurrentCase struct {
 				principalValue string
@@ -564,7 +564,7 @@ var _ = Describe("Request Security Context", func() {
 	})
 
 	Context("when requests degrade to anonymous context", func() {
-		// Scenario 3.1 from specs/033-request-security-context/spec.md
+		// Scenario 3.1 from specs/20260629-120000-request-security-context/spec.md
 		It("should record actor as anonymous for unauthenticated public requests", func() {
 			resp := publicGET("/.well-known/oauth-authorization-server", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -578,7 +578,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(accessLog).NotTo(HaveKey("calling_peer"))
 		})
 
-		// Scenario 3.2 from specs/033-request-security-context/spec.md
+		// Scenario 3.2 from specs/20260629-120000-request-security-context/spec.md
 		It("should degrade gracefully without rejecting requests that have missing or garbled metadata", func() {
 			resp := publicGET("/.well-known/oauth-authorization-server", map[string]string{
 				"User-Agent":      "",
@@ -596,7 +596,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(requestSecurityString(accessLog, "client_ip")).NotTo(Equal("garbled-forwarded-for"))
 		})
 
-		// Scenario 3.3 from specs/033-request-security-context/spec.md
+		// Scenario 3.3 from specs/20260629-120000-request-security-context/spec.md
 		It("should still reject unauthenticated access to protected routes with the existing 401 behavior", func() {
 			resp := publicGET("/api/consent/agents", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -605,7 +605,7 @@ var _ = Describe("Request Security Context", func() {
 			Expect(resp.Header.Get("traceresponse")).To(MatchRegexp(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`))
 		})
 
-		// Scenario 3.4 from specs/033-request-security-context/spec.md
+		// Scenario 3.4 from specs/20260629-120000-request-security-context/spec.md
 		It("should still emit a trace_id for degraded health requests", func() {
 			resp := publicGET("/health", nil)
 			defer func() { _ = resp.Body.Close() }()
@@ -616,7 +616,7 @@ var _ = Describe("Request Security Context", func() {
 	})
 
 	Context("when client IP and secret-bearing inputs are asserted", func() {
-		// Edge case from specs/033-request-security-context/spec.md (Spoofed forwarding headers)
+		// Edge case from specs/20260629-120000-request-security-context/spec.md (Spoofed forwarding headers)
 		It("should ignore forged X-Forwarded-For when proxy trust is disabled", func() {
 			resp := authenticatedGET("/api/me", map[string]string{"X-Forwarded-For": "1.2.3.4"})
 			defer func() { _ = resp.Body.Close() }()
@@ -634,7 +634,7 @@ var _ = Describe("Request Security Context", func() {
 				serverFactory = bootstrap.NewServerFactory(config, logger)
 			})
 
-			// Edge case from specs/033-request-security-context/spec.md (Trusted proxy configuration)
+			// Edge case from specs/20260629-120000-request-security-context/spec.md (Trusted proxy configuration)
 			It("should use the right-most forwarded entry when proxy trust is enabled", func() {
 				resp := authenticatedGET("/api/me", map[string]string{"X-Forwarded-For": "9.9.9.9, 10.0.0.5"})
 				defer func() { _ = resp.Body.Close() }()
@@ -646,7 +646,7 @@ var _ = Describe("Request Security Context", func() {
 			})
 		})
 
-		// Edge case from specs/033-request-security-context/spec.md (Sensitive material)
+		// Edge case from specs/20260629-120000-request-security-context/spec.md (Sensitive material)
 		It("should keep query params, authorization headers, and cookies out of logs and propagated context", func() {
 			secretCode := "secret-authorization-code"
 			bearerSecret := "Bearer super-secret-token"

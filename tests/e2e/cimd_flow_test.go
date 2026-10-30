@@ -126,7 +126,7 @@ var _ = Describe("CIMD Full Authorization Flow", func() {
 		}
 	})
 
-	// User Story 7 Scenario 4 from specs/013-token-exchange/spec.md
+	// User Story 7 Scenario 4 from specs/20260115-120000-token-exchange/spec.md
 	Describe("when a CIMD agent completes the full authorization flow", func() {
 		It("issues a code and exchanges its CIMD subject token after consent", func() {
 			principal := fixtures.DefaultPrincipal().String()

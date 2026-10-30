@@ -52,7 +52,7 @@ type CELEvaluatorConfig struct {
 //   - Email extraction (optional, nil on failure or non-string result)
 //   - Picture URL extraction (optional, nil on failure or non-string result)
 //
-// This follows the pattern from internal/domain/tokenexchange/cel_evaluator.go (ADR 009).
+// This follows the pattern from internal/domain/tokenexchange/cel_evaluator.go (ADR 20260116-120100).
 type CELEvaluator struct {
 	// principalProgram is the compiled CEL program for principal extraction (required)
 	principalProgram cel.Program

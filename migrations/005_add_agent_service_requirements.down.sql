@@ -1,5 +1,5 @@
 -- Migration 005 Rollback: Remove service_requirements column from agents table
--- Feature: Agent Permission Requirements (Spec 011)
+-- Feature: Agent Permission Requirements (Spec 20260108-120000)
 -- WARNING: This rollback will DELETE all service requirement data
 
 -- Remove GIN index first (must drop index before dropping column)

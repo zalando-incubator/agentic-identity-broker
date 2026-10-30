@@ -87,7 +87,7 @@ type UserSession struct {
 
 // EncryptionContext holds metadata for token encryption/decryption.
 // This is stored in JSONB and included as AAD (Additional Authenticated Data).
-// Simplified to service_id-only for performance optimization (ADR 008).
+// Simplified to service_id-only for performance optimization (ADR 20260116-120000).
 type EncryptionContext struct {
 	ServiceID id.ServiceID `json:"service_id"` // OAuth service identifier
 }

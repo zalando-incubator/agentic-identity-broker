@@ -415,7 +415,7 @@ If you cannot correct the problem:
 
 ## References
 
-- Storage Architecture: `adrs/004-storage-layer-architecture.md`
+- Storage Architecture: `adrs/20251215-120300-storage-layer-architecture.md`
 - Security Checklist: `SECURITY.md`
 - [Extension Guide](./STORAGE_EXTENSION_GUIDE.md)
 - PostgreSQL Documentation: https://www.postgresql.org/docs/

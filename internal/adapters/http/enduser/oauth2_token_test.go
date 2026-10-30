@@ -496,7 +496,7 @@ func TestProxyGrantStrategy_InfraErrorsReturnJSON(t *testing.T) {
 }
 
 // TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier tests claim verification
-// for multi-agent client sharing (Feature 021 US1).
+// for multi-agent client sharing (Feature 20260320-120000 US1).
 func TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier(t *testing.T) {
 	agentID := id.NewAgentID()
 	agentRepo := newStubAgentRepo(agentID, "test-upstream-client")
@@ -654,7 +654,7 @@ func TestOAuth2TokenHandler_ServeHTTP_ResponseStreaming(t *testing.T) {
 
 // TestOAuth2TokenHandler_ClientIDValidation tests that client_id is always validated as an
 // agent UUID, regardless of whether MultiAgentVerifier is set.  The client_id is the
-// broker-internal agent UUID from the perspective of every OAuth2 client (spec: Feature 021).
+// broker-internal agent UUID from the perspective of every OAuth2 client (spec: Feature 20260320-120000).
 func TestOAuth2TokenHandler_ClientIDValidation(t *testing.T) {
 	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -290,7 +290,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(boot(validConfig())).To(Succeed())
 		})
 
-		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.1 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("mints a token with sub=subject and act.iss/act.sub identifying the actor", func() {
 			resp := postImpersonation(baseRequest())
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
@@ -315,7 +315,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims["scope"]).To(Equal(""))
 		})
 
-		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.1 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("should mint an equivalent token when the audience addresses the target by canonical ID", func() {
 			req := baseRequest()
 			req.Set("audience", canonicalAudience)
@@ -327,7 +327,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims["act"].(map[string]any)["sub"]).To(Equal("actor-1"))
 		})
 
-		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.1 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("mints the requested scope allowed by the target agent", func() {
 			req := baseRequest()
 			req.Set("scope", "read")
@@ -338,7 +338,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeJWTClaims(body["access_token"].(string))["scope"]).To(Equal("read"))
 		})
 
-		// Scenario US1.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects a scope outside the target allow list", func() {
 			req := baseRequest()
 			req.Set("scope", "admin")
@@ -349,7 +349,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body).ToNot(HaveKey("access_token"))
 		})
 
-		// Scenario US1.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("allows requested scopes when the target allow list is empty", func() {
 			targetAgent.AllowedScopes = nil
 			Expect(testStorage.Agents().Update(context.Background(), targetAgent)).To(Succeed())
@@ -362,7 +362,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeJWTClaims(body["access_token"].(string))["scope"]).To(Equal("admin"))
 		})
 
-		// Scenario US1.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an unsupported subject_token_type with invalid_request", func() {
 			req := baseRequest()
 			req.Set("subject_token_type", imperAccessTyp)
@@ -371,7 +371,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Scenario US1.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an absent actor_token_type with invalid_request", func() {
 			req := baseRequest()
 			req.Del("actor_token_type")
@@ -380,7 +380,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Scenario US1.3 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.3 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("issues local-policy base claims and the subject email, without credential leakage", func() {
 			resp := postImpersonation(baseRequest())
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
@@ -394,7 +394,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims).ToNot(HaveKey("subject_token"))
 		})
 
-		// Scenario US1.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("does not activate impersonation for a different audience", func() {
 			req := baseRequest()
 			req.Set("audience", "https://example.com/other")
@@ -405,7 +405,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			_ = resp.Body.Close()
 		})
 
-		// Scenario US1.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("does not activate impersonation for an absent audience", func() {
 			req := baseRequest()
 			req.Del("audience")
@@ -414,7 +414,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			_ = resp.Body.Close()
 		})
 
-		// Edge case (target resolution) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (target resolution) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects malformed and unknown audience targets without token exchange", func() {
 			for _, tc := range []struct {
 				audience string
@@ -433,7 +433,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			}
 		})
 
-		// Edge case (resource present) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (resource present) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects a request that also supplies resource with invalid_request", func() {
 			req := baseRequest()
 			req.Set("resource", "https://api.example.com")
@@ -442,7 +442,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Edge case (requested_token_type mismatch) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (requested_token_type mismatch) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects a requested_token_type that is not the access-token type", func() {
 			req := baseRequest()
 			req.Set("requested_token_type", imperJWTType)
@@ -451,7 +451,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Edge case (actor == subject) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (actor == subject) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("permits an actor identity equal to the subject identity", func() {
 			req := baseRequest()
 			req.Set("actor_token", signCred("user-1", "", imperAudience, now.Add(time.Hour)))
@@ -462,7 +462,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims["act"].(map[string]any)["sub"]).To(Equal("user-1"))
 		})
 
-		// Scenario US3.1 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.1 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an unsigned subject token submitted under the RFC 8693 JWT type", func() {
 			req := baseRequest()
 			unsigned, err := helpers.CreateUnsignedJWT(map[string]any{
@@ -476,7 +476,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Scenario US3.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an expired actor token", func() {
 			req := baseRequest()
 			req.Set("actor_token", signCred("actor-1", "", imperAudience, now.Add(-time.Hour)))
@@ -485,7 +485,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_request"))
 		})
 
-		// Scenario US3.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects a client assertion with a wrong audience with invalid_client", func() {
 			req := baseRequest()
 			req.Set("client_assertion", signCred("gateway-prod", "", "https://wrong.example.com", now.Add(time.Hour)))
@@ -494,7 +494,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_client"))
 		})
 
-		// Scenario US3.3 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.3 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("returns access_denied when no rule predicate permits the client", func() {
 			req := baseRequest()
 			req.Set("client_assertion", signCred("gateway-untrusted", "", imperAudience, now.Add(time.Hour)))
@@ -503,7 +503,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("access_denied"))
 		})
 
-		// Scenario US3.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects when the subject identity cannot be extracted", func() {
 			req := baseRequest()
 			// subject token missing the sub claim → extraction yields empty identity.
@@ -520,7 +520,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body).ToNot(HaveKey("access_token"))
 		})
 
-		// Scenario US4.1 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US4.1 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("emits a credential-free audit event on success", func() {
 			req := baseRequest()
 			resp := postImpersonation(req)
@@ -537,7 +537,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(logs).ToNot(ContainSubstring(accessToken))
 		})
 
-		// Scenario US4.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US4.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("emits a credential-free audit event on failure", func() {
 			req := baseRequest()
 			req.Set("client_assertion", signCred("gateway-untrusted", "", imperAudience, now.Add(time.Hour)))
@@ -549,7 +549,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(logs).ToNot(ContainSubstring(req.Get("client_assertion")))
 		})
 
-		// Scenario US2.3 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US2.3 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects a client assertion from an issuer the rule does not trust", func() {
 			untrusted := helpers.NewMockJWKSServer()
 			defer untrusted.Close()
@@ -565,7 +565,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("invalid_client"))
 		})
 
-		// Scenario US4.3 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US4.3 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("never records any submitted or issued token value in the audit event", func() {
 			req := baseRequest()
 			resp := postImpersonation(req)
@@ -580,7 +580,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			}
 		})
 
-		// SC-001 from specs/037-oauth2-user-impersonation/spec.md
+		// SC-001 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("serves 100 concurrent signed impersonation requests within the SC-001 budget", Label("performance"), func() {
 			form := baseRequest().Encode() // sign once; the same valid request is replayed
 			// Warm the JWKS cache and signing key so we measure a warmed deployment (SC-001).
@@ -624,7 +624,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	})
 
 	Context("first-match rule evaluation", func() {
-		// Scenario US2.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US2.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("falls through the first rule and applies the second, sharing an issuer", func() {
 			config := validConfig()
 			// Rule 1 only permits gateway-A; rule 2 permits gateway-prod; both trust the same issuer.
@@ -639,7 +639,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeJWTClaims(decodeBody(resp)["access_token"].(string))["sub"]).To(Equal("user-1"))
 		})
 
-		// Scenario US2.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US2.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("applies only the first fully matching rule", func() {
 			config := validConfig()
 			second := imperSignedRule("rule-second", issuer.URL(), issuer.JWKSURL(), "true")
@@ -661,7 +661,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(logs).ToNot(ContainSubstring(`"rule":"rule-second"`))
 		})
 
-		// Edge case (JWKS unavailable → fall through) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (JWKS unavailable → fall through) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("falls through a rule whose issuer JWKS is unavailable to a rule whose issuer is reachable", func() {
 			dead := helpers.NewMockJWKSServer()
 			deadJWKSURL := dead.JWKSURL()
@@ -683,7 +683,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	})
 
 	Context("user delegation enforcement", func() {
-		// Scenario US5.2 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US5.2 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("should reject a rule-authorized subject without a delegation and provide the consent URL", func() {
 			config := validConfig()
 			Expect(boot(config)).To(Succeed())
@@ -699,7 +699,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(logBuf.String()).To(ContainSubstring(`"token_exchange.failure_detail":"grant_missing"`))
 		})
 
-		// Scenario US5.3 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US5.3 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("should reject an expired subject delegation without revealing its prior existence", func() {
 			config := validConfig()
 			Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ExpiredGrant(
@@ -764,7 +764,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			postgres = nil
 		})
 
-		// Scenario US5.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US5.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("should fail closed when delegation storage cannot be queried", func() {
 			req := baseRequest()
 			resp := postImpersonation(req)
@@ -781,7 +781,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	})
 
 	Context("configuration validation at startup", func() {
-		// Scenario US2.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US2.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("fails startup when a trusted issuer omits allowed_algorithms", func() {
 			config := validConfig()
 			config.OAuth2AuthServer.Impersonation.Rules[0].TrustedIssuers[0].AllowedAlgorithms = nil
@@ -790,7 +790,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(err.Error()).To(ContainSubstring("allowed_algorithms"))
 		})
 
-		// Scenario US2.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US2.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("fails startup when a rule omits its authorization predicate", func() {
 			config := validConfig()
 			config.OAuth2AuthServer.Impersonation.Rules[0].Authorization.CEL.Expression = ""
@@ -798,7 +798,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(err).To(HaveOccurred())
 		})
 
-		// Configuration edge (HS256) from specs/037-oauth2-user-impersonation/spec.md
+		// Configuration edge (HS256) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("fails startup when a trusted issuer allows a symmetric algorithm", func() {
 			config := validConfig()
 			config.OAuth2AuthServer.Impersonation.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"HS256"}
@@ -809,7 +809,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	})
 
 	Context("proxy mode boundary", func() {
-		// Scenario US1.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects impersonation configuration outside local mode", func() {
 			upstream := helpers.NewMockUpstreamOAuth2Server()
 			defer upstream.Close()
@@ -825,7 +825,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	})
 
 	Context("issuer signing metadata unavailable", func() {
-		// Edge case (JWKS unavailable → fail closed) from specs/037-oauth2-user-impersonation/spec.md
+		// Edge case (JWKS unavailable → fail closed) from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("fails closed when a trusted issuer's JWKS cannot be fetched", func() {
 			config := validConfig() // captures issuer URLs while still valid
 			// Take the issuer's JWKS endpoint offline before startup so the broker can never
@@ -873,7 +873,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			return req
 		}
 
-		// Scenario US1.6 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US1.6 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("mints a token from an unsigned unverified subject carrying principal id and email", func() {
 			Expect(boot(unverifiedConfig())).To(Succeed())
 			seedDelegation("chat-user-1")
@@ -890,7 +890,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims["scope"]).To(Equal(""))
 		})
 
-		// Scenario US3.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an unverified subject when the configured rules only accept signed subjects", func() {
 			Expect(boot(validConfig())).To(Succeed()) // only the signed-subject rule is configured
 			resp := postImpersonation(unverifiedRequest(unverifiedSubjectToken("chat-user-1", "chat-user-1@example.com")))
@@ -898,7 +898,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)).To(HaveKey("error"))
 		})
 
-		// Scenario US3.5 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US3.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("rejects an unverified subject the authorization predicate does not permit", func() {
 			Expect(boot(unverifiedConfig())).To(Succeed())
 			resp := postImpersonation(unverifiedRequest(unverifiedSubjectToken("chat-user-1", "user@notexample.com")))
@@ -906,7 +906,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)["error"]).To(Equal("access_denied"))
 		})
 
-		// Scenario US3.5 from specs/037-oauth2-user-impersonation/spec.md — a signed JWS under
+		// Scenario US3.5 from specs/20260825-120000-oauth2-user-impersonation/spec.md — a signed JWS under
 		// the JWT type must never enter the unverified route (no signature bypass).
 		It("rejects a signed JWS submitted under the JWT type", func() {
 			Expect(boot(unverifiedConfig())).To(Succeed())
@@ -916,7 +916,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(decodeBody(resp)).To(HaveKey("error"))
 		})
 
-		// FR-007a/CR-005a from specs/037-oauth2-user-impersonation/spec.md
+		// FR-007a/CR-005a from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("fails startup when an unverified rule's predicate does not reference subject_token", func() {
 			config := unverifiedConfig()
 			config.OAuth2AuthServer.Impersonation.Rules[0].Authorization.CEL.Expression = `client_assertion.sub == "gateway-prod"`
@@ -925,7 +925,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(err.Error()).To(ContainSubstring("subject_token"))
 		})
 
-		// FR-006a from specs/037-oauth2-user-impersonation/spec.md — a caller-controlled email is not
+		// FR-006a from specs/20260825-120000-oauth2-user-impersonation/spec.md — a caller-controlled email is not
 		// minted unless the predicate binds subject_token.email.
 		It("does not mint a caller-supplied email that the predicate does not bind", func() {
 			config := unverifiedConfig()
@@ -940,7 +940,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(claims).ToNot(HaveKey("email"))
 		})
 
-		// Scenario US5.4 from specs/037-oauth2-user-impersonation/spec.md
+		// Scenario US5.4 from specs/20260825-120000-oauth2-user-impersonation/spec.md
 		It("should reject an unverified subject without a delegation", func() {
 			config := unverifiedConfig()
 			Expect(boot(config)).To(Succeed())

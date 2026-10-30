@@ -44,7 +44,7 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		}
 	})
 
-	// Browser route delivery and SPA response security contract from ADRs 035 and 005.
+	// Browser route delivery and SPA response security contract from ADRs 20260904-120000 and 20251218-120000.
 	It("serves canonical browser views for GET and HEAD", func() {
 		for _, path := range []string{
 			"/",
@@ -85,7 +85,7 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		Expect(body).To(BeEmpty())
 	})
 
-	// Reserved protocol namespace contract from ADR 035.
+	// Reserved protocol namespace contract from ADR 20260904-120000.
 	It("keeps protocol namespaces outside the SPA route", func() {
 		for _, path := range []string{"/api/not-a-route", "/oauth2/not-a-route", "/.well-known/not-a-route", "/health/not-a-route"} {
 			response, err := server.DirectRequest(http.MethodGet, path, fixtures.DefaultPrincipal().String(), nil, nil)
@@ -95,7 +95,7 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		}
 	})
 
-	// Unsupported SPA method contract from ADR 035.
+	// Unsupported SPA method contract from ADR 20260904-120000.
 	It("does not serve unsupported methods through the SPA route", func() {
 		response, err := server.DirectRequest(http.MethodPost, "/agents/agent-123", fixtures.DefaultPrincipal().String(), nil, nil)
 		Expect(err).ToNot(HaveOccurred())

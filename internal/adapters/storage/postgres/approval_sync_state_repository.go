@@ -71,7 +71,7 @@ func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (int64, er
 }
 
 // IncrementVersion atomically increments the sync version and issues NOTIFY for cross-instance wake-up.
-// Both UPDATE and NOTIFY are wrapped in the same transaction per ADR 014/FR-010.
+// Both UPDATE and NOTIFY are wrapped in the same transaction per ADR 20260328-120000/FR-010.
 func (r *ApprovalSyncStateRepository) IncrementVersion(ctx context.Context) (int64, error) {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.increment_version.approval_sync")
 	defer span.End()
@@ -125,7 +125,7 @@ func (r *ApprovalSyncStateRepository) IncrementVersion(ctx context.Context) (int
 		)
 	}
 
-	// Issue NOTIFY within the same transaction for atomic wake-up (ADR 014)
+	// Issue NOTIFY within the same transaction for atomic wake-up (ADR 20260328-120000)
 	_, err = tx.ExecContext(execCtx, `NOTIFY approval_sync`)
 	if err != nil {
 		return 0, storage.NewStorageError(

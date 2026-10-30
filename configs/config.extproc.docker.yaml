@@ -1,5 +1,5 @@
 # ExtProc Token Exchange Service — Docker Compose Configuration
-# Reference: specs/015-extproc-token-exchange/contracts/docker-compose.md
+# Reference: specs/20260223-120000-extproc-token-exchange/contracts/docker-compose.md
 #
 # WARNING: Development/local Docker Compose use only.
 # HTTP endpoints are acceptable here because all services run in the same

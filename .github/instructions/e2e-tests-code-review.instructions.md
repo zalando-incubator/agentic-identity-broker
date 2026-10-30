@@ -12,11 +12,11 @@ These guidelines apply specifically to end-to-end tests in `tests/e2e/`. They en
 ## Critical Requirements
 
 ### 1. Spec Traceability (MANDATORY)
-**Every `It()` block MUST link to a specific acceptance scenario from `specs/[NNN-feature]/spec.md`.**
+**Every `It()` block MUST link to a specific acceptance scenario from `specs/[YYYYMMDD-HHMMSS-feature]/spec.md`.**
 
 ✅ Required:
 ```go
-// Scenario 1.3 from specs/009-oauth2-auth-server/spec.md (User Story 1)
+// Scenario 1.3 from specs/20251222-120100-oauth2-auth-server/spec.md (User Story 1)
 It("should redirect to consent UI when no grant exists", func() {
 ```
 

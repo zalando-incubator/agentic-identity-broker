@@ -129,7 +129,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		return finishConnect(startConnect())
 	}
 
-	// US5-S6 from specs/013-token-exchange/spec.md
+	// US5-S6 from specs/20260115-120000-token-exchange/spec.md
 	It("[US5-S6] survives a transient provider outage during refresh without demanding re-authentication", func() {
 		ctx := context.Background()
 		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
@@ -143,7 +143,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(hasErrorURI).To(BeFalse())
 	})
 
-	// US2-S10 from specs/008-thirdparty-oauth2-sessions/spec.md
+	// US2-S10 from specs/20251222-120000-thirdparty-oauth2-sessions/spec.md
 	It("[US2-S10] accepts reconnect without a refresh token and requires login after expiry", func() {
 		ctx := context.Background()
 		mockUpstream.WithAccessToken("account-a-access").WithRefreshToken("account-a-refresh")
@@ -191,7 +191,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(form.Get("refresh_token") == "account-b-refresh").To(BeTrue())
 	})
 
-	// US2-S11 from specs/008-thirdparty-oauth2-sessions/spec.md
+	// US2-S11 from specs/20251222-120000-thirdparty-oauth2-sessions/spec.md
 	It("[US2-S11] keeps the first completed callback and accepts a later deliberate reconnect", func() {
 		first, second := startConnect(), startConnect()
 		mockUpstream.WithAccessToken("initial-winner")
@@ -227,7 +227,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(body["error"]).To(Equal("invalid_grant"))
 	})
 
-	// US1-S8 from specs/013-token-exchange/spec.md
+	// US1-S8 from specs/20260115-120000-token-exchange/spec.md
 	It("[US1-S8] refreshes and persists a provider lifetime encoded as a JSON string", func() {
 		ctx := context.Background()
 		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())

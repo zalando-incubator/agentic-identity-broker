@@ -16,7 +16,7 @@ Read the suite-specific guidance before you change either test layer.
 ExtProc agentgateway E2E tests use Docker. Infra-backed integration tests use PostgreSQL
 and an AWS emulator. They require Docker or Podman.
 
-Read [007-e2e-testing-with-ginkgo.md](../adrs/007-e2e-testing-with-ginkgo.md). It defines the E2E test architecture.
+Read [20260106-120000-e2e-testing-with-ginkgo.md](../adrs/20260106-120000-e2e-testing-with-ginkgo.md). It defines the E2E test architecture.
 
 ## E2E Tests (`tests/e2e/`)
 

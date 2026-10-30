@@ -86,7 +86,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			seedUsableCIMDKey()
 		})
 
-		// US2-S1 from specs/046-cimd-upstream-client/spec.md
+		// US2-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should return a client ID equal to its URL", Label("cimd-upstream-client"), func() {
 			clientIDURL := fixtures.CIMDClientIDURL(cimdService.ID)
 
@@ -97,7 +97,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			Expect(document).To(HaveKeyWithValue("client_id", clientIDURL))
 		})
 
-		// US2-S2 from specs/046-cimd-upstream-client/spec.md
+		// US2-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should publish the required callback and authentication fields", Label("cimd-upstream-client"), func() {
 			response := getBrokerDocument(fixtures.CIMDClientIDURL(cimdService.ID))
 			Expect(response.StatusCode).To(Equal(http.StatusOK))
@@ -112,7 +112,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			Expect(document).To(HaveKeyWithValue("jwks_uri", fixtures.CIMDJWKSURL(cimdService.ID)))
 		})
 
-		// US2-S3 from specs/046-cimd-upstream-client/spec.md
+		// US2-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should expose only public metadata and JWK material", Label("cimd-upstream-client"), func() {
 			metadataResponse := getBrokerDocument(fixtures.CIMDClientIDURL(cimdService.ID))
 			Expect(metadataResponse.StatusCode).To(Equal(http.StatusOK))
@@ -147,7 +147,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			}
 		})
 
-		// US2-S5 from specs/046-cimd-upstream-client/spec.md
+		// US2-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should return JSON documents with five-minute cache headers", Label("cimd-upstream-client"), func() {
 			metadataResponse := getBrokerDocument(fixtures.CIMDClientIDURL(cimdService.ID))
 			Expect(metadataResponse.StatusCode).To(Equal(http.StatusOK))
@@ -176,7 +176,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			Expect(testStorage.Services().Create(context.Background(), staticService)).To(Succeed())
 		})
 
-		// US2-S4 from specs/046-cimd-upstream-client/spec.md
+		// US2-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should not expose a CIMD identity for non-CIMD services", Label("cimd-upstream-client"), func() {
 			for _, service := range []*model.ThirdpartyOAuth2ProviderEntity{publicService, staticService} {
 				response := getBrokerDocument(fixtures.CIMDClientIDURL(service.ID))
@@ -209,7 +209,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			Expect(testStorage.Services().Create(context.Background(), unavailableService)).To(Succeed())
 		})
 
-		// US2-S6 from specs/046-cimd-upstream-client/spec.md
+		// US2-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should return canonical JSON 404 responses for unavailable services", Label("cimd-upstream-client"), func() {
 			serviceIDs := []id.ServiceID{
 				id.NewServiceID(),
@@ -261,7 +261,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 			}
 		})
 
-		// US2-S7 from specs/046-cimd-upstream-client/spec.md
+		// US2-S7 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should publish disjoint CIMD and token key identifiers", Label("cimd-upstream-client"), func() {
 			cimdResponse := getBrokerDocument(fixtures.CIMDJWKSURL(cimdService.ID))
 			Expect(cimdResponse.StatusCode).To(Equal(http.StatusOK))

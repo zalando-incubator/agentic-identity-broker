@@ -551,7 +551,7 @@ Reply with two parts and nothing after the second:
   "dimension": "adr-compliance",
   "verdict": "one sentence",
   "findings": [
-    { "severity": "RED", "title": "short title", "description": "1-2 sentences", "path": "adrs/014-oauth2-server-mode.md", "line": 1 }
+    { "severity": "RED", "title": "short title", "description": "1-2 sentences", "path": "adrs/20260328-120100-oauth2-server-mode.md", "line": 1 }
   ]
 }
 ```

@@ -171,7 +171,7 @@ func (e *CELEvaluator) compileExpression(expr string) (cel.Program, error) {
 		cel.Variable("request", cel.MapType(cel.StringType, cel.AnyType)),
 	}
 
-	// Feature 021 (T031): Register resolveAgentIdByClientId only when the resolver is configured.
+	// Feature 20260320-120000 (T031): Register resolveAgentIdByClientId only when the resolver is configured.
 	// When nil (multi-agent sharing enabled), the function is not registered and expressions
 	// using it fail at compile time, surfacing the misconfiguration immediately.
 	if e.config.ResolveAgentIDByClientID != nil {

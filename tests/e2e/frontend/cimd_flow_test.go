@@ -93,7 +93,7 @@ var _ = Describe("CIMD Full Browser Authorization Flow", func() {
 		}
 	})
 
-	// Scenario US6.2 from specs/028-cimd-support/spec.md
+	// Scenario US6.2 from specs/20260421-120000-cimd-support/spec.md
 	It("navigates from authorize to consent UI, approves grant, and receives authorization code", func() {
 		ctx := context.Background()
 		verifier := helpers.PKCEVerifier()
@@ -227,7 +227,7 @@ var _ = Describe("CIMD Loopback Warning Browser Flow", func() {
 		}
 	})
 
-	// SC-005 from specs/028b-portless-registration/spec.md
+	// SC-005 from specs/20260602-120000-portless-registration/spec.md
 	It("shows the localhost warning when authorize uses a different runtime loopback port", func() {
 		ctx := context.Background()
 		verifier := helpers.PKCEVerifier()

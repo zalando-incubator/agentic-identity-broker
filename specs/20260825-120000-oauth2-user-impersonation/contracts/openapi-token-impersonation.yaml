@@ -1,0 +1,126 @@
+# OpenAPI Contract Fragment: OAuth2 User Impersonation
+#
+# Feature: 20260825-120000-oauth2-user-impersonation
+# Target file to amend before implementation: api/enduser/openapi.yaml
+#
+# This fragment is the binding API contract for the impersonation extension of the existing
+# POST /oauth2/token endpoint (Constitution Principle IV/X — API-first). It documents the new
+# request parameters, the broker unverified subject profile extension, the RFC 8693 success
+# response shape, the `act` claim, activation rule, local-mode-only applicability, target-owned optional
+# scope, and error responses (FR-013). Merge the additions below into the existing
+# TokenExchangeRequest / TokenExchangeResponse / OAuth2Error schemas and the /oauth2/token
+# description; do NOT create a second endpoint.
+
+openapi: 3.0.3
+info:
+  title: Impersonation additions to /oauth2/token
+  version: 037
+
+# ---------------------------------------------------------------------------
+# 1. /oauth2/token description addendum (append a new grant subsection)
+# ---------------------------------------------------------------------------
+x-token-endpoint-addendum: |
+  ### Token Exchange Grant (RFC 8693) — User Impersonation (local mode only)
+
+  The routing-only `oauth2_authorization_server.impersonation.audience_prefix` selects this flow
+  only when the request contains exactly one `audience` of
+  `<audience_prefix>/<agent UUID or canonical ID>`. The suffix resolves a registered target agent.
+  The target supplies issued `agent_id` and local-token CEL `agent.*`; a validated client assertion
+  remains privileged-client authorization and audit material. The routing audience is never copied
+  to issued `aud`, which remains controlled by the existing local `token_claims_expression`.
+
+  Activation is evaluated BEFORE the third-party mandatory-`resource` check. An impersonation
+  request MUST NOT include `resource`. An optional `scope` requests a subset of the resolved target
+  agent's `allowed_scopes`; an empty target allow-list is unrestricted, and a denied scope is `invalid_scope`.
+
+  Required parameters:
+  - `grant_type`: `urn:ietf:params:oauth:grant-type:token-exchange`
+  - `audience`: `<audience_prefix>/<agent UUID or canonical ID>` (single value)
+  - `client_assertion_type`: `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
+  - `client_assertion`: signed JWT authenticating the privileged client
+  - `actor_token_type`: `urn:ietf:params:oauth:token-type:jwt`
+  - `actor_token`: signed JWT identifying the actor
+  - `subject_token_type`: `urn:ietf:params:oauth:token-type:jwt`
+  - `subject_token`: a signed subject JWT, OR — for a matching rule declaring `verification: none`
+    — an **unsigned (`alg:none`) JWT** carrying claims such as principal id and email
+  - `requested_token_type` (optional): if present MUST equal
+    `urn:ietf:params:oauth:token-type:access_token`
+  - `scope` (optional): literal-space-separated values requested from the resolved target agent's
+    `allowed_scopes`
+
+  Unverified subject (broker profile extension, NOT standard RFC 8693): selected solely by a
+  matching rule declaring `verification: none`. The broker reads the unsigned JWT's claims WITHOUT
+  verifying a signature and WITHOUT resolving it against any issuer; its `alg:none` guard rejects
+  signed JWSs on this path. Trust derives from the signed client assertion plus the matching rule's
+  authorization predicate, which must bind `subject_token`.
+
+# ---------------------------------------------------------------------------
+# 2. TokenExchangeRequest — properties to ADD
+# ---------------------------------------------------------------------------
+components:
+  schemas:
+    TokenExchangeRequest_additions:
+      type: object
+      properties:
+        actor_token:
+          type: string
+          description: |
+            Signed JWT identifying the acting party for impersonation. Required for the
+            impersonation flow. Its validated issuer and extracted identity are represented as
+            `act.iss` and `act.sub` in the issued token.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+        actor_token_type:
+          type: string
+          enum:
+            - "urn:ietf:params:oauth:token-type:jwt"
+          description: Type of actor_token. MUST be the RFC 8693 JWT token type. Required for impersonation.
+          example: "urn:ietf:params:oauth:token-type:jwt"
+        requested_token_type:
+          type: string
+          enum:
+            - "urn:ietf:params:oauth:token-type:access_token"
+          description: |
+            Optional for impersonation. When present MUST equal the access-token type; any other
+            value is rejected with invalid_request. When absent the access-token type is assumed.
+          example: "urn:ietf:params:oauth:token-type:access_token"
+      # subject_token_type MUST be the RFC 8693 JWT type:
+      #   - "urn:ietf:params:oauth:token-type:jwt" (signed or unsigned unverified subject)
+      # The matching rule's verification mode selects the subject path.
+      # audience (existing property) becomes the target-routing selector:
+      # <audience_prefix>/<agent UUID or canonical ID>. Do not add an agent_id request property.
+      # For impersonation, scope is optional and constrained by the resolved target's allowed_scopes;
+      # resource MUST NOT be present.
+
+# ---------------------------------------------------------------------------
+# 3. TokenExchangeResponse — impersonation success shape (existing schema, constrained)
+# ---------------------------------------------------------------------------
+    ImpersonationTokenResponse_contract:
+      description: |
+        Impersonation success reuses TokenExchangeResponse with:
+          access_token:      the locally signed broker token
+          token_type:        "Bearer"
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
+        The non-empty granted `scope` field is returned; it is omitted when no scopes are granted.
+        The payload contains sub (subject), agent_id and local CEL `agent.*` derived from the registered
+        audience target, act = { "iss": <actor-token issuer>, "sub": <actor> }, optional email,
+        granted `scope`, and standard local base claims. `aud`, when present, is emitted only by
+        the existing local token-claims policy. It MUST NOT contain any submitted credential value.
+
+# ---------------------------------------------------------------------------
+# 4. OAuth2Error — mapping for impersonation
+# ---------------------------------------------------------------------------
+    OAuth2Error_impersonation_mapping:
+      description: |
+        invalid_request (400): malformed/missing/repeated params; bare target or target matching
+          neither identifier form; resource present; invalid/expired/unsigned actor or subject;
+          identity extraction failure; requested_token_type mismatch.
+        invalid_scope (400): a requested scope is outside the resolved target agent's non-empty
+          allowed_scopes list.
+        invalid_target (400): a syntactically valid UUID or canonical-ID audience target is not a
+          registered agent.
+        invalid_client (401): client assertion fails signature/issuer/audience/expiry/nbf, or no
+          rule trusts it.
+        access_denied (403): a rule validated all credentials but no predicate permitted the
+          request.
+        On no-match exhaustion the code is chosen by precedence: access_denied > invalid_request >
+          invalid_client. Errors reveal no token values, key material, or trust internals.

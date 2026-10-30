@@ -93,7 +93,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 	})
 
 	Context("US1: Exchange From Dynamic Metadata", func() {
-		// 043-extproc-metadata-input: US1-S2 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US1-S2 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("uses only metadata values when raw HTTP attributes conflict", func() {
 			env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 			req := rawAttributeRequest().
@@ -107,7 +107,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			Expect(resp).To(helpers.HaveReplacedAuthorizationHeader(fixtures.FreshExchangedToken))
 		})
 
-		// 043-extproc-metadata-input: US1-S3 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US1-S3 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("rejects the request and forwards no credential when the exchange fails", func() {
 			env.MockTokenExchange.WithError(http.StatusForbidden, "access_denied")
 			req := helpers.NewRequestHeaders().
@@ -124,7 +124,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			Expect(helpers.ExtractMutatedAuthorizationHeader(resp)).To(BeEmpty())
 		})
 
-		// 043-extproc-metadata-input: US1-S4 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US1-S4 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("rejects without exchange when a required value is outside the namespace or is not a string", func() {
 			testCases := []struct {
 				name         string
@@ -167,7 +167,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 	})
 
 	Context("US2: Configure Instance Resource", func() {
-		// 043-extproc-metadata-input: US2-S2 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US2-S2 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("returns invalid_resource for missing, empty, non-string, or invalid resource metadata", func() {
 			testCases := []struct {
 				name    string
@@ -210,7 +210,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 	})
 
 	Context("US3: Remove Raw Attribute Dependency", func() {
-		// 043-extproc-metadata-input: US3-S1 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US3-S1 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("returns invalid_subject_token for missing, empty, scheme-prefixed, or non-string subject metadata", func() {
 			testCases := []struct {
 				name    string
@@ -251,7 +251,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			}
 		})
 
-		// 043-extproc-metadata-input: US3-S2 — specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: US3-S2 — specs/20260914-120000-extproc-metadata-input/spec.md
 		It("returns invalid_subject_token for a raw-attribute-only request", func() {
 			resp := helpers.SendRequestHeaders(context.Background(), client, rawAttributeRequest().Build())
 
@@ -261,7 +261,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 	})
 
 	Context("Edge Cases", func() {
-		// 043-extproc-metadata-input: Edge case — no metadata, one value, or whitespace-only values; specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: Edge case — no metadata, one value, or whitespace-only values; specs/20260914-120000-extproc-metadata-input/spec.md
 		It("returns the defined response for absent, partial, or whitespace-only metadata", func() {
 			testCases := []struct {
 				name         string
@@ -311,7 +311,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			}
 		})
 
-		// 043-extproc-metadata-input: Edge case — Bearer-prefixed subject token; specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: Edge case — Bearer-prefixed subject token; specs/20260914-120000-extproc-metadata-input/spec.md
 		It("rejects a scheme-prefixed subject token without forwarding it", func() {
 			req := rawAttributeRequest().
 				WithTokenExchangeMetadata("Bearer "+fixtures.ValidBearerToken, fixtures.ValidResourceURI).
@@ -323,7 +323,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			Expect(env.MockTokenExchange.CallCount()).To(Equal(0))
 		})
 
-		// 043-extproc-metadata-input: Edge case — resource URL is not absolute HTTP(S) with a host; specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: Edge case — resource URL is not absolute HTTP(S) with a host; specs/20260914-120000-extproc-metadata-input/spec.md
 		It("rejects resource values that are not absolute HTTP or HTTPS URLs with a host", func() {
 			for _, resourceURI := range []string{
 				fixtures.RelativePathResourceURI,
@@ -342,7 +342,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			}
 		})
 
-		// 043-extproc-metadata-input: Edge case — both required metadata values are invalid; specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: Edge case — both required metadata values are invalid; specs/20260914-120000-extproc-metadata-input/spec.md
 		It("returns invalid_subject_token when both required metadata values are invalid", func() {
 			req := rawAttributeRequest().
 				WithTokenExchangeMetadata("Bearer "+fixtures.ValidBearerToken, fixtures.RelativePathResourceURI).
@@ -354,7 +354,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 			Expect(env.MockTokenExchange.CallCount()).To(Equal(0))
 		})
 
-		// 043-extproc-metadata-input: Edge case — unrelated fields in aib.tokenexchange; specs/043-extproc-metadata-input/spec.md
+		// 20260914-120000-extproc-metadata-input: Edge case — unrelated fields in aib.tokenexchange; specs/20260914-120000-extproc-metadata-input/spec.md
 		It("ignores unrelated fields in the token-exchange metadata namespace", func() {
 			env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 			req := helpers.NewRequestHeaders().

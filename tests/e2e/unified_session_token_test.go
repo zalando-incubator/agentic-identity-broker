@@ -111,7 +111,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 		})
 
-		// Scenario 1.1 from specs/031-unified-session-token/spec.md
+		// Scenario 1.1 from specs/20260517-120000-unified-session-token/spec.md
 		It("includes session_token and omits redirect_uri for local agent authorize", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			authorizeURL := fmt.Sprintf(
@@ -131,7 +131,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(loc).NotTo(ContainSubstring("redirect_uri="), "consent URL must NOT contain redirect_uri")
 		})
 
-		// Scenario 1.2 from specs/031-unified-session-token/spec.md
+		// Scenario 1.2 from specs/20260517-120000-unified-session-token/spec.md
 		It("session token contains agent ID, principal, original URL, iat, exp with 10min TTL", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			originalURL := fmt.Sprintf(
@@ -165,7 +165,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(claims.CIMDMetadata).To(BeNil(), "local agent token must not contain CIMD metadata")
 		})
 
-		// Scenario 1.3 from specs/031-unified-session-token/spec.md
+		// Scenario 1.3 from specs/20260517-120000-unified-session-token/spec.md
 		It("rejects session token when principal does not match authenticated user", func() {
 			principalA := fixtures.DefaultPrincipal().String()
 			principalB := fixtures.AnotherPrincipal().String()
@@ -239,7 +239,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			}
 		})
 
-		// Scenario 2.1 from specs/031-unified-session-token/spec.md
+		// Scenario 2.1 from specs/20260517-120000-unified-session-token/spec.md
 		It("includes session_token for proxy agent authorize", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			authorizeURL := fmt.Sprintf(
@@ -258,7 +258,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(loc).NotTo(ContainSubstring("redirect_uri="), "proxy agent consent URL must NOT contain redirect_uri")
 		})
 
-		// Scenario 2.2 from specs/031-unified-session-token/spec.md
+		// Scenario 2.2 from specs/20260517-120000-unified-session-token/spec.md
 		It("rejects expired session token for proxy agent", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			expiredToken := newExpiredE2ESessionToken(agent.ID, principal)
@@ -301,7 +301,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 		})
 
-		// Scenario 3.1 from specs/031-unified-session-token/spec.md
+		// Scenario 3.1 from specs/20260517-120000-unified-session-token/spec.md
 		It("consent handler extracts context from session token for any agent mode", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			authorizeURL := fmt.Sprintf(
@@ -342,7 +342,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(body["redirect_url"]).ToNot(BeEmpty(), "session token claims must provide redirect_url")
 		})
 
-		// Scenario 4.1 from specs/031-unified-session-token/spec.md
+		// Scenario 4.1 from specs/20260517-120000-unified-session-token/spec.md
 		It("grant response redirect_url preserves original authorization request context", func() {
 			principal := fixtures.DefaultPrincipal().String()
 			state := "originalstate456"
@@ -408,7 +408,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 				"resuming the authorize flow after consent must redirect (grant now exists)")
 		})
 
-		// Scenario 3.2 from specs/031-unified-session-token/spec.md
+		// Scenario 3.2 from specs/20260517-120000-unified-session-token/spec.md
 		// Without a session_token the grants handler operates in consent-management mode
 		// (user managing grants outside the OAuth2 flow) — no redirect_url is returned.
 		It("grant response omits redirect_url when no session_token is present", func() {
@@ -427,7 +427,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 				"no redirect_url in consent-management mode (session_token absent)")
 		})
 
-		// Scenario 3.3 from specs/031-unified-session-token/spec.md
+		// Scenario 3.3 from specs/20260517-120000-unified-session-token/spec.md
 		// GET agent detail without session_token must return the resource normally —
 		// no session context required for standalone consent-management requests.
 		It("returns agent detail without session context when no session_token is present", func() {

@@ -1077,7 +1077,7 @@ func validateImpersonationRule(rule *ports.ImpersonationRuleConfig, rbase string
 
 	subject := rule.Roles[string(ports.CredentialRoleSubject)]
 	subjectUnverified := subject.Verification == ports.SubjectVerificationNone
-	// FR-003d/ADR 031: the subject role may be signed ("jwks", default) or unverified ("none").
+	// FR-003d/ADR 20260825-120000: the subject role may be signed ("jwks", default) or unverified ("none").
 	if subject.Verification != "" &&
 		subject.Verification != ports.SubjectVerificationJWKS &&
 		subject.Verification != ports.SubjectVerificationNone {

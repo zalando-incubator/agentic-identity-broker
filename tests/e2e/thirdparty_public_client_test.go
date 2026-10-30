@@ -138,7 +138,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			}
 		})
 
-		// US1-S1 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S1 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("creates the service and reports method none with no credential", func() {
 			request := serviceRequest("")
 			request["token_endpoint_auth_method"] = "none"
@@ -152,7 +152,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(service).NotTo(HaveKey("client_secret"))
 		})
 
-		// US1-S2 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S2 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("rejects the contradiction and creates no service", func() {
 			request := serviceRequest("")
 			request["token_endpoint_auth_method"] = "none"
@@ -170,7 +170,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(decodeJSON[[]map[string]any](listed)).To(BeEmpty())
 		})
 
-		// US1-S3 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S3 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("creates a confidential service with unchanged credential requirements", func() {
 			response := postJSON(adminServer, "/api/services", principal, serviceRequest(""))
 			Expect(response.StatusCode).To(Equal(http.StatusCreated))
@@ -181,7 +181,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(service).To(HaveKeyWithValue("client_secret", "REDACTED"))
 		})
 
-		// US1-S4 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S4 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("rejects a confidential service with no client secret exactly as today", func() {
 			request := serviceRequest("")
 			request["client_secret"] = ""
@@ -193,7 +193,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(errorBody).To(HaveKeyWithValue("message", "client_secret is required"))
 		})
 
-		// US1-S5 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S5 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("rejects none for the google variant, naming it", func() {
 			request := fixtures.ValidGoogleServiceRequest()
 			request["token_endpoint_auth_method"] = "none"
@@ -206,7 +206,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(errorBody).To(HaveKeyWithValue("message", "token_endpoint_auth_method \"none\" is not supported for the google flavor: the client identifier is derived from the credential document"))
 		})
 
-		// US1-S6 from specs/042-thirdparty-public-pkce/spec.md
+		// US1-S6 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("reports the method for every entry and omits the credential for public ones", func() {
 			publicRequest := serviceRequest("")
 			publicRequest["display_name"] = "Public catalogue service"
@@ -288,7 +288,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			}
 		})
 
-		// US2-S1 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S1 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("sends code_challenge and code_challenge_method S256 upstream", func() {
 			service := publicService
 			authorizationURL := initiateFlow(enduserServer, principal, service.ID)
@@ -299,7 +299,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(authorizationURL.Query().Get("code_challenge_method")).To(Equal("S256"))
 		})
 
-		// US2-S2 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S2 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("sends client_id and code_verifier with no client_secret in the body", func() {
 			service := publicService
 			response := completeFlow(enduserServer, principal, service.ID)
@@ -314,7 +314,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(form).NotTo(HaveKey("client_secret"))
 		})
 
-		// US2-S3 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S3 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("sends no authorization header, including none with an empty password", func() {
 			service := publicService
 			response := completeFlow(enduserServer, principal, service.ID)
@@ -323,7 +323,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 
 			credentialFreeTokenRequests(upstream)
 		})
-		// US2-S4 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S4 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("stores an encrypted session exactly as for a confidential service", func() {
 			service := publicService
 			response := completeFlow(enduserServer, principal, service.ID)
@@ -337,7 +337,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(session.EncryptedRefreshToken).NotTo(BeEmpty())
 		})
 
-		// US2-S5 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S5 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("fails closed without any retry adding a credential", func() {
 			service := publicService
 			upstream.WithErrorResponse("temporarily_unavailable")
@@ -353,7 +353,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			credentialFreeTokenRequests(upstream)
 		})
 
-		// US2-S6 from specs/042-thirdparty-public-pkce/spec.md
+		// US2-S6 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("leaves the confidential connect flow unchanged", func() {
 			confidentialUpstream := helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse()
 			DeferCleanup(confidentialUpstream.Close)
@@ -444,7 +444,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			return response
 		}
 
-		// US3-S1 from specs/042-thirdparty-public-pkce/spec.md
+		// US3-S1 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("refreshes with client_id and refresh_token and no client_secret", func() {
 			response := refresh(serviceID)
 			Expect(response.StatusCode).To(Equal(http.StatusOK))
@@ -457,7 +457,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			credentialFreeTokenRequests(upstream)
 		})
 
-		// US3-S2 from specs/042-thirdparty-public-pkce/spec.md
+		// US3-S2 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("encrypts and persists the refreshed tokens, replacing the previous ones", func() {
 			before, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), serviceID)
 			Expect(err).NotTo(HaveOccurred())
@@ -482,7 +482,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(upstreamForm(upstream).Get("refresh_token")).To(Equal("refreshed-public-refresh-token"))
 		})
 
-		// US3-S3 from specs/042-thirdparty-public-pkce/spec.md
+		// US3-S3 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("leaves the confidential refresh request unchanged", func() {
 			confidentialUpstream := helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse()
 			DeferCleanup(confidentialUpstream.Close)
@@ -507,7 +507,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(confidentialUpstream.GetLastRequest().Header.Get("Authorization")).To(BeEmpty())
 		})
 
-		// US3-S4 from specs/042-thirdparty-public-pkce/spec.md
+		// US3-S4 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("surfaces the failure without retrying with a credential or downgrading", func() {
 			before, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), serviceID)
 			Expect(err).NotTo(HaveOccurred())
@@ -587,7 +587,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			}
 		})
 
-		// US4-S1 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S1 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("removes the stored credential when the service becomes public", func() {
 			created := create(serviceRequest(upstream.URL()))
 			request := serviceRequest(upstream.URL())
@@ -605,7 +605,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(stored.Secret.IsAbsent()).To(BeTrue())
 		})
 
-		// US4-S2 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S2 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("rejects the update and leaves the public service intact", func() {
 			publicRequest := serviceRequest(upstream.URL())
 			publicRequest["token_endpoint_auth_method"] = "none"
@@ -624,7 +624,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(stored).NotTo(HaveKey("client_secret"))
 		})
 
-		// US4-S3 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S3 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("makes the service confidential and sends that credential upstream", func() {
 			publicRequest := serviceRequest(upstream.URL())
 			publicRequest["token_endpoint_auth_method"] = "none"
@@ -647,7 +647,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(upstream.GetLastRequest().Header.Get("Authorization")).To(Equal(expectedAuthorization))
 		})
 
-		// US4-S4 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S4 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("keeps the service public with no credential", func() {
 			publicRequest := serviceRequest(upstream.URL())
 			publicRequest["token_endpoint_auth_method"] = "none"
@@ -667,7 +667,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(updated).NotTo(HaveKey("client_secret"))
 		})
 
-		// US4-S5 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S5 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("keeps stored sessions valid and uses the new setting on the next refresh", func() {
 			created := create(serviceRequest(upstream.URL()))
 			serviceID := id.MustParseServiceID(created["id"].(string))
@@ -739,7 +739,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			Expect(confidentialUpstream.GetLastRequest().Header.Get("Authorization")).To(BeEmpty())
 		})
 
-		// US4-S6 from specs/042-thirdparty-public-pkce/spec.md
+		// US4-S6 from specs/20260910-120000-thirdparty-public-pkce/spec.md
 		It("accepts the null token_endpoint_auth_method a read returned and keeps the service confidential", func() {
 			created := create(serviceRequest(upstream.URL()))
 			read := get(created["id"].(string))

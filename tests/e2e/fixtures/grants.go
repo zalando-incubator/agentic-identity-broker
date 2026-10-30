@@ -143,7 +143,7 @@ func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, 
 }
 
 // SeedGrantSessions stores a usable session for every service the grant includes,
-// as FR-020 of specs/019-permission-sets/spec.md requires before consent is saved.
+// as FR-020 of specs/20260314-120000-permission-sets/spec.md requires before consent is saved.
 // Authorization redirects to consent while an included service has no session (FR-022).
 // Included services that are not stored yet are created with ServiceWithID and no protected resources.
 func SeedGrantSessions(ctx context.Context, store *storageadapter.Adapter, grant *storagedomain.UserGrant) error {

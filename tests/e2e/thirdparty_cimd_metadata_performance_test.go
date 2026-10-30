@@ -76,7 +76,7 @@ var _ = Describe("CIMD public metadata performance", func() {
 		}
 	})
 
-	// SC-008 from specs/046-cimd-upstream-client/spec.md
+	// SC-008 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("serves warmed metadata and JWK documents within the normal-load p95 budget", Label("cimd-upstream-client", "performance"), func() {
 		routes := []struct {
 			name string

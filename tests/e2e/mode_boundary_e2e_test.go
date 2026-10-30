@@ -25,14 +25,14 @@ import (
 
 // SR-002 Mode Boundary Enforcement E2E Tests
 //
-// Maps to FR-006, FR-007, and SR-002 from specs/030-hybrid-oauth-modes/spec.md.
+// Maps to FR-006, FR-007, and SR-002 from specs/20260511-120000-hybrid-oauth-modes/spec.md.
 // SR-002 requires that mode strategy boundaries are enforced at the HTTP layer —
 // a builder wiring regression (wrong strategy injected for a mode) must produce a
 // detectable HTTP error response, not silent misrouting.
 //
 // FR-005 CIMD UUID Rejection E2E Test
 //
-// Maps to scenario 4 (US2) from specs/030-hybrid-oauth-modes/spec.md.
+// Maps to scenario 4 (US2) from specs/20260511-120000-hybrid-oauth-modes/spec.md.
 
 var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 	var (
@@ -80,7 +80,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 			}
 		})
 
-		// Scenario US2.7 from specs/030-hybrid-oauth-modes/spec.md
+		// Scenario US2.7 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 		It("rejects LocalClient agent with unauthorized_client (FR-006, SR-002)", func() {
 			now := time.Now()
 			localAgent := &storage.Agent{
@@ -168,7 +168,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 			}
 		})
 
-		// Scenario US2.8 from specs/030-hybrid-oauth-modes/spec.md
+		// Scenario US2.8 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 		It("rejects ProxyClient agent with unauthorized_client (FR-007, SR-002)", func() {
 			now := time.Now()
 			proxyAgent := &storage.Agent{
@@ -230,7 +230,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 
 // FR-005 CIMD UUID Rejection E2E Test
 //
-// Maps to scenario 4 (US2) from specs/030-hybrid-oauth-modes/spec.md.
+// Maps to scenario 4 (US2) from specs/20260511-120000-hybrid-oauth-modes/spec.md.
 // CIMD agents must be addressed via their URL-format client_id, never by their internal UUID.
 // UUID-format resolution that finds a CIMD agent must be rejected before any CIMD fetch occurs.
 var _ = Describe("FR-005: CIMD Agent UUID Rejection", func() {
@@ -281,7 +281,7 @@ var _ = Describe("FR-005: CIMD Agent UUID Rejection", func() {
 		}
 	})
 
-	// Scenario 4 (US2) from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario 4 (US2) from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("rejects UUID-format client_id that resolves to a CIMD agent (FR-005)", func() {
 		resp, err := server.AuthenticatedGET(
 			fmt.Sprintf("/oauth2/authorize?client_id=%s&redirect_uri=https://cimd-fr005.test.invalid/callback&response_type=code&state=xyz",

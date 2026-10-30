@@ -153,7 +153,7 @@ var _ = Describe("OAuth2 credential-file deployment", func() {
 		})
 
 		Context("when an operator applies the paired broker configuration", func() {
-			// US7-S1 from specs/051-oauth2-secret-file-overrides/spec.md.
+			// US7-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md.
 			// Default omission and rendered mount preservation are covered by TestHelmCredentialFilesDefaultsOmitBinding and TestHelmCredentialFilesPairsAndExistingMounts.
 			It("US7-S1 applies both configured paths and connects a filesystem service", Label("oauth2-secret-file-overrides"), func() {
 				startBroker(map[string]map[string]string{"deployment-service": binding}, false)
@@ -163,7 +163,7 @@ var _ = Describe("OAuth2 credential-file deployment", func() {
 		})
 
 		Context("when the credential publisher atomically replaces a complete immutable pair", func() {
-			// US7-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US7-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US7-S2 connects and renews access in the real non-root broker using the current file credentials", Label("oauth2-secret-file-overrides"), func() {
 				startBroker(map[string]map[string]string{"deployment-service": binding}, true)
 				registerFilesystem("deployment-service")
@@ -244,7 +244,7 @@ var _ = Describe("OAuth2 credential-file deployment", func() {
 			}))
 		})
 
-		// US7-S3 from specs/051-oauth2-secret-file-overrides/spec.md.
+		// US7-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md.
 		// TestHelmCredentialFilesTargetDeployment renders these same portable inputs.
 		It("US7-S3 applies the target employee pair and permits explicit filesystem registration without inline placeholders", Label("oauth2-secret-file-overrides"), func() {
 			for _, path := range []string{"/meta/credentials/employee-client-id", "/meta/credentials/employee-client-secret"} {

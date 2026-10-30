@@ -7,10 +7,10 @@
 # presented as structured input to OPA (input.mcp.tool_name, input.type, etc.).
 #
 # For the full authorization configuration reference, see:
-#   specs/020-extproc-opa-authorization/contracts/configuration.md
+#   specs/20260314-120100-extproc-opa-authorization/contracts/configuration.md
 #
 # For the recommended Rego policy pattern (set-based allow/deny), see:
-#   specs/020-extproc-opa-authorization/contracts/rego-policy-pattern.md
+#   specs/20260314-120100-extproc-opa-authorization/contracts/rego-policy-pattern.md
 
 grpc:
   bind: "0.0.0.0"

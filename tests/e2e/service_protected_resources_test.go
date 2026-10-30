@@ -148,7 +148,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 	})
 
 	Describe("US1: add a single protected resource", func() {
-		// Scenario 1.1 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 1.1 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should add a member-addressed resource and leave unrelated service fields unchanged", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			before := getService(serviceID)
@@ -169,7 +169,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(after).To(HaveKeyWithValue("client_secret", "REDACTED"))
 		})
 
-		// Scenario 1.1 from specs/035-protected-resource-subresources/spec.md (POST alternate add form)
+		// Scenario 1.1 from specs/20260812-120000-protected-resource-subresources/spec.md (POST alternate add form)
 		It("should add a collection resource through POST without requiring service credentials", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			resource := "https://resources.example.test/post/"
@@ -182,7 +182,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(resourceSet(after)).To(ConsistOf("https://api.github.com", "https://resources.example.test/post"))
 		})
 
-		// Scenario 1.2 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 1.2 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should be idempotent when a normalized URI is already owned by the service", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/already"})
 
@@ -190,7 +190,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			expectMutation(response, http.StatusOK, "https://resources.example.test/already", []string{"https://api.github.com", "https://resources.example.test/already"})
 		})
 
-		// Scenario 1.3 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 1.3 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should reject a resource URI owned by another service without changing either set", func() {
 			githubID := seedService("github", []string{"https://api.github.com"})
 			googleID := seedService("google", []string{"https://www.googleapis.com", "https://shared.example.test/resource"})
@@ -201,7 +201,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(resourceSet(getService(googleID))).To(ConsistOf("https://www.googleapis.com", "https://shared.example.test/resource"))
 		})
 
-		// Scenario 1.4 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 1.4 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should reject malformed, relative, empty, and whitespace-only resource URIs without changing the set", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			for _, invalid := range []string{"not a URI", "/relative", "", " \t "} {
@@ -211,7 +211,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			}
 		})
 
-		// Scenario 1.5 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 1.5 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should return not found when adding to a non-existent service", func() {
 			response := mutate(http.MethodPost, "/api/services/00000000-0000-0000-0000-000000000099/protected-resources", map[string]string{"resource_uri": "https://resources.example.test/missing"})
 			expectError(response, http.StatusNotFound)
@@ -219,7 +219,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 	})
 
 	Describe("US2: remove a single protected resource", func() {
-		// Scenario 2.1 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 2.1 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should remove an owned resource and preserve unrelated service fields", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/remove"})
 			before := getService(serviceID)
@@ -235,7 +235,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(after["endpoints"]).To(Equal(before["endpoints"]))
 		})
 
-		// Scenario 2.2 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 2.2 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should return not found when removing a resource the service does not own", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			response := mutate(http.MethodDelete, "/api/services/"+serviceID+"/protected-resources/"+fullyEscapeResource("https://resources.example.test/not-owned"), nil)
@@ -296,7 +296,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 				}
 			})
 
-			// Scenario 2.3 from specs/035-protected-resource-subresources/spec.md
+			// Scenario 2.3 from specs/20260812-120000-protected-resource-subresources/spec.md
 			It("should make the removed URI unresolvable to RFC 8693 token exchange", func() {
 				beforeDeletion := postExchange()
 				Expect(beforeDeletion).To(matchers.HaveStatusCode(http.StatusOK))
@@ -319,7 +319,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			})
 		})
 
-		// Scenario 2.4 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 2.4 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should allow removing the last resource and leave an empty set", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			response := mutate(http.MethodDelete, "/api/services/"+serviceID+"/protected-resources/"+fullyEscapeResource("https://api.github.com"), nil)
@@ -331,14 +331,14 @@ var _ = Describe("Protected Resource Subresources", func() {
 	})
 
 	Describe("US3: rename a protected resource", func() {
-		// Scenario 3.1 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 3.1 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should rename an owned resource to a normalized unclaimed URI", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/source"})
 			response := mutate(http.MethodPatch, "/api/services/"+serviceID+"/protected-resources/"+fullyEscapeResource("https://resources.example.test/source"), map[string]string{"to": "https://resources.example.test/target/"})
 			expectMutation(response, http.StatusOK, "https://resources.example.test/target", []string{"https://api.github.com", "https://resources.example.test/target"})
 		})
 
-		// Scenario 3.2 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 3.2 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should reject a rename to a URI owned elsewhere or already present", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/source", "https://resources.example.test/existing"})
 			seedService("google", []string{"https://www.googleapis.com", "https://resources.example.test/other-service"})
@@ -350,7 +350,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			}
 		})
 
-		// Scenario 3.3 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 3.3 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should return not found when renaming a resource the service does not own", func() {
 			serviceID := seedService("github", []string{"https://api.github.com"})
 			response := mutate(http.MethodPatch, "/api/services/"+serviceID+"/protected-resources/"+fullyEscapeResource("https://resources.example.test/missing-source"), map[string]string{"to": "https://resources.example.test/target"})
@@ -358,7 +358,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(resourceSet(getService(serviceID))).To(ConsistOf("https://api.github.com"))
 		})
 
-		// Scenario 3.4 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 3.4 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should treat renaming a resource to itself as a no-op success", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/same"})
 			response := mutate(http.MethodPatch, "/api/services/"+serviceID+"/protected-resources/"+fullyEscapeResource("https://resources.example.test/same"), map[string]string{"to": "https://resources.example.test/same"})
@@ -367,7 +367,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 	})
 
 	Describe("US4: retrieve protected resources", func() {
-		// Scenario 4.1 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 4.1 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should return every normalized protected resource for a service", func() {
 			serviceID := seedService("github", []string{"https://api.github.com", "https://resources.example.test/v1", "https://resources.example.test/v2"})
 			response := listResources(serviceID)
@@ -377,7 +377,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 			Expect(resourceSet(body)).To(ConsistOf("https://api.github.com", "https://resources.example.test/v1", "https://resources.example.test/v2"))
 		})
 
-		// Scenario 4.2 from specs/035-protected-resource-subresources/spec.md
+		// Scenario 4.2 from specs/20260812-120000-protected-resource-subresources/spec.md
 		It("should return not found when listing resources for a non-existent service", func() {
 			response := listResources("00000000-0000-0000-0000-000000000099")
 			expectError(response, http.StatusNotFound)

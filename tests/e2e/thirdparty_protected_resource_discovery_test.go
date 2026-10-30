@@ -133,7 +133,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 	})
 
 	Context("when a resource advertises one path-qualified issuer", func() {
-		// US1-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S1 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should save the single issuer and its discovered endpoints", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			resourceHost, issuerHost := host(scenario.ResourceURL), host(scenario.IssuerURLs[0])
@@ -155,7 +155,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			scenario = fixtures.CIMDAndDCRProtectedResource()
 		})
 
-		// US1-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S2 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should choose hosted CIMD without registering another client", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			Expect(service["discovery"]).To(HaveKeyWithValue("client_method", "cimd"))
@@ -170,7 +170,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			}))
 		})
 
-		// US1-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S3 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should connect with S256 PKCE and one resource on each request", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			serviceID := service["id"].(string)
@@ -221,7 +221,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			scenario = fixtures.MultiIssuerProtectedResource()
 		})
 
-		// US1-S4 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S4 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should discover only the explicitly selected issuer", Label("protected-resource-discovery"), func() {
 			selected := scenario.IssuerURLs[1]
 			service := createService(selected)
@@ -249,7 +249,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			overrides = []fixtures.ProtectedResourceReply{challenge, root}
 		})
 
-		// US1-S5 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S5 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should follow the one challenge URL before well-known alternatives", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			Expect(service).To(HaveKeyWithValue("issuer_uri", scenario.IssuerURLs[0]))
@@ -273,7 +273,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			overrides = []fixtures.ProtectedResourceReply{oauth, inserted, appended}
 		})
 
-		// US1-S6 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S6 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should select path-inserted OpenID before path-appended OpenID", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			Expect(service["endpoints"]).To(HaveKeyWithValue("token_endpoint", scenario.IssuerURLs[0]+"/token"))
@@ -300,7 +300,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			}
 		})
 
-		// US1-S7 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S7 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should use path-appended OpenID after two missing locations", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			Expect(service["endpoints"]).To(And(
@@ -328,7 +328,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			overrides = []fixtures.ProtectedResourceReply{oauth, openid}
 		})
 
-		// US1-S8 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S8 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should obtain root issuer endpoints from OpenID metadata", Label("protected-resource-discovery"), func() {
 			service := createService(scenario.IssuerURLs[0])
 			Expect(service["endpoints"]).To(And(
@@ -355,7 +355,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 			overrides = []fixtures.ProtectedResourceReply{challenge, root}
 		})
 
-		// US1-S9 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S9 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should prefer path-specific metadata over root metadata", Label("protected-resource-discovery"), func() {
 			service := createService("")
 			Expect(service).To(HaveKeyWithValue("issuer_uri", scenario.IssuerURLs[0]))
@@ -368,7 +368,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 	})
 
 	Context("when an administrator reads a discovered service", func() {
-		// US1-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US1-S10 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should show the verified URL as its effective resource", Label("protected-resource-discovery"), func() {
 			created := createService("")
 			response, err := adminServer.AuthenticatedGET("/api/services/"+created["id"].(string), principal)

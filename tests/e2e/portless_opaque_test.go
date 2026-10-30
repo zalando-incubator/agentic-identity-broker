@@ -55,7 +55,7 @@ var _ = Describe("Portless Redirect URI — Opaque Agent", func() {
 		}
 	})
 
-	// SC-006 from specs/028b-portless-registration/spec.md
+	// SC-006 from specs/20260602-120000-portless-registration/spec.md
 	It("accepts a different ephemeral port for an opaque agent with explicit-port loopback redirect URI", func() {
 		completeAuthorizationCodeFlow(
 			server,

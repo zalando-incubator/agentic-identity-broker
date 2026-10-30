@@ -9,11 +9,11 @@ Security is NON-NEGOTIABLE and MUST NOT be bypassed or made optional in this cod
 **Rules**:
 - Security features MUST be enabled by default; disabling them MUST require explicit configuration
 - Signature validation is NEVER optional—no code path shall skip cryptographic verification, except
-  for the exact **Accepted ADR 031** exception: in local-mode OAuth2 user impersonation only, a
+  for the exact **Accepted ADR 20260825-120000** exception: in local-mode OAuth2 user impersonation only, a
   subject credential accepted by a rule declaring `verification: none` MAY be an unsigned
   `alg:none` JWT carried under the RFC 8693 JWT token type. The exception NEVER applies to a
   client assertion, actor token, or a signed subject (a rule with `verification: jwks`). It
-  requires all ADR 031 compensating controls: explicit per-rule opt-in; signature-verified client
+  requires all ADR 20260825-120000 compensating controls: explicit per-rule opt-in; signature-verified client
   assertion and actor; a startup-verified authorization predicate reference to `subject_token`; an
   unverified email minted only when the predicate binds `subject_token.email`; fail-closed
   evaluation and extraction; and credential-free structured audit events.
@@ -32,7 +32,7 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
 - When features change or touch architecture, [ARCHITECTURE.md](../../ARCHITECTURE.md) MUST be updated in the same PR
 - Non-functional requirements (performance, security, scalability) MUST be documented in [ARCHITECTURE.md](../../ARCHITECTURE.md)
 - Major architectural decisions MUST be recorded in [adrs/](adrs/) directory as Architecture Decision Records
-- ADR files MUST follow the format `NNN-decision-title.md` (e.g., `001-hexagonal-architecture.md`)
+- ADR files MUST follow the format `YYYYMMDD-HHMMSS-decision-title.md` (e.g., `20260319-143022-hexagonal-architecture.md`), using the creation timestamp. The timestamp is the ADR identifier (for example, "ADR 20260319-143022")
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
 - An ADR introduced on the current branch MAY have status "Accepted" and be approved in
   that same PR; a separate PR or prior merge is not required
@@ -44,14 +44,14 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
   without a new accepted superseding ADR
 - A superseding ADR MAY be introduced and accepted in the same PR as the authorized change
 - When an ADR establishes a pattern (e.g., interface design, library choice, architectural pattern), that pattern MUST be followed consistently across the codebase
-- ADRs supersede ad-hoc implementation choices: if an ADR exists for a domain (e.g., ADR 004 for storage), implementers MUST follow it
+- ADRs supersede ad-hoc implementation choices: if an ADR exists for a domain (e.g., ADR 20251215-120300 for storage), implementers MUST follow it
 
 **Rationale**: Agents and developers require rapid, accurate understanding of architectural
 constraints to maintain consistency. Protecting Accepted ADRs already merged into main prevents
 architectural drift, while allowing revisions before an ADR's first merge keeps its reviewed
 decision aligned with the implementation without needless supersession records.
 
-**Example**: ADR 004 (Storage Layer Architecture) establishes interface segregation, sqlx for PostgreSQL, and specific error handling patterns. Any new storage-backed entity must follow these decisions, not introduce alternative approaches.
+**Example**: ADR 20251215-120300 (Storage Layer Architecture) establishes interface segregation, sqlx for PostgreSQL, and specific error handling patterns. Any new storage-backed entity must follow these decisions, not introduce alternative approaches.
 
 ### III. Library-First Security Implementation
 
@@ -197,7 +197,7 @@ All entities requiring persistence MUST follow established patterns, and ALL dat
 MUST be managed via migrations with comprehensive testing.
 
 **Rules**:
-- New entities requiring persistence MUST follow patterns in [specs/004-persistence-layer/quickstart.md](specs/004-persistence-layer/quickstart.md)
+- New entities requiring persistence MUST follow patterns in [specs/20251215-120100-persistence-layer/quickstart.md](specs/20251215-120100-persistence-layer/quickstart.md)
 - Storage interfaces MUST use small, focused interfaces following Interface Segregation Principle:
   - Separate repository interface per entity (e.g., `UserRepository`, `ProductRepository`)
   - Lifecycle operations in separate interface (`StorageLifecycle`)
@@ -232,9 +232,9 @@ MUST be managed via migrations with comprehensive testing.
   - Integration tests MUST verify persistence behavior against real PostgreSQL
   - Integration tests MUST use the same migrations that production uses
   - Integration tests MUST validate error handling and edge cases (constraints, timeouts, etc.)
-- See [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) for binding architectural decisions
+- See [ADR 20251215-120300: Storage Layer Architecture](adrs/20251215-120300-storage-layer-architecture.md) for binding architectural decisions
 
-**Rationale**: The 004-persistence-layer feature established comprehensive, battle-tested persistence
+**Rationale**: The 20251215-120100-persistence-layer feature established comprehensive, battle-tested persistence
 patterns following Go best practices (small interfaces, Interface Segregation Principle, hexagonal
 architecture). Requiring all entities to follow these patterns ensures consistency, maintainability,
 and prevents ad-hoc persistence implementations that violate architectural principles. Database
@@ -365,7 +365,7 @@ maps 1:1 to a test scenario in `tests/e2e/`. E2E tests MUST be written BEFORE im
 change minimally during implementation, and follow red-green development.
 
 **Rules**:
-- **Every acceptance scenario in `specs/[NNN-feature-name]/spec.md` MUST have a corresponding E2E test in `tests/e2e/`**
+- **Every acceptance scenario in `specs/[YYYYMMDD-HHMMSS-feature-name]/spec.md` MUST have a corresponding E2E test in `tests/e2e/`**
 - E2E tests MUST be written BEFORE implementation begins (acceptance-test-driven development)
 - **E2E tests MUST compile AND fail semantically initially (red phase)**:
   - E2E tests MUST compile successfully with no compilation errors
@@ -402,7 +402,7 @@ change minimally during implementation, and follow red-green development.
 - Test data MUST use fixtures from `tests/e2e/fixtures/` (agents, grants, principals, config) NOT hardcoded values
 - E2E tests MUST follow Given/When/Then structure mapping to BeforeEach (setup) / action / assertions
 - Test file naming convention: `tests/e2e/[feature]_test.go` (e.g., `oauth2_authorize_test.go`)
-- Each test file MUST include comment references to spec scenarios: `// Scenario X.Y from specs/[NNN-feature]/spec.md`
+- Each test file MUST include comment references to spec scenarios: `// Scenario X.Y from specs/[YYYYMMDD-HHMMSS-feature]/spec.md`
 - E2E tests MUST be independent and isolated: fresh server and storage for each test via BeforeEach/AfterEach
 - Common E2E test utilities (matchers, helpers, mock servers) MUST be in `tests/e2e/matchers/` and `tests/e2e/helpers/`
 - E2E tests MUST NOT depend on test execution order or shared state between tests
@@ -430,7 +430,7 @@ documentation of UI states, making regressions immediately visible during review
 (Ginkgo/Gomega) and frontend E2E (Playwright) provide defense in depth covering the full stack.
 
 **Example**: When implementing OAuth2 authorization endpoint:
-1. Read acceptance scenarios from `specs/009-oauth2-auth-server/spec.md` (User Story 1)
+1. Read acceptance scenarios from `specs/20251222-120100-oauth2-auth-server/spec.md` (User Story 1)
 2. Create `tests/e2e/oauth2_authorize_test.go` with one `It()` block per scenario
 3. Implement minimal structure so E2E tests compile (empty handler stubs, basic routes)
 4. Verify E2E tests compile AND fail semantically: assertions like `Expect(resp.StatusCode).To(Equal(302))`
@@ -542,7 +542,7 @@ unrelated findings without silently enlarging the feature.
 - [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) reflects architectural changes (if any)
 - [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
 - [ ] Code follows accepted ADRs already merged into main and final accepted ADRs introduced
-      in this PR (especially ADR 004 for persistence)
+      in this PR (especially ADR 20251215-120300 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification
 - [ ] End-user API documentation in [docs/api/](docs/api/) with examples (if applicable)
 - [ ] Configuration implementation uses the configuration system owned by its deployable application; a standalone configuration path requires an accepted ADR
@@ -737,4 +737,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
+**Version**: 4.3.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-30

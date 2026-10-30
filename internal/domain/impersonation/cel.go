@@ -13,7 +13,7 @@ import (
 
 // CEL variable names available to impersonation authorization and extraction expressions
 // (FR-007). subject_unverified is true only for the unsigned unverified subject path (FR-003d,
-// ADR 031) and false for a signed subject.
+// ADR 20260825-120000) and false for a signed subject.
 const (
 	celClientAssertion   = "client_assertion"
 	celActorToken        = "actor_token"

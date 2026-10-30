@@ -1,5 +1,5 @@
 // Package extproc_test contains E2E acceptance tests for ExtProc telemetry.
-// This file validates acceptance scenarios from specs/027-extproc-otel/spec.md.
+// This file validates acceptance scenarios from specs/20260417-120000-extproc-otel/spec.md.
 //
 // Test Structure: Each `It()` block maps 1:1 to ONE acceptance scenario from the spec,
 // organized under `Describe` blocks corresponding to the five User Stories (US1–US5).
@@ -118,7 +118,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			}
 		})
 
-		// Scenario 1.1 from specs/027-extproc-otel/spec.md
+		// Scenario 1.1 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S1: extracts W3C traceparent from agentgateway and creates linked span", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -142,7 +142,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 				"span must inherit the incoming trace ID from traceparent header")
 		})
 
-		// Scenario 1.2 from specs/027-extproc-otel/spec.md
+		// Scenario 1.2 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S2: span carries outcome without caller-controlled resource attributes", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -167,7 +167,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(outcome).To(Equal("success"), "outcome uses the common bounded taxonomy")
 		})
 
-		// Scenario 1.3 from specs/027-extproc-otel/spec.md
+		// Scenario 1.3 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S3: injects trace context into outbound HTTP request to Identity Broker", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -222,7 +222,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 				"outbound traceparent parent-id must be the HTTP client span's span ID")
 		})
 
-		// Scenario 1.4 from specs/027-extproc-otel/spec.md
+		// Scenario 1.4 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S4: records error outcome on token exchange failure", func() {
 			env.MockTokenExchange.WithError(400, "invalid_grant")
 
@@ -254,7 +254,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(attrs["token_exchange.broker_error_code"].AsString()).To(Equal("invalid_grant"))
 		})
 
-		// Scenario 1.5 from specs/027-extproc-otel/spec.md
+		// Scenario 1.5 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S5: incurs no overhead when telemetry is disabled (no spans recorded)", func() {
 			// BeforeEach already recorded spans (e.g., from the safe HTTP client
 			// assertion fetch). Capture the count before switching to noop so we can assert
@@ -282,7 +282,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 				"noop provider must not record any new spans — telemetry overhead is zero when disabled")
 		})
 
-		// Scenario 1.6 from specs/027-extproc-otel/spec.md
+		// Scenario 1.6 from specs/20260417-120000-extproc-otel/spec.md
 		It("US1-S6: preserves incoming trace context in outbound request when traces.enabled=false", func() {
 			// Reset global state to match production startup (no prior test BeforeEach).
 			// The BeforeEach set a recording TracerProvider and propagators; clear both
@@ -366,7 +366,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			}
 		})
 
-		// Scenario 2.1 from specs/027-extproc-otel/spec.md
+		// Scenario 2.1 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S1: starts normally with telemetry disabled (default config)", func() {
 			cfg := fixtures.DefaultConfig()
 			// Default config has Telemetry.Enabled = false
@@ -383,7 +383,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(resp).NotTo(BeNil(), "token exchange must succeed when telemetry is disabled")
 		})
 
-		// Scenario 2.2 from specs/027-extproc-otel/spec.md
+		// Scenario 2.2 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S2: TelemetryConfig mirrors ports.TelemetryConfig schema (service_name configurable)", func() {
 			cfg := fixtures.DefaultConfig()
 			cfg.Telemetry.ServiceName = "my-extproc"
@@ -391,7 +391,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 				"service_name must be configurable via TelemetryConfig")
 		})
 
-		// Scenario 2.3 from specs/027-extproc-otel/spec.md
+		// Scenario 2.3 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S3: validates gRPC protocol as accepted exporter protocol", func() {
 			cfg := fixtures.DefaultConfig()
 			cfg.OAuth2.TLS.AllowHTTP = true // DefaultConfig uses HTTP placeholders
@@ -403,7 +403,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(err).NotTo(HaveOccurred(), "grpc protocol must pass validation")
 		})
 
-		// Scenario 2.4 from specs/027-extproc-otel/spec.md
+		// Scenario 2.4 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S4: validates HTTP protocol as accepted exporter protocol", func() {
 			cfg := fixtures.DefaultConfig()
 			cfg.OAuth2.TLS.AllowHTTP = true // DefaultConfig uses HTTP placeholders
@@ -415,7 +415,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(err).NotTo(HaveOccurred(), "http protocol must pass validation")
 		})
 
-		// Scenario 2.5 from specs/027-extproc-otel/spec.md
+		// Scenario 2.5 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S5: validates HTTPS protocol as accepted exporter protocol", func() {
 			cfg := fixtures.DefaultConfig()
 			cfg.OAuth2.TLS.AllowHTTP = true // DefaultConfig uses HTTP placeholders
@@ -427,7 +427,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(err).NotTo(HaveOccurred(), "https protocol must pass validation")
 		})
 
-		// Scenario 2.6 from specs/027-extproc-otel/spec.md
+		// Scenario 2.6 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S6: EXTPROC_TELEMETRY_EXPORTER_ENDPOINT env var overrides config", func() {
 			// Write a YAML config with a different endpoint value to prove the
 			// env var wins during Viper loading (env > YAML > default).
@@ -457,7 +457,7 @@ telemetry:
 				"EXTPROC_TELEMETRY_EXPORTER_ENDPOINT must override YAML config value")
 		})
 
-		// Scenario 2.7 from specs/027-extproc-otel/spec.md
+		// Scenario 2.7 from specs/20260417-120000-extproc-otel/spec.md
 		It("US2-S7: fails at startup with clear error for invalid protocol", func() {
 			cfg := fixtures.DefaultConfig()
 			cfg.OAuth2.TLS.AllowHTTP = true // DefaultConfig uses HTTP placeholders
@@ -507,7 +507,7 @@ telemetry:
 			}
 		})
 
-		// Scenario 3.1 from specs/027-extproc-otel/spec.md
+		// Scenario 3.1 from specs/20260417-120000-extproc-otel/spec.md
 		It("US3-S1: exports request counter and latency histogram broken down by outcome", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -549,7 +549,7 @@ telemetry:
 				"extproc.token_exchange.duration histogram must be exported")
 		})
 
-		// Scenario 3.2 from specs/027-extproc-otel/spec.md:
+		// Scenario 3.2 from specs/20260417-120000-extproc-otel/spec.md:
 		// "Go runtime metrics are automatically exported when metrics are enabled."
 		// Exercises the real telemetry.NewProvider() path which calls runtimemetrics.Start()
 		// and sets a real SDK MeterProvider as the global.
@@ -599,7 +599,7 @@ telemetry:
 				"global MeterProvider must be *sdkmetric.MeterProvider, got %T", currentMP)
 		})
 
-		// Scenario 3.3 from specs/027-extproc-otel/spec.md:
+		// Scenario 3.3 from specs/20260417-120000-extproc-otel/spec.md:
 		// "Given metrics are disabled but tracing is enabled, When requests are processed,
 		//  Then only trace data is exported and no metric data is emitted."
 		It("US3-S3: no custom metrics emitted when metrics are disabled but tracing is enabled", func() {
@@ -725,7 +725,7 @@ telemetry:
 			}
 		})
 
-		// Scenario 4.1 from specs/027-extproc-otel/spec.md
+		// Scenario 4.1 from specs/20260417-120000-extproc-otel/spec.md
 		It("US4-S1: service starts successfully even when collector is unreachable", func() {
 			// The server started in BeforeEach without error — this verifies startup
 			// does not block or fail when no OTLP collector is available.
@@ -737,7 +737,7 @@ telemetry:
 				"server must respond normally even with unreachable collector")
 		})
 
-		// Scenario 4.2 from specs/027-extproc-otel/spec.md
+		// Scenario 4.2 from specs/20260417-120000-extproc-otel/spec.md
 		It("US4-S2: token exchange continues normally when collector becomes unreachable during operation", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -789,7 +789,7 @@ telemetry:
 			}
 		})
 
-		// Scenario 5.1 from specs/027-extproc-otel/spec.md
+		// Scenario 5.1 from specs/20260417-120000-extproc-otel/spec.md
 		It("US5-S1: slog bridge configuration is valid when telemetry.logs.enabled=true", func() {
 			// The slog-to-OTel bridge is wired in cmd/extproc-token-exchange/root.go,
 			// not in the server library. E2E tests exercise the server library directly,
@@ -808,7 +808,7 @@ telemetry:
 				"telemetry.logs.enabled=true must pass validation — bridge is wired at cmd layer")
 		})
 
-		// Scenario 5.2 from specs/027-extproc-otel/spec.md
+		// Scenario 5.2 from specs/20260417-120000-extproc-otel/spec.md
 		It("US5-S2: logs.enabled=false is valid and skips OTLP log pipeline", func() {
 			// When logs are disabled, cmd/extproc-token-exchange/root.go skips the
 			// otelslog.NewHandler() call entirely — no LoggerProvider is registered.

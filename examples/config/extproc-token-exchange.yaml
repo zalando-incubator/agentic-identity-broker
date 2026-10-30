@@ -1,6 +1,6 @@
 # ExtProc Token Exchange Service Configuration
-# Feature: 015-extproc-token-exchange
-# Reference: specs/015-extproc-token-exchange/contracts/configuration.md
+# Feature: 20260223-120000-extproc-token-exchange
+# Reference: specs/20260223-120000-extproc-token-exchange/contracts/configuration.md
 #
 # Environment variable mapping: EXTPROC_<SECTION>_<KEY>
 # Example: grpc.port → EXTPROC_GRPC_PORT
@@ -139,7 +139,7 @@ log:
 #   - Structured log correlation with active trace context (trace_id, span_id)
 #   - Graceful degradation when the telemetry collector is unavailable
 # The schema is identical to the identity broker's telemetry configuration for operational parity.
-# See specs/027-extproc-otel/spec.md and examples/config/extproc-telemetry.yaml for details.
+# See specs/20260417-120000-extproc-otel/spec.md and examples/config/extproc-telemetry.yaml for details.
 #
 # Uncomment and configure to enable:
 # telemetry:

@@ -182,7 +182,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	JustBeforeEach(func() { env = start(scenario, clientName, useProductionTransport) })
 
 	Context("when protected-resource metadata is absent", func() {
-		// US3-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S1 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject missing metadata rather than accept manual endpoints", Label("protected-resource-discovery"), func() {
 			env.provider.SetReply(fixtures.ProtectedResourceReply{Host: "cimd-only.example.test", Method: http.MethodGet, Path: "/.well-known/oauth-protected-resource/mcp", Status: http.StatusNotFound})
 			failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "discovery failed", "resource_metadata_not_found")
@@ -199,7 +199,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	})
 
 	Context("when the resource document identifies another resource", func() {
-		// US3-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S2 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject mismatched resource identity before choosing a client", Label("protected-resource-discovery"), func() {
 			setJSON(env, "cimd-only.example.test", http.MethodGet, "/.well-known/oauth-protected-resource/mcp", http.StatusOK,
 				map[string]any{"resource": "https://other.example.test/mcp", "authorization_servers": scenario.IssuerURLs})
@@ -214,7 +214,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 		BeforeEach(func() {
 			useProductionTransport = true
 		})
-		// US3-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S3 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should block a private destination before connecting", Serial, Label("protected-resource-discovery"), func() {
 			failure(post(env, request(env, env.provider.Server.URL+"/mcp")), http.StatusBadRequest, "discovery failed", "unsafe_destination")
 			const hostname = "private-discovery.example.test"
@@ -230,7 +230,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	})
 
 	Context("when the issuer supports neither CIMD nor DCR", func() {
-		// US3-S4 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S4 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should refuse to invent a static client identity", Label("protected-resource-discovery"), func() {
 			setJSON(env, "cimd-issuer.example.test", http.MethodGet, "/.well-known/oauth-authorization-server/tenant", http.StatusOK,
 				map[string]any{"issuer": scenario.IssuerURLs[0], "authorization_endpoint": scenario.IssuerURLs[0] + "/authorize", "token_endpoint": scenario.IssuerURLs[0] + "/token", "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": []string{"none"}})
@@ -243,7 +243,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when hosted CIMD is selected but its key is unavailable", func() {
 		BeforeEach(func() { scenario = fixtures.CIMDAndDCRProtectedResource(); clientName = scenario.ClientName })
-		// US3-S5 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S5 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should fail without retrying registration by DCR", Label("protected-resource-discovery"), func() {
 			failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "client registration failed", "cimd_unavailable")
 			Expect(env.provider.RegistrationCount()).To(BeZero())
@@ -253,7 +253,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when protected-resource metadata advertises two issuers", func() {
 		BeforeEach(func() { scenario = fixtures.MultiIssuerProtectedResource() })
-		// US3-S6 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S6 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should return validated choices and contact only the selected issuer on retry", Label("protected-resource-discovery"), func() {
 			provisionKey(env)
 			choices := failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "discovery failed", "issuer_selection_required")
@@ -276,7 +276,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	})
 
 	Context("when the first issuer document reports another issuer", func() {
-		// US3-S7 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S7 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject issuer mismatch without trying lower-priority locations", Label("protected-resource-discovery"), func() {
 			provisionKey(env)
 			setJSON(env, "cimd-issuer.example.test", http.MethodGet, "/.well-known/oauth-authorization-server/tenant", http.StatusOK,
@@ -293,7 +293,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when the token endpoint rejects the bound resource", func() {
 		BeforeEach(func() { scenario = fixtures.ConfidentialDCRProtectedResource(); clientName = scenario.ClientName })
-		// US3-S8 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S8 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should fail connection without making an unbound token request", Label("protected-resource-discovery"), func() {
 			created := post(env, request(env, scenario.ResourceURL))
 			Expect(created.StatusCode).To(Equal(http.StatusCreated))
@@ -342,7 +342,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	})
 
 	Context("when an explicit authorization resource is invalid", func() {
-		// US3-S9 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S9 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject an invalid audience before creating a service", Label("protected-resource-discovery"), func() {
 			body := request(env, scenario.ResourceURL)
 			body["authorization_params"] = map[string]string{"resource": "/relative-audience"}
@@ -358,7 +358,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	})
 
 	Context("when both protected-resource and direct metadata sources are specified", func() {
-		// US3-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S10 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject conflicting discovery sources before fetching metadata", Label("protected-resource-discovery"), func() {
 			body := request(env, scenario.ResourceURL)
 			body["discovery"].(map[string]any)["metadata_url"] = scenario.IssuerURLs[0] + "/.well-known/oauth-authorization-server/tenant"
@@ -374,7 +374,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when confidential registration is refused", func() {
 		BeforeEach(func() { scenario = fixtures.RejectedProtectedResource(); clientName = "Example Platform" })
-		// US3-S11 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S11 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should not retry rejected confidential registration as public", Label("protected-resource-discovery"), func() {
 			failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "client registration failed", "client_registration_rejected")
 			Expect(env.provider.RegistrationCount()).To(Equal(1))
@@ -385,7 +385,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when a second service receives the same issuer and DCR client ID", func() {
 		BeforeEach(func() { scenario = fixtures.ConfidentialDCRProtectedResource(); clientName = scenario.ClientName })
-		// US3-S12 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S12 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should preserve the first service credential and reject the duplicate", Label("protected-resource-discovery"), func() {
 			first := post(env, request(env, scenario.ResourceURL))
 			Expect(first.StatusCode).To(Equal(http.StatusCreated))
@@ -423,7 +423,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when DCR has no configured broker client name", func() {
 		BeforeEach(func() { scenario = fixtures.ConfidentialDCRProtectedResource(); clientName = "" })
-		// US3-S13 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// US3-S13 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should reject absent and whitespace-only names without blocking other modes", Label("protected-resource-discovery"), func() {
 			failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "client registration failed", "client_name_unconfigured")
 			Expect(env.provider.RegistrationCount()).To(BeZero())

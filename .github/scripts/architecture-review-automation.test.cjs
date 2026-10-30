@@ -75,10 +75,10 @@ function fixture(eventName, payload, options = {}) {
             throw error;
           }
           return { data: [
-            { type: "file", name: "002-config.md", path: "adrs/002-config.md" },
+            { type: "file", name: "20251215-120000-config.md", path: "adrs/20251215-120000-config.md" },
             { type: "file", name: "README.md", path: "adrs/README.md" },
             { type: "dir", name: "drafts", path: "adrs/drafts" },
-            { type: "file", name: "001-template.txt", path: "adrs/001-template.txt" },
+            { type: "file", name: "20251214-120000-template.txt", path: "adrs/20251214-120000-template.txt" },
           ] };
         },
       },
@@ -196,33 +196,33 @@ test("prepare writes the compact context and PR details with changed files and A
   t.mock.method(fs, "writeFileSync", (name, content) => { written[path.basename(String(name))] = JSON.parse(content); });
   const files = [
     { filename: "internal/domain/approval/service.go", status: "modified", additions: 10, deletions: 2 },
-    { filename: "adrs/045-approvals.md", status: "added", additions: 40, deletions: 0 },
-    { filename: "adrs/002-config.md", status: "modified", additions: 1, deletions: 1 },
+    { filename: "adrs/20261030-120000-approvals.md", status: "added", additions: 40, deletions: 0 },
+    { filename: "adrs/20251215-120000-config.md", status: "modified", additions: 1, deletions: 1 },
     { filename: "adrs/drafts/x.md", status: "added", additions: 1, deletions: 0 },
     { filename: "internal/domain/approval/model.go", status: "renamed", additions: 0, deletions: 0, previous_filename: "internal/domain/approval/types.go" },
   ];
   const f = fixture("issue_comment", {}, {
     files, comments: [command("/architecture-review sessions")],
-    pr: { body: "Summary\n\n<!-- speckit-feature: specs/054-approvals -->" },
+    pr: { body: "Summary\n\n<!-- speckit-feature: specs/20261030-120000-approvals -->" },
   });
   process.env.GITHUB_RUN_ATTEMPT = "2";
   const data = await prepare({ ...f, inputs: { pr: "42", comment: "20" } });
   assert.equal(root.length > 0, true);
   assert.deepEqual(data, {
     run: "100/2", repository: "example/broker", pr: 42, head, branch: "feature/approvals", base: "main", base_sha: base,
-    feature: "specs/054-approvals", focus: "sessions", command: { id: 20, author: "maintainer", argument: "sessions" },
+    feature: "specs/20261030-120000-approvals", focus: "sessions", command: { id: 20, author: "maintainer", argument: "sessions" },
   });
   assert.deepEqual(written["context.json"], data);
   const details = written["pr-details.json"];
   assert.equal(details.headRefOid, head);
   assert.equal(details.baseRefOid, base);
-  assert.equal(details.feature, "specs/054-approvals");
+  assert.equal(details.feature, "specs/20261030-120000-approvals");
   assert.deepEqual(details.changedFiles[4], {
     path: "internal/domain/approval/model.go", status: "renamed", additions: 0, deletions: 0,
     previous_path: "internal/domain/approval/types.go",
   });
   assert.deepEqual(details.adrs, {
-    existing: ["adrs/002-config.md", "adrs/README.md"], added: ["adrs/045-approvals.md"], modified: ["adrs/002-config.md"],
+    existing: ["adrs/20251215-120000-config.md", "adrs/README.md"], added: ["adrs/20261030-120000-approvals.md"], modified: ["adrs/20251215-120000-config.md"],
   });
   assert.deepEqual(f.calls.map((call) => call.username), ["maintainer", "maintainer"]);
 });

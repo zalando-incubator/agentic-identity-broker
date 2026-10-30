@@ -399,7 +399,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 // buildUpstreamAuthorizeURL constructs the upstream authorization endpoint URL
 // preserving all OAuth2 parameters.
 //
-// Feature 021: uses agent.ClientID (upstream OAuth2 client ID) instead of req.ClientID
+// Feature 20260320-120000: uses agent.ClientID (upstream OAuth2 client ID) instead of req.ClientID
 // (which is now the broker's internal agent UUID). When MultiAgentClient.Enabled,
 // appends the agent's internal UUID as the configured AgentIDParamName query parameter.
 func (s *AuthorizationService) buildUpstreamAuthorizeURL(req *ports.AuthorizationRequest, agent *storage.Agent) (string, error) {
@@ -431,7 +431,7 @@ func (s *AuthorizationService) buildUpstreamAuthorizeURL(req *ports.Authorizatio
 		q.Set("code_challenge_method", req.CodeChallengeMethod)
 	}
 
-	// Feature 021 — multi-agent client sharing: inject agent UUID param so upstream
+	// Feature 20260320-120000 — multi-agent client sharing: inject agent UUID param so upstream
 	// can embed it as a claim in the returned token (for MultiAgentTokenVerifier).
 	if s.config.MultiAgentClient.Enabled {
 		q.Set(s.config.MultiAgentClient.AgentIDParamName, agent.ID.String())
@@ -543,7 +543,7 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 
 // anyDelegatedSessionUnusable reports the first service included in the grant whose
 // session is missing or no longer usable, with the reason. Only services listed in the
-// IncludedServiceIDs of a granted permission set entry are checked (FR-022 of Feature 019),
+// IncludedServiceIDs of a granted permission set entry are checked (FR-022 of Feature 20260314-120000),
 // so sessions for services the user did not include never force consent.
 func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (id.ServiceID, string, error) {
 	relevantServices := make(map[id.ServiceID]bool)

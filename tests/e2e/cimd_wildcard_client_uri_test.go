@@ -90,7 +90,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		return resp
 	}
 
-	// User Story 1, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
+	// User Story 1, acceptance scenario 1 from specs/20260909-120000-cimd-wildcard-client-uris/spec.md.
 	It("resolves a concrete hosted client URL through a path-segment wildcard", func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/dIwd44EtAHp-/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
@@ -108,7 +108,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		Expect(location.Path).To(ContainSubstring("/agents/" + agent.ID.String()))
 	})
 
-	// User Story 1, acceptance scenario 2 from specs/028c-cimd-wildcard-client-uris/spec.md.
+	// User Story 1, acceptance scenario 2 from specs/20260909-120000-cimd-wildcard-client-uris/spec.md.
 	It("rejects a client URL with an extra path segment", func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/tenant/nested/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
@@ -124,7 +124,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		Expect(resp).To(matchers.HaveOAuth2Error("invalid_client"))
 	})
 
-	// User Story 1, acceptance scenario 3 from specs/028c-cimd-wildcard-client-uris/spec.md.
+	// User Story 1, acceptance scenario 3 from specs/20260909-120000-cimd-wildcard-client-uris/spec.md.
 	It("rejects a client URL with a different literal path segment", func() {
 		clientURL := "https://" + fakeHost + "/oauth/other/tenant/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
@@ -140,7 +140,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		Expect(resp).To(matchers.HaveOAuth2Error("invalid_client"))
 	})
 
-	// User Story 2, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
+	// User Story 2, acceptance scenario 1 from specs/20260909-120000-cimd-wildcard-client-uris/spec.md.
 	It("uses an exact client URI before a matching pattern", func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/literal/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
@@ -158,7 +158,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		Expect(resp.Header.Get("Location")).To(ContainSubstring("/agents/" + exactAgent.ID.String()))
 	})
 
-	// User Story 3, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
+	// User Story 3, acceptance scenario 1 from specs/20260909-120000-cimd-wildcard-client-uris/spec.md.
 	It("rejects a client URL that matches patterns on different agents", func() {
 		clientURL := "https://" + fakeHost + "/oauth/test/foo/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"

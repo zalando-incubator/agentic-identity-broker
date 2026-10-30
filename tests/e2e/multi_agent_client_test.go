@@ -93,7 +93,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				}
 			})
 
-			// US1 Scenario 1 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 1 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should append agent ID param to upstream authorize URL", Label("US1"), func() {
 				// Given: Feature enabled, agent has active grant
 				grant := fixtures.ActiveGrant(
@@ -120,7 +120,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(redirectURL.Query().Get("x_agent_id")).To(Equal(alpha.ID.String()))
 			})
 
-			// US1 Scenario 2 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 2 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should resolve client_id against agent.id not agent.client_id", Label("US1"), func() {
 				// Given: Agent registered with client_id="shared-upstream" but internal ID is a UUID
 				// Active grant for the default principal
@@ -152,7 +152,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(location).To(ContainSubstring(mockUpstream.URL()))
 			})
 
-			// US1 Scenario 3 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 3 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should proxy token after verifying agent ID claim", Label("US1"), func() {
 				// Given: Mock upstream returns JWT token containing x_agent_id=alpha.ID
 				mockUpstream.WithSuccessfulTokenResponse().
@@ -214,7 +214,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(lastReq.FormValue("client_id")).NotTo(Equal(alpha.ID.String()))
 			})
 
-			// US1 Scenario 4 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 4 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should verify claim value matches initiating agent ID", Label("US1"), func() {
 				// Given: Mock upstream returns JWT with x_agent_id=BETA (wrong agent!)
 				mockUpstream.WithSuccessfulTokenResponse().
@@ -337,7 +337,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(tokenResp).To(matchers.HaveStatusCode(http.StatusOK))
 			})
 
-			// US1 Scenario 5 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 5 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should return error and withhold token when agent ID claim absent", Label("US1"), func() {
 				// Given: Mock upstream returns a plain non-JWT token (no x_agent_id claim)
 				mockUpstream.WithSuccessfulTokenResponse().
@@ -383,7 +383,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				}
 			})
 
-			// US1 Scenario 6 from specs/021-multi-agent-clientid/spec.md
+			// US1 Scenario 6 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should not inject param or verify claim when feature is disabled", Label("US1"), func() {
 				// Given: Feature disabled; alpha has an active grant
 				grant := fixtures.ActiveGrant(
@@ -480,7 +480,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(err).ToNot(HaveOccurred())
 			})
 
-			// US2 Scenario 1 from specs/021-multi-agent-clientid/spec.md
+			// US2 Scenario 1 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should resolve agent from token claim when feature enabled", Label("US2"), func() {
 				// Given: Subject token contains x_agent_id=alpha.ID, CEL reads it directly.
 				// Full RFC 8693 claims required: iss must match upstream for issuer validation.
@@ -522,7 +522,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			})
 
-			// US2 Scenario 2 from specs/021-multi-agent-clientid/spec.md
+			// US2 Scenario 2 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should fail token exchange when agent ID claim absent from subject token", Label("US2"), func() {
 				// Given: Subject token WITHOUT x_agent_id claim; CEL policy expects it.
 				// Full RFC 8693 claims required to pass issuer validation before claim check.
@@ -562,7 +562,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(resp.StatusCode).ToNot(Equal(http.StatusOK))
 			})
 
-			// US2 Scenario 4 from specs/021-multi-agent-clientid/spec.md
+			// US2 Scenario 4 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should reject token exchange when agent ID claim does not match any registered agent", Label("US2"), func() {
 				// Given: Subject token has x_agent_id claim with UUID not matching any registered agent.
 				// Full RFC 8693 claims required to pass issuer validation before agent lookup.
@@ -653,7 +653,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				Expect(err).ToNot(HaveOccurred())
 			})
 
-			// US2 Scenario 3 from specs/021-multi-agent-clientid/spec.md
+			// US2 Scenario 3 from specs/20260320-120000-multi-agent-clientid/spec.md
 			It("should resolve agent via resolveAgentIdByClientId CEL function when disabled", Label("US2"), func() {
 				// Given: Feature disabled; CEL policy uses resolveAgentIdByClientId(subject_token.azp)
 				// Subject token has azp=alpha.ClientID plus full RFC 8693 claims (iss, aud, exp, iat).
@@ -702,7 +702,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 	// US3 tests validate server startup behavior — they create their own
 	// server instances inside each It() block to test config validation.
 	Describe("US3: Operator Configures Multi-Agent Client Sharing", func() {
-		// US3 Scenario 1 from specs/021-multi-agent-clientid/spec.md
+		// US3 Scenario 1 from specs/20260320-120000-multi-agent-clientid/spec.md
 		It("should start successfully with valid multi_agent_client configuration", Label("US3"), func() {
 			// Given: Config with feature enabled and both required fields present
 			config := fixtures.MultiAgentEnabledConfig(mockUpstream.URL())
@@ -720,7 +720,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			defer srv.Close()
 		})
 
-		// US3 Scenario 2 from specs/021-multi-agent-clientid/spec.md
+		// US3 Scenario 2 from specs/20260320-120000-multi-agent-clientid/spec.md
 		It("should fail to start when enabled but agent_id_param_name is absent", Label("US3"), func() {
 			// Given: Config with feature enabled but agent_id_param_name missing
 			config := fixtures.MultiAgentEnabledConfig(mockUpstream.URL())
@@ -735,7 +735,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			Expect(err.Error()).To(ContainSubstring("agent_id_param_name"))
 		})
 
-		// US3 Scenario 3 from specs/021-multi-agent-clientid/spec.md
+		// US3 Scenario 3 from specs/20260320-120000-multi-agent-clientid/spec.md
 		It("should fail to start when enabled but agent_id_claim_name is absent", Label("US3"), func() {
 			// Given: Config with feature enabled but agent_id_claim_name missing
 			config := fixtures.MultiAgentEnabledConfig(mockUpstream.URL())
@@ -750,7 +750,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			Expect(err.Error()).To(ContainSubstring("agent_id_claim_name"))
 		})
 
-		// US3 Scenario 4 from specs/021-multi-agent-clientid/spec.md
+		// US3 Scenario 4 from specs/20260320-120000-multi-agent-clientid/spec.md
 		It("should operate in single-agent mode when multi_agent_client is disabled", Label("US3"), func() {
 			// Given: Config with feature explicitly disabled
 			config := fixtures.MultiAgentDisabledConfig(mockUpstream.URL())

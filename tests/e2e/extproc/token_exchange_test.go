@@ -1,6 +1,6 @@
 // Package extproc_test contains E2E acceptance tests for the ExtProc Token Exchange Service.
 //
-// Each It() block maps 1:1 to an acceptance scenario from specs/015-extproc-token-exchange/spec.md.
+// Each It() block maps 1:1 to an acceptance scenario from specs/20260223-120000-extproc-token-exchange/spec.md.
 // Tests COMPILE but FAIL initially (red phase) — they will turn GREEN when the implementation
 // satisfies each acceptance scenario.
 //
@@ -61,7 +61,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 	// ---------------------------------------------------------------------------
 	// User Story 1: Transparent Token Exchange for Agent Requests (P1)
-	// specs/015-extproc-token-exchange/spec.md — US1
+	// specs/20260223-120000-extproc-token-exchange/spec.md — US1
 	// ---------------------------------------------------------------------------
 	Describe("US1: Transparent Token Exchange", func() {
 
@@ -159,7 +159,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 	// ---------------------------------------------------------------------------
 	// User Story 2: Token Exchange Cache for Repeated Calls (P2)
-	// specs/015-extproc-token-exchange/spec.md — US2
+	// specs/20260223-120000-extproc-token-exchange/spec.md — US2
 	// ---------------------------------------------------------------------------
 	Describe("US2: Token Exchange Cache", func() {
 
@@ -262,7 +262,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 	// ---------------------------------------------------------------------------
 	// User Story 3: Operable Configuration and Startup Validation (P3)
-	// specs/015-extproc-token-exchange/spec.md — US3
+	// specs/20260223-120000-extproc-token-exchange/spec.md — US3
 	// ---------------------------------------------------------------------------
 	Describe("US3: Configuration and Startup Validation", func() {
 
@@ -317,7 +317,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 	})
 
 	// ---------------------------------------------------------------------------
-	// Edge Cases (from specs/015-extproc-token-exchange/spec.md)
+	// Edge Cases (from specs/20260223-120000-extproc-token-exchange/spec.md)
 	// ---------------------------------------------------------------------------
 	Describe("Edge Cases", func() {
 
@@ -449,7 +449,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 	})
 
 	// ---------------------------------------------------------------------------
-	// Edge Cases (from specs/015-extproc-token-exchange/spec.md)
+	// Edge Cases (from specs/20260223-120000-extproc-token-exchange/spec.md)
 	// ---------------------------------------------------------------------------
 	Describe("Edge Cases", func() {
 

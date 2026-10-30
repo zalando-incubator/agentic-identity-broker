@@ -258,7 +258,7 @@ From the repository root, render every image and source pair in one or more spec
 
 ```bash
 just install-tools                                   # once, and after a Wireloom version change
-just render-wireframes specs/NNN-feature-name/spec.md
+just render-wireframes specs/YYYYMMDD-HHMMSS-feature-name/spec.md
 ```
 
 The recipe writes each SVG to the path in its image link and prints that path. It rejects

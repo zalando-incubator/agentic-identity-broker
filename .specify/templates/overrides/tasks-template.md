@@ -5,7 +5,7 @@ description: "Task list template for feature implementation"
 
 # Tasks: [FEATURE NAME]
 
-**Input**: Design documents from `/specs/[###-feature-name]/`
+**Input**: Design documents from `/specs/[YYYYMMDD-HHMMSS-feature-name]/`
 
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
@@ -214,7 +214,7 @@ from business logic. Reviewers can quickly approve structural scaffolding (empty
 ### Boilerplate: [EntityName] *(repeat per new entity)*
 
 - [ ] TBPL001 Define typed ID (`type [Entity]ID uuid.UUID`) in `internal/domain/id/gen_ids.go` and
-      document in `internal/domain/id/AGENTS.md` (ADR 013)
+      document in `internal/domain/id/AGENTS.md` (ADR 20260313-120000)
 - [ ] TBPL002 Define domain struct for `[EntityName]` in `internal/domain/storage/` or appropriate
       domain package
 - [ ] TBPL003 Define `[EntityName]Repository` interface in `internal/ports/storage.go` (ISP — 5-7

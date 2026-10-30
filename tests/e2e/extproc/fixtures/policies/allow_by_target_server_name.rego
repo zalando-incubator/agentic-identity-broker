@@ -2,7 +2,7 @@ package aib.extproc.authz
 
 import rego.v1
 
-# Spec 044: demonstrates a policy that scopes decisions per MCP server using
+# Spec 20260916-120000: demonstrates a policy that scopes decisions per MCP server using
 # input.mcp.target_server_name — agentgateway routing metadata, not an MCP
 # protocol field. Only "github-mcp" is authorized; all other target servers
 # (including requests with no target server at all) are denied.

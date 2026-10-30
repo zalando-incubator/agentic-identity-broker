@@ -113,7 +113,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			provisionCIMDKey()
 		})
 
-		// US1-S1 from specs/046-cimd-upstream-client/spec.md
+		// US1-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("creates a secretless service with broker-hosted identity", Label("cimd-upstream-client"), func() {
 			created := postService(serviceRequest())
 			Expect(created.StatusCode).To(Equal(http.StatusCreated))
@@ -139,7 +139,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			config.Security.SkipThirdpartyHTTPSValidation = true
 		})
 
-		// US1-S2 from specs/046-cimd-upstream-client/spec.md
+		// US1-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("rejects caller credentials before provider discovery", Label("cimd-upstream-client"), func() {
 			request := serviceRequest()
 			request["token_endpoint_auth_method"] = "private_key_jwt"
@@ -163,7 +163,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		})
 	})
 
-	// US1-S3 from specs/046-cimd-upstream-client/spec.md
+	// US1-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("preserves static confidential registration", Label("cimd-upstream-client"), func() {
 		request := serviceRequest()
 		delete(request, "token_endpoint_auth_method")
@@ -179,7 +179,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		Expect(service).To(HaveKeyWithValue("client_secret", "REDACTED"))
 	})
 
-	// US1-S4 from specs/046-cimd-upstream-client/spec.md
+	// US1-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("preserves public registration", Label("cimd-upstream-client"), func() {
 		request := serviceRequest()
 		request["client_id"] = "public-client"
@@ -193,7 +193,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		Expect(service).NotTo(HaveKey("client_secret"))
 	})
 
-	// US1-S5 from specs/046-cimd-upstream-client/spec.md
+	// US1-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("rejects private key JWT for the google flavor", Label("cimd-upstream-client"), func() {
 		request := fixtures.ValidGoogleServiceRequest()
 		request["token_endpoint_auth_method"] = "private_key_jwt"
@@ -224,7 +224,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			cimdService = createCIMDService()
 		})
 
-		// US5-S1 from specs/046-cimd-upstream-client/spec.md
+		// US5-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("lists static, public, and CIMD authentication postures", Label("cimd-upstream-client"), func() {
 			response, err := adminServer.AuthenticatedGET("/api/services", principal)
 			Expect(err).NotTo(HaveOccurred())
@@ -254,7 +254,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			cimdService = createCIMDService()
 		})
 
-		// US5-S2 from specs/046-cimd-upstream-client/spec.md
+		// US5-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("reads the immutable CIMD client ID without a shared secret", Label("cimd-upstream-client"), func() {
 			service := readService(cimdService["id"].(string))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
@@ -287,7 +287,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 			updatedService = decodeJSON[map[string]any](response)
 		})
 
-		// US5-S3 from specs/046-cimd-upstream-client/spec.md
+		// US5-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("replaces static secret state with CIMD authentication", Label("cimd-upstream-client"), func() {
 			Expect(updatedService).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
 			Expect(updatedService).To(HaveKeyWithValue("client_registration", "cimd"))

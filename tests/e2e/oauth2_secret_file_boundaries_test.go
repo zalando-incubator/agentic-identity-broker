@@ -189,7 +189,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				Expect(before.Secret.IsAbsent()).To(BeTrue())
 			})
 
-			// US4-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US4-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US4-S1 connects and refreshes without a shared secret or filesystem selection", Label("oauth2-secret-file-overrides"), func() {
 				initial := connect(serviceID, fixtures.CredentialClientID)
 				journey.Upstream.WithAccessToken("public-access-renewed").WithRefreshToken("public-refresh-renewed")
@@ -247,7 +247,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				Expect(before.Secret.IsAbsent()).To(BeTrue())
 			})
 
-			// US4-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US4-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US4-S2 connects and refreshes with provider-validated CIMD assertions", Label("oauth2-secret-file-overrides"), func() {
 				initial := connect(serviceID, fixtures.CIMDClientIDURL(serviceID))
 				renewed := refresh(serviceID, "cimd-upstream-access-token", "cimd-upstream-refresh-token")
@@ -311,7 +311,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				journey.Upstream.WithAccessToken("google-access-initial").WithRefreshToken("google-refresh-initial")
 			})
 
-			// US4-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US4-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US4-S3 connects and refreshes with the stored Google credential document", Label("oauth2-secret-file-overrides"), func() {
 				initial := connect(serviceID, "112233445566778899001")
 				journey.Upstream.WithAccessToken("google-access-renewed").WithRefreshToken("google-refresh-renewed")
@@ -384,7 +384,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				}
 			})
 
-			// US4-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US4-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US4-S4 rejects filesystem creation and updates for every excluded mode without mutation", Label("oauth2-secret-file-overrides"), func() {
 				for _, service := range services {
 					By("rejecting filesystem creation and update for " + service.mode)
@@ -479,7 +479,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 	Context("when a filesystem service exposes only source metadata", func() {
 		BeforeEach(func() { serviceID = register("filesystem") })
 
-		// US5-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US5-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US5-S1 keeps file credentials absent from administration and persistence after exchange and refresh", func() {
 			complete()
 			response, err := journey.Refresh(serviceID)
@@ -498,7 +498,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			Expect(session.UpstreamClientID.String()).To(Equal(fixtures.CredentialClientID))
 		})
 
-		// US5-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US5-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US5-S2 reads and updates metadata during either file outage without changing the selected source", func() {
 			for _, field := range []string{"client_id_file", "client_secret_file"} {
 				path := binding[field]
@@ -538,7 +538,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 				Expect(journey.Storage.UserGrants().Create(ctx, grant)).To(Succeed())
 			})
 
-			// US5-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US5-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US5-S3 keeps affected consent and session metadata available while initiation requires only the client ID", func() {
 				Expect(os.Rename(binding["client_secret_file"], binding["client_secret_file"]+".saved")).To(Succeed())
 				authorized, err := journey.Authorize(serviceID)
@@ -568,7 +568,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			})
 		})
 
-		// US5-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US5-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US5-S4 excludes file values and paths from metadata errors events and configuration diagnostics", func() {
 			complete()
 			markers := []string{fixtures.CredentialClientID, fixtures.CredentialClientSecret, binding["client_id_file"], binding["client_secret_file"]}
@@ -730,7 +730,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			})
 			AfterEach(func() { cases = nil })
 
-			// US5-S5 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US5-S5 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US5-S5 atomically removes stored credentials and enforces matching mismatched and legacy identities", func() {
 				for _, tc := range cases {
 					By("transitioning an established " + tc.name + " context")
@@ -779,7 +779,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			})
 			AfterEach(func() { cases = nil })
 
-			// US5-S6 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US5-S6 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US5-S6 requires explicit encrypted reverse credentials and never revives legacy contexts after a round trip", func() {
 				for _, tc := range cases {
 					By("returning an established " + tc.name + " context to stored mode")
@@ -821,7 +821,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 	})
 
 	Context("when stored defaults and legacy records remain compatible", func() {
-		// US5-S7 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US5-S7 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US5-S7 preserves stored credentials and redaction on omitted-source updates", func() {
 			serviceID = register("")
 			request := fixtures.CredentialServiceRequest(canonicalID, journey.Upstream.URL(), "")
@@ -857,7 +857,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 				Expect(journey.Storage.Services().Create(context.Background(), legacy)).To(Succeed())
 			})
 
-			// US5-S8 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US5-S8 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US5-S8 reads upgraded legacy services as stored and preserves never-transitioned authentication", func() {
 				before, err := journey.Storage.Services().Get(context.Background(), serviceID)
 				Expect(err).NotTo(HaveOccurred())

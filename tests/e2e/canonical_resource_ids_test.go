@@ -134,14 +134,14 @@ var _ = Describe("Canonical Resource IDs", func() {
 		}
 	})
 
-	// Scenario 1.1 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 1.1 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("creates a managed resource with canonical and UUID identifiers", func() {
 		created := createAgent("research-agent", "github-service", "github-read")
 		Expect(created["id"]).To(MatchRegexp(`^[0-9a-f-]{36}$`))
 		Expect(created["canonical_id"]).To(Equal("research-agent"))
 	})
 
-	// Scenario 1.2 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 1.2 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("manages an agent through canonical ID and UUID", func() {
 		created := createAgent("path-agent", "github-service", "github-read")
 		for _, identifier := range []string{"path-agent", created["id"].(string)} {
@@ -204,7 +204,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusNoContent))
 	})
 
-	// Scenario 1.3 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 1.3 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("keeps a UUID-only resource manageable", func() {
 		created := createAgent(nil, serviceID.String(), permissionID.String())
 		Expect(created["canonical_id"]).To(BeNil())
@@ -213,7 +213,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 	})
 
-	// Scenario 1.4 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 1.4 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("preserves, replaces, and removes canonical IDs on update", func() {
 		created := createAgent("mutable-agent", "github-service", "github-read")
 		base := map[string]any{"client_id": "canonical-client-mutable-agent", "display_name": "Mutable", "description": "Updated", "service_requirements": []map[string]any{{"service_id": "github-service", "requirement_type": "mandatory", "required_scopes": []string{"read"}}}, "permission_sets": []map[string]any{{"permission_set_id": "github-read", "requirement_type": "mandatory"}}}
@@ -230,7 +230,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(canonicalResponse(resp)["canonical_id"]).To(BeNil())
 	})
 
-	// Scenario 2.1 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 2.1 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("resolves every supported cross-resource reference by canonical ID", func() {
 		created := createAgent("canonical-reference-agent", "github-service", "github-read")
 		requirements := created["service_requirements"].([]any)
@@ -253,7 +253,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(permissionSet["service_scopes"].([]any)[0].(map[string]any)["service_id"]).To(Equal(serviceID.String()))
 	})
 
-	// Scenario 2.2 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 2.2 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("resolves every supported cross-resource reference by UUID", func() {
 		created := createAgent("uuid-reference-agent", serviceID.String(), permissionID.String())
 		Expect(created["id"]).ToNot(BeEmpty())
@@ -271,7 +271,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(canonicalResponse(resp)["service_scopes"].([]any)[0].(map[string]any)["service_id"]).To(Equal(serviceID.String()))
 	})
 
-	// Scenario 2.3 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 2.3 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("rejects unresolved references without persistence", func() {
 		body := map[string]any{"client_id": "missing-reference-client", "display_name": "Missing", "description": "Missing reference", "service_requirements": []map[string]any{{"service_id": "missing-service", "requirement_type": "mandatory", "required_scopes": []string{"read"}}}, "permission_sets": []map[string]any{{"permission_set_id": "github-read", "requirement_type": "mandatory"}}}
 		resp, err := request(http.MethodPost, "/api/agents/", body, nil)
@@ -301,7 +301,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(items).To(HaveLen(1))
 	})
 
-	// Scenario 3.1 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 3.1 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("returns stable UUID IDs and canonical metadata by default", func() {
 		created := createAgent("readable-agent", "github-service", "github-read")
 		resp, err := request(http.MethodGet, "/api/agents/"+created["id"].(string), nil, nil)
@@ -325,7 +325,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(permissionSet["service_scopes"].([]any)[0].(map[string]any)["service_id"]).To(Equal(serviceID.String()))
 	})
 
-	// Scenario 3.2 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 3.2 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("returns null canonical metadata for UUID-only resources", func() {
 		created := createAgent(nil, serviceID.String(), permissionID.String())
 		resp, err := request(http.MethodGet, "/api/agents/"+created["id"].(string), nil, nil)
@@ -333,7 +333,7 @@ var _ = Describe("Canonical Resource IDs", func() {
 		Expect(canonicalResponse(resp)["canonical_id"]).To(BeNil())
 	})
 
-	// Scenario 3.3 from specs/036-canonical-resource-ids/spec.md
+	// Scenario 3.3 from specs/20260813-120000-canonical-resource-ids/spec.md
 	It("renders nested references canonically when requested", func() {
 		created := createAgent("preferred-agent", "github-service", "github-read")
 		resp, err := request(http.MethodGet, "/api/agents/"+created["id"].(string), nil, map[string]string{"Prefer": "reference-id=canonical"})

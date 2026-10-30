@@ -164,7 +164,7 @@ var _ = Describe("Consent Flow", func() {
 		GetLogger().Info("Test passed: Consent page renders correctly with UI elements visible")
 	})
 
-	// Scenario 10 from specs/007-consent-frontend/spec.md
+	// Scenario 10 from specs/20251217-120100-consent-frontend/spec.md
 	It("allows a user to set and read a future end date", func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")

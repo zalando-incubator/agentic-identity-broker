@@ -25,7 +25,7 @@ func (e *AgentIDMismatchError) Error() string {
 }
 
 // MultiAgentTokenVerifier verifies that an upstream token response contains the expected
-// agent ID claim, as required by feature 021 (multi-agent client sharing).
+// agent ID claim, as required by feature 20260320-120000 (multi-agent client sharing).
 //
 // When multiple agents share a single upstream OAuth2 client_id, the upstream server
 // is expected to embed the requesting agent's UUID into the issued token as a custom claim.

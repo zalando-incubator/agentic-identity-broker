@@ -13,7 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
-// Regression for specs/015-extproc-token-exchange/spec.md FR-011: a cache TTL taken verbatim
+// Regression for specs/20260223-120000-extproc-token-exchange/spec.md FR-011: a cache TTL taken verbatim
 // from expires_in serves a token until the exact second the provider rejects it, so requests
 // started shortly before expiry reach the upstream with a dead token and the agent observes a
 // 401 even though the broker could have refreshed it.

@@ -99,7 +99,7 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			return body
 		}
 
-		// Scenario 7.1 from specs/025-oauth2-server/spec.md
+		// Scenario 7.1 from specs/20260328-120000-oauth2-server/spec.md
 		It("stores and returns create and update callbacks unchanged and in order", func() {
 			uris := []string{"https://agent.example.com/callback", "http://127.0.0.1/callback", fixtures.GitHubAppCallback, fixtures.NativeAppCallback}
 			response, err := adminServer.AuthenticatedPOST("/api/agents", "admin@example.com", "application/json", bytes.NewReader(payload(uris)))
@@ -133,7 +133,7 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			Expect(readRedirects()).To(Equal(reversed))
 		})
 
-		// Scenario 7.2 from specs/025-oauth2-server/spec.md
+		// Scenario 7.2 from specs/20260328-120000-oauth2-server/spec.md
 		It("rejects unsafe, malformed and noncanonical callbacks at their index", func() {
 			for _, uri := range []string{
 				"javascript://oauth/callback", "data:text/html,callback", "file:///etc/passwd",
@@ -167,7 +167,7 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 		})
 
-		// Scenario 7.3 from specs/025-oauth2-server/spec.md
+		// Scenario 7.3 from specs/20260328-120000-oauth2-server/spec.md
 		It("issues a code to the native callback and exchanges it without client credentials", func() {
 			code, verifier := issueCodeWithActiveGrant(enduserServer, "test@example.com", agent.ID.String(), fixtures.NativeAppCallback)
 			response := exchangeAuthorizationCode(enduserServer, agent.ID.String(), code, fixtures.NativeAppCallback, verifier)
@@ -180,7 +180,7 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			Expect(token["access_token"]).ToNot(BeEmpty())
 		})
 
-		// Scenario 7.4 from specs/025-oauth2-server/spec.md
+		// Scenario 7.4 from specs/20260328-120000-oauth2-server/spec.md
 		It("rejects each look-alike authorization callback without redirecting", func() {
 			for _, uri := range []string{
 				"com.example.app:/oauth2redirect/other", "COM.EXAMPLE.APP:/oauth2redirect/example-provider",
@@ -202,7 +202,7 @@ var _ = Describe("US7: Native App Private-Use Redirect URIs (local mode)", func(
 			}
 		})
 
-		// Scenario 7.5 from specs/025-oauth2-server/spec.md
+		// Scenario 7.5 from specs/20260328-120000-oauth2-server/spec.md
 		It("rejects a code exchange with a different native callback", func() {
 			code, verifier := issueCodeWithActiveGrant(enduserServer, "test@example.com", agent.ID.String(), fixtures.NativeAppCallback)
 			response := exchangeAuthorizationCode(enduserServer, agent.ID.String(), code, "com.example.app:/oauth2redirect/other", verifier)

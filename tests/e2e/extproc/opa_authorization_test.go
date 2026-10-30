@@ -1,6 +1,6 @@
 // Package extproc_test contains E2E acceptance tests for OPA-based authorization in ExtProc.
 //
-// This file covers US2–US5 acceptance scenarios from specs/020-extproc-opa-authorization/spec.md.
+// This file covers US2–US5 acceptance scenarios from specs/20260314-120100-extproc-opa-authorization/spec.md.
 // Tests run in-process using the bootstrap harness (no Docker required).
 //
 // Each It() block maps 1:1 to one acceptance scenario.
@@ -99,7 +99,7 @@ var _ = Describe("OPA Authorization", func() {
 
 	// -------------------------------------------------------------------------
 	// User Story 2: Protocol-Aware Input Extraction (P2)
-	// specs/020-extproc-opa-authorization/spec.md — US2
+	// specs/20260314-120100-extproc-opa-authorization/spec.md — US2
 	// -------------------------------------------------------------------------
 	Describe("US2: Protocol-Aware Input Extraction", func() {
 		var (
@@ -125,7 +125,7 @@ var _ = Describe("OPA Authorization", func() {
 			env.Stop()
 		})
 
-		// Scenario US2.1 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US2.1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given an MCP tools/call request with tool name "create_issue" and arguments,
 		// When OPA evaluates the request,
 		// Then input contains type="mcp_tool_call", mcp.tool_name="create_issue".
@@ -149,7 +149,7 @@ var _ = Describe("OPA Authorization", func() {
 				"correct MCP input should be allowed in the body phase")
 		})
 
-		// Scenario US2.2 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US2.2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given a request with an unrecognized protocol in metadata,
 		// When OPA evaluates the request,
 		// Then type="unknown" and raw body is available in input.attributes.request.http.body.
@@ -169,7 +169,7 @@ var _ = Describe("OPA Authorization", func() {
 				"unknown-protocol requests should still be allowed in the body phase when the policy permits them")
 		})
 
-		// Scenario US2.3 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US2.3 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given an MCP initialize request,
 		// When OPA evaluates the request,
 		// Then input contains type="mcp_method", mcp.method="initialize".
@@ -192,10 +192,10 @@ var _ = Describe("OPA Authorization", func() {
 	})
 
 	// -------------------------------------------------------------------------
-	// Spec 044: MCP Target Server Name in OPA Authorization Input
-	// specs/044-extproc-opa-mcp-target-server/spec.md — US1, US2, US3
+	// Spec 20260916-120000: MCP Target Server Name in OPA Authorization Input
+	// specs/20260916-120000-extproc-opa-mcp-target-server/spec.md — US1, US2, US3
 	// -------------------------------------------------------------------------
-	Describe("Spec 044: MCP Target Server Name", func() {
+	Describe("Spec 20260916-120000: MCP Target Server Name", func() {
 
 		Context("US1/US2: input.mcp.target_server_name shape across request types", func() {
 			var (
@@ -221,7 +221,7 @@ var _ = Describe("OPA Authorization", func() {
 				env.Stop()
 			})
 
-			// Scenario US1.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Scenario US1.1 from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given an MCP tools/call request with agentgateway mcp_server="github-mcp",
 			// When OPA evaluates the request,
 			// Then input.mcp.target_server_name == "github-mcp".
@@ -244,7 +244,7 @@ var _ = Describe("OPA Authorization", func() {
 					"tools/call with matching target_server_name should be allowed in the body phase")
 			})
 
-			// Scenario US1.1 (mcp_method variant) from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Scenario US1.1 (mcp_method variant) from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given an MCP initialize request with agentgateway mcp_server="github-mcp",
 			// When OPA evaluates the request,
 			// Then input.mcp.target_server_name == "github-mcp" alongside input.mcp.method.
@@ -266,7 +266,7 @@ var _ = Describe("OPA Authorization", func() {
 					"initialize with matching target_server_name should be allowed in the body phase")
 			})
 
-			// Scenario US2.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Scenario US2.1 from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given a header-only MCP request (end_of_stream=true) with agentgateway
 			// mcp_server="github-mcp", When OPA evaluates the mcp_headers_only input,
 			// Then input.mcp.target_server_name == "github-mcp".
@@ -286,7 +286,7 @@ var _ = Describe("OPA Authorization", func() {
 					"mcp_headers_only request with matching target_server_name should be allowed and token-exchanged")
 			})
 
-			// Scenario US3.1 from specs/044-extproc-opa-mcp-target-server/spec.md (FR-004)
+			// Scenario US3.1 from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md (FR-004)
 			// Given an MCP tools/call request where agentgateway sends no mcp_server metadata,
 			// When ExtProc evaluates the request headers,
 			// Then the request is rejected with 403 before OPA is ever invoked (misconfiguration),
@@ -333,7 +333,7 @@ var _ = Describe("OPA Authorization", func() {
 				env.Stop()
 			})
 
-			// Scenario US1.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Scenario US1.1 from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given a policy that allows tool calls only when target_server_name=="github-mcp",
 			// When a tool call arrives with mcp_server="github-mcp",
 			// Then the request is allowed.
@@ -353,7 +353,7 @@ var _ = Describe("OPA Authorization", func() {
 					"tool call targeting the authorized MCP server should be allowed")
 			})
 
-			// Scenario US1.2 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Scenario US1.2 from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given the same policy, When a tool call arrives with mcp_server="salesforce-mcp"
 			// (a different, unauthorized server), Then the request is denied with 403.
 			It("should deny the tool call when target_server_name targets a different server", func() {
@@ -372,7 +372,7 @@ var _ = Describe("OPA Authorization", func() {
 					"tool call targeting an unauthorized MCP server should be denied")
 			})
 
-			// Edge case from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Edge case from specs/20260916-120000-extproc-opa-mcp-target-server/spec.md
 			// Given the same policy, When a tool call arrives with no mcp_server metadata at all,
 			// Then the request is rejected with 403 at the headers phase by ExtProc's mandatory
 			// mcp_server check (FR-004) — it never reaches the policy's own deny rule.
@@ -397,16 +397,16 @@ var _ = Describe("OPA Authorization", func() {
 
 	// -------------------------------------------------------------------------
 	// User Story 3: Local Rego File for Quick Setup (P3)
-	// specs/020-extproc-opa-authorization/spec.md — US3
+	// specs/20260314-120100-extproc-opa-authorization/spec.md — US3
 	// -------------------------------------------------------------------------
 	Describe("US3: Local Rego File", func() {
 
-		// Scenario US3.1 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US3.1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given a valid Rego file at the configured path,
 		// When ExtProc starts,
 		// Then the policy is compiled and applied to requests.
 		It("should compile and apply local Rego policy at startup", func() {
-			// US3 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
+			// US3 Scenario 1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 			cfg := opaEnabledConfig(policyPath("allow_readonly.rego"))
 			env := bootstrap.NewTestEnvironment(cfg, opaLogger)
@@ -457,12 +457,12 @@ var _ = Describe("OPA Authorization", func() {
 				"denial response should include the reason from the Rego deny rule")
 		})
 
-		// Scenario US3.2 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US3.2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given a Rego file with syntax errors,
 		// When ExtProc starts,
 		// Then the service fails to start with a clear compilation error.
 		It("should fail startup with clear error for invalid Rego", func() {
-			// US3 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
+			// US3 Scenario 2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 			// Write a temporary Rego file with a syntax error
 			tmpDir := GinkgoT().TempDir()
@@ -485,12 +485,12 @@ this is not valid rego syntax !!!
 				"error message should reference the invalid Rego file path")
 		})
 
-		// Scenario US3.3 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US3.3 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given a configured Rego file path that does not exist,
 		// When ExtProc starts,
 		// Then the service fails to start indicating the file was not found.
 		It("should fail startup when Rego file path does not exist", func() {
-			// US3 Scenario 3 from specs/020-extproc-opa-authorization/spec.md
+			// US3 Scenario 3 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 			cfg := opaEnabledConfig("/nonexistent/path/policy.rego")
 
@@ -508,16 +508,16 @@ this is not valid rego syntax !!!
 
 	// -------------------------------------------------------------------------
 	// User Story 4: OPA Config File for Bundle Pulling (P4)
-	// specs/020-extproc-opa-authorization/spec.md — US4
+	// specs/20260314-120100-extproc-opa-authorization/spec.md — US4
 	// -------------------------------------------------------------------------
 	Describe("US4: OPA Config File", func() {
 
-		// Scenario US4.1 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US4.1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given a valid OPA config file with bundle server settings,
 		// When ExtProc starts,
 		// Then OPA initializes with the provided config.
 		It("should initialize OPA from config file with bundle settings", func() {
-			// US4 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
+			// US4 Scenario 1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 			// Write a temporary OPA config that loads from a local file bundle directory.
 			// Uses a dedicated bundle/ subdirectory containing only allow_readonly.rego to avoid
@@ -582,12 +582,12 @@ this is not valid rego syntax !!!
 				"bundle-backed policy should eventually allow the request once OPA loads the local bundle")
 		})
 
-		// Scenario US4.2 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US4.2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given an OPA config file with an unreachable bundle server,
 		// When ExtProc starts,
 		// Then startup follows OPA's own retry semantics.
 		It("should follow OPA retry semantics when bundle server is unreachable", func() {
-			// US4 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
+			// US4 Scenario 2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 			//
 			// OPA retry semantics: when the bundle server is initially unreachable,
 			// OPA starts in non-blocking mode and retries until the bundle is loaded.
@@ -704,7 +704,7 @@ bundles:
 
 	// -------------------------------------------------------------------------
 	// User Story 5: Authorization is Optional (P5)
-	// specs/020-extproc-opa-authorization/spec.md — US5
+	// specs/20260314-120100-extproc-opa-authorization/spec.md — US5
 	// -------------------------------------------------------------------------
 	Describe("US5: Authorization is Optional", func() {
 		var (
@@ -730,7 +730,7 @@ bundles:
 			env.Stop()
 		})
 
-		// Scenario US5.1 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US5.1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given no OPA configuration is provided,
 		// When ExtProc starts,
 		// Then the service processes requests using token exchange only.
@@ -752,7 +752,7 @@ bundles:
 				"token exchange should be called when OPA is not configured")
 		})
 
-		// Scenario US5.2 from specs/020-extproc-opa-authorization/spec.md
+		// Scenario US5.2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// Given OPA is explicitly disabled,
 		// When a request with token-exchange metadata arrives,
 		// Then no body inspection occurs and token exchange proceeds directly.
@@ -773,14 +773,14 @@ bundles:
 
 	// -------------------------------------------------------------------------
 	// Edge Cases
-	// specs/020-extproc-opa-authorization/spec.md — Edge Cases
+	// specs/20260314-120100-extproc-opa-authorization/spec.md — Edge Cases
 	// -------------------------------------------------------------------------
 	Describe("Edge Cases", func() {
 
 		// Edge case: both policy sources specified
-		// specs/020-extproc-opa-authorization/spec.md — Edge Cases
+		// specs/20260314-120100-extproc-opa-authorization/spec.md — Edge Cases
 		It("should reject config with both local file and OPA config", func() {
-			// Edge case from specs/020-extproc-opa-authorization/spec.md
+			// Edge case from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 			cfg := fixtures.DefaultConfig()
 			cfg.Authorization = extprocconfig.AuthorizationConfig{
@@ -808,7 +808,7 @@ bundles:
 			), "error should reference the mutual exclusivity constraint")
 		})
 
-		// Evaluation-timeout edge case from specs/020-extproc-opa-authorization/spec.md
+		// Evaluation-timeout edge case from specs/20260314-120100-extproc-opa-authorization/spec.md
 		It("should deny a live request when policy evaluation times out", func() {
 			cfg := opaEnabledConfig(policyPath("allow_all.rego"))
 			cfg.Authorization.EvaluationTimeout = time.Nanosecond

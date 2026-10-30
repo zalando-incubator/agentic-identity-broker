@@ -140,7 +140,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 			unicode = createAgent("Unicode Boundary", "unicode-boundary", unicodeID)
 		})
 
-		// US1-S1 from specs/054-agent-external-id-filter/spec.md
+		// US1-S1 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should return only the exact matching agent for each unique ID", func() {
 			for _, tc := range []struct {
 				value string
@@ -163,7 +163,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 			Expect(agentIDs(readAgents(resp))).To(ConsistOf(analyst.ID.String()))
 		})
 
-		// US1-S2 from specs/054-agent-external-id-filter/spec.md
+		// US1-S2 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should return an empty array for absent and non-exact IDs", func() {
 			for _, value := range []string{
 				missingExternalID,
@@ -180,7 +180,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 		})
 	})
 
-	// US1-S3 from specs/054-agent-external-id-filter/spec.md
+	// US1-S3 from specs/20261026-120000-agent-external-id-filter/spec.md
 	It("should return every agent sharing an external ID and no others", func() {
 		resp, err := server.AuthenticatedGET(filterPath(researchExternalID), principal)
 		Expect(err).NotTo(HaveOccurred())
@@ -192,21 +192,21 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 	})
 
 	Describe("when the external ID filter is unusable", func() {
-		// US2-S1 from specs/054-agent-external-id-filter/spec.md
+		// US2-S1 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should reject a present but empty external ID", func() {
 			for _, path := range []string{"/api/agents?external_id=", "/api/agents?external_id", "/api/agents?%65xternal_id="} {
 				expectInvalidFilter(path)
 			}
 		})
 
-		// US2-S2 from specs/054-agent-external-id-filter/spec.md
+		// US2-S2 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should reject repeated external IDs even if identical", func() {
 			value := url.QueryEscape(researchExternalID)
 			expectInvalidFilter("/api/agents?external_id=" + value + "&external_id=" + value)
 			expectInvalidFilter("/api/agents?external_id=" + value + "&%65xternal_id=" + value)
 		})
 
-		// US2-S3 from specs/054-agent-external-id-filter/spec.md
+		// US2-S3 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should reject overlong, invalid UTF-8, and NUL values", func() {
 			for _, path := range []string{
 				filterPath(strings.Repeat("界", 256)), // count Unicode code points, not bytes
@@ -217,7 +217,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 			}
 		})
 
-		// US2-S4 from specs/054-agent-external-id-filter/spec.md
+		// US2-S4 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should reject malformed escapes and raw semicolons in the filter", func() {
 			for _, path := range []string{
 				"/api/agents?external_id=urn%3Aexample%3",
@@ -228,7 +228,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 		})
 	})
 
-	// US3-S1 from specs/054-agent-external-id-filter/spec.md
+	// US3-S1 from specs/20261026-120000-agent-external-id-filter/spec.md
 	It("should retain the complete list when no external ID is supplied", func() {
 		for _, path := range []string{"/api/agents", "/api/agents?unrecognized=value&malformed=%ZZ"} {
 			resp, err := server.AuthenticatedGET(path, principal)
@@ -245,7 +245,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 			releaseWriter = createAgent("Release Notes Writer", "release-notes-writer", missingExternalID)
 		})
 
-		// US3-S2 from specs/054-agent-external-id-filter/spec.md
+		// US3-S2 from specs/20261026-120000-agent-external-id-filter/spec.md
 		It("should apply the canonical permission set reference to filtered results", func() {
 			resp, err := server.DirectRequest(http.MethodGet, filterPath(missingExternalID), principal,
 				map[string]string{"Prefer": "reference-id=canonical"}, nil)

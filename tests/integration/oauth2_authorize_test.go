@@ -751,7 +751,7 @@ func (r *inMemoryGrantRepo) CountGrantsReferencingPermissionSet(_ context.Contex
 }
 
 // newConnectedSessionRepo stores a usable session for every service the grant includes,
-// as consent requires (FR-020 of specs/019-permission-sets/spec.md).
+// as consent requires (FR-020 of specs/20260314-120000-permission-sets/spec.md).
 func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserSessionRepository {
 	t.Helper()
 	repo := memory.NewInMemoryUserSessionRepository()

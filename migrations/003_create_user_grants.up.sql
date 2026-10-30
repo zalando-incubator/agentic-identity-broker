@@ -1,5 +1,5 @@
 -- Migration: Create user_grants table
--- Feature: 006-domain-model-apis
+-- Feature: 20251217-120000-domain-model-apis
 -- Description: Creates the table for storing user grants (permission delegations to agents)
 
 CREATE TABLE IF NOT EXISTS user_grants (

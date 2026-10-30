@@ -1,5 +1,5 @@
 -- Migration 005: Add service_requirements column to agents table
--- Feature: Agent Permission Requirements (Spec 011)
+-- Feature: Agent Permission Requirements (Spec 20260108-120000)
 -- Purpose: Allow agents to declare mandatory/optional third-party service requirements
 --
 -- Schema Change:

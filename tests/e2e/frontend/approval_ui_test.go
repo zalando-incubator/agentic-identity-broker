@@ -1,5 +1,5 @@
 // Package e2e_test provides end-to-end tests for the frontend UI using Playwright.
-// This file contains tests for the tool approval review UI (feature 024-approval-api-ui).
+// This file contains tests for the tool approval review UI (feature 20260327-120000-approval-api-ui).
 //
 // 10 UI states tested:
 //  1. Pending review (US1-S1)
@@ -76,7 +76,7 @@ var _ = Describe("Approval UI", func() {
 		approvalPage = pages.NewApprovalPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S1 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 1: Pending Review
 	It("should display pending approval with user-facing context, session context, and persistence choices", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -123,7 +123,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Pending approval displayed with full review context")
 	})
 
-	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S1 from specs/20260327-120000-approval-api-ui/spec.md
 	// Regression: high-risk approvals must not crash the review page.
 	It("should render a high-risk approval without hitting the global error boundary", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -146,7 +146,7 @@ var _ = Describe("Approval UI", func() {
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 	})
 
-	// FR-016 from specs/024-approval-api-ui/spec.md
+	// FR-016 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 2: Permanent Warning
 	It("should show permanent warning when Always allow is selected", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -172,7 +172,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Permanent warning displayed correctly")
 	})
 
-	// Scenario US1-S2 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S2 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 3: Confirmed Once
 	It("should show approval confirmation after approving once", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -205,7 +205,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Approval confirmed with once persistence")
 	})
 
-	// Scenario US1-S4 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S4 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 4: Confirmed Permanent
 	It("should show approval confirmation after approving permanently", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -237,7 +237,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Approval confirmed with permanent persistence")
 	})
 
-	// Scenario US2-S1 from specs/024-approval-api-ui/spec.md
+	// Scenario US2-S1 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 5: Denied
 	It("should show denial confirmation after denying", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -266,7 +266,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Denial confirmed")
 	})
 
-	// Scenario US1-S6 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S6 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 6: Expired
 	It("should show expired error when approval has passed its TTL", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -297,7 +297,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Expired approval shows error message")
 	})
 
-	// Scenario US1-S5 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S5 from specs/20260327-120000-approval-api-ui/spec.md
 	// State 7: Forbidden
 	It("should show forbidden error when approval belongs to another user", func() {
 		otherPrincipal := id.Principal("other-user@example.com")
@@ -324,7 +324,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Forbidden error shown")
 	})
 
-	// Edge Case from specs/024-approval-api-ui/spec.md
+	// Edge Case from specs/20260327-120000-approval-api-ui/spec.md
 	// State 8: Not Found
 	It("should show not found error for unknown approval ID", func() {
 		fakeID := uuid.New().String()
@@ -347,7 +347,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Not found error shown")
 	})
 
-	// Edge Case from specs/024-approval-api-ui/spec.md
+	// Edge Case from specs/20260327-120000-approval-api-ui/spec.md
 	// State 9: Loading Skeleton
 	It("should show loading skeleton while approval is being fetched", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -367,7 +367,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Loading skeleton resolved to review page")
 	})
 
-	// Edge Case from specs/024-approval-api-ui/spec.md
+	// Edge Case from specs/20260327-120000-approval-api-ui/spec.md
 	// State 10: Network Error (Already Actioned)
 	It("should show error banner when trying to approve an already-actioned approval", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -401,7 +401,7 @@ var _ = Describe("Approval UI", func() {
 
 		GetLogger().Info("Test passed: Error banner shown for already-actioned approval")
 	})
-	// US7-S6 from specs/024-approval-api-ui/spec.md
+	// US7-S6 from specs/20260327-120000-approval-api-ui/spec.md
 	It("should edit and persist a permanent parameter scope", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
@@ -437,7 +437,7 @@ var _ = Describe("Approval UI", func() {
 		Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*", "title": "Fix bug"}))
 	})
 
-	// US7-S3 from specs/024-approval-api-ui/spec.md
+	// US7-S3 from specs/20260327-120000-approval-api-ui/spec.md
 	It("should unconstrain a single parameter with any value", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))

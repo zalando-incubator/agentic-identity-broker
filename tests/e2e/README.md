@@ -321,7 +321,7 @@ var _ = Describe("Feature Name", func() {
 - Parameter preservation in proxy
 - Redirect behavior (302 vs 303)
 
-**Maps to Spec**: `specs/009-oauth2-auth-server/spec.md` - User Story 1
+**Maps to Spec**: `specs/20251222-120100-oauth2-auth-server/spec.md` - User Story 1
 
 ### 2. Token Endpoint (`oauth2_token_test.go`)
 
@@ -335,7 +335,7 @@ var _ = Describe("Feature Name", func() {
 - Error response proxying
 - Status code preservation
 
-**Maps to Spec**: `specs/009-oauth2-auth-server/spec.md` - User Story 2
+**Maps to Spec**: `specs/20251222-120100-oauth2-auth-server/spec.md` - User Story 2
 
 ### 3. Metadata Endpoint (`oauth2_metadata_test.go`)
 
@@ -349,7 +349,7 @@ var _ = Describe("Feature Name", func() {
 - Supported auth methods
 - Cache headers
 
-**Maps to Spec**: `specs/009-oauth2-auth-server/spec.md` - User Story 3
+**Maps to Spec**: `specs/20251222-120100-oauth2-auth-server/spec.md` - User Story 3
 
 ### 4. Security & Validation (`oauth2_security_test.go`)
 
@@ -364,7 +364,7 @@ var _ = Describe("Feature Name", func() {
 - Timeout handling
 - Malformed request handling
 
-**Maps to Spec**: `specs/009-oauth2-auth-server/spec.md` - Edge Cases & Security
+**Maps to Spec**: `specs/20251222-120100-oauth2-auth-server/spec.md` - Edge Cases & Security
 
 ### 5. Edge Cases (`oauth2_edge_cases_test.go`)
 
@@ -379,7 +379,7 @@ var _ = Describe("Feature Name", func() {
 - Parameter limit handling
 - Concurrent request handling
 
-**Maps to Spec**: `specs/009-oauth2-auth-server/spec.md` - Edge Cases
+**Maps to Spec**: `specs/20251222-120100-oauth2-auth-server/spec.md` - Edge Cases
 
 ## Ginkgo Test Organization Patterns
 
@@ -685,7 +685,7 @@ When implementing tests from spec scenarios:
 Add comments in your test code linking to the spec:
 
 ```go
-// Scenario 1.1 from specs/009-oauth2-auth-server/spec.md (User Story 1)
+// Scenario 1.1 from specs/20251222-120100-oauth2-auth-server/spec.md (User Story 1)
 // Spec: "Given a valid authorization request, When client_id is valid,
 //        Then system looks up Agent and validates it exists"
 It("should look up the agent by client_id and validate it exists", func() {
@@ -2688,6 +2688,6 @@ GetLogger().Info("Service check complete",
 - [/tests/e2e/fixtures/FIXTURE_EXAMPLES.md](fixtures/FIXTURE_EXAMPLES.md) - Comprehensive fixture examples
 - [/tests/e2e/bootstrap/test_server.go](bootstrap/test_server.go) - Server implementation details
 - [/tests/e2e/pages/](pages/) - Page Object implementations
-- [/specs/009-oauth2-auth-server/spec.md](../../specs/009-oauth2-auth-server/spec.md) - Feature specification
+- [/specs/20251222-120100-oauth2-auth-server/spec.md](../../specs/20251222-120100-oauth2-auth-server/spec.md) - Feature specification
 - `ARCHITECTURE.md` - System architecture overview
 - `/justfile` - Available test commands

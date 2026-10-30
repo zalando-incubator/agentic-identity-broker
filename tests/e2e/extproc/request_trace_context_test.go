@@ -155,7 +155,7 @@ var _ = Describe("Request Trace Context", func() {
 	})
 
 	Context("US4 S1 — propagated trace_id", func() {
-		// Scenario 4.1 from specs/033-request-security-context/spec.md
+		// Scenario 4.1 from specs/20260629-120000-request-security-context/spec.md
 		It("reuses an inbound traceparent across the OPA-disabled and OPA-enabled paths", func() {
 			const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 			const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
@@ -183,7 +183,7 @@ var _ = Describe("Request Trace Context", func() {
 	})
 
 	Context("US4 S2 — generated trace_id", func() {
-		// Scenario 4.2 from specs/033-request-security-context/spec.md
+		// Scenario 4.2 from specs/20260629-120000-request-security-context/spec.md
 		It("generates a trace_id across the OPA-disabled and OPA-enabled paths when none is supplied", func() {
 			const traceIDPattern = "^[0-9a-f]{32}$"
 
@@ -213,7 +213,7 @@ var _ = Describe("Request Trace Context", func() {
 	})
 
 	Context("US4 S3 — actor and optional calling_peer semantics", func() {
-		// Scenario 4.3 from specs/033-request-security-context/spec.md
+		// Scenario 4.3 from specs/20260629-120000-request-security-context/spec.md
 		It("records actor=anonymous and omits calling_peer consistently across the OPA-disabled and OPA-enabled paths", func() {
 			directEnv, directClient, directConn, directLogs := startDirectTraceEnvironment()
 			defer directConn.Close() //nolint:errcheck

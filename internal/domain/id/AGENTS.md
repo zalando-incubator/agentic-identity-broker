@@ -4,7 +4,7 @@
 
 Read `internal/domain/AGENTS.md` for the full reference. Its domain-layer rules apply here too.
 
-**ADR**: `adrs/013-strongly-typed-entity-ids.md` — binding decision for all typed ID usage.
+**ADR**: `adrs/20260313-120000-strongly-typed-entity-ids.md` — binding decision for all typed ID usage.
 
 ## Purpose
 

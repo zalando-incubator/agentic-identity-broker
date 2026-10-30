@@ -226,8 +226,8 @@ func TestResolveKeySetSourceRefreshBounds(t *testing.T) {
 		name  string
 		input SourceInput
 	}{
-		{name: "remote source keeps the ADR 029 default", input: SourceInput{JWKSURI: "https://idp.example.com/keys", MinRefresh: 2 * time.Hour}},
-		{name: "implicit source keeps the ADR 029 default", input: SourceInput{MinRefresh: 2 * time.Hour}},
+		{name: "remote source keeps the ADR 20260811-120000 default", input: SourceInput{JWKSURI: "https://idp.example.com/keys", MinRefresh: 2 * time.Hour}},
+		{name: "implicit source keeps the ADR 20260811-120000 default", input: SourceInput{MinRefresh: 2 * time.Hour}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, err := ResolveKeySetSource(clientAssertionAnchor, tc.input)

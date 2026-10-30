@@ -383,7 +383,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}()
 
 	// T029: Initialize telemetry provider
-	// Per ADR-011: OTel provider wired at app layer, no port interface needed.
+	// Per ADR-20260301-120000: OTel provider wired at app layer, no port interface needed.
 	// When b.tracerProvider is set (test override), register it globally and wrap
 	// it in a shutdown function. Otherwise, initialize the full OTel provider from config.
 	if b.tracerProvider != nil {
@@ -575,7 +575,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}
 
 	// Resolve every trust anchor's key source before any discovery, key fetch, or file read,
-	// so a misconfigured trust anchor causes no I/O (ADR 040).
+	// so a misconfigured trust anchor causes no I/O (ADR 20261016-120000).
 	trustAnchors, err := b.resolveTrustAnchorSources()
 	if err != nil {
 		return nil, err

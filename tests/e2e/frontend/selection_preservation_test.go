@@ -166,7 +166,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Feature 008 User Story 5 Amendment, Scenario 1: Compact reference creation
+	// Feature 20251222-120000 User Story 5 Amendment, Scenario 1: Compact reference creation
 	It("keeps a large selection map compact through the provider callback", func() {
 		addLargeActiveSelectionMap(ctx, testAgent)
 
@@ -220,7 +220,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 	})
 
-	// Feature 008 User Story 5 Amendment, edge case: failed selection storage
+	// Feature 20251222-120000 User Story 5 Amendment, edge case: failed selection storage
 	It("blocks login when current-tab selections cannot be saved", func() {
 		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
 		selectOptionalPermissionSet(ctx, consentPage)
@@ -245,7 +245,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(authorizeRequested.Load()).To(BeFalse())
 	})
 
-	// Feature 008 User Story 5 Amendment, edge case: no selections or return data
+	// Feature 20251222-120000 User Story 5 Amendment, edge case: no selections or return data
 	It("uses GET to reach the provider when no selections or return data exist", func() {
 		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
 		serverFactory := bootstrap.NewServerFactory(config, GetLogger())
@@ -290,7 +290,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
 	})
 
-	// Feature 008 User Story 5 Amendment, Scenario 2: Same-tab restoration
+	// Feature 20251222-120000 User Story 5 Amendment, Scenario 2: Same-tab restoration
 	It("restores selected permission sets from the captured current-tab reference", func() {
 		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
 		selectOptionalPermissionSet(ctx, consentPage)
@@ -358,7 +358,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}, 5*time.Second, 100*time.Millisecond).Should(BeFalse())
 	})
 
-	// Feature 008 User Story 5 Amendment, Scenario 3: Complete provider callback
+	// Feature 20251222-120000 User Story 5 Amendment, Scenario 3: Complete provider callback
 	It("preserves authorization session callback parameters and restores selections", func() {
 		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
 		serverFactory := bootstrap.NewServerFactory(config, GetLogger())

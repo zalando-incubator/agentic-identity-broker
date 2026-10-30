@@ -41,7 +41,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 			}
 		})
 
-		// Scenario US3-S1 from specs/051-private-key-jwt-auth/spec.md
+		// Scenario US3-S1 from specs/20261015-120000-private-key-jwt-auth/spec.md
 		It("should reject a second use of the same assertion", func() {
 			code, verifier, err := fixture.AuthorizeCode("read offline_access")
 			Expect(err).To(Succeed())
@@ -68,7 +68,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 			Expect(second.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario US3-S3 from specs/051-private-key-jwt-auth/spec.md
+		// Scenario US3-S3 from specs/20261015-120000-private-key-jwt-auth/spec.md
 		It("should spend an assertion when its grant later fails PKCE", func() {
 			code, verifier, err := fixture.AuthorizeCode("read")
 			Expect(err).To(Succeed())
@@ -91,7 +91,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 			Expect(replay.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario US3-S4 from specs/051-private-key-jwt-auth/spec.md
+		// Scenario US3-S4 from specs/20261015-120000-private-key-jwt-auth/spec.md
 		It("should scope the same jti independently for two clients", func() {
 			clientB := "https://" + cimdPrivateKeyJWTFakeHost + "/client-b"
 			redirectB := "https://" + cimdPrivateKeyJWTFakeHost + "/callback-b"
@@ -125,7 +125,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 		})
 	})
 
-	// Scenario US3-S2 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US3-S2 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should accept one concurrent assertion across two PostgreSQL brokers", Label("docker"), func() {
 		Expect(bootstrap.CanAccessContainerRuntime()).To(Succeed())
 		ctx := context.Background()

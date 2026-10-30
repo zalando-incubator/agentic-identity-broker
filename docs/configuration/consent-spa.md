@@ -16,7 +16,7 @@ backend integration.
 
 The backend always serves the root-mounted SPA from `web/dist`, relative to the process working directory. It has no SPA-specific environment variables, YAML keys, or CLI flags.
 
-Deployments must build the frontend and make `web/dist` available relative to the broker process. The browser routes are defined in [ADR 035](../../adrs/035-root-mounted-spa.md).
+Deployments must build the frontend and make `web/dist` available relative to the broker process. The browser routes are defined in [ADR 20260904-120000](../../adrs/20260904-120000-root-mounted-spa.md).
 
 ### Server Configuration
 

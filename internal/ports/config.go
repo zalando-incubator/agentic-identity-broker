@@ -181,7 +181,7 @@ type JWTConfig struct {
 // JWTClaimExtractionConfig holds CEL expressions for extracting principal and
 // optional profile attributes from JWT claims. All expressions receive a single
 // variable "claims" of type map(string, any) — the JWT claims map.
-// This follows the pattern from ADR 009 (CEL for Authorization Policies).
+// This follows the pattern from ADR 20260116-120100 (CEL for Authorization Policies).
 type JWTClaimExtractionConfig struct {
 	// PrincipalExpression is a CEL expression to extract the principal from JWT claims.
 	// Must evaluate to a non-empty string. Authentication fails if extraction fails.
@@ -791,7 +791,7 @@ const (
 const (
 	// SubjectVerificationJWKS validates a signed subject against a trusted issuer (default).
 	SubjectVerificationJWKS = "jwks"
-	// SubjectVerificationNone accepts an unsigned unverified subject JWT (FR-003d, ADR 031).
+	// SubjectVerificationNone accepts an unsigned unverified subject JWT (FR-003d, ADR 20260825-120000).
 	SubjectVerificationNone = "none"
 )
 

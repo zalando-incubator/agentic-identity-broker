@@ -78,7 +78,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 	})
 
 	Describe("GitHub Flavor Registration", func() {
-		// Scenario 1.2 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.2 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should accept explicit github flavor and create service successfully", func() {
 			req := fixtures.ValidGitHubServiceRequest()
 
@@ -91,7 +91,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 			Expect(body["client_secret"]).To(Equal("REDACTED"))
 		})
 
-		// Scenario 1.2 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.2 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should return github flavor in GET response after creation", func() {
 			req := fixtures.ValidGitHubServiceRequest()
 			createResp := createService(req)
@@ -111,7 +111,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 			Expect(endpoints["authorize_endpoint"]).To(Equal("https://github.com/login/oauth/authorize"))
 		})
 
-		// Scenario 3.1 from specs/018-oauth2-provider-flavors/spec.md (User Story 3)
+		// Scenario 3.1 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 3)
 		It("should validate github flavor same as standard (require client_id, client_secret, issuer_uri)", func() {
 			req := fixtures.ValidGitHubServiceRequest()
 			delete(req, "client_id")
@@ -128,7 +128,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 	})
 
 	Describe("GitHub Flavor Auto-Detection", func() {
-		// Scenario 1.1 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.1 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should auto-detect github flavor when token endpoint contains github.com and flavor is omitted", func() {
 			req := map[string]interface{}{
 				"display_name":  "Auto GitHub Service",
@@ -150,7 +150,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("github"))
 		})
 
-		// Scenario 1.1 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.1 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should default to standard flavor when token endpoint does not contain github.com and flavor is omitted", func() {
 			req := map[string]interface{}{
 				"display_name":  "Generic Service",
@@ -172,7 +172,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("standard"))
 		})
 
-		// Scenario 1.1 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.1 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should default to standard flavor when non-github endpoints are provided and flavor is omitted", func() {
 			req := map[string]interface{}{
 				"display_name":  "No Endpoints Service",
@@ -196,7 +196,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 	})
 
 	Describe("GitHub Flavor Scope Separator", func() {
-		// Scenario 1.4 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
+		// Scenario 1.4 from specs/20260312-120000-oauth2-provider-flavors/spec.md (User Story 1)
 		It("should reject unrecognized flavor values including near-misses", func() {
 			req := fixtures.ValidGitHubServiceRequest()
 			req["oauth2_flavor"] = "GitHub" // capital G - invalid

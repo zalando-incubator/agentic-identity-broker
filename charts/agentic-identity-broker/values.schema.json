@@ -1015,7 +1015,7 @@
                               "verification": {
                                 "type": "string",
                                 "enum": ["jwks", "none"],
-                                "description": "Subject mode: 'jwks' (signed, validated against a trusted issuer, default) or 'none' (unverified unsigned JWT, broker profile extension per ADR 031)"
+                                "description": "Subject mode: 'jwks' (signed, validated against a trusted issuer, default) or 'none' (unverified unsigned JWT, broker profile extension per ADR 20260825-120000)"
                               },
                               "expected_audience": {
                                 "type": "string",

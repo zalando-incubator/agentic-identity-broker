@@ -33,7 +33,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		}
 	})
 
-	// Scenario US4-S1 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S1 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should refetch an unknown kid and accept the rotated key", func() {
 		fixture.Close()
 		var err error
@@ -70,7 +70,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		Expect(response.StatusCode).To(Equal(http.StatusOK))
 	})
 
-	// Scenario US4-S2 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S2 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should reject a removed key after refreshing the set", func() {
 		fixture.Close()
 		var err error
@@ -121,7 +121,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		Expect(removedKey.StatusCode).To(Equal(http.StatusUnauthorized))
 	})
 
-	// Scenario US4-S3 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S3 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should refuse a jwks_uri that resolves to a blocked address", func() {
 		fixture.Close()
 		fixture = nil
@@ -144,7 +144,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		Expect(response.StatusCode).To(BeNumerically(">=", 500))
 	})
 
-	// Scenario US4-S4 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S4 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	DescribeTable("fails closed when the JWKS dependency fails", func(mode string) {
 		if mode == "timeout" {
 			fixture.Close()
@@ -183,7 +183,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		Entry("timeout", "timeout"),
 	)
 
-	// Scenario US4-S5 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S5 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should never select weak or unsupported verification keys", func() {
 		weakRSA, err := rsa.GenerateKey(rand.Reader, 1024)
 		Expect(err).To(Succeed())
@@ -226,7 +226,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 		Expect(response.StatusCode).To(Equal(http.StatusUnauthorized))
 	})
 
-	// Scenario US4-S6 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US4-S6 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should limit repeated unknown-kid fetches", func() {
 		code, verifier, err := fixture.AuthorizeCode("read")
 		Expect(err).To(Succeed())

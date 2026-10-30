@@ -150,7 +150,7 @@ func run(cmd *cobra.Command, args []string) error {
 	defer stop()
 
 	// Start servers with atomic startup pattern (both must bind, or neither runs)
-	// ADR 004-dual-server-isolation.md compliance
+	// ADR 20251215-120200-dual-server-isolation.md compliance
 	logger.Info("Starting dual-port HTTP servers",
 		"enduser_port", cfg.Server.EndUser.Port,
 		"admin_port", cfg.Server.Admin.Port)

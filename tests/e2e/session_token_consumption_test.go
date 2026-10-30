@@ -24,7 +24,7 @@ import (
 
 // Session Token Consumption E2E Tests
 //
-// Covers FR-029 and SR-014 from specs/031-unified-session-token/spec.md:
+// Covers FR-029 and SR-014 from specs/20260517-120000-unified-session-token/spec.md:
 // session-based consent submission using stateless JWE tokens across all agent modes.
 // Anti-replay is enforced by the token TTL — there is no server-side consumed flag.
 
@@ -119,7 +119,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 		return bytes.NewReader(body)
 	}
 
-	// Scenario 3.1 from specs/031-unified-session-token/spec.md
+	// Scenario 3.1 from specs/20260517-120000-unified-session-token/spec.md
 	Describe("when consent is submitted with a valid session_token", func() {
 		It("creates the grant and returns redirect_url from the JWE claims OriginalURL", func() {
 			agent := createAgent()
@@ -142,7 +142,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 		})
 	})
 
-	// SR-014 from specs/031-unified-session-token/spec.md — expired token is rejected
+	// SR-014 from specs/20260517-120000-unified-session-token/spec.md — expired token is rejected
 	Describe("when consent is submitted with an expired session_token", func() {
 		It("rejects with 400 Bad Request", func() {
 			agent := createAgent()
@@ -157,7 +157,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 		})
 	})
 
-	// SR-014 from specs/031-unified-session-token/spec.md — malformed token is rejected
+	// SR-014 from specs/20260517-120000-unified-session-token/spec.md — malformed token is rejected
 	Describe("when consent is submitted with a malformed session_token", func() {
 		It("rejects with 400 Bad Request", func() {
 			agent := createAgent()
@@ -171,7 +171,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 		})
 	})
 
-	// SR-014 principal isolation from specs/031-unified-session-token/spec.md
+	// SR-014 principal isolation from specs/20260517-120000-unified-session-token/spec.md
 	Describe("when session_token belongs to a different principal", func() {
 		It("rejects with 403 Forbidden", func() {
 			agent := createAgent()
@@ -188,7 +188,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 		})
 	})
 
-	// SR-014 agent binding from specs/031-unified-session-token/spec.md
+	// SR-014 agent binding from specs/20260517-120000-unified-session-token/spec.md
 	Describe("when session_token was created for a different agent", func() {
 		It("rejects with 400 Bad Request", func() {
 			agent := createAgent()

@@ -490,7 +490,7 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 		assert.Equal(t, []interface{}{optionalServiceID.String()}, grantedPermissionSets[permissionSetID.String()])
 	})
 
-	// redirect_uri without session_token must be ignored — no redirect_url in response (SR-004, ADR 016).
+	// redirect_uri without session_token must be ignored — no redirect_url in response (SR-004, ADR 20260428-120000).
 	t.Run("redirect_uri_without_session_token_is_ignored", func(t *testing.T) {
 		reqBody := GrantRequest{
 			GrantedPermissionSets: map[string][]string{permissionSetID.String(): {optionalServiceID.String()}},

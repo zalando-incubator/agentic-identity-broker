@@ -21,8 +21,8 @@ import (
 )
 
 // Regression suite for recurring third-party "logout" reports.
-// Scenario references: specs/008-thirdparty-oauth2-sessions/spec.md (US2-S10)
-// and specs/013-token-exchange/spec.md (US1-S7, US1-S8, US5-S6).
+// Scenario references: specs/20251222-120000-thirdparty-oauth2-sessions/spec.md (US2-S10)
+// and specs/20260115-120000-token-exchange/spec.md (US1-S7, US1-S8, US5-S6).
 
 func seedExpiringSession(t *testing.T, sessions ports.UserSessionRepository, principal id.Principal, serviceID id.ServiceID, accessExpiresAt time.Time, refreshToken string, scope []string) {
 	t.Helper()
@@ -191,7 +191,7 @@ func TestListUserSessions_ExcludesSpentAccessOnlyConnectionsFromActiveServices(t
 	assert.Empty(t, activeIDs)
 }
 
-// 013 US1-S7 from specs/013-token-exchange/spec.md.
+// 013 US1-S7 from specs/20260115-120000-token-exchange/spec.md.
 func TestGetValidAccessToken_RefreshesNearExpiryAccessTokenInBackground(t *testing.T) {
 	ctx := context.Background()
 	service, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)

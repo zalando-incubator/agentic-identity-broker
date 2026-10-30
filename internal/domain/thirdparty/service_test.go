@@ -2105,7 +2105,7 @@ func TestThirdpartyOAuth2ProviderService_Create_ServiceIDOnlyContext(t *testing.
 	svcID := id.NewServiceID()
 	entity := minimalValidEntity(svcID, model.NewPlaintextSecret("secret"))
 
-	// ADR 008: only service_id in context, no principal
+	// ADR 20260116-120000: only service_id in context, no principal
 	expectedContext := map[string]string{"service_id": svcID.String()}
 	mockEnc.On("Encrypt", ctx, []byte("secret"), expectedContext).Return([]byte("enc"), nil)
 	mockRepo.On("Create", ctx, mock.Anything).Return(nil)

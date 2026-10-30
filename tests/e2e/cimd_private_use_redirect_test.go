@@ -103,7 +103,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 	})
 
 	Context("when the Agent allowlists github-app://oauth/callback", func() {
-		// Scenario US7.1 from specs/028-cimd-support/spec.md
+		// Scenario US7.1 from specs/20260421-120000-cimd-support/spec.md
 		It("accepts the published document and redirects to consent", func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, fixtures.GitHubAppCallback), principal)
 			Expect(err).ToNot(HaveOccurred())
@@ -115,7 +115,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 			Expect(location.Query().Get("session_token")).ToNot(BeEmpty())
 		})
 
-		// Scenario US7.3 from specs/028-cimd-support/spec.md
+		// Scenario US7.3 from specs/20260421-120000-cimd-support/spec.md
 		It("rejects every look-alike callback without redirecting", func() {
 			for _, callback := range []string{
 				"GITHUB-APP://oauth/callback",
@@ -133,7 +133,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 			}
 		})
 
-		// Scenario US7.5 from specs/028-cimd-support/spec.md
+		// Scenario US7.5 from specs/20260421-120000-cimd-support/spec.md
 		It("completes consent, code issuance, and public-client token exchange", func() {
 			code, verifier := completeAuthorizationCodeFlow(server, testStorage, principal, clientURL, fixtures.GitHubAppCallback, func(data map[string]any) {
 				assertCIMDConsentContext(data, fixtures.GitHubAppCallback, fakeHost)
@@ -147,7 +147,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 			Expect(token["access_token"]).ToNot(BeEmpty())
 		})
 
-		// Scenario US7.6 from specs/028-cimd-support/spec.md
+		// Scenario US7.6 from specs/20260421-120000-cimd-support/spec.md
 		It("rejects exchange of a native-app code for a loopback callback", func() {
 			code, verifier := completeAuthorizationCodeFlow(server, testStorage, principal, clientURL, fixtures.GitHubAppCallback, nil)
 			resp := exchangeAuthorizationCode(server, clientURL, code, "http://127.0.0.1/callback", verifier)
@@ -156,7 +156,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 			Expect(resp).To(matchers.HaveOAuth2Error("invalid_grant"))
 		})
 
-		// Scenario US7.7 from specs/028-cimd-support/spec.md
+		// Scenario US7.7 from specs/20260421-120000-cimd-support/spec.md
 		It("rejects exchange with a mismatched PKCE verifier", func() {
 			code, verifier := completeAuthorizationCodeFlow(server, testStorage, principal, clientURL, fixtures.GitHubAppCallback, nil)
 			wrongVerifier := helpers.PKCEVerifier()
@@ -167,7 +167,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 			Expect(resp).To(matchers.HaveOAuth2Error("invalid_grant"))
 		})
 
-		// Scenario US7.8 from specs/028-cimd-support/spec.md
+		// Scenario US7.8 from specs/20260421-120000-cimd-support/spec.md
 		It("rechecks the Agent allowlist on a cached document after an Admin update", func() {
 			first, err := server.AuthenticatedGET(authorizeURL(clientURL, fixtures.GitHubAppCallback), principal)
 			Expect(err).ToNot(HaveOccurred())
@@ -205,7 +205,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 	Context("when the Agent does not allowlist the callback", func() {
 		BeforeEach(func() { agentRedirectURIs = nil })
 
-		// Scenario US7.2 from specs/028-cimd-support/spec.md
+		// Scenario US7.2 from specs/20260421-120000-cimd-support/spec.md
 		It("rejects the entire document even for its loopback callback", func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, "http://127.0.0.1/callback"), principal)
 			Expect(err).ToNot(HaveOccurred())
@@ -219,7 +219,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 	Context("when only the Agent lists the callback", func() {
 		BeforeEach(func() { documentRedirectURIs = []string{"http://127.0.0.1/callback"} })
 
-		// Scenario US7.4 from specs/028-cimd-support/spec.md
+		// Scenario US7.4 from specs/20260421-120000-cimd-support/spec.md
 		It("rejects a native callback absent from the document", func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, fixtures.GitHubAppCallback), principal)
 			Expect(err).ToNot(HaveOccurred())

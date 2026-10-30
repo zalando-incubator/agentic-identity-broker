@@ -277,7 +277,7 @@ func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resou
 // alongside protocol. Calling this method always includes the field in the built metadata
 // (even with an empty string), which BuildWithMetadata's default-injection (below) treats as
 // "explicitly set" and does not override. This simulates the metadata agentgateway sends when
-// it knows which MCP server a request targets (spec 044).
+// it knows which MCP server a request targets (spec 20260916-120000).
 func (b *ProcessingRequestBuilder) WithAgentgatewayMCPServer(server string) *ProcessingRequestBuilder {
 	b.mcpServer = &server
 	return b
@@ -314,7 +314,7 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 	}
 
 	// mcp_server is mandatory for MCP requests once OPA authorization is enabled
-	// (spec 044 FR-004). Default-inject a value for protocol=="mcp" builds so existing
+	// (spec 20260916-120000 FR-004). Default-inject a value for protocol=="mcp" builds so existing
 	// tests unrelated to mcp_server itself don't need to set it explicitly. Tests that
 	// exercise the true-absence rejection path call WithAgentgatewayMCPServer("") to opt
 	// out: an explicit (even empty) value is never overridden by the default below.

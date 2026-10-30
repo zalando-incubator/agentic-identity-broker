@@ -386,7 +386,7 @@ var _ = Describe("OAuth2 Authorization Server Metadata Discovery", func() {
 		})
 	})
 
-	// Scenario 4.1 and 4.5 from specs/025-oauth2-server/spec.md
+	// Scenario 4.1 and 4.5 from specs/20260328-120000-oauth2-server/spec.md
 	Context("local mode offline access advertisement", func() {
 		var (
 			localServer         *bootstrap.TestServer

@@ -1,6 +1,6 @@
 // Package extproc_test contains E2E acceptance tests for OPA authorization via agentgateway.
 //
-// This file covers US1 acceptance scenarios from specs/020-extproc-opa-authorization/spec.md.
+// This file covers US1 acceptance scenarios from specs/20260314-120100-extproc-opa-authorization/spec.md.
 // It requires Docker (agentgateway container) and is skipped when Docker is unavailable.
 //
 // Test architecture:
@@ -223,12 +223,12 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		mockTokenExchangeSvr.reset()
 	})
 
-	// US1 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
+	// US1 Scenario 1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// Given OPA is enabled with allow_readonly policy and list_repositories is a read-only tool,
 	// When an MCP tools/call request for list_repositories arrives with a Bearer token,
 	// Then the request proceeds to token exchange and the MCP server receives the exchanged token.
 	It("should allow read-only tool call and exchange token", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// US1 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
+		// US1 Scenario 1 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 		mockTokenExchangeSvr.withExchangedToken(opaAgentgwExchangedToken)
 
@@ -248,12 +248,12 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"MCP tool handler should receive the exchanged token after OPA allow decision")
 	})
 
-	// US1 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
+	// US1 Scenario 2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// Given OPA is enabled with allow_readonly policy and delete_repository is destructive,
 	// When an MCP tools/call request for delete_repository arrives,
 	// Then ExtProc returns 403 with denial reasons.
 	It("should deny destructive tool call with 403 and reasons", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// US1 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
+		// US1 Scenario 2 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 		resp := opaAgentgwPostMCP(ctx, agentgatewayPort, mcpJWT,
 			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)
@@ -287,12 +287,12 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"deny response should include the human-readable reason from the policy")
 	})
 
-	// US1 Scenario 3 from specs/020-extproc-opa-authorization/spec.md
+	// US1 Scenario 3 from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// Given OPA is enabled and the policy does not match any rule for the incoming tool,
 	// When the request is evaluated,
 	// Then the default deny decision applies and the request is rejected with 403.
 	It("should deny unmatched tool call by default", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// US1 Scenario 3 from specs/020-extproc-opa-authorization/spec.md
+		// US1 Scenario 3 from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 		// "unknown_tool" is not in allow or deny sets — default deny applies
 		resp := opaAgentgwPostMCP(ctx, agentgatewayPort, mcpJWT,
@@ -303,13 +303,13 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"default-denied tool must not reach the MCP handler")
 	})
 
-	// US1 Scenario 4 from specs/020-extproc-opa-authorization/spec.md
+	// US1 Scenario 4 from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// Given OPA is enabled with a Rego policy,
 	// When a non-tools/call MCP method (initialize) arrives,
 	// Then the full parsed MCP message is available to the policy.
 	// The allow_readonly policy explicitly allows non-tools/call methods.
 	It("should evaluate non-tool-call MCP methods against policy", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// US1 Scenario 4 from specs/020-extproc-opa-authorization/spec.md
+		// US1 Scenario 4 from specs/20260314-120100-extproc-opa-authorization/spec.md
 		// The MCP client already sent an initialize during BeforeAll connection setup.
 		// This test verifies that the policy evaluated initialize (mcp_method) and allowed it
 		// by making a fresh connection through agentgateway (which triggers a new initialize).
@@ -334,7 +334,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		newClient.Close() //nolint:errcheck
 	})
 
-	// FR-024 from specs/020-extproc-opa-authorization/spec.md
+	// FR-024 from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// Given the token exchange response carries an authoritative granted_permission_sets snapshot for the required service,
 	// When a permission-gated MCP tool call arrives,
 	// Then the policy allows the request and the MCP server receives the exchanged token.
@@ -442,7 +442,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"deny response should explain that permission-set context was unavailable")
 	})
 
-	// Feature 023 User Story 1 Amendment, Scenario 3 (specs/023-extproc-mcp-elicitation/spec.md): OPA mode.
+	// Feature 20260326-120000 User Story 1 Amendment, Scenario 3 (specs/20260326-120000-extproc-mcp-elicitation/spec.md): OPA mode.
 	It("should return the 403 insufficient_scope challenge from the headers phase when exchange requires re-auth", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		const opaAgentgwReAuthURL = "https://broker.example.com/sessions"
 		mockTokenExchangeSvr.withReAuthErrorURI(opaAgentgwReAuthURL)
@@ -468,7 +468,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"broker endpoint must be reached — a cache hit would silently bypass the re-auth path")
 	})
 
-	// mcp_headers_only scenario from specs/020-extproc-opa-authorization/spec.md (FR-018)
+	// mcp_headers_only scenario from specs/20260314-120100-extproc-opa-authorization/spec.md (FR-018)
 	// When agentgateway sends a header-only GET /mcp (end_of_stream=true, no body),
 	// ExtProc evaluates type=mcp_headers_only through OPA. The allow_readonly policy
 	// allows mcp_headers_only GET requests, so token exchange proceeds and the
@@ -480,7 +480,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	// HTTP response to a session-less GET is 422). Direct gRPC verifies the ExtProc
 	// mcp_headers_only path (OPA evaluation + token exchange + auth mutation) exactly.
 	It("should allow mcp_headers_only GET /mcp and forward exchanged token to MCP server", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// mcp_headers_only scenario from specs/020-extproc-opa-authorization/spec.md (FR-018)
+		// mcp_headers_only scenario from specs/20260314-120100-extproc-opa-authorization/spec.md (FR-018)
 		//
 		// Uses a distinct minted JWT so the exchange endpoint is actually called and no
 		// cached token produces a false pass.
@@ -513,14 +513,14 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"exchange endpoint must be called — cache must not produce a false-positive pass")
 	})
 
-	// Edge case from specs/020-extproc-opa-authorization/spec.md
+	// Edge case from specs/20260314-120100-extproc-opa-authorization/spec.md
 	// When a request has no protocol metadata AND the body is not recognizable as MCP
 	// JSON-RPC 2.0 (type="unknown"), OPA denies with the default deny rule.
 	//
 	// NOTE: This scenario is tested directly via gRPC (not through agentgateway MCP client)
 	// because we need to send a raw ExtProc request without agentgateway's metadata injection.
 	It("should reject with 403 when protocol metadata missing and body is non-MCP", NodeTimeout(time.Minute), func(ctx SpecContext) {
-		// Edge case from specs/020-extproc-opa-authorization/spec.md
+		// Edge case from specs/20260314-120100-extproc-opa-authorization/spec.md
 
 		// Connect directly to the ExtProc gRPC server (bypass agentgateway).
 		directClient, conn := helpers.ConnectToExtProc(extprocAddr)

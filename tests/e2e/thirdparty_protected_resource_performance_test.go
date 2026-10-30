@@ -123,7 +123,7 @@ var _ = Describe("Protected resource registration performance", func() {
 	})
 
 	Context("when twenty independent DCR providers each delay four responses", func() {
-		// SC-006 from specs/050-oauth2-protected-resource-discovery/spec.md
+		// SC-006 from specs/20261001-120000-oauth2-protected-resource-discovery/spec.md
 		It("should complete at least nineteen registrations within five seconds", Label("protected-resource-discovery", "performance"), func() {
 			principal := fixtures.DefaultPrincipal().String()
 			results := make(chan protectedResourcePerformanceResult, protectedResourcePerformanceRegistrations)

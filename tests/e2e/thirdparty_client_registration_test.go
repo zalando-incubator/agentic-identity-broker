@@ -124,7 +124,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 		}
 	})
 
-	// US7-S1 from specs/046-cimd-upstream-client/spec.md
+	// US7-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("creates and replaces all legacy method pairs with explicit registration", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		key, err := admin.AuthenticatedPOST("/api/cimd-client-keys", principal, "application/json", bytes.NewBufferString(`{"algorithm":"ES256"}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -161,7 +161,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 		Expect(list()).To(HaveLen(len(modes)))
 	})
 
-	// US7-S2 from specs/046-cimd-upstream-client/spec.md
+	// US7-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("rejects incompatible pairs on create and replace before contacting the provider", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		var traffic atomic.Int32
 		provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -208,7 +208,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 		}
 	})
 
-	// US7-S3 from specs/046-cimd-upstream-client/spec.md
+	// US7-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("resolves omitted registration on create and complete replacement without inferring CIMD public", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		key, err := admin.AuthenticatedPOST("/api/cimd-client-keys", principal, "application/json", bytes.NewBufferString(`{"algorithm":"ES256"}`))
 		Expect(err).NotTo(HaveOccurred())
@@ -232,7 +232,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 		}
 	})
 
-	// US7-S4 from specs/046-cimd-upstream-client/spec.md
+	// US7-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("rejects explicit null, empty, and unknown registrations without provider traffic", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		var traffic atomic.Int32
 		provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -289,7 +289,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 			}
 		})
 
-		// US7-S5 from specs/046-cimd-upstream-client/spec.md
+		// US7-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("reports legacy classifications without altering identities, methods, or sessions", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			expected := []struct {
 				registration, clientID string
@@ -324,7 +324,7 @@ var _ = Describe("Third-party client registration compatibility", func() {
 		})
 	})
 
-	// US7-S6 from specs/046-cimd-upstream-client/spec.md
+	// US7-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("rejects supplied registration before discovery and reports the selected CIMD or DCR method", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		for _, selection := range []struct {
 			scenario                           fixtures.ProtectedResourceScenario

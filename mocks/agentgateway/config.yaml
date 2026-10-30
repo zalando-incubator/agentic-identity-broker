@@ -2,7 +2,7 @@
 # HTTP endpoints (identity-broker, upstream-oauth2) are used for local Docker Compose.
 # In production: use HTTPS and set oauth2.tls.allow_http: false in ExtProc config.
 #
-# Reference: specs/043-extproc-metadata-input/contracts/extproc-metadata-input.md
+# Reference: specs/20260914-120000-extproc-metadata-input/contracts/extproc-metadata-input.md
 
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 binds:

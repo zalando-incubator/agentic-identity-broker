@@ -271,7 +271,7 @@ App
 - **Local State**: React `useState` for component-level state
 - **Server State**: Custom hooks with axios for API data fetching
 - **Context**: React Context API for global UI state (theme, error messages)
-- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
+- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 20260922-120000](adrs/20260922-120000-consent-selection-oauth-redirect-state.md) and [Feature 20251222-120000](specs/20251222-120000-thirdparty-oauth2-sessions/spec.md).
 - **No Redux/MobX**: Hooks + Context sufficient for current requirements
 
 **API Communication**:
@@ -309,9 +309,9 @@ App
 
 **Purpose**: Central DI wiring for all application components. All service instantiation happens in `internal/app/builder.go` via the `Builder` struct and `NewBuilder().With*().Build()` pattern.
 
-**OTel Provider Wiring** (Feature 017):
+**OTel Provider Wiring** (Feature 20260228-120000):
 
-The OTel provider is initialized in `Build()` and follows the app-layer provider pattern documented in [ADR 011](adrs/011-opentelemetry-provider-pattern.md):
+The OTel provider is initialized in `Build()` and follows the app-layer provider pattern documented in [ADR 20260301-120000](adrs/20260301-120000-opentelemetry-provider-pattern.md):
 
 ```
 Build()
@@ -346,7 +346,7 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
-**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+**Service-specific session recovery ([ADR 20261026-120000](adrs/20261026-120000-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
 
 #### 3.1.4. End-to-End Testing Architecture
 
@@ -354,7 +354,7 @@ Domain errors expose immutable, typed, credential-free diagnostics. Telemetry ex
 
 **Architecture**: Ginkgo BDD-style tests with separation of stable test scenarios (HTTP contract) and volatile setup code (production bootstrap wrappers).
 
-**Key Design Principles** (see [ADR 007](adrs/007-e2e-testing-with-ginkgo.md)):
+**Key Design Principles** (see [ADR 20260106-120000](adrs/20260106-120000-e2e-testing-with-ginkgo.md)):
 
 1. **Use Production Bootstrap**: Tests use production `app.Builder`, `httpAdapter.Server`, and `storage.Adapter` - no custom test implementations
 2. **Stability Through Separation**: Test scenarios focus on HTTP contracts (stable), setup code wraps production bootstrap (volatile)
@@ -454,7 +454,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Purpose**: Enable real-time approval state synchronization between ExtProc gateway instances and the broker without polling overhead.
 
-**Architecture** (see [ADR 014](adrs/014-long-poll-listen-notify.md)):
+**Architecture** (see [ADR 20260328-120000](adrs/20260328-120000-long-poll-listen-notify.md)):
 
 - **Long-Poll HTTP**: `GET /api/approvals` blocks using `select{}` on change channel, timeout timer, or client disconnect. Uses `If-None-Match` / `ETag` with monotonic version counter.
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
@@ -578,7 +578,7 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 
 **Third-party session maintenance**: In every OAuth2 server mode, the builder creates `OAuth2SessionService`, its bounded background refresh pool, and the admin sweep handler. This work is separate from local/hybrid `SessionCleanup`. The broker does not start a session-sweep timer; the chart can render a CronJob that calls the sweep. When `token_refresh.health_metrics.enabled` is true, the builder also registers `SessionHealthMetrics` and unregisters it during shutdown before telemetry stops.
 
-**Continuing consent for local refresh (Feature 049)**: Initial refresh issuance binds the active grant ID to the existing refresh row. Before rotation, Fosite storage verifies continuing consent and the grant identity. Legacy rows use UTC creation-time comparison for one rotation. Consent denial revokes the request chain and returns the existing `invalid_grant` response. Infrastructure errors leave the token unchanged.
+**Continuing consent for local refresh (Feature 20261012-120000)**: Initial refresh issuance binds the active grant ID to the existing refresh row. Before rotation, Fosite storage verifies continuing consent and the grant identity. Legacy rows use UTC creation-time comparison for one rotation. Consent denial revokes the request chain and returns the existing `invalid_grant` response. Infrastructure errors leave the token unchanged.
 
 If targeted revocation wins after the consent lookup, the provider returns canonical `invalid_grant` after Fosite rolls back rotation. A rollback error remains `server_error`.
 
@@ -614,7 +614,7 @@ End-User Server (Port 8000):
 
 **Multi-issuer JWT validation**: Token exchange fetches the role-specific JWKS and verifies the signature once per credential, then applies issuer, audience, and time-claim validation for each permitted issuer. The client assertion retains its separate trust anchor; a failed signature never yields claims for authorization.
 
-**Trust-anchor key sources (Feature 052, [ADR 040](adrs/040-trust-anchor-local-key-sets.md))**: Each trust anchor (the client-assertion anchor, every impersonation trusted issuer, and JWT pre-authentication on each of the end-user and admin servers) accepts at most one explicit Key Set Source: `jwks_uri` (remote), `jwks` (inline), or `jwks_file` (file). The sources are mutually exclusive with no precedence, and more than one fails startup. The domain package `internal/domain/trustanchor/` resolves the source before any discovery or adapter creation. A local source performs no discovery and no outbound request. A trust anchor with no explicit source keeps its existing behavior, including discovery and ADR 029 upstream reuse. A local key set is used only by the trust anchor that declares it. It is never published at `/oauth2/jwks.json` and never validates subject tokens. Impersonation entries share an adapter only when every source attribute matches. The ADR 029 self-trust check applies to every source.
+**Trust-anchor key sources (Feature 20261012-120100, [ADR 20261016-120000](adrs/20261016-120000-trust-anchor-local-key-sets.md))**: Each trust anchor (the client-assertion anchor, every impersonation trusted issuer, and JWT pre-authentication on each of the end-user and admin servers) accepts at most one explicit Key Set Source: `jwks_uri` (remote), `jwks` (inline), or `jwks_file` (file). The sources are mutually exclusive with no precedence, and more than one fails startup. The domain package `internal/domain/trustanchor/` resolves the source before any discovery or adapter creation. A local source performs no discovery and no outbound request. A trust anchor with no explicit source keeps its existing behavior, including discovery and ADR 20260811-120000 upstream reuse. A local key set is used only by the trust anchor that declares it. It is never published at `/oauth2/jwks.json` and never validates subject tokens. Impersonation entries share an adapter only when every source attribute matches. The ADR 20260811-120000 self-trust check applies to every source.
 
 **Resolution order for one trust anchor**: The builder rejects conflicting sources, refresh bounds with `jwks`, and `verification: none` with any key source. For `jwks_file`, it requires an absolute path, a configured Trust Directory, and a path inside that directory. It then selects the one declared source, or the existing discovery behavior when none is declared. A failed local source never falls back to discovery or to another source.
 
@@ -654,7 +654,7 @@ Admin Server (Port 14000):
 
 These routes use the existing administrative authentication boundary. They operate only on the `cimd_client_authentication` domain. Token-signing key routes remain unavailable in `proxy` mode.
 
-#### 3.1.4.2. Request Security Context Propagation (Feature 033)
+#### 3.1.4.2. Request Security Context Propagation (Feature 20260629-120000)
 
 **Purpose**: Capture one immutable, request-scoped security context at the broker perimeter and propagate it through handlers, services, repositories, and audit logs without per-endpoint metadata plumbing.
 
@@ -707,7 +707,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
 
-#### 3.1.5. Encryption Vault for OAuth Tokens (Feature 012)
+#### 3.1.5. Encryption Vault for OAuth Tokens (Feature 20260114-120000)
 
 **Purpose**: Secure at-rest encryption of OAuth2 tokens using envelope encryption with AWS Encryption SDK, protecting tokens from unauthorized access while maintaining developer transparency.
 
@@ -778,22 +778,22 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **Locked-session capacity**: The PostgreSQL adapter admits at most 20 `WithLockedSession` operations across all repository instances that share its 25-connection pool. Background, on-demand, sweep, and reconnect operations share this limit. Excess operations wait before acquiring a database connection. Admission and connection acquisition share the `storage.timeouts.write` budget and respect earlier caller cancellation. The slot remains occupied through commit or rollback and connection release. This leaves five pool connections outside locked-session work, even during provider outages. Other request traffic can still consume those connections.
 - **Session telemetry and privacy**: The context handler preserves request `trace_id`, `actor`, and optional `calling_peer`. Per-session refresh success, failure, and saturation logs include the session owner's `principal`, session ID, and service ID without token material. `session.oauth2.sweep_aborted` and the aggregate sweep audit have no session owner; the audit uses `operator_principal`. `SessionTokensRefreshed` emits `session.oauth2.token_refreshed` only after commit, with `triggered_by` set to `on-demand`, `background`, or `sweep`. A background refresh starts a new root span linked to the triggering request span, not a child of that request.
 - **Session metrics**: OpenTelemetry `Int64Counter` instruments `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, and `proactive_refresh_failed_total` use only `triggered_by=background`. Instruments `session_sweep_refreshed_total`, `session_sweep_skipped_total`, and `session_sweep_failed_total` use only `triggered_by=sweep`. A deduplicated or closed submission and a dry-run result do not increment these counters. No counter uses principal, session ID, or service ID as an attribute. The sweep handler records `session_sweep_duration_seconds`, a histogram attributed by `outcome` and `dry_run`, next to its audit event; a request without an operator principal records nothing. The `oauth2_sessions` observable gauge, attributed by `service_id`, `expiry`, and `refreshable`, comes from one `UserSessionHealthRepository.CountSessionsByExpiry` query per export cycle. The domain classifies each group into a Session Health State and zero-fills all eight `(expiry, refreshable)` combinations per service. A failed query exports no points for that cycle and logs a WARN with the storage error kind.
-- **Session-expiry index**: Migration `037` creates the B-tree index `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY`. The key order matches the expiry-then-UUID sweep cursor. DOWN uses `DROP INDEX CONCURRENTLY`. The separate migration image invokes `golang-migrate` directly. Both SQL files retain `-- migrate:no-transaction` as an informational comment, not an enforced directive. [ADR 039](adrs/039-concurrent-session-expiry-index.md) accepts this named non-atomic exception with direct execution. No preflight checks the SQL pair: a missing DOWN can go unnoticed until after UP. A failed build can leave an invalid index and a dirty `schema_migrations` version. Recovery inspects `pg_index.indisvalid`, both ordered keys, and the migration version before any change. After stopping competing migration Jobs, operators drop only a confirmed invalid index with schema-qualified `DROP INDEX CONCURRENTLY` outside a transaction. They use `migrate force 36` or `migrate force 37` only after reviewing actual schema state. Force changes metadata, not the index. See [the runbook](docs/operations/session-sweep.md).
+- **Session-expiry index**: Migration `037` creates the B-tree index `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY`. The key order matches the expiry-then-UUID sweep cursor. DOWN uses `DROP INDEX CONCURRENTLY`. The separate migration image invokes `golang-migrate` directly. Both SQL files retain `-- migrate:no-transaction` as an informational comment, not an enforced directive. [ADR 20261008-120100](adrs/20261008-120100-concurrent-session-expiry-index.md) accepts this named non-atomic exception with direct execution. No preflight checks the SQL pair: a missing DOWN can go unnoticed until after UP. A failed build can leave an invalid index and a dirty `schema_migrations` version. Recovery inspects `pg_index.indisvalid`, both ordered keys, and the migration version before any change. After stopping competing migration Jobs, operators drop only a confirmed invalid index with schema-qualified `DROP INDEX CONCURRENTLY` outside a transaction. They use `migrate force 36` or `migrate force 37` only after reviewing actual schema state. Force changes metadata, not the index. See [the runbook](docs/operations/session-sweep.md).
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange and refresh retry transient failures, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of stored confidential provider `client_secret` values via the `Secret` value object. Filesystem, public, and CIMD services use an absent secret. No other layer touches `EncryptionPort` for provider secrets.
 - Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
 
-**Implemented credential sources and operation boundaries (`051-oauth2-secret-file-overrides`, unreleased)**:
+**Implemented credential sources and operation boundaries (`20261002-120000-oauth2-secret-file-overrides`, unreleased)**:
 
-**Approval, 2026-10-08**: The user explicitly selected “Accept ADR 038” and “Major contract bump to 2.0.0”. [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md) is Accepted. Source selection, file acquisition, identity checks, and both-store persistence are implemented. Historical design approval and semantic-red evidence remain in the [quickstart](specs/051-oauth2-secret-file-overrides/quickstart.md#status-and-prerequisites). This feature is unreleased. No registry publication or live deployment occurred.
+**Approval, 2026-10-08**: The user explicitly selected “Accept ADR 20261008-120000” and “Major contract bump to 2.0.0”. [ADR 20261008-120200](adrs/20261008-120200-oauth2-client-secret-file-overrides.md) is Accepted. Source selection, file acquisition, identity checks, and both-store persistence are implemented. Historical design approval and semantic-red evidence remain in the [quickstart](specs/20261002-120000-oauth2-secret-file-overrides/quickstart.md#status-and-prerequisites). This feature is unreleased. No registry publication or live deployment occurred.
 
 The registered service owns `credential_source: stored | filesystem`. Creation omission selects stored. Update omission preserves the source without changing unrelated PUT semantics. Stored mode ignores bindings. Public clients, CIMD confidential clients, and Google-flavor services reject filesystem selection and retain existing behavior without file access.
 
 Filesystem mode requires a canonical ID and rejects either supplied inline credential field, including null or empty input. The service stores no file client ID or secret placeholder and uses `NewAbsentSecret()`. Administrative, consent, and session metadata operations never resolve files. Filesystem administrative responses omit both inline credentials and expose no paths or internal transition evidence.
 
-**Administrative API approval and versioning (`051-oauth2-secret-file-overrides`)**:
+**Administrative API approval and versioning (`20261002-120000-oauth2-secret-file-overrides`)**:
 
 Published release `v0.1.81` contains Admin API `1.0.0`. Its `Service` response requires `client_id`, so filesystem omission is a breaking contract change. Admin API `2.0.0` replaces that contract on the existing `/api/services` and `/api/services/{service-id}` routes. No versioned route, compatibility endpoint, shim, or alias is introduced. The OpenAPI contract version is separate from the broker release tag.
 
@@ -836,7 +836,7 @@ Legacy missing identity remains usable only for stored services whose transition
 
 Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
 
-RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 044). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 20261026-120000). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
 
 Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
 
@@ -922,8 +922,8 @@ Service Layer (OAuth2SessionService):
 
 **See Also**:
 
-- ADR 009: Envelope Encryption Design (cryptographic approach)
-- ADR 012: Encryption Layer Separation (architectural pattern)
+- ADR 20260116-120200: Envelope Encryption Design (cryptographic approach)
+- ADR 20260223-120100: Encryption Layer Separation (architectural pattern)
 
 #### 3.1.x. Client ID Metadata Document (CIMD) Subsystem
 
@@ -962,11 +962,11 @@ OAuth2 /authorize request
 
 **CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
 
-**Redirect URI Matching**: `urivalidation.IsRegisteredRedirectURI` (`internal/domain/urivalidation/redirect.go`) decides registration. For CIMD clients, the client list comes from the fetched document. Otherwise, it comes from the Agent's `redirect_uris`. Web URIs retain `MatchesRedirectURI` behavior: loopback HTTP ports are ignored, while every other component must match exactly. A private-use URI must pass `IsValidPrivateUseRedirectURI` and equal an entry in both the client list and the Agent's `redirect_uris` byte for byte. A CIMD document alone cannot enable a custom-scheme callback (ADR 042).
+**Redirect URI Matching**: `urivalidation.IsRegisteredRedirectURI` (`internal/domain/urivalidation/redirect.go`) decides registration. For CIMD clients, the client list comes from the fetched document. Otherwise, it comes from the Agent's `redirect_uris`. Web URIs retain `MatchesRedirectURI` behavior: loopback HTTP ports are ignored, while every other component must match exactly. A private-use URI must pass `IsValidPrivateUseRedirectURI` and equal an entry in both the client list and the Agent's `redirect_uris` byte for byte. A CIMD document alone cannot enable a custom-scheme callback (ADR 20261022-120000).
 
-**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. That relocation leaves the timeout, response limit, and cache policy unchanged. [ADR 042](adrs/042-agent-allowlisted-private-use-redirect-uris.md) defines the private-use redirect exception and Agent allowlist.
+**See Also**: [ADR 20260425-120000: CIMD Fetcher Architecture](adrs/20260425-120000-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 20261007-120000](adrs/20261007-120000-protected-resource-discovery-and-dcr.md) changes only its package locations. That relocation leaves the timeout, response limit, and cache policy unchanged. [ADR 20261022-120000](adrs/20261022-120000-agent-allowlisted-private-use-redirect-uris.md) defines the private-use redirect exception and Agent allowlist.
 
-#### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
+#### 3.1.z. Outbound CIMD Client Authentication (Feature 20260917-120000)
 
 **Purpose**: Identify the broker as a hosted client of a third-party OAuth2 service, with or without token-endpoint authentication. CIMD confidential uses `private_key_jwt`; CIMD public explicitly uses `none`. This outbound feature does not change inbound CIMD client resolution.
 
@@ -982,7 +982,7 @@ OAuth2 /authorize request
 
 `private_key_jwt` remains recommended for CIMD because it authenticates the broker to the provider. CIMD public is an explicit per-service choice for providers that require `none`; the broker never infers it or selects it through protected-resource discovery. An omitted registration resolves to `cimd` only for `private_key_jwt` and to `static` otherwise. Requests with `static` plus `private_key_jwt`, or `cimd` plus an absent or null method, fail before provider traffic. Discovery-backed DCR pins its selected method without authentication-style probing. Manual confidential services retain their existing negotiated behavior.
 
-**Key-domain boundary (ADR 037)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
+**Key-domain boundary (ADR 20260921-120000)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
 
 CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. Only CIMD confidential metadata, public JWK publication, and assertion signing depend on the CIMD key set. CIMD public metadata is keyless.
 
@@ -1016,11 +1016,11 @@ The broker caches only the public CIMD JWK set for 45 seconds per process. Each 
 
 PostgreSQL reads check stored client registration and authentication without repeating write-time discovery URL validation. An unsafe persisted discovery URL does not block service lists or startup. New writes validate that URL, and the guarded outbound client rejects unsafe destinations. Invalid stored client authentication reports the service ID. The startup check still rejects a CIMD client ID that differs from the configured public origin.
 
-**Identity switches and rollout**: A full replacement keeps the URL between CIMD methods. Static-to-CIMD assigns the hosted URL; CIMD-to-static requires an operator client ID and ends metadata serving. Provider caches can retain an old document for 300 seconds, and a provider can reject old refresh tokens after the client ID changes. During rollout after migration 044, pre-upgrade replicas fail closed on CIMD confidential creates and CIMD identity rewrites. Retry those writes after all replicas upgrade. See ADR 044 for the guarded rollback procedure.
+**Identity switches and rollout**: A full replacement keeps the URL between CIMD methods. Static-to-CIMD assigns the hosted URL; CIMD-to-static requires an operator client ID and ends metadata serving. Provider caches can retain an old document for 300 seconds, and a provider can reject old refresh tokens after the client ID changes. During rollout after migration 044, pre-upgrade replicas fail closed on CIMD confidential creates and CIMD identity rewrites. Retry those writes after all replicas upgrade. See ADR 20261022-120100 for the guarded rollback procedure.
 
-**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) and [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md).
+**See Also**: [ADR 20260921-120000: CIMD Client-Authentication Key Domain](adrs/20260921-120000-cimd-client-authentication-key-domain.md) and [ADR 20261022-120100: Client Registration Independent of Authentication](adrs/20261022-120100-client-registration-independent-of-authentication.md).
 
-#### 3.1.z.1. Protected-Resource Discovery and Dynamic Client Registration (Feature 050)
+#### 3.1.z.1. Protected-Resource Discovery and Dynamic Client Registration (Feature 20261001-120000)
 
 **Boundary and ownership**: `ThirdpartyOAuth2ProviderService` owns discovery for the existing service aggregate. It validates source and metadata identities, selects an issuer and client method, sets the effective resource, encrypts DCR secrets, and changes status. The Admin handler parses requests and returns safe results. The domain uses the narrow `OAuthDiscoveryClient` port for the resource probe, bounded metadata reads, and one registration request. `internal/adapters/outboundhttp/` performs remote I/O. Builder wires the port and HTTP clients. No End-user API or consent UI changes.
 
@@ -1063,9 +1063,9 @@ Discovery and registration send no service credentials, user tokens, cookies, or
 
 **Audit NFRs**: Discovery, registration, rejection, and refresh audit records contain the service ID, operation, outcome, and validated issuer or selected method when known. They also contain a safe failure code on failure. They contain no secrets, assertions, tokens, authorization codes, query strings, or raw remote response bodies.
 
-**See Also**: [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md), [feature specification](specs/050-oauth2-protected-resource-discovery/spec.md), and the canonical [Admin OpenAPI](api/admin/openapi.yaml).
+**See Also**: [ADR 20261007-120000: Protected Resource Discovery and Dynamic Client Registration](adrs/20261007-120000-protected-resource-discovery-and-dcr.md), [feature specification](specs/20261001-120000-oauth2-protected-resource-discovery/spec.md), and the canonical [Admin OpenAPI](api/admin/openapi.yaml).
 
-#### 3.1.y. User Impersonation Domain (Feature 037)
+#### 3.1.y. User Impersonation Domain (Feature 20260825-120000)
 
 **Purpose**: Orchestrate the broker's user-impersonation capability on `POST /oauth2/token` so a privileged client can mint a broker-issued access token that represents a specified subject while explicitly attributing the acting party via the standard `act` claim. Because the issued token carries both `sub` and `act`, this is *delegation* in RFC 8693 §1.1 terms, not impersonation; the broker keeps **impersonation** as the operator-facing capability name but implements RFC 8693 delegation semantics for actor accountability. It separately requires the repo's user-consented `UserGrant` delegation before minting. Available only in `local` mode.
 
@@ -1081,7 +1081,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
   ↓   ├─ Validate signed client_assertion, actor, and subject against the rule's per-issuer JWKS
   ↓   │    (signature, algorithm allow-list, iss, per-role expected audience, exp, nbf)
   ↓   ├─ Extract privileged-client, actor-token issuer, actor, and subject identities (+ optional subject email)
-  ↓   └─ Evaluate the rule's single CEL authorization predicate (ADR-009 pattern)
+  ↓   └─ Evaluate the rule's single CEL authorization predicate (ADR-20260116-120100 pattern)
   ↓ Verify an active UserGrant for (extracted subject principal, target agent)
   ↓   missing/expired → terminal access_denied + error_uri=<public-url>/agents/<target-id>; lookup failure → server_error
   ↓ Mint through normal local access-token path: target agent_id + local CEL agent.*, sub=subject, act.iss=validated actor-token issuer, act.sub=actor, granted scope
@@ -1098,9 +1098,9 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 - Fail-closed on validation, extraction, predicate denial, delegation verification, or CEL timeout; no-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 - Local-mode only; proxy and hybrid modes reject impersonation and never forward upstream.
 
-**Reused Machinery**: the JWKS adapter (`internal/adapters/jwks`), the ADR-009 CEL evaluator pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern, and the local issuer's signing key + `token_claims_expression` principal context (`internal/domain/oauth2server`).
+**Reused Machinery**: the JWKS adapter (`internal/adapters/jwks`), the ADR-20260116-120100 CEL evaluator pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern, and the local issuer's signing key + `token_claims_expression` principal context (`internal/domain/oauth2server`).
 
-**See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
+**See Also**: ADR 20260825-120100 (accepted) — mandatory user delegation for impersonation; spec `20260825-120000-oauth2-user-impersonation` (FR-013–019, CR-001–010).
 
 ### 3.2. Envoy External Processor (ExtProc) Token Exchange Service
 
@@ -1134,7 +1134,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
-**Approval Cache**: An ExtProc-local `sync.RWMutex` cache of broker approval summaries. It is keyed by the verified `(principal, agent_id)` pair. `internal/domain/approval/toolpattern` provides single-pattern matching. `internal/extproc/approval/precedence.go` ranks matching candidates under ADR 035. A cache match requires a successful sync within `tool_approvals.max_staleness`, which defaults to 60s. The cache stores no permission sets.
+**Approval Cache**: An ExtProc-local `sync.RWMutex` cache of broker approval summaries. It is keyed by the verified `(principal, agent_id)` pair. `internal/domain/approval/toolpattern` provides single-pattern matching. `internal/extproc/approval/precedence.go` ranks matching candidates under ADR 20260904-120100. A cache match requires a successful sync within `tool_approvals.max_staleness`, which defaults to 60s. The cache stores no permission sets.
 
 **Approval Gate**: The request-path component that handles standalone `approval_required` MCP tool calls. It matches the cache, performs a targeted broker read on a miss, and creates an approval only after that read succeeds. It denies on every broker or identity error.
 
@@ -1173,13 +1173,13 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 4. On success, replace `Authorization` with `Bearer <exchanged token>`.
 5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
+See [ADR 20260914-120000](adrs/20260914-120000-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 20260326-120000](specs/20260326-120000-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
 #### 3.2.4. Configuration
 
 **Configuration Subsystem**: Separate from broker config, uses `EXTPROC_` environment prefix.
 
-**Deployment Boundary**: ExtProc is independently deployed and is not a workload of `charts/agentic-identity-broker/`. Its `EXTPROC_*` settings and YAML file MUST NOT be added to the broker chart's ConfigMap or Deployment. Any chart that later deploys ExtProc must give it a distinct workload and configuration path, as required by ADR 011 and Constitution Principle VII.
+**Deployment Boundary**: ExtProc is independently deployed and is not a workload of `charts/agentic-identity-broker/`. Its `EXTPROC_*` settings and YAML file MUST NOT be added to the broker chart's ConfigMap or Deployment. Any chart that later deploys ExtProc must give it a distinct workload and configuration path, as required by ADR 20260223-120000 and Constitution Principle VII.
 
 **Config Structure**:
 
@@ -1346,11 +1346,11 @@ examples/config/
 
 #### 3.2.11. Telemetry Support
 
-ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 011, ADR 027) for distributed tracing, metrics, and log correlation. The `cmd/extproc-token-exchange/` composition layer imports `internal/adapters/telemetry` to initialize and manage the OTel provider lifecycle. The ExtProc domain and gRPC server use the global OTel tracer and meter patterns; no changes to adapter constructors are required. See ADR 027 for the cross-boundary dependency rationale and implementation approach.
+ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 20260301-120000, ADR 20260421-120000) for distributed tracing, metrics, and log correlation. The `cmd/extproc-token-exchange/` composition layer imports `internal/adapters/telemetry` to initialize and manage the OTel provider lifecycle. The ExtProc domain and gRPC server use the global OTel tracer and meter patterns; no changes to adapter constructors are required. See ADR 20260421-120000 for the cross-boundary dependency rationale and implementation approach.
 
 ## 4. Data Stores
 
-Production state is in PostgreSQL. The development and test storage adapter keeps the same entities in memory without persistence (ADR 004). AWS KMS holds the root encryption key, not application records.
+Production state is in PostgreSQL. The development and test storage adapter keeps the same entities in memory without persistence (ADR 20251215-120300). AWS KMS holds the root encryption key, not application records.
 
 ### 4.1. PostgreSQL application store
 
@@ -1366,13 +1366,13 @@ Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_gra
 
 Name: AWS Encryption SDK branch-key store
 
-Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 010)
+Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 20260217-120000)
 
-Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 009). This table does not store grants or user sessions.
+Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 20260116-120200). This table does not store grants or user sessions.
 
 ## 5. External Integrations / APIs
 
-**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 20261026-120000](adrs/20261026-120000-service-specific-session-recovery-url.md) records the recovery decision.
 
 (List any third-party services or external APIs the system interacts with.)
 
@@ -1397,7 +1397,7 @@ Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK S
 The [security assurance case](docs/resources/assurance-case.md) records the assets, attackers, trust boundaries, secure design controls, and weakness-to-verification mapping. [Security posture](docs/resources/security.md) gives the operator-facing summary.
 
 - **Authentication:** The trusted proxy authenticates end users and injects `X-Remote-User`. It restricts port 14000 to administrators. The broker validates signed machine client assertions and subject tokens for token exchange.
-- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018.
+- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 20260630-120000.
 - **Encryption:** Production uses AWS KMS and DynamoDB branch keys to encrypt secrets, sessions, and signing-key material before PostgreSQL storage. Failed encryption or decryption has no plaintext fallback. TLS termination and private backend connectivity are deployment responsibilities.
 - **Outbound discovery:** The guarded client validates public HTTPS destinations, disables redirects and proxies, and blocks private resolved addresses before connection. It handles resource discovery, registration, and discovery-backed token calls. Direct `metadata_url` selects an administrator-provided authorization-server metadata endpoint and retains the older shared transport and fallback. The 10-second attempt deadline and 256-KiB response limit apply to resource discovery and registration. Audit events contain no credentials or raw remote bodies.
 - **Verification:** The required `CI gate` runs E2E suites for consent, approval, OAuth2, and token exchange, plus dependency review on pull requests. CodeQL analyzes Go and JavaScript/TypeScript on pull requests. A separate scheduled security workflow runs gosec, govulncheck, and OSV-Scanner. Parser fuzzing is scheduled separately.
@@ -1424,48 +1424,48 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 ### Core Infrastructure
 
-- [ADR 002: Configuration Libraries](adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
-- [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
-- [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
-- [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
+- [ADR 20251215-120000: Configuration Libraries](adrs/20251215-120000-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
+- [ADR 20251215-120100: Chi Framework Selection](adrs/20251215-120100-chi-framework.md) - HTTP routing framework choice
+- [ADR 20251215-120200: Dual-Server Isolation](adrs/20251215-120200-dual-server-isolation.md) - Separate end-user and admin servers
+- [ADR 20251215-120300: Storage Layer Architecture](adrs/20251215-120300-storage-layer-architecture.md) - Hexagonal architecture for persistence
 
 ### Frontend & User Interface
 
-- [ADR 005: SPA Serving Pattern](adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
-- [ADR 006: Frontend Stack](adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
+- [ADR 20251218-120000: SPA Serving Pattern](adrs/20251218-120000-spa-serving-pattern.md) - Serving React SPA from Go backend
+- [ADR 20251218-120100: Frontend Stack](adrs/20251218-120100-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
 
 ### Testing & Quality
 
-- [ADR 007: E2E Testing with Ginkgo](adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
+- [ADR 20260106-120000: E2E Testing with Ginkgo](adrs/20260106-120000-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
 
 ### RFC 8693 Token Exchange
 
-- [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
-- [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
-- [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
+- [ADR 20260119-120000: Token Exchange JWKS Adapter Pattern](adrs/20260119-120000-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
+- [ADR 20261016-120000: Inline and File-Based Key Sets for Trust Anchors](adrs/20261016-120000-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 20261026-120000: Service-Specific Session Recovery URL](adrs/20261026-120000-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
 
 ### Security & Encryption
 
-- [ADR 008: Encryption Context Optimization](adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
-- [ADR 009: Envelope Encryption Design](adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
-- [ADR 010: CDK Encryption Infrastructure](adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
-- [ADR 012: Encryption Layer Separation](adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
+- [ADR 20260116-120000: Encryption Context Optimization](adrs/20260116-120000-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
+- [ADR 20260116-120200: Envelope Encryption Design](adrs/20260116-120200-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
+- [ADR 20260217-120000: CDK Encryption Infrastructure](adrs/20260217-120000-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
+- [ADR 20260223-120100: Encryption Layer Separation](adrs/20260223-120100-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
 
 ### Observability
 
-- [ADR 011: OpenTelemetry Provider Pattern](adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
-- [ADR 033: Request Security Context Propagation](adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
+- [ADR 20260301-120000: OpenTelemetry Provider Pattern](adrs/20260301-120000-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
+- [ADR 20260703-120100: Request Security Context Propagation](adrs/20260703-120100-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
 
 ### Client ID Metadata Document (CIMD)
 
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. ADR 040 supersedes its package locations only.
-- [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
-- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 040 extends decision 2 only for discovery-backed DCR.
-- [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 015's package locations and ADR 036 decision 2 for discovery-backed DCR clients.
-- [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
+- [ADR 20260425-120000: CIMD Fetcher Architecture](adrs/20260425-120000-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. ADR 20261007-120000 supersedes its package locations only.
+- [ADR 20260921-120000: CIMD Client-Authentication Key Domain](adrs/20260921-120000-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
+- [ADR 20260911-120000: Public Client Token-Endpoint Authentication](adrs/20260911-120000-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 20261007-120000 extends decision 2 only for discovery-backed DCR.
+- [ADR 20261007-120000: Protected Resource Discovery and Dynamic Client Registration](adrs/20261007-120000-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 20260425-120000's package locations and ADR 20260911-120000 decision 2 for discovery-backed DCR clients.
+- [ADR 20261022-120100: Client Registration Independent of Authentication](adrs/20261022-120100-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
 
 ### Tool Approval
-- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
+- [ADR 20260328-120000: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/20260328-120000-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
 
 ## 11. Project Identification
 
@@ -1505,7 +1505,7 @@ Define any project-specific terms or acronyms.)
 
 **KEK**: Key Encryption Key. A key used to encrypt/wrap the DEK. In AWS implementation, this is an AWS KMS customer-managed key (CMK) referenced by ARN. The KEK never leaves the secure boundary and is managed by AWS KMS.
 
-**EncryptionContext**: Additional authenticated data (AAD) bound to ciphertext during encryption but not encrypted itself. Constrained to exactly one stable, non-secret subject key per ciphertext namespace. The approved single-subject keys are `service_id` for service-scoped secrets and `kid` for signing-key private material (ADR 008 amendment). Implemented as a `map[string]string` with exactly one approved subject key present.
+**EncryptionContext**: Additional authenticated data (AAD) bound to ciphertext during encryption but not encrypted itself. Constrained to exactly one stable, non-secret subject key per ciphertext namespace. The approved single-subject keys are `service_id` for service-scoped secrets and `kid` for signing-key private material (ADR 20260116-120000 amendment). Implemented as a `map[string]string` with exactly one approved subject key present.
 
 **BranchKeySubject**: Domain value object in `internal/domain/encryption/` identifying the logical namespace that should map to a branch key. Wraps either a service subject (`service_id`) or a signing-key subject (`kid`) and produces the corresponding single-subject `EncryptionContext`.
 
@@ -1555,7 +1555,7 @@ Define any project-specific terms or acronyms.)
 
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 
-**Agent**: An AI agent registered in the identity broker system. Each agent has a unique client_id (the `ClientID` field — a short opaque identifier used in existing OAuth2/consent flows via `GetByClientID`; optional in the Admin API, and when omitted there is no auto-generation fallback per ADR 017, so `client_id` remains NULL), display name, description, and optional URLs for governance documentation and user interface. Agents may additionally register one or more **client_uris** (Client ID Metadata Document URLs per IETF draft-parecki-oauth-client-id-metadata-document) which provide an alternative resolution path via `GetByClientURI` for CIMD-aware clients. The `client_id` remains the canonical primary identifier when present; client_uris are supplementary discovery handles that resolve to the same Agent entity. Agents request delegated OAuth2 permissions from users through the consent flow. Optionally, agents may specify service requirements (mandatory and optional third-party services with required scopes).
+**Agent**: An AI agent registered in the identity broker system. Each agent has a unique client_id (the `ClientID` field — a short opaque identifier used in existing OAuth2/consent flows via `GetByClientID`; optional in the Admin API, and when omitted there is no auto-generation fallback per ADR 20260510-120000, so `client_id` remains NULL), display name, description, and optional URLs for governance documentation and user interface. Agents may additionally register one or more **client_uris** (Client ID Metadata Document URLs per IETF draft-parecki-oauth-client-id-metadata-document) which provide an alternative resolution path via `GetByClientURI` for CIMD-aware clients. The `client_id` remains the canonical primary identifier when present; client_uris are supplementary discovery handles that resolve to the same Agent entity. Agents request delegated OAuth2 permissions from users through the consent flow. Optionally, agents may specify service requirements (mandatory and optional third-party services with required scopes).
 
 **CIMD Client URI Pattern**: A pre-registered `client_uri` that contains `*` as a complete path segment. It identifies a controlled set of concrete CIMD URLs for one Agent. The pattern has a literal scheme, host, and port. `*` matches one non-empty path segment. It never matches an encoded or literal path separator.
 
@@ -1565,7 +1565,7 @@ Define any project-specific terms or acronyms.)
 
 **Mandatory Service**: A third-party OAuth2 service marked with requirement_type="mandatory" in an agent's service requirements. Authorization flow validates that user has an active, non-expired OAuth2 session with all mandatory services and that session scopes are a superset of required_scopes (case-sensitive). If validation fails, user is redirected to consent screen to establish missing sessions before authorization continues.
 
-**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization while the user has not included it in their grant. Once the user includes it, it is required for that user: a missing or unusable session redirects authorization to the consent screen, where the user reconnects or deselects it ([Feature 019](specs/019-permission-sets/spec.md) FR-022). Allows agents to degrade gracefully when optional integrations are unavailable.
+**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization while the user has not included it in their grant. Once the user includes it, it is required for that user: a missing or unusable session redirects authorization to the consent screen, where the user reconnects or deselects it ([Feature 20260314-120000](specs/20260314-120000-permission-sets/spec.md) FR-022). Allows agents to degrade gracefully when optional integrations are unavailable.
 
 **ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Static confidential providers in stored mode retain a client ID and an encrypted `Secret` value object. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
@@ -1595,7 +1595,7 @@ Define any project-specific terms or acronyms.)
 
 **Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a filesystem, public, or CIMD confidential service without a stored secret. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
 
-The next five entries describe the implemented, unreleased model from `051-oauth2-secret-file-overrides` under [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
+The next five entries describe the implemented, unreleased model from `20261002-120000-oauth2-secret-file-overrides` under [ADR 20261008-120200](adrs/20261008-120200-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
 
 **Credential source**: The service-owned choice of `stored` or `filesystem` credentials. The third-party domain validates it, and both stores persist it. Internal `credential_source_transitioned` starts false on creation/backfill, becomes true atomically on an actual transition, and never resets. It prevents legacy missing-identity reuse after a source round trip. No-op selections and metadata updates preserve it. The administrative API never exposes the marker.
 
@@ -1643,7 +1643,7 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **UserSession**: Domain aggregate representing the complete lifecycle of a user's session with a third-party OAuth2 provider. Contains encrypted access/refresh tokens, expiration metadata, and manages token encryption/decryption through the EncryptionPort. Enforces one session per (principal, service_id) with automatic token refresh and secure deletion.
 
-**EncryptionContext**: Domain value object containing metadata that cryptographically binds encrypted material to its usage context. Implemented as an immutable single-subject `map[string]string`: `service_id` for user-session tokens and other service-scoped secrets, `kid` for broker signing-key private material. Preserves ADR 008's minimal-context rule while keeping non-service assets semantically correct.
+**EncryptionContext**: Domain value object containing metadata that cryptographically binds encrypted material to its usage context. Implemented as an immutable single-subject `map[string]string`: `service_id` for user-session tokens and other service-scoped secrets, `kid` for broker signing-key private material. Preserves ADR 20260116-120000's minimal-context rule while keeping non-service assets semantically correct.
 
 **BranchKeySubject**: Domain value object representing the single encryption subject used for branch-key routing. `service` subjects preserve existing service-backed branch-key identities; `signing_key` subjects give broker signing keys their own namespace.
 
@@ -1691,7 +1691,7 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **OAuth2StateToken**: A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. It contains principal, PKCE verifier, service ID, and redirect URI claims. For resource discovery, it also seals the issuer and effective RFC 8707 audience from the initiating service snapshot. A mismatch with the current service rejects the callback before token exchange. The state lasts 10 minutes (15 minutes at most). Authenticated encryption (A256GCMKW + A256GCM) detects changes.
 
-**AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 016). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).
+**AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 20260428-120000). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).
 
 **PKCE**: Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random 32-128 byte secret, base64url-encoded) and code_challenge (SHA256 hash of verifier). Mandatory for all OAuth2 flows with no bypass allowed.
 
@@ -1732,7 +1732,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 
-**ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. Alternatively, `token_exchange.client_assertion.jwks` (inline JWK Set) or `token_exchange.client_assertion.jwks_file` (file in the Trust Directory) supplies the keys with no discovery and no outbound request. At most one of `jwks_uri`, `jwks`, and `jwks_file` may be set (Key Set Source, ADR 040). It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
+**ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. Alternatively, `token_exchange.client_assertion.jwks` (inline JWK Set) or `token_exchange.client_assertion.jwks_file` (file in the Trust Directory) supplies the keys with no discovery and no outbound request. At most one of `jwks_uri`, `jwks`, and `jwks_file` may be set (Key Set Source, ADR 20261016-120000). It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
 
 **SubjectToken**: JWT containing both user principal and agent identifier from the upstream OAuth2 server. Principal extracted via configurable CEL expression (default: sub claim). Agent identifier extracted via configurable CEL expression (default: azp claim). Identifies the end-user and agent on whose behalf token exchange is requested.
 
@@ -1742,9 +1742,9 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **CEL Authorization**: Common Expression Language policy evaluation for privileged client authorization. Expression evaluated against client_assertion claims and request context. Expression must return boolean; defaults to "true" (allow all valid privileged clients). Enables flexible authorization policies beyond basic JWT validation.
 
-**Protected Resources (Feature 035)**: An unordered set of normalized routing URIs owned by a `ThirdpartyOAuth2Provider` for RFC 8693 token exchange. It is separate from the RFC 8707 effective token audience at `authorization_params.resource`. Migration `027` replaces the provider's `TEXT[]` column and GIN index with `service_protected_resources`, whose `resource_uri` is a global primary key. One normalized URI belongs to at most one service. The strong service ETag versions active configuration and owned routing resources. A full-service update that supplies `protected_resources` must use the current ETag. Omission or `null` preserves the set. Single-resource add, remove, and rename operations are atomic deltas without `If-Match`. Failed discovery status writes do not change the ETag.
+**Protected Resources (Feature 20260812-120000)**: An unordered set of normalized routing URIs owned by a `ThirdpartyOAuth2Provider` for RFC 8693 token exchange. It is separate from the RFC 8707 effective token audience at `authorization_params.resource`. Migration `027` replaces the provider's `TEXT[]` column and GIN index with `service_protected_resources`, whose `resource_uri` is a global primary key. One normalized URI belongs to at most one service. The strong service ETag versions active configuration and owned routing resources. A full-service update that supplies `protected_resources` must use the current ETag. Omission or `null` preserves the set. Single-resource add, remove, and rename operations are atomic deltas without `If-Match`. Failed discovery status writes do not change the ETag.
 
-### RFC 8693 User Impersonation (Feature 037)
+### RFC 8693 User Impersonation (Feature 20260825-120000)
 
 **Target Agent**: The existing registered `storage.Agent` selected from the canonical suffix of the routing `audience_prefix`. It supplies issued `agent_id`, local-token CEL `agent.*`, request `agent_id`, audit identity, and `AllowedScopes` policy for the optional impersonation scope request; an empty allow-list is unrestricted. It is not the privileged client.
 
@@ -1812,7 +1812,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.
 
-**PrivateUseRedirectURI**: A native-app redirect URI with a private-use scheme (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or `github-app://oauth/callback`. `urivalidation.IsValidPrivateUseRedirectURI` enforces R1–R6: a restricted ASCII character set, canonical form, no opaque URI or userinfo, a safe scheme, a valid single-slash path or lowercase authority, and no dot path segments. Only an Agent's `redirect_uris` can authorize it; a CIMD client also needs the URI in its document. Match it byte for byte (ADR 042).
+**PrivateUseRedirectURI**: A native-app redirect URI with a private-use scheme (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or `github-app://oauth/callback`. `urivalidation.IsValidPrivateUseRedirectURI` enforces R1–R6: a restricted ASCII character set, canonical form, no opaque URI or userinfo, a safe scheme, a valid single-slash path or lowercase authority, and no dot path segments. Only an Agent's `redirect_uris` can authorize it; a CIMD client also needs the URI in its document. Match it byte for byte (ADR 20261022-120000).
 
 **ClientID** (credential): String-typed identifier for broker-issued OAuth2 client credentials. Always equals the agent's UUID string. Globally unique. Bound to authorization codes for rotation safety. Located in `internal/domain/id/string_ids.go`.
 
@@ -1854,9 +1854,9 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **JWKSPublisher**: Domain service (`JWKSPublisherService` in `internal/domain/oauth2/jwks_publisher.go`) implementing the `JWKSPublisherPort` interface. On each request it reads the current mode-appropriate key sources, merges them, enforces kid-uniqueness across local and upstream keys, tracks upstream freshness, and returns `ErrUpstreamUnavailable` or `ErrKidConflict` sentinel errors when the verification surface is incomplete. Mapped to HTTP 503 at the handler layer.
 
-### Trust Anchor Key Sets (Feature 052)
+### Trust Anchor Key Sets (Feature 20261012-120100)
 
-**Key Set Source**: The origin of one trust anchor's public verification keys: `remote` (explicit or discovered `jwks_uri`, or ADR 029 upstream reuse), `inline` (`jwks`), or `file` (`jwks_file`). Exactly one per trust anchor, immutable after startup, never shared with another trust anchor's verification. It is distinct from the JWKS Aggregation domain's **KeySource**, which describes inputs to the broker's *published* key set.
+**Key Set Source**: The origin of one trust anchor's public verification keys: `remote` (explicit or discovered `jwks_uri`, or ADR 20260811-120000 upstream reuse), `inline` (`jwks`), or `file` (`jwks_file`). Exactly one per trust anchor, immutable after startup, never shared with another trust anchor's verification. It is distinct from the JWKS Aggregation domain's **KeySource**, which describes inputs to the broker's *published* key set.
 
 **Local Key Set**: A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one public asymmetric key, a unique non-empty `kid` on every key, approved algorithms when `alg` is present, and at most 1 MiB of data. It is never published.
 
@@ -1920,7 +1920,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### JWT Pre-Authentication
 
-At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. For either server, an inline `jwks` or a `jwks_file` in the Trust Directory replaces the remote fetch: the builder creates a `jwks.StaticAdapter` or `jwks.FileAdapter` and injects it into the jwx authenticator as its key-set port, so the authenticator skips the remote cache and the startup fetch. It verifies with the same options as the remote path. A file set uses the fixed 5-minute re-read and 15-minute staleness window of the authenticator's remote cache. Each server is a separate trust anchor with its own adapter, never shared ([ADR 040](adrs/040-trust-anchor-local-key-sets.md)). The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
+At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. For either server, an inline `jwks` or a `jwks_file` in the Trust Directory replaces the remote fetch: the builder creates a `jwks.StaticAdapter` or `jwks.FileAdapter` and injects it into the jwx authenticator as its key-set port, so the authenticator skips the remote cache and the startup fetch. It verifies with the same options as the remote path. A file set uses the fixed 5-minute re-read and 15-minute staleness window of the authenticator's remote cache. Each server is a separate trust anchor with its own adapter, never shared ([ADR 20261016-120000](adrs/20261016-120000-trust-anchor-local-key-sets.md)). The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
 
 `verification: none` trusts the identity-bearing header without a signature. Its trust boundary is the authenticated gateway or mesh: only it can reach the broker ports, and it must remove every inbound client-supplied copy of the JWT header before setting the verified user's claims. The bearer token used to authenticate at the gateway is not a broker operator principal. Without these deployment controls, a caller could forge an unsigned JWT and become an operator.
 
@@ -1936,7 +1936,7 @@ At startup the application builder constructs an authenticator independently for
 
 ### Tool Approval Domain
 
-**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, persistence scope, and `ToolPattern`/`ParamsPattern` for future calls. `ToolPattern` is server-derived from the exact tool name. `ParamsPattern` is the browser-editable scope. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 013).
+**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, persistence scope, and `ToolPattern`/`ParamsPattern` for future calls. `ToolPattern` is server-derived from the exact tool name. `ParamsPattern` is the browser-editable scope. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 20260313-120000).
 
 **ApprovalStatus**: Value object enum with three states: `pending` (awaiting user decision), `approved` (user authorized the tool call), `denied` (user rejected the tool call). State transitions are one-way: pending → approved or pending → denied.
 

@@ -262,7 +262,7 @@ export interface GetAgentGrantsResponse {
 }
 
 /**
- * Request body for POST /api/consent/agents/{id}/grants (spec 019)
+ * Request body for POST /api/consent/agents/{id}/grants (spec 20260314-120000)
  */
 export interface CreateOrUpdateGrantRequest {
   /** Granted permission sets: map of PS ID → included service IDs */

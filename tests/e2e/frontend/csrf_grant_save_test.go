@@ -117,7 +117,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 	})
 
 	It("should successfully save a grant through the consent screen", func() {
-		// specs/007-consent-frontend/spec.md — User Story 3, Scenario 7:
+		// specs/20251217-120100-consent-frontend/spec.md — User Story 3, Scenario 7:
 		// "Given a user clicks Approve & Delegate, When the request is processed successfully,
 		// Then the system creates or updates the grant and displays a success message."
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
@@ -135,7 +135,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 	})
 
 	It("should save grant when redirect_uri parameter is present", func() {
-		// User Story 3, Scenario 7 from specs/007-consent-frontend/spec.md.
+		// User Story 3, Scenario 7 from specs/20251217-120100-consent-frontend/spec.md.
 		// Without session_token, redirect_uri does not turn a direct grant save into an OAuth2 redirect.
 		err := consentPage.NavigateToAgentWithRedirectURI(ctx, testAgentID, "/oauth2/callback?code=abc")
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with redirect_uri")

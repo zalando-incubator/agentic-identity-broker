@@ -107,7 +107,7 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 }
 
 // Update validates and persists changes to an existing agent. When clientID is nil
-// and clearClientID is false, the existing client_id is preserved (ADR 017). When
+// and clearClientID is false, the existing client_id is preserved (ADR 20260510-120000). When
 // clearClientID is true, client_id is set to nil regardless of the existing value.
 // When multiAgentEnabled is false, uniqueness is enforced for the effective client_id.
 func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage.Agent, clearClientID bool) error {

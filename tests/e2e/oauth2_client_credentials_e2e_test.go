@@ -53,7 +53,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 		}
 	})
 
-	// Scenario 1.1 from specs/025-oauth2-server/spec.md
+	// Scenario 1.1 from specs/20260328-120000-oauth2-server/spec.md
 	It("generates credentials for an agent", func() {
 		resp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
@@ -70,7 +70,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 		Expect(body).To(HaveKey("created_at"))
 	})
 
-	// Scenario 1.2 from specs/025-oauth2-server/spec.md: only an accepted rotation invalidates the old credential.
+	// Scenario 1.2 from specs/20260328-120000-oauth2-server/spec.md: only an accepted rotation invalidates the old credential.
 	It("rejects hostile credential rotations and accepts an operator rotation", func() {
 		credentialPath := "/api/agents/" + agent.ID.String() + "/client-credentials"
 		adminPrincipal := fixtures.AdminPrincipal().String()
@@ -144,7 +144,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 		Expect(readMetadata()).To(HaveKey("rotated_at"))
 	})
 
-	// Scenario 1.3 from specs/025-oauth2-server/spec.md
+	// Scenario 1.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("returns 404 for missing agent", func() {
 		resp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/00000000-0000-0000-0000-000000000099/client-credentials",
@@ -155,7 +155,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusNotFound))
 	})
 
-	// Scenario 1.4 from specs/025-oauth2-server/spec.md
+	// Scenario 1.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("gets credential metadata without secret", func() {
 		resp, _ := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",

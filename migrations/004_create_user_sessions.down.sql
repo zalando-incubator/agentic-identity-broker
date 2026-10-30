@@ -1,6 +1,6 @@
 -- Migration: 004_create_user_sessions.down.sql
 -- Purpose: Rollback user_sessions table creation
--- Feature: 008-thirdparty-oauth2-sessions
+-- Feature: 20251222-120000-thirdparty-oauth2-sessions
 -- Date: 2025-12-23
 
 -- Drop trigger first (depends on function)

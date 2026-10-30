@@ -75,7 +75,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 			}
 		})
 
-		// Scenario 1.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 1.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("exposes aggregated JWKS endpoint in proxy mode", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
@@ -87,7 +87,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 			Expect(jwks).To(HaveKey("keys"))
 		})
 
-		// Scenario 2.2 from specs/032-aggregated-jwks/spec.md
+		// Scenario 2.2 from specs/20260604-120000-aggregated-jwks/spec.md
 		It("advertises jwks_uri in discovery metadata in proxy mode", func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 			Expect(err).ToNot(HaveOccurred())

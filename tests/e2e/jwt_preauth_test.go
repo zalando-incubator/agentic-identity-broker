@@ -87,7 +87,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			}
 		})
 
-		// Scenario 1.1 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.1 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should extract principal from valid signed JWT via CEL expression", func() {
 			claims := helpers.NewJWTClaims().
 				WithSubject(principal).
@@ -116,7 +116,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			Expect(apiResp.Data.Principal).To(Equal(principal))
 		})
 
-		// Scenario 1.2 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.2 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should reject JWT with invalid signature with 401", func() {
 			differentPrivateKey, _, err := helpers.GenerateTestRSAKeyPair()
 			Expect(err).NotTo(HaveOccurred())
@@ -137,7 +137,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario 1.3 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.3 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should reject expired JWT with 401", func() {
 			claims := helpers.NewJWTClaims().
 				WithSubject(principal).
@@ -156,7 +156,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario 1.4 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.4 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should reject request without JWT header on protected route with 401", func() {
 			resp, err := enduserServer.PublicGET("/api/me")
 			Expect(err).NotTo(HaveOccurred())
@@ -165,7 +165,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario 1.5 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.5 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should reject JWT with wrong audience with 401", func() {
 			claims := helpers.NewJWTClaims().
 				WithSubject(principal).
@@ -184,7 +184,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 		})
 
-		// Scenario 1.6 from specs/016-jwt-preauth/spec.md (User Story 1)
+		// Scenario 1.6 from specs/20260227-120000-jwt-preauth/spec.md (User Story 1)
 		It("should reject JWT with wrong issuer with 401", func() {
 			claims := helpers.NewJWTClaims().
 				WithSubject(principal).
@@ -249,7 +249,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 2.1 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.1 from specs/20260227-120000-jwt-preauth/spec.md (User Story 2)
 			It("should accept unsigned JWT when verification is none", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -277,7 +277,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				Expect(apiResp.Data.Principal).To(Equal(principal))
 			})
 
-			// Scenario 2.3 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.3 from specs/20260227-120000-jwt-preauth/spec.md (User Story 2)
 			It("should accept signed JWT without checking signature when verification is none", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -317,7 +317,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			})
 
-			// Scenario 2.4 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.4 from specs/20260227-120000-jwt-preauth/spec.md (User Story 2)
 			It("should reject expired JWT even when verification is none", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -381,7 +381,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 2.2 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.2 from specs/20260227-120000-jwt-preauth/spec.md (User Story 2)
 			It("should reject unsigned JWT when verification is jwks", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -401,7 +401,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 		})
 
 		Context("when verification none and jwks_uri both present", func() {
-			// Scenario 2.5 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.5 from specs/20260227-120000-jwt-preauth/spec.md (User Story 2)
 			It("should fail startup when verification none and jwks_uri both present", func() {
 				logger = slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{
 					Level: slog.LevelDebug,
@@ -478,7 +478,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 3.1 from specs/016-jwt-preauth/spec.md (User Story 3)
+			// Scenario 3.1 from specs/20260227-120000-jwt-preauth/spec.md (User Story 3)
 			It("should return display name, email, and picture URL from JWT claims in /api/me", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -513,7 +513,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				Expect(*apiResp.Data.PictureURL).To(Equal("https://example.com/jane.jpg"))
 			})
 
-			// Scenario 3.2 from specs/016-jwt-preauth/spec.md (User Story 3)
+			// Scenario 3.2 from specs/20260227-120000-jwt-preauth/spec.md (User Story 3)
 			It("should omit missing profile attributes from /api/me response", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -589,7 +589,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 3.3 from specs/016-jwt-preauth/spec.md (User Story 3)
+			// Scenario 3.3 from specs/20260227-120000-jwt-preauth/spec.md (User Story 3)
 			It("should derive display name from principal when no display name expression configured", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -661,7 +661,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 3.4 from specs/016-jwt-preauth/spec.md (User Story 3)
+			// Scenario 3.4 from specs/20260227-120000-jwt-preauth/spec.md (User Story 3)
 			It("should return principal-only profile for plain header preauth", func() {
 				resp, err := enduserServer.AuthenticatedGET("/api/me", principal)
 				Expect(err).NotTo(HaveOccurred())
@@ -729,7 +729,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 5.1 from specs/016-jwt-preauth/spec.md (User Story 5)
+			// Scenario 5.1 from specs/20260227-120000-jwt-preauth/spec.md (User Story 5)
 			It("should work with plain header preauth only config (no JWT block)", func() {
 				resp, err := enduserServer.AuthenticatedGET("/api/me", principal)
 				Expect(err).NotTo(HaveOccurred())
@@ -792,7 +792,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 5.2 from specs/016-jwt-preauth/spec.md (User Story 5)
+			// Scenario 5.2 from specs/20260227-120000-jwt-preauth/spec.md (User Story 5)
 			It("should prefer JWT over plain header when both configured and JWT present", func() {
 				jwtPrincipal := "jwt-user@example.com"
 				claims := helpers.NewJWTClaims().
@@ -820,7 +820,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				Expect(apiResp.Data.Principal).To(Equal(jwtPrincipal))
 			})
 
-			// Scenario 5.3 from specs/016-jwt-preauth/spec.md (User Story 5)
+			// Scenario 5.3 from specs/20260227-120000-jwt-preauth/spec.md (User Story 5)
 			It("should reject with 401 when JWT is configured but JWT header is absent", func() {
 				plainPrincipal := "plain-user@example.com"
 
@@ -880,7 +880,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Edge case from specs/016-jwt-preauth/spec.md
+			// Edge case from specs/20260227-120000-jwt-preauth/spec.md
 			// FR-013: System MUST NOT silently fall back to plain header when JWT is invalid
 			It("should reject request when JWT present but invalid, not falling back to plain header", func() {
 				claims := helpers.NewJWTClaims().

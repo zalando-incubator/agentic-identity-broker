@@ -1,6 +1,6 @@
 // Package e2e_test provides end-to-end tests for the frontend UI using Playwright.
 // This file contains tests for the Tool Authorizations page — the approval list
-// and actions view (feature 024-approval-api-ui).
+// and actions view (feature 20260327-120000-approval-api-ui).
 //
 // 5 UI states tested:
 //  1. Empty state (no approvals)
@@ -130,7 +130,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 		GetLogger().Info("Test passed: Pending approvals list displayed correctly")
 	})
 
-	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S1 from specs/20260327-120000-approval-api-ui/spec.md
 	// Regression: high-risk pending approvals must not crash the Tool Authorizations page.
 	It("should render high-risk pending approvals without hitting the global error boundary", func() {
 		principal := fixtures.DefaultPrincipal()
@@ -157,7 +157,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 	})
 
 	// State 3: Approve action with persistence selection
-	// Scenario US1-S4 from specs/024-approval-api-ui/spec.md
+	// Scenario US1-S4 from specs/20260327-120000-approval-api-ui/spec.md
 	It("approves the first of two expanded requests with permanent persistence", func() {
 		principal := fixtures.DefaultPrincipal()
 

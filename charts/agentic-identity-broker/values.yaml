@@ -563,7 +563,7 @@ broker:
     #             client_assertion.iss == "https://idp.internal.example.com" &&
     #             client_assertion.sub == "gateway-prod"
     #           evaluation_timeout: "100ms"
-    #     # Unverified subject (broker profile extension, ADR 031): verification "none",
+    #     # Unverified subject (broker profile extension, ADR 20260825-120000): verification "none",
     #     # no expected_audience, subject absent from signs_roles; the predicate MUST bind
     #     # subject_token and binds subject_token.email so a caller-supplied email is minted.
     #     - name: "chat-bridge-unverified-subject"
@@ -613,7 +613,7 @@ broker:
     #           evaluation_timeout: "100ms"
 
 
-    # Multi-agent client sharing (Feature 021)
+    # Multi-agent client sharing (Feature 20260320-120000)
     # When enabled, multiple agents may share the same upstream OAuth2 client_id.
     # Requires both agentIdParamName and agentIdClaimName when enabled.
     multiAgentClient:

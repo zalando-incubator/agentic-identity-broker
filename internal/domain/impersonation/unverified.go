@@ -10,7 +10,7 @@ import (
 )
 
 // parseUnverifiedSubject reads the claims of an unsigned (alg:none) subject JWT without verifying
-// or requiring a signature, and without resolving it against any trusted issuer (FR-003d, ADR 031).
+// or requiring a signature, and without resolving it against any trusted issuer (FR-003d, ADR 20260825-120000).
 // It is reachable only when the matching rule declares verification: none.
 func parseUnverifiedSubject(tokenString string) (map[string]interface{}, error) {
 	sig, err := soleSignature(tokenString)

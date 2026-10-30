@@ -48,7 +48,7 @@ func UnknownExpirySession(principal string, serviceID id.ServiceID, now time.Tim
 }
 
 // HealthJourneySessions reproduces the eight sessions of Journey 2 in
-// specs/053-session-auto-refresh/spec.md: six for calendar, two for tickets.
+// specs/20261015-120100-session-auto-refresh/spec.md: six for calendar, two for tickets.
 func HealthJourneySessions(now time.Time, calendar, tickets id.ServiceID) []*storage.UserSession {
 	return []*storage.UserSession{
 		ValidSession("u-7f3a@example.com", calendar, now),

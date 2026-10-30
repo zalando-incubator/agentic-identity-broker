@@ -176,7 +176,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 				sourceASession = connect(serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 			})
 
-			// US2-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US2-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US2-S1 uses a same-identity replacement secret for a new exchange and the existing session without service writes or restart", func() {
 				By("publishing source B's secret with source A's unchanged client identity")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.CredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
@@ -217,7 +217,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 				connect(serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 			})
 
-			// US2-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US2-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US2-S3 follows a complete symlink generation swap and sends only coherent provider credential pairs", func() {
 				By("atomically publishing source B through fresh immutable generation targets")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
@@ -254,7 +254,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 				pausedACallback = pauseAuthorization(serviceID, fixtures.CredentialClientID)
 			})
 
-			// US2-S5 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US2-S5 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US2-S5 refuses source A's code and session before provider authentication after identity B is published, then completes a new B connection", func() {
 				By("publishing source B and starting a fresh authorization with B")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
@@ -325,7 +325,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			connect(serviceB, fixtures.AlternateCredentialClientID, "independent-service-secret")
 		})
 
-		// US2-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US2-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US2-S2 changes only the selected service's provider credentials when one independent binding rotates", func() {
 			By("replacing only the first service's source A with its complete source B pair")
 			Expect(helpers.PublishCredentialPair(bindingA, "rotated-first-client", "rotated-first-secret")).To(Succeed())
@@ -357,7 +357,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			serviceBefore = snapshotService(serviceID)
 		})
 
-		// US2-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US2-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US2-S4 trims both files' surrounding spaces, tabs and newlines while preserving internal credential characters through connect and refresh", func() {
 			By("authorizing and exchanging with the normalized identity and secret")
 			connected := connect(serviceID, clientID, clientSecret)

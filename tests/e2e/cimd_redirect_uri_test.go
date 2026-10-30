@@ -105,7 +105,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			}
 		})
 
-		// Scenario US1.1 from specs/028b-portless-registration/spec.md
+		// Scenario US1.1 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept ephemeral port 52341 when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -119,7 +119,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			)
 		})
 
-		// Scenario US1.2 from specs/028b-portless-registration/spec.md
+		// Scenario US1.2 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept ephemeral port 8080 when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -133,7 +133,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			)
 		})
 
-		// Scenario US1.3 from specs/028b-portless-registration/spec.md
+		// Scenario US1.3 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept portless request when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -147,7 +147,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			)
 		})
 
-		// Scenario US1.4 from specs/028b-portless-registration/spec.md
+		// Scenario US1.4 from specs/20260602-120000-portless-registration/spec.md
 		It("should reject request with path mismatch even when host is loopback", func() {
 			resp, err := server.AuthenticatedGET(
 				authorizeURL(clientURL, "http://localhost:52341/other"),
@@ -208,7 +208,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			}
 		})
 
-		// Scenario US2.1 from specs/028b-portless-registration/spec.md
+		// Scenario US2.1 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept a different ephemeral port when explicit port :3000 is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -222,7 +222,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			)
 		})
 
-		// Scenario US2.2 from specs/028b-portless-registration/spec.md
+		// Scenario US2.2 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept portless request when explicit port :3000 is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -283,7 +283,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			}
 		})
 
-		// Scenario US2.3 from specs/028b-portless-registration/spec.md
+		// Scenario US2.3 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept a different ephemeral port for 127.0.0.1 loopback registration", func() {
 			completeAuthorizationCodeFlow(
 				server,
@@ -345,7 +345,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			}
 		})
 
-		// Scenario US3.1 from specs/028b-portless-registration/spec.md
+		// Scenario US3.1 from specs/20260602-120000-portless-registration/spec.md
 		It("should reject non-loopback request with a port when portless non-loopback URI is registered", func() {
 			resp, err := server.AuthenticatedGET(
 				authorizeURL(clientURL, "https://"+fakeHost+":9999/callback"),
@@ -420,7 +420,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			}
 		})
 
-		// Scenario US3.2 from specs/028b-portless-registration/spec.md
+		// Scenario US3.2 from specs/20260602-120000-portless-registration/spec.md
 		It("should reject non-loopback request with a different port when explicit port :443 is registered", func() {
 			resp, err := server.AuthenticatedGET(
 				authorizeURL(clientURL, "https://"+fakeHost+":9000/callback"),
@@ -433,7 +433,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 			Expect(resp.Header.Get("Location")).To(BeEmpty())
 		})
 
-		// Scenario US3.3 from specs/028b-portless-registration/spec.md
+		// Scenario US3.3 from specs/20260602-120000-portless-registration/spec.md
 		It("should accept non-loopback request when explicit port :443 matches exactly", func() {
 			completeAuthorizationCodeFlow(
 				server,

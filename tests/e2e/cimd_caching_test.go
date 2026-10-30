@@ -47,7 +47,7 @@ var _ = Describe("CIMD Response Caching", func() {
 		}
 	})
 
-	// Scenario US3.1 from specs/028-cimd-support/spec.md
+	// Scenario US3.1 from specs/20260421-120000-cimd-support/spec.md
 	// Given a CIMD document was fetched on the first request,
 	// When a second authorization request arrives within the TTL,
 	// Then the CIMD server receives only one HTTP request (cache hit).
@@ -113,7 +113,7 @@ var _ = Describe("CIMD Response Caching", func() {
 		})
 	})
 
-	// Scenario US3.2 from specs/028-cimd-support/spec.md
+	// Scenario US3.2 from specs/20260421-120000-cimd-support/spec.md
 	// Given a CIMD document fetch returns a non-200 status,
 	// When a second authorization request arrives immediately,
 	// Then the CIMD server is called again (failed fetch is not cached).
@@ -176,7 +176,7 @@ var _ = Describe("CIMD Response Caching", func() {
 		})
 	})
 
-	// Scenario US3.3 from specs/028-cimd-support/spec.md
+	// Scenario US3.3 from specs/20260421-120000-cimd-support/spec.md
 	// Given a CIMD document is served with max-age exceeding the operator maxTTL,
 	// When a second request arrives within maxTTL,
 	// Then it is served from cache (TTL is clamped to operator maxTTL, not rejected).
@@ -244,7 +244,7 @@ var _ = Describe("CIMD Response Caching", func() {
 		})
 	})
 
-	// Scenario US3.4 from specs/028-cimd-support/spec.md
+	// Scenario US3.4 from specs/20260421-120000-cimd-support/spec.md
 	// Given a CIMD document is cached with a short TTL,
 	// When a new authorization request arrives after TTL expiry,
 	// Then the CIMD server is called again (cache miss after expiry).

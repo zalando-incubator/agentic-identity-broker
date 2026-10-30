@@ -861,7 +861,7 @@ docs-clean:
 docs-lint:
     npx markdownlint-cli2 "docs/**/*.md"
 
-# Render Wireloom wireframes in spec Markdown to SVG (example: just render-wireframes specs/NNN-name/spec.md)
+# Render Wireloom wireframes in spec Markdown to SVG (example: just render-wireframes specs/YYYYMMDD-HHMMSS-name/spec.md)
 render-wireframes +files:
     #!/usr/bin/env bash
     set -euo pipefail

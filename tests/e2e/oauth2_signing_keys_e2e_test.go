@@ -163,7 +163,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		}
 	})
 
-	// Scenario 5.1 from specs/025-oauth2-server/spec.md
+	// Scenario 5.1 from specs/20260328-120000-oauth2-server/spec.md
 	It("adds a signing key", func() {
 		resp, err := adminServer.AuthenticatedPOST(
 			"/api/oauth2-server/signing-keys",
@@ -182,7 +182,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(body["is_current"]).To(BeTrue())
 	})
 
-	// Scenario 5.2 from specs/025-oauth2-server/spec.md
+	// Scenario 5.2 from specs/20260328-120000-oauth2-server/spec.md
 	It("lists signing keys", func() {
 		resp, err := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		Expect(err).ToNot(HaveOccurred())
@@ -194,7 +194,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(body).To(HaveKey("items"))
 	})
 
-	// Scenario 5.3 from specs/025-oauth2-server/spec.md
+	// Scenario 5.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("promotes a key to current", func() {
 		// Add a second key (auto-current)
 		resp, err := adminServer.AuthenticatedPOST(
@@ -238,7 +238,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(promoteResp.StatusCode).To(Equal(http.StatusOK))
 	})
 
-	// Scenario 5.4 from specs/025-oauth2-server/spec.md
+	// Scenario 5.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("removes a non-current key and invalidates tokens signed with it", func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
@@ -295,7 +295,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(err).To(HaveOccurred(), "tokens signed with a deleted key must fail verification")
 	})
 
-	// Scenario 5.4 from specs/025-oauth2-server/spec.md
+	// Scenario 5.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("returns 409 when removing the grace-period fallback key that is still signing tokens", func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
@@ -325,7 +325,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(body["message"]).To(Equal("wait for the promoted signing key to activate or promote a different key before removing the key still signing tokens"))
 	})
 
-	// Scenario 5.5 from specs/025-oauth2-server/spec.md
+	// Scenario 5.5 from specs/20260328-120000-oauth2-server/spec.md
 	It("cannot remove last key", func() {
 		// Only auto-generated key exists; try to delete it
 		listResp, _ := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
@@ -349,8 +349,8 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(delResp.StatusCode).To(Equal(http.StatusConflict))
 	})
 
-	// User Story 5 independent rotation journey from specs/025-oauth2-server/spec.md
-	// Scenario 5.3 from specs/025-oauth2-server/spec.md
+	// User Story 5 independent rotation journey from specs/20260328-120000-oauth2-server/spec.md
+	// Scenario 5.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("keeps existing tokens valid while a promoted key signs new tokens", func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
@@ -390,7 +390,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		validateTokenWithJWKS(secondToken, keySet)
 	})
 
-	// Scenario 5.6 from specs/025-oauth2-server/spec.md
+	// Scenario 5.6 from specs/20260328-120000-oauth2-server/spec.md
 	It("key appears in JWKS via discovery", func() {
 		// Get JWKS
 		resp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")

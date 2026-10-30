@@ -1,5 +1,5 @@
 // Package config — validate.go provides startup validation for ExtProc configuration.
-// Validation rules from specs/015-extproc-token-exchange/contracts/configuration.md
+// Validation rules from specs/20260223-120000-extproc-token-exchange/contracts/configuration.md
 // are enforced here. Validation runs after loading and before the service starts.
 package config
 

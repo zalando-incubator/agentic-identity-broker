@@ -1,6 +1,6 @@
 # Feature Specification: [FEATURE NAME]
 
-**Feature Branch**: `[###-feature-name]`
+**Feature Branch**: `[YYYYMMDD-HHMMSS-feature-name]`
 
 **Created**: [DATE]
 
@@ -102,8 +102,8 @@
     only for values that are clear from context and immaterial to the behavior; keep
     security-critical inputs and observable outcomes explicit.
   - UI: one `wireloom` block per meaningful state. Render it with
-    `just render-wireframes specs/[###-feature-name]/spec.md`, commit the SVG under
-    `specs/[###-feature-name]/wireframes/`, and embed it above a collapsed `<details>` block
+    `just render-wireframes specs/[YYYYMMDD-HHMMSS-feature-name]/spec.md`, commit the SVG under
+    `specs/[YYYYMMDD-HHMMSS-feature-name]/wireframes/`, and embed it above a collapsed `<details>` block
     containing the editable `wireloom` source; name the user action between states. Follow
     https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md
   - JWT: synthetic token marker plus decoded header and claims. Never use real tokens or secrets.
@@ -277,7 +277,7 @@ sequenceDiagram
 - **DB-003**: Each migration MUST be atomic (fully apply or fully rollback on failure)
 - **DB-004**: All migrations MUST be tested in PostgreSQL integration tests (apply, rollback, repeat without data loss)
 - **DB-005**: All PostgreSQL-backed repositories MUST have integration tests verifying persistence behavior
-- **DB-006**: If adding new entities with persistence, implementations MUST follow `specs/004-persistence-layer/quickstart.md` patterns
+- **DB-006**: If adding new entities with persistence, implementations MUST follow `specs/20251215-120100-persistence-layer/quickstart.md` patterns
 
 ### Security Requirements *(mandatory for security-critical features)*
 

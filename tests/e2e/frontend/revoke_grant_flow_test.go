@@ -1,5 +1,5 @@
 // Package e2e_test provides end-to-end tests for the frontend UI using Playwright.
-// This file contains tests for the revoke agent grant UI flow (feature 022).
+// This file contains tests for the revoke agent grant UI flow (feature 20260320-120100).
 package e2e_test
 
 // Revoke Grant Flow UI E2E Tests
@@ -77,7 +77,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Scenario US1-S1 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US1-S1 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("Revoke All Access button visible on detail page when grant exists", func() {
 		// Given: User has an active grant and navigates to the agent detail page
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
@@ -94,7 +94,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Revoke All Access button visible on detail page")
 	})
 
-	// Scenario US1-S2 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US1-S2 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("confirmation dialog shows agent name and OAuth2 services note", func() {
 		// Given: User navigates to the agent detail page and clicks Revoke All Access
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
@@ -125,7 +125,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Revoke dialog shows agent name and service note")
 	})
 
-	// Scenario Edge from specs/022-revoke-agent-consent/spec.md
+	// Scenario Edge from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("Revoke All Access button absent when user has no active grant", func() {
 		// Given: A second agent with NO grant for this user
 		agentWithoutGrant := fixtures.AnotherAgent()
@@ -148,7 +148,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Revoke button absent when no active grant")
 	})
 
-	// Scenario US2-S1 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US2-S1 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("Revoke action visible on each overview page agent card", func() {
 		// Given: User has an active grant and views the consent overview page
 		err := consentPage.NavigateToOverview(ctx)
@@ -166,7 +166,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Revoke action visible on overview page agent card")
 	})
 
-	// Scenario US2-S2 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US2-S2 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("overview dialog content matches spec", func() {
 		// Given: User views the consent overview page and clicks Revoke on an agent card
 		err := consentPage.NavigateToOverview(ctx)
@@ -192,7 +192,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Overview revoke dialog content matches spec")
 	})
 
-	// Scenario US1-S5 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US1-S5 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("cancel dialog from detail page — grant remains active, detail page stays open", func() {
 		// Given: User navigates to the agent detail page and opens the revoke dialog
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
@@ -223,7 +223,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 		GetLogger().Info("Test passed: Cancel from detail page leaves grant intact")
 	})
 
-	// Scenario US2-S4 from specs/022-revoke-agent-consent/spec.md
+	// Scenario US2-S4 from specs/20260320-120100-revoke-agent-consent/spec.md
 	It("cancel dialog from overview page — agent card remains unchanged", func() {
 		// Given: User views the consent overview page and opens the revoke dialog on a card
 		err := consentPage.NavigateToOverview(ctx)

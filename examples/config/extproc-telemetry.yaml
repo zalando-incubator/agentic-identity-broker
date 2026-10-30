@@ -1,6 +1,6 @@
 # ExtProc OpenTelemetry Telemetry Configuration Example
-# Feature: 027-extproc-otel
-# Reference: specs/027-extproc-otel/spec.md
+# Feature: 20260417-120000-extproc-otel
+# Reference: specs/20260417-120000-extproc-otel/spec.md
 #
 # This example demonstrates OpenTelemetry configuration for the ExtProc Token Exchange service.
 # Configuration schema mirrors the identity broker's telemetry configuration (ports.TelemetryConfig)

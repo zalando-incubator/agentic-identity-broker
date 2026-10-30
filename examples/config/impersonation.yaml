@@ -5,7 +5,7 @@
 # impersonate an end user. A privileged client presents a SIGNED client assertion
 # and a SIGNED actor token, plus a subject credential that is either a SIGNED
 # subject token (rules 1-2) or an UNSIGNED (alg:none) unverified subject JWT under
-# the RFC 8693 JWT token type when rule 3 declares `verification: none` (FR-003d / ADR 031). The broker mints a
+# the RFC 8693 JWT token type when rule 3 declares `verification: none` (FR-003d / ADR 20260825-120000). The broker mints a
 # locally signed access token whose `sub` is the impersonated subject and whose
 # `act` claim records the actor.
 #
@@ -177,7 +177,7 @@ oauth2_authorization_server:
       # UNSIGNED (alg:none) subject JWT carrying the principal id and email.
       #
       # Governance: this is the single bounded exception to Constitution Principle I,
-      # authorized by ADR 031. The subject is NOT signature-verified and NOT resolved
+      # authorized by ADR 20260825-120000. The subject is NOT signature-verified and NOT resolved
       # against any trusted issuer; trust derives solely from the signed client_assertion
       # plus this rule's subject-binding authorization predicate.
       - name: "chat-bridge"

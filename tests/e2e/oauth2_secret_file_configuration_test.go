@@ -233,7 +233,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 	}
 
 	Context("when operators configure valid bindings through established sources", func() {
-		// US6-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S1] connects using the exact pair from a YAML configuration file", func() {
 			process := start(configuration("YAML", map[string]map[string]string{"Config.One_1": pairA}))
 			serviceID := register(process, "Config.One_1", "filesystem")
@@ -241,7 +241,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			expectFilesystem(adminObject(process, http.MethodGet, "/api/services/"+serviceID, nil, http.StatusOK), "Config.One_1")
 		})
 
-		// US6-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S2] connects independent case-sensitive dotted pairs from the real environment", func() {
 			process := start(configuration("environment", map[string]map[string]string{
 				"Env.Pair.One": pairA,
@@ -257,7 +257,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			}
 		})
 
-		// US6-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S3] connects independent dotted pairs from CLI JSON configuration", func() {
 			process := start(configuration("CLI", map[string]map[string]string{
 				"CLI.Pair-One": pairA,
@@ -273,7 +273,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			}
 		})
 
-		// US6-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S4] replaces the whole map in CLI then environment then YAML order and preserves sources under winning empty maps", func() {
 			yamlBindings := map[string]map[string]string{"Shared.Pair": pairA, "YAML.Only": pairA, "Stored.Control": pairB}
 			envBindings := map[string]map[string]string{"Shared.Pair": pairB, "Environment.Only": pairB, "Stored.Control": pairB}
@@ -321,7 +321,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 	})
 
 	Context("when configuration is invalid before listeners start", func() {
-		// US6-S5 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S5 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S5] rejects invalid canonical binding keys before either listener serves requests", func() {
 			for _, invalid := range []struct{ source, key string }{
 				{"YAML", "with/slash"},
@@ -333,7 +333,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			}
 		})
 
-		// US6-S6 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S6 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S6] rejects representative invalid file-pair paths from each source before listeners", func() {
 			for _, invalid := range []struct {
 				source, field, name string
@@ -369,7 +369,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 	})
 
 	Context("when bindings do not make credentials usable", func() {
-		// US6-S7 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S7 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S7] starts and serves metadata with unavailable files but fails at the operation requiring them", func() {
 			for _, unavailable := range []string{"client_id_file", "client_secret_file", "both"} {
 				By("unavailable " + unavailable)
@@ -421,7 +421,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			}
 		})
 
-		// US6-S8 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S8 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S8] does not register unknown IDs or select filesystem mode from configuration", func() {
 			process := start(configuration("YAML", map[string]map[string]string{"Unknown.Service.1": pairB}))
 			Expect(listServices(process)).To(BeEmpty())
@@ -443,7 +443,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 			Expect(listServices(process)).To(HaveLen(3))
 		})
 
-		// US6-S9 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US6-S9 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("[US6-S9] rejects canonical-ID clearing and uses only a reassigned exact binding without stored or name fallback", func() {
 			process := start(configuration("YAML", map[string]map[string]string{
 				"Canonical.Old":     pairA,

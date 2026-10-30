@@ -92,7 +92,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		}
 	})
 
-	// Scenario 4.1 and 4.5 from specs/025-oauth2-server/spec.md
+	// Scenario 4.1 and 4.5 from specs/20260328-120000-oauth2-server/spec.md
 	It("full auth code flow with PKCE", func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
@@ -152,7 +152,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(tokenBody["token_type"]).To(Equal("Bearer"))
 	})
 
-	// Scenario 4.1 and 4.5 from specs/025-oauth2-server/spec.md
+	// Scenario 4.1 and 4.5 from specs/20260328-120000-oauth2-server/spec.md
 	Context("offline_access refresh tokens", func() {
 		var client *http.Client
 
@@ -294,7 +294,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		})
 	})
 
-	// Scenario 4.2 from specs/025-oauth2-server/spec.md
+	// Scenario 4.2 from specs/20260328-120000-oauth2-server/spec.md
 	It("invalid redirect URI rejected", func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -316,7 +316,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 	})
 
-	// Scenario 4.3 from specs/025-oauth2-server/spec.md
+	// Scenario 4.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("missing code_challenge rejected", func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -337,7 +337,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(resp.StatusCode).To(SatisfyAny(Equal(http.StatusBadRequest), Equal(http.StatusFound)))
 	})
 
-	// Scenario 4.4 from specs/025-oauth2-server/spec.md
+	// Scenario 4.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("consent redirect for new user", func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -367,7 +367,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(location).To(ContainSubstring("/agents/"))
 	})
 
-	// Scenario 4.6 from specs/025-oauth2-server/spec.md
+	// Scenario 4.6 from specs/20260328-120000-oauth2-server/spec.md
 	It("PKCE mismatch rejected on token exchange", func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
@@ -412,7 +412,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(tokenResp.StatusCode).To(Equal(http.StatusBadRequest))
 	})
 
-	// Scenario 4.7 from specs/025-oauth2-server/spec.md
+	// Scenario 4.7 from specs/20260328-120000-oauth2-server/spec.md
 	It("code replay rejected", func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
@@ -520,7 +520,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 		}
 	})
 
-	// Scenario 4.5 from specs/025-oauth2-server/spec.md
+	// Scenario 4.5 from specs/20260328-120000-oauth2-server/spec.md
 	It("full auth code flow without client secret", func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
@@ -572,7 +572,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 		Expect(tokenBody["token_type"]).To(Equal("Bearer"))
 	})
 
-	// Scenario 4.3 from specs/025-oauth2-server/spec.md
+	// Scenario 4.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("authorize without code_challenge rejected", func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -655,7 +655,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 		}
 	})
 
-	// Scenario 4.5 from specs/025-oauth2-server/spec.md
+	// Scenario 4.5 from specs/20260328-120000-oauth2-server/spec.md
 	It("should include the authenticated profile in locally issued token claims", func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)

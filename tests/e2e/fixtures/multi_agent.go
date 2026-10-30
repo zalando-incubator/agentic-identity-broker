@@ -8,7 +8,7 @@ import (
 )
 
 // SharedUpstreamClientID is the upstream OAuth2 client_id shared by multi-agent test agents.
-// Multiple agents sharing this client_id is the core of feature 021.
+// Multiple agents sharing this client_id is the core of feature 20260320-120000.
 const SharedUpstreamClientID = "shared-upstream"
 
 // MultiAgentAlpha returns the first test agent sharing SharedUpstreamClientID.
@@ -18,7 +18,7 @@ func MultiAgentAlpha() *storage.Agent {
 	agent := newTestAgent(
 		ptr.To(id.ClientID(SharedUpstreamClientID)),
 		"Multi-Agent Alpha",
-		"First agent sharing an upstream OAuth2 client_id (feature 021 testing)",
+		"First agent sharing an upstream OAuth2 client_id (feature 20260320-120000 testing)",
 	)
 	agent.RedirectURIs = []string{"https://client.example.com/cb"}
 	return agent
@@ -31,7 +31,7 @@ func MultiAgentBeta() *storage.Agent {
 	agent := newTestAgent(
 		ptr.To(id.ClientID(SharedUpstreamClientID)),
 		"Multi-Agent Beta",
-		"Second agent sharing an upstream OAuth2 client_id (feature 021 testing)",
+		"Second agent sharing an upstream OAuth2 client_id (feature 20260320-120000 testing)",
 	)
 	agent.RedirectURIs = []string{"https://client.example.com/cb"}
 	return agent

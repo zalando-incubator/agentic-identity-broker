@@ -29,7 +29,7 @@ import (
 // Hybrid Mode E2E Tests
 //
 // Maps to US2 (scenarios 1–3, 7–11) and US3 (scenarios 3–4) from
-// specs/030-hybrid-oauth-modes/spec.md. US1 and US2 scenarios 4–6 are
+// specs/20260511-120000-hybrid-oauth-modes/spec.md. US1 and US2 scenarios 4–6 are
 // covered by config unit tests; US2.7–8 are covered in mode_configuration_e2e_test.go.
 
 var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
@@ -76,7 +76,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 		}
 	})
 
-	// Scenario US2.1 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.1 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("accepts proxy agent requests (proxy path) in hybrid mode", func() {
 		now := time.Now()
 		proxyAgent := &storage.Agent{
@@ -104,7 +104,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 		Expect(resp.Header.Get("Location")).To(ContainSubstring("/agents/" + proxyAgent.ID.String()))
 	})
 
-	// Scenario US2.2 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.2 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("accepts local agent requests (local path) in hybrid mode", func() {
 		localAgent := fixtures.LocalAgent()
 		localAgent.RedirectURIs = []string{"https://example.com/cb"}
@@ -121,7 +121,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 		Expect(resp.Header.Get("Location")).To(ContainSubstring("/agents/" + localAgent.ID.String()))
 	})
 
-	// Scenario US2.10 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.10 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("serves JWKS endpoint in hybrid mode", func() {
 		resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
@@ -135,7 +135,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 		Expect(len(keys)).To(BeNumerically(">=", 1))
 	})
 
-	// Scenario US2.11 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.11 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("exposes discovery metadata with JWKS URI in hybrid mode", func() {
 		resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 		Expect(err).ToNot(HaveOccurred())
@@ -220,7 +220,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 		}
 	})
 
-	// Scenario US3.3 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US3.3 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("accepts hybrid+CIMD configuration and starts successfully", func() {
 		// Builder succeeded (server is non-nil) — hybrid+CIMD config is accepted.
 		// The JWKS endpoint confirms local token signing is wired.
@@ -230,7 +230,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 	})
 
-	// Scenario US2.3 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.3 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("resolves CIMD agent via URL-format client_id in hybrid mode", func() {
 		now := time.Now()
 		cimdAgent := &storage.Agent{
@@ -259,7 +259,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 		Expect(resp.Header.Get("Location")).To(ContainSubstring("/agents/" + cimdAgent.ID.String()))
 	})
 
-	// Scenario US3.4 from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US3.4 from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("proxy agent bypasses CIMD in hybrid mode — resolved by UUID without CIMD lookup", func() {
 		now := time.Now()
 		proxyAgent := &storage.Agent{
@@ -436,7 +436,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		}
 	})
 
-	// Scenario US2.2 (full journey) from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.2 (full journey) from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("local agent in hybrid mode issues JWT via full authorization code flow with PKCE", func() {
 		principal := fixtures.DefaultPrincipal().String()
 		verifier := helpers.PKCEVerifier()
@@ -451,7 +451,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		}.Encode()
 
 		// Step 1: Authorize — no grant → consent redirect.
-		// Consent URL contains session_token (spec 031 unified session token).
+		// Consent URL contains session_token (spec 20260517-120000 unified session token).
 		authResp, err := enduserServer.AuthenticatedGET(authorizeURL, principal)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = authResp.Body.Close() }()
@@ -635,7 +635,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 		}
 	})
 
-	// Scenario US2.1 (full journey) from specs/030-hybrid-oauth-modes/spec.md
+	// Scenario US2.1 (full journey) from specs/20260511-120000-hybrid-oauth-modes/spec.md
 	It("proxy agent in hybrid mode forwards authorize to upstream and proxies token response", func() {
 		principal := fixtures.DefaultPrincipal().String()
 		authorizeURL := "/oauth2/authorize?" + url.Values{
@@ -646,7 +646,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 		}.Encode()
 
 		// Step 1: Authorize — no grant → consent redirect.
-		// Consent URL contains session_token (spec 031 unified session token).
+		// Consent URL contains session_token (spec 20260517-120000 unified session token).
 		authResp, err := server.AuthenticatedGET(authorizeURL, principal)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = authResp.Body.Close() }()

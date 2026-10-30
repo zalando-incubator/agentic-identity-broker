@@ -47,7 +47,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		}
 	})
 
-	// Scenario US2.1 from specs/028-cimd-support/spec.md
+	// Scenario US2.1 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when client_id resolves to a private RFC 1918 address", func() {
 		It("rejects the request before establishing any outbound connection", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -86,7 +86,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.2 from specs/028-cimd-support/spec.md
+	// Scenario US2.2 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when client_id resolves to a loopback address", func() {
 		It("rejects the request before establishing any outbound connection", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -124,7 +124,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.3 from specs/028-cimd-support/spec.md
+	// Scenario US2.3 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when client_id resolves to a link-local address (cloud metadata endpoint)", func() {
 		It("rejects the request before establishing any outbound connection", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -162,7 +162,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.4 from specs/028-cimd-support/spec.md
+	// Scenario US2.4 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when client_id uses an HTTP (non-HTTPS) scheme", func() {
 		It("rejects the request immediately without any outbound connection", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -189,7 +189,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.5 from specs/028-cimd-support/spec.md
+	// Scenario US2.5 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when client_id URL contains dot segments", func() {
 		It("rejects the request without any outbound connection", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -215,7 +215,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.6 from specs/028-cimd-support/spec.md
+	// Scenario US2.6 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD endpoint streams a response larger than the size limit", func() {
 		var (
 			cimdServer *httptest.Server
@@ -286,7 +286,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 		})
 	})
 
-	// Scenario US2.7 from specs/028-cimd-support/spec.md
+	// Scenario US2.7 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD endpoint does not respond within the configured timeout", func() {
 		var (
 			cimdServer *httptest.Server

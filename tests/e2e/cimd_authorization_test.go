@@ -75,7 +75,7 @@ var _ = Describe("CIMD Authorization", func() {
 		}
 	})
 
-	// Scenario US1.5 from specs/028-cimd-support/spec.md
+	// Scenario US1.5 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when CIMD is disabled", func() {
 		It("rejects URL-format client_id with invalid_client without attempting a fetch", func() {
 			config := fixtures.OAuth2ConfigWithUpstream(mockUpstream.Server.URL)
@@ -99,7 +99,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// Scenario US1.1 from specs/028-cimd-support/spec.md
+	// Scenario US1.1 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when CIMD is enabled and the document is valid", func() {
 		var (
 			cimdServer  *httptest.Server
@@ -184,7 +184,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// Scenario US1.2 from specs/028-cimd-support/spec.md
+	// Scenario US1.2 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when CIMD document client_id does not match the request URL", func() {
 		var (
 			cimdServer *httptest.Server
@@ -254,7 +254,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// Scenario US1.3 from specs/028-cimd-support/spec.md
+	// Scenario US1.3 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD endpoint returns a non-200 status", func() {
 		var (
 			cimdServer *httptest.Server
@@ -321,7 +321,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// Scenario US1.4 from specs/028-cimd-support/spec.md
+	// Scenario US1.4 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when redirect_uri is not listed in the CIMD document", func() {
 		var (
 			cimdServer *httptest.Server
@@ -392,7 +392,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-027 from specs/028-cimd-support/spec.md
+	// FR-027 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the client_id URL is not pre-registered on any Agent", func() {
 		It("rejects the authorization request with invalid_client before any CIMD fetch", func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
@@ -418,7 +418,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-022 from specs/028-cimd-support/spec.md
+	// FR-022 from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD document specifies a secret-bearing token_endpoint_auth_method", func() {
 		var (
 			cimdServer *httptest.Server
@@ -496,7 +496,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// Edge case from specs/028-cimd-support/spec.md: redirect_uris is mandatory (FR-004)
+	// Edge case from specs/20260421-120000-cimd-support/spec.md: redirect_uris is mandatory (FR-004)
 	Describe("when the CIMD document has an empty redirect_uris array", func() {
 		var (
 			cimdServer *httptest.Server
@@ -572,7 +572,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// RFC §4.1 (from specs/028-cimd-support/spec.md document validation rules)
+	// RFC §4.1 (from specs/20260421-120000-cimd-support/spec.md document validation rules)
 	Describe("when the CIMD document contains a client_secret field", func() {
 		var (
 			cimdServer *httptest.Server
@@ -650,7 +650,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-004a from specs/028-cimd-support/spec.md
+	// FR-004a from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD document contains a cross-origin redirect_uri", func() {
 		var (
 			cimdServer *httptest.Server
@@ -728,7 +728,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-004a localhost exception from specs/028-cimd-support/spec.md
+	// FR-004a localhost exception from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD document redirect_uri is a localhost address", func() {
 		var (
 			cimdServer *httptest.Server
@@ -810,7 +810,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-023a from specs/028-cimd-support/spec.md
+	// FR-023a from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD document client_name differs from Agent.DisplayName", func() {
 		var (
 			cimdServer  *httptest.Server
@@ -894,7 +894,7 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
-	// FR-023b from specs/028-cimd-support/spec.md
+	// FR-023b from specs/20260421-120000-cimd-support/spec.md
 	Describe("when the CIMD document client_name matches a built-in blocked term", func() {
 		var (
 			cimdServer *httptest.Server

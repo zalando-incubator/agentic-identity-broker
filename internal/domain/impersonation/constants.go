@@ -1,7 +1,7 @@
 // Package impersonation implements the RFC 8693 user-impersonation flow: a privileged
 // client mints a locally issued broker token representing a subject user while attributing
 // the acting party via the standard act claim. It is a self-contained bounded context that
-// reuses the JWKS adapter, the ADR-009 CEL pattern, and the local issuer's signing policy.
+// reuses the JWKS adapter, the ADR-20260116-120100 CEL pattern, and the local issuer's signing policy.
 package impersonation
 
 import (

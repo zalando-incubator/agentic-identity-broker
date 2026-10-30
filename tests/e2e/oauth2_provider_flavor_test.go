@@ -120,7 +120,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 	// US1: Configure Third-Party Service with Explicit OAuth2 Flavor
 
 	Describe("US1: Configure Third-Party Service with Explicit OAuth2 Flavor", func() {
-		// Spec Reference: US1.S1 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US1.S1 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US1.S1] should assign default standard flavor when oauth2_flavor is omitted", func() {
 			// Given: A service creation request with no oauth2_flavor field
 			req := standardServiceRequest()
@@ -143,7 +143,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(getBody["oauth2_flavor"]).To(Equal("standard"))
 		})
 
-		// Spec Reference: US1.S2 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US1.S2 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US1.S2] should accept explicit standard flavor and validate credential as plain string", func() {
 			// Given: A service creation request with oauth2_flavor: standard
 			req := standardServiceRequest()
@@ -158,7 +158,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("standard"))
 		})
 
-		// Spec Reference: US1.S3 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US1.S3 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US1.S3] should accept google flavor and validate credential as service account JSON", func() {
 			// Given: A service creation request with oauth2_flavor: google and valid SA JSON
 			req := fixtures.ValidGoogleServiceRequest()
@@ -172,7 +172,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("google"))
 		})
 
-		// Spec Reference: US1.S4 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US1.S4 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US1.S4] should reject unrecognized flavor values with HTTP 400 listing valid values", func() {
 			// Given: A service creation request with an invalid oauth2_flavor
 			req := standardServiceRequest()
@@ -190,7 +190,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("azure"))
 		})
 
-		// Spec Reference: US1.S5 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US1.S5 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US1.S5] should re-validate credential against new flavor when flavor is updated", func() {
 			// Given: An existing standard service
 			req := standardServiceRequest()
@@ -218,7 +218,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 	// US2: Configure Google OAuth2 Service with Service Account Credentials
 
 	Describe("US2: Configure Google OAuth2 Service with Service Account Credentials", func() {
-		// Spec Reference: US2.S1 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S1 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S1] should store service account JSON encrypted and extract client_id from JSON", func() {
 			// Given: A valid google service request
 			req := fixtures.ValidGoogleServiceRequest()
@@ -233,7 +233,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("google"))
 		})
 
-		// Spec Reference: US2.S2 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S2 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S2] should return service config with client_id populated and credential redacted", func() {
 			// Given: A valid google service created
 			req := fixtures.ValidGoogleServiceRequest()
@@ -253,7 +253,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("google"))
 		})
 
-		// Spec Reference: US2.S3 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S3 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S3] should reject google credential with missing private_key field with HTTP 400", func() {
 			// Given: Google service account JSON without private_key
 			saJSON := strings.ReplaceAll(fixtures.GoogleServiceAccountFixtureJSON(),
@@ -280,7 +280,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("private_key"))
 		})
 
-		// Spec Reference: US2.S4 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S4 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S4] should reject google credential with type != service_account with HTTP 400", func() {
 			// Given: Google JSON with wrong type
 			saJSON := strings.ReplaceAll(fixtures.GoogleServiceAccountFixtureJSON(),
@@ -307,7 +307,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("service_account"))
 		})
 
-		// Spec Reference: US2.S5 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S5 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S5] should return oauth2_flavor: google and redacted credential in GET response", func() {
 			// Given: A google service created
 			req := fixtures.ValidGoogleServiceRequest()
@@ -326,7 +326,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["client_secret"]).To(Equal("REDACTED"))
 		})
 
-		// Spec Reference: US2.S6 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S6 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S6] should reject issuer_uri whose host differs from token_uri in JSON with HTTP 400", func() {
 			// Given: A google service request with mismatched issuer_uri host
 			req := fixtures.ValidGoogleServiceRequest()
@@ -344,7 +344,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).NotTo(BeEmpty())
 		})
 
-		// Spec Reference: US2.S7 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US2.S7 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US2.S7] should use token_uri from JSON as token endpoint when issuer_uri is omitted", func() {
 			// Given: A google service request without issuer_uri
 			req := fixtures.ValidGoogleServiceRequest()
@@ -364,7 +364,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 	// US3: Validate Credentials According to OAuth2 Flavor
 
 	Describe("US3: Validate Credentials According to OAuth2 Flavor", func() {
-		// Spec Reference: US3.S1 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S1 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S1] should accept non-empty string credential for standard flavor", func() {
 			// Given: A standard service with a plain string credential
 			req := standardServiceRequest()
@@ -375,7 +375,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusCreated))
 		})
 
-		// Spec Reference: US3.S2 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S2 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S2] should reject empty/whitespace-only credential for standard flavor with HTTP 400", func() {
 			// Given: A standard service with empty client_secret
 			req := standardServiceRequest()
@@ -389,7 +389,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 		})
 
-		// Spec Reference: US3.S3 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S3 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S3] should accept valid google service account JSON for google flavor", func() {
 			// Given: A google service with valid SA JSON
 			req := fixtures.ValidGoogleServiceRequest()
@@ -399,7 +399,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusCreated))
 		})
 
-		// Spec Reference: US3.S4 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S4 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S4] should reject non-JSON credential for google flavor with HTTP 400", func() {
 			// Given: A google service with a plain string (not JSON) credential
 			req := map[string]interface{}{
@@ -418,7 +418,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 		})
 
-		// Spec Reference: US3.S5 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S5 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S5] should reject google JSON missing required fields with HTTP 400 identifying each missing field", func() {
 			// Given: Google service account JSON missing client_id
 			saJSON := strings.ReplaceAll(fixtures.GoogleServiceAccountFixtureJSON(),
@@ -445,7 +445,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("client_id"))
 		})
 
-		// Spec Reference: US3.S6 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US3.S6 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US3.S6] should reject plain string (not JSON) for google flavor with HTTP 400", func() {
 			// Given: A google service request with a plain string as the credential
 			req := map[string]interface{}{
@@ -468,7 +468,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 	// US4: List and Filter Third-Party Services by Flavor
 
 	Describe("US4: List and Filter Third-Party Services by Flavor", func() {
-		// Spec Reference: US4.S1 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US4.S1 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US4.S1] should include oauth2_flavor in list response for all services", func() {
 			// Given: Two services — one standard, one google
 			stdReq := standardServiceRequest()
@@ -497,7 +497,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			}
 		})
 
-		// Spec Reference: US4.S2 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: US4.S2 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[US4.S2] should include oauth2_flavor in single service GET response", func() {
 			// Given: A standard service created
 			req := standardServiceRequest()
@@ -520,7 +520,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 	// Edge Cases
 
 	Describe("Edge Cases", func() {
-		// Spec Reference: EC1 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: EC1 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[EC1] should allow flavor change from google to standard when providing a valid plain-text credential", func() {
 			// Given: A google service already created
 			googleReq := fixtures.ValidGoogleServiceRequest()
@@ -555,7 +555,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(body["oauth2_flavor"]).To(Equal("standard"))
 		})
 
-		// Spec Reference: EC2 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: EC2 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[EC2] should reject google service account JSON exceeding 32 KB with HTTP 400", func() {
 			// Given: A google service request with a credential exceeding 32 KB
 			largePadding := strings.Repeat("x", 33*1024)
@@ -583,7 +583,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("32 KB"))
 		})
 
-		// Spec Reference: EC3 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: EC3 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[EC3] should reject google JSON where client_id field is missing with HTTP 400", func() {
 			// Given: Google service account JSON with missing client_id
 			saJSON := strings.ReplaceAll(fixtures.GoogleServiceAccountFixtureJSON(),
@@ -610,7 +610,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 			Expect(fmt.Sprintf("%v", errorBody)).To(ContainSubstring("client_id"))
 		})
 
-		// Spec Reference: EC4 from specs/018-oauth2-provider-flavors/spec.md
+		// Spec Reference: EC4 from specs/20260312-120000-oauth2-provider-flavors/spec.md
 		It("[EC4] should reject google JSON where private_key is present but empty with HTTP 400", func() {
 			// Given: Google service account JSON with empty private_key value
 			saJSON := strings.ReplaceAll(fixtures.GoogleServiceAccountFixtureJSON(),

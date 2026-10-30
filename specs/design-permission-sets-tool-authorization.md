@@ -245,7 +245,7 @@ graph LR
 **Rationale**:
 - ExtProc already sits in the request path and sees all request data
 - Avoids network hop to an external OPA server
-- Single binary deployment (per ADR 011 precedent)
+- Single binary deployment (per ADR 20260223-120000 precedent)
 - CEL remains in the broker for token exchange authorization (two policy engines, different domains)
 
 **What ExtProc sees today** (already available, no agentgateway changes needed):
@@ -535,7 +535,7 @@ All approval API calls derive the principal (user) and agent identity from the a
 
 **Why the subject token works for approval creation**: The subject token is a human-bound token that identifies both the principal (user) and the agent (via the client credentials used in the OAuth2 flow). The broker can extract both identities from a single token, eliminating the need for ExtProc to pass `user` and `agent` as explicit parameters. This also means the broker can **authorize** the request — only the correct user's ExtProc session can create or query approvals for that user.
 
-**Why client assertion for long-polling**: The long-poll goroutine runs in the background and outlives individual request contexts. The `Authorization: Bearer` header carries the ExtProc's client assertion (identifying the gateway instance). The broker validates this assertion using a **CEL expression** — the same trust mechanism used for token exchange authorization (see ADR 009). The broker returns **all** approvals and permission sets (not filtered by gateway), since it has no knowledge of which agents are served by which gateway. ExtProc filters the response client-side to populate its per-`(principal, agent)` cache. On cache misses (e.g., a new `(principal, agent)` pair not yet in the long-poll response), ExtProc augments by making a targeted `GET /api/approvals?principal={p}` call.
+**Why client assertion for long-polling**: The long-poll goroutine runs in the background and outlives individual request contexts. The `Authorization: Bearer` header carries the ExtProc's client assertion (identifying the gateway instance). The broker validates this assertion using a **CEL expression** — the same trust mechanism used for token exchange authorization (see ADR 20260116-120100). The broker returns **all** approvals and permission sets (not filtered by gateway), since it has no knowledge of which agents are served by which gateway. ExtProc filters the response client-side to populate its per-`(principal, agent)` cache. On cache misses (e.g., a new `(principal, agent)` pair not yet in the long-poll response), ExtProc augments by making a targeted `GET /api/approvals?principal={p}` call.
 
 **Approval UI authentication** is separate: when a user opens the approval URL in their browser, they authenticate through the normal upstream proxy (X-Remote-User header), not via the subject token. The broker verifies the authenticated browser user matches the principal on the pending approval.
 
@@ -769,7 +769,7 @@ Optional filtering:
 GET /api/approvals?principal=user@example.com
 ```
 
-> **Authentication**: The `Authorization` header carries the ExtProc's client assertion. The broker validates it using a **CEL expression** (same trust mechanism as token exchange — see ADR 009) and returns all approval and permission set state.
+> **Authentication**: The `Authorization` header carries the ExtProc's client assertion. The broker validates it using a **CEL expression** (same trust mechanism as token exchange — see ADR 20260116-120100) and returns all approval and permission set state.
 >
 > **Client-side filtering**: The broker returns the full set of approvals and permission sets across all agents. ExtProc filters locally into its per-`(principal, agent)` cache, keeping only pairs it has seen requests for. This simplifies the broker (no per-gateway subscription tracking) and makes the protocol stateless on the server side.
 >
@@ -934,7 +934,7 @@ The `session_id` used for session-scoped approvals is distinct from the MCP `Mcp
 | **Custom `X-Agent-Session-Id` header** | Set by the agent host or agentgateway | Explicit, stable across MCP reconnects. Requires agent host to generate and propagate. |
 | **Derived from `(principal, agent, time_window)`** | Computed by ExtProc | No upstream cooperation needed. A session is "any activity from this user+agent within a rolling time window." |
 
-**Recommended approach**: ExtProc derives the session ID using a **CEL expression** (configured in the ExtProc config, not hardcoded). CEL is already used in the project for authorization policies (ADR 009), so reusing it for session ID extraction keeps the expression language consistent across the system.
+**Recommended approach**: ExtProc derives the session ID using a **CEL expression** (configured in the ExtProc config, not hardcoded). CEL is already used in the project for authorization policies (ADR 20260116-120100), so reusing it for session ID extraction keeps the expression language consistent across the system.
 
 The CEL expression receives the request metadata (headers, principal, agent ID, and bearer token claims) and must return a `string` — the session ID. This gives operators full flexibility without needing new strategy types for every extraction pattern.
 
@@ -1338,7 +1338,7 @@ graph LR
 
 | Trade-off | Decision | Rationale |
 |-----------|----------|-----------|
-| OPA in ExtProc vs. external OPA | Embedded library | Single binary, no network hop, per ADR 011 precedent |
+| OPA in ExtProc vs. external OPA | Embedded library | Single binary, no network hop, per ADR 20260223-120000 precedent |
 | Permission sets in broker vs. gateway | Broker | Consent is the broker's domain; admin CRUD needs persistence |
 | Permission sets per-service vs. multi-service | Multi-service | A single permission set can bundle scopes across services, simplifying consent UX |
 | Tool mapping in broker vs. OPA policy | OPA policy | Tools are a gateway concern; independent lifecycle |

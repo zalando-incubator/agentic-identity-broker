@@ -162,7 +162,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 		var j *journey
 		BeforeEach(func() { j = start("local", false) })
 
-		// US8-S1 from specs/046-cimd-upstream-client/spec.md
+		// US8-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should publish exactly five public metadata members with cache headers", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			response, err := j.enduser.PublicGET("/.well-known/oauth-client/" + j.service.ID.String())
 			Expect(err).NotTo(HaveOccurred())
@@ -178,7 +178,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			}))
 		})
 
-		// US8-S2 from specs/046-cimd-upstream-client/spec.md
+		// US8-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should serve metadata but not keys or a public JWKS", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			listKeys(j)
 			metadata, err := j.enduser.PublicGET("/.well-known/oauth-client/" + j.service.ID.String())
@@ -197,7 +197,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			listKeys(j)
 		})
 
-		// US8-S3 from specs/046-cimd-upstream-client/spec.md
+		// US8-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should authorize with the hosted client identity and S256 PKCE", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			authorizationURL := initiate(j)
 			Expect(authorizationURL.Scheme + "://" + authorizationURL.Host + authorizationURL.Path).To(Equal(j.provider.AuthorizationEndpoint()))
@@ -219,7 +219,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			Expect(observations.JWKSFetchCount).To(BeZero())
 		})
 
-		// US8-S4 from specs/046-cimd-upstream-client/spec.md
+		// US8-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should exchange a code without credentials and store an encrypted session", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			response := connect(j)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -240,7 +240,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			Expect(len(session.EncryptedRefreshToken)).To(BeNumerically(">", 0))
 		})
 
-		// US8-S5 from specs/046-cimd-upstream-client/spec.md
+		// US8-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should refresh without credentials and persist encrypted replacement tokens", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			response := connect(j)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -267,7 +267,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			Expect(bytes.Equal(after.EncryptedRefreshToken, refreshBefore)).To(BeFalse())
 		})
 
-		// US8-S6 from specs/046-cimd-upstream-client/spec.md
+		// US8-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should fail closed on exchange and refresh rejection without storing tokens", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			j.provider.WithTokenError("invalid_client")
 			response := connect(j)
@@ -304,7 +304,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 		})
 	})
 
-	// US8-S7 from specs/046-cimd-upstream-client/spec.md
+	// US8-S7 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should connect and refresh with hosted identity in all server modes", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		for _, mode := range []string{"proxy", "local", "hybrid"} {
 			j := start(mode, false)
@@ -334,7 +334,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 		var j *journey
 		BeforeEach(func() { j = start("proxy", true) })
 
-		// US8-S8 from specs/046-cimd-upstream-client/spec.md
+		// US8-S8 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should start and complete a keyless connect and refresh", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			listKeys(j)
 			response := connect(j)

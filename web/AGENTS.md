@@ -4,7 +4,7 @@
 
 ## Overview
 
-Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 035). Use the Refined Trust Architecture and WCAG 2.1 AA.
+Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 20260904-120000). Use the Refined Trust Architecture and WCAG 2.1 AA.
 
 ## Tech Stack
 

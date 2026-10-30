@@ -139,7 +139,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				serviceID = register(journey, "stored-empty", "")
 			})
 
-			// US1-S1 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S1 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S1 connects and renews with stored credentials without a file binding", func() {
 				before := record(journey, serviceID)
 				connect(journey, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
@@ -167,7 +167,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				}
 			})
 
-			// US1-S4 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S4 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S4 ignores bindings during stored-source connection and renewal", func() {
 				for _, serviceID := range serviceIDs {
 					before := record(journey, serviceID)
@@ -196,7 +196,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			// US1-S2 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S2 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S2 redirects with the file client ID and exchanges the code with the file pair", func() {
 				connect(journey, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 				stored := session(journey, serviceID)
@@ -204,7 +204,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				Expect(*stored.UpstreamClientID).To(Equal(id.ClientID(fixtures.CredentialClientID)))
 			})
 
-			// US1-S3 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S3 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S3 renews an established session with its current file credentials", func() {
 				connect(journey, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 				before := record(journey, serviceID)
@@ -220,7 +220,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				Expect(record(journey, serviceID)).To(Equal(before))
 			})
 
-			// US1-S7 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S7 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S7 creates and reads filesystem mode without inline fields or stored file values", func() {
 				expectRepresentation := func(body map[string]any) {
 					GinkgoHelper()
@@ -268,7 +268,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			// US1-S5 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S5 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S5 selects only the exact canonical ID despite unrelated UUID, display label and filenames", func() {
 				metadata := readService(journey, serviceID)
 				Expect(metadata["canonical_id"]).To(Equal("GitHub-Prod"))
@@ -290,7 +290,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				serviceIDs = []id.ServiceID{register(journey, "filesystem-first", "filesystem"), register(journey, "filesystem-second", "filesystem")}
 			})
 
-			// US1-S6 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S6 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S6 isolates each service's file pair for connection and renewal", func() {
 				firstBefore := record(journey, serviceIDs[0])
 				secondBefore := record(journey, serviceIDs[1])
@@ -339,7 +339,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				}
 			})
 
-			// US1-S8 from specs/051-oauth2-secret-file-overrides/spec.md
+			// US1-S8 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 			It("US1-S8 fails initiation and renewal before provider requests for absent and empty mappings", func() {
 				for _, fixture := range cases {
 					j, serviceID := fixture.journey, fixture.serviceID
@@ -382,7 +382,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 			filesystemID = register(journey, "filesystem-original", "filesystem")
 		})
 
-		// US1-S9 from specs/051-oauth2-secret-file-overrides/spec.md
+		// US1-S9 from specs/20261002-120000-oauth2-secret-file-overrides/spec.md
 		It("US1-S9 rejects either supplied inline field, including null and empty values, without mutation", func() {
 			before := record(journey, serviceID)
 			beforeRepresentation := readService(journey, serviceID)

@@ -125,7 +125,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 		}
 	})
 
-	// US6-S1 from specs/046-cimd-upstream-client/spec.md
+	// US6-S1 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should assign a hosted secretless client identity on creation", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		created := createPublic()
 		serviceID := created["id"].(string)
@@ -140,7 +140,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 		Expect(stored).NotTo(HaveKey("client_secret"))
 	})
 
-	// US6-S2 from specs/046-cimd-upstream-client/spec.md
+	// US6-S2 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should allow public create and replacement without generating a key", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		Expect(keyList()).To(BeEmpty())
 		created := createPublic()
@@ -172,7 +172,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 			config.Security.SkipThirdpartyHTTPSValidation = true
 		})
 
-		// US6-S3 from specs/046-cimd-upstream-client/spec.md
+		// US6-S3 from specs/20260917-120000-cimd-upstream-client/spec.md
 		It("should reject supplied identifiers and secrets before provider traffic", Label("cimd-upstream-client", "cimd-public-client"), func() {
 			created := createPublic()
 			serviceID := created["id"].(string)
@@ -200,7 +200,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 		})
 	})
 
-	// US6-S4 from specs/046-cimd-upstream-client/spec.md
+	// US6-S4 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should reject CIMD registration for Google and filesystem while allowing static", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		google := fixtures.ValidGoogleServiceRequest()
 		google["client_registration"] = "cimd"
@@ -225,7 +225,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 		Expect(decodeJSON[map[string]any](response)).To(HaveKeyWithValue("client_registration", "static"))
 	})
 
-	// US6-S5 from specs/046-cimd-upstream-client/spec.md
+	// US6-S5 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should retain its URL across authentication-method switches and require a confidential key", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		created := createPublic()
 		serviceID := created["id"].(string)
@@ -258,7 +258,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 		Expect(decodeJSON[map[string]any](metadata)).To(HaveKeyWithValue("token_endpoint_auth_method", "none"))
 	})
 
-	// US6-S6 from specs/046-cimd-upstream-client/spec.md
+	// US6-S6 from specs/20260917-120000-cimd-upstream-client/spec.md
 	It("should change identity only after validating static and CIMD replacements", Label("cimd-upstream-client", "cimd-public-client"), func() {
 		static := publicRequest()
 		static["client_registration"] = "static"

@@ -26,7 +26,7 @@ This mock service implements the standard OAuth2 Authorization Code Flow with PK
 
 ```bash
 # Terminal 1: Start the broker
-cd ~/Projects/agentic-identity-broker-008-thirdparty-oauth2-sessions
+cd ~/Projects/agentic-identity-broker-20251222-120000-thirdparty-oauth2-sessions
 just run
 
 # Terminal 2: Start the mock OAuth2 service and register it

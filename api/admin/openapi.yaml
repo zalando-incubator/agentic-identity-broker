@@ -83,7 +83,7 @@ info:
     - Administrative requests and responses contain no credential-file paths, file values, or internal source-transition marker
     - Administrative metadata operations never read credential files or require their availability
     - This approved breaking contract replaces released Admin API 1.0.0 on the existing `/api/services` routes
-    - ADR 041 and the major contract bump were explicitly approved on 2026-10-08. Schema approval does not establish runtime implementation
+    - ADR 20261008-120200 and the major contract bump were explicitly approved on 2026-10-08. Schema approval does not establish runtime implementation
 
     ### Client Registration Contract (Increment 2, issue #264, Admin API 2.1.0)
 
@@ -2687,7 +2687,7 @@ components:
             No entry may contain a fragment. Invalid entries cause `400 validation failed`.
             Accepted entries are stored and returned unchanged.
             For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
-            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
+            This list then only allowlists private-use callbacks that the document also declares (ADR 20261022-120000).
           items:
             type: string
             format: uri
@@ -2840,7 +2840,7 @@ components:
             No entry may contain a fragment. Invalid entries cause `400 validation failed`.
             Accepted entries are stored and returned unchanged.
             For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
-            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
+            This list then only allowlists private-use callbacks that the document also declares (ADR 20261022-120000).
           items:
             type: string
             format: uri
@@ -2988,7 +2988,7 @@ components:
             No entry may contain a fragment. Invalid entries cause `400 validation failed`.
             Accepted entries are stored and returned unchanged.
             For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
-            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
+            This list then only allowlists private-use callbacks that the document also declares (ADR 20261022-120000).
           items:
             type: string
             format: uri

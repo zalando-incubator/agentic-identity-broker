@@ -29,7 +29,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		storageFactory = bootstrap.NewStorageFactory(logger)
 	})
 
-	// Scenario 2.1 from specs/025-oauth2-server/spec.md
+	// Scenario 2.1 from specs/20260328-120000-oauth2-server/spec.md
 	It("starts in local mode", func() {
 		config := fixtures.LocalConfig()
 		testStorage, err := storageFactory.NewTestStorage()
@@ -42,7 +42,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(app).ToNot(BeNil())
 	})
 
-	// Scenario 2.2 from specs/025-oauth2-server/spec.md
+	// Scenario 2.2 from specs/20260328-120000-oauth2-server/spec.md
 	It("no upstream URI needed in local mode", func() {
 		config := fixtures.LocalConfig()
 		Expect(config.OAuth2AuthServer.Proxy.UpstreamIssuerURI).To(BeEmpty())
@@ -58,13 +58,13 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(app).ToNot(BeNil())
 	})
 
-	// Scenario 2.3 from specs/025-oauth2-server/spec.md
+	// Scenario 2.3 from specs/20260328-120000-oauth2-server/spec.md
 	It("default is proxy mode", func() {
 		config := fixtures.DefaultOAuth2Config()
 		Expect(config.OAuth2AuthServer.Mode).To(Equal(servermode.Proxy))
 	})
 
-	// Scenario 2.4 from specs/025-oauth2-server/spec.md
+	// Scenario 2.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("auto-generates an initial signing key at startup", func() {
 		config := fixtures.LocalConfig()
 		testStorage, err := storageFactory.NewTestStorage()
@@ -109,7 +109,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(keys[0].(map[string]interface{})["kid"]).To(Equal(key["kid"]))
 	})
 
-	// Scenario 2.4 from specs/025-oauth2-server/spec.md
+	// Scenario 2.4 from specs/20260328-120000-oauth2-server/spec.md
 	It("issues tokens without manual signing key provisioning", func() {
 		config := fixtures.LocalConfig()
 		testStorage, err := storageFactory.NewTestStorage()

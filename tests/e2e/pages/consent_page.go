@@ -1047,7 +1047,7 @@ func (cp *ConsentPage) IsMandatoryServiceConnected(ctx context.Context, serviceD
 
 // ===== Revoke Grant Page Object Methods =====
 // These methods support the RevokeGrantButton and RevokeGrantDialog UI components
-// introduced by feature 022-revoke-agent-consent.
+// introduced by feature 20260320-120100-revoke-agent-consent.
 
 // GetRevokeButton returns the "Revoke All Access" button locator on the agent detail page.
 // The button is only rendered when the user has an active grant for the agent (FR-009).

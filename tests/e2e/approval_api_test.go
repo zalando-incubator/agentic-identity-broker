@@ -700,7 +700,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(consumeResp.Data.ConsumedAt).NotTo(BeEmpty())
 		})
 
-		// Security scenario from ADR 018: Subject token principal must own the approval.
+		// Security scenario from ADR 20260630-120000: Subject token principal must own the approval.
 		It("returns 403 when another principal consumes an approval", func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "consume_owner_tool", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
@@ -734,7 +734,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		})
 
-		// Security scenario from ADR 018: Missing subject token is rejected
+		// Security scenario from ADR 20260630-120000: Missing subject token is rejected
 		It("returns 401 without subject token on consume", func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "consume_auth_tool", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
@@ -803,7 +803,7 @@ var _ = Describe("Tool Approval API", func() {
 	})
 
 	Describe("when a user scopes an approval decision", func() {
-		// US7-S2 from specs/024-approval-api-ui/spec.md
+		// US7-S2 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should persist an edited parameter glob and expose it through sync", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
@@ -829,7 +829,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(found.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*"}))
 		})
 
-		// US7-S1 from specs/024-approval-api-ui/spec.md
+		// US7-S1 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should store exact coverage when pattern fields are omitted", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent"})
@@ -843,7 +843,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/app"}))
 		})
 
-		// US7-S3 from specs/024-approval-api-ui/spec.md
+		// US7-S3 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should store unconstrained coverage for an explicit empty params pattern", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{}})
@@ -855,7 +855,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.ParamsPattern).To(BeEmpty())
 		})
 
-		// US7-S4 from specs/024-approval-api-ui/spec.md
+		// US7-S4 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should reject a non-covering parameter pattern and leave the approval pending", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{"repo": "other/*"}})
@@ -869,7 +869,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.Status).To(Equal("pending"))
 		})
 
-		// US7-S5 from specs/024-approval-api-ui/spec.md
+		// US7-S5 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should reject a tool pattern and leave the approval pending", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "*"})
@@ -884,7 +884,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.Status).To(Equal("pending"))
 		})
 
-		// US7-S7 from specs/024-approval-api-ui/spec.md
+		// US7-S7 from specs/20260327-120000-approval-api-ui/spec.md
 		It("should reject a one-time scoped approval and leave it pending", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "once", "params_pattern": map[string]string{}})
@@ -899,7 +899,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 	})
 
-	// US5-S3 and US5-S4 from specs/026-extproc-approval-sync/spec.md
+	// US5-S3 and US5-S4 from specs/20260410-120000-extproc-approval-sync/spec.md
 	DescribeTable("projects approved_at only for approved sync records", func(status string, wantApprovedAt bool) {
 		created := createPendingApproval(server, machineAuth, alicePrincipal, "decision_time_tool", map[string]any{})
 		var expectedApprovedAt *time.Time

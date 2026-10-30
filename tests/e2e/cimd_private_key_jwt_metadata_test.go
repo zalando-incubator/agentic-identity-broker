@@ -50,7 +50,7 @@ func fetchCIMDPrivateKeyJWTMetadata(config *ports.Config) (map[string]any, error
 }
 
 var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
-	// Scenario US5-S1 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US5-S1 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should advertise private_key_jwt and algorithms in local and hybrid modes", func() {
 		upstream := helpers.NewMockUpstreamOAuth2Server()
 		defer upstream.Close()
@@ -69,7 +69,7 @@ var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 		}
 	})
 
-	// Scenario US5-S2 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US5-S2 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should not advertise private_key_jwt when CIMD is disabled or proxied", func() {
 		upstream := helpers.NewMockUpstreamOAuth2Server()
 		defer upstream.Close()
@@ -85,7 +85,7 @@ var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 		}
 	})
 
-	// Scenario US5-S3 from specs/051-private-key-jwt-auth/spec.md
+	// Scenario US5-S3 from specs/20261015-120000-private-key-jwt-auth/spec.md
 	It("should advertise only authentication methods and algorithms it accepts", func() {
 		metadata, err := fetchCIMDPrivateKeyJWTMetadata(fixtures.OAuth2ConfigWithCIMD(""))
 		Expect(err).To(Succeed())
