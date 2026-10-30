@@ -2,7 +2,8 @@ const fs = require("node:fs");
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
-const markerPattern = /^<!-- architecture-review: (\{.*\}) -->$/m;
+// Safe outputs strip HTML comments from agent comments, so the state travels in a visible JSON block.
+const marker = "## Architecture review result";
 const statusMarker = "<!-- architecture-review-status -->";
 const dimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
   "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability"];
@@ -143,6 +144,9 @@ function validateResult(draft, context) {
   const failed = dimensions.filter((name) => status[name] === "failed");
   const counts = Object.fromEntries(severities.map((severity) =>
     [severity, draft.findings.filter((finding) => finding.severity === severity).length]));
+  if (failed.length > 1) {
+    throw new Error("More than one unassessed dimension cannot be published; report the blocker instead");
+  }
   if (failed.length && draft.recommendation === "APPROVE") {
     throw new Error("A review with unassessed dimensions cannot approve");
   }
@@ -159,7 +163,9 @@ function validateResult(draft, context) {
     if (!body.includes(`\n${section}`)) throw new Error(`The review body is missing the "${section}" section`);
   }
   if (!body.includes(`**${draft.recommendation}**`)) throw new Error("The review body must state the recommendation");
-  if (/<!-- (?:architecture-review|gh-aw)/.test(body)) throw new Error("The review body must not contain reserved markers");
+  if (/<!-- (?:architecture-review|gh-aw)/.test(body) || body.includes(marker)) {
+    throw new Error("The review body must not contain reserved markers");
+  }
   const prefix = `https://github.com/${context.repository}/blob/`;
   for (const match of body.matchAll(/https:\/\/github\.com\/[^/\s)]+\/[^/\s)]+\/blob\/([^/\s)]+)\//g)) {
     if (!match[0].startsWith(prefix) || match[1] !== context.head) {
@@ -181,7 +187,8 @@ function writeResult() {
     summary: draft.summary.trim(), findings: counts, failed,
   };
   fs.writeFileSync(`${directory}/comment.md`,
-    [draft.body.trimEnd(), "", `<!-- architecture-review: ${JSON.stringify(state)} -->`, ""].join("\n"));
+    [draft.body.trimEnd(), "", "<details><summary>Review state</summary>", "", marker,
+      "```json", JSON.stringify(state, null, 2), "```", "", "</details>", ""].join("\n"));
 }
 
 function validateState(state) {
@@ -202,10 +209,12 @@ function parseReview(comment) {
   if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/architecture-review -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
-  const markers = body.match(new RegExp(markerPattern.source, "gm"));
-  if (markers?.length !== 1) return null;
+  const sections = body.split(marker);
+  if (sections.length !== 2) return null;
+  const blocks = [...sections[1].matchAll(/^```json\n([\s\S]*?)\n```$/gm)];
+  if (blocks.length !== 1) return null;
   try {
-    const state = validateState(JSON.parse(body.match(markerPattern)[1]));
+    const state = validateState(JSON.parse(blocks[0][1]));
     return state.pr === Number(issue[3]) ? state : null;
   } catch {
     return null;
