@@ -164,7 +164,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
@@ -533,7 +533,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
@@ -607,7 +607,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install just
-        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - if: inputs.phase == 'implement'
@@ -1324,7 +1324,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
@@ -1641,7 +1641,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
@@ -1922,7 +1922,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
@@ -1998,7 +1998,7 @@ jobs:
     steps:
       - name: Setup Scripts
         id: setup
-        uses: github/gh-aw-actions/setup@458b269006dcf88e3b5496b6fbecabe4b9a0f954 # v0.92.0
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
         with:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}

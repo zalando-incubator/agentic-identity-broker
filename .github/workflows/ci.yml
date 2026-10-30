@@ -121,7 +121,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install development tools
@@ -232,7 +232,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install development tools
@@ -280,7 +280,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install development tools
@@ -326,7 +326,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install development tools
@@ -379,7 +379,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install development tools
@@ -485,7 +485,7 @@ jobs:
           gh aw compile speckit-specify speckit-phase speckit-plan speckit-analyze speckit-implement architecture-review --strict --no-emit --no-check-update
           gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
       - name: zizmor
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           advanced-security: false
           min-severity: medium
