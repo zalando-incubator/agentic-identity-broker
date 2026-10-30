@@ -11,7 +11,14 @@ on:
     name: repo-ask
   reaction: "eyes"
 
-permissions: read-all
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  discussions: read
+  issues: read
+  pull-requests: read
+  statuses: read
 
 network: defaults
 
