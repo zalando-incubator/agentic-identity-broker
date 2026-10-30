@@ -688,7 +688,7 @@ function parseProposal(comment) {
     if (!Object.hasOwn(state.items, id) || selected.includes(id)) return null;
     if (mark !== " ") selected.push(id);
   }
-  const apply = new RegExp(`^- \\[[xX]\\] ${applyBox.replace(/\*/g, "\\*")}`, "m").test(body);
+  const apply = /^- \[[xX]\] \*\*Apply the selected items\*\*/m.test(body);
   return { review: state.review, head: state.head, items: state.items, selected, apply };
 }
 
