@@ -23,6 +23,7 @@ network:
     - local
     - containers
     - linux-distros
+    - api.osv.dev
 permissions:
   contents: read
   issues: read
