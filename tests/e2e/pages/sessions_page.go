@@ -170,3 +170,54 @@ func (sp *SessionsPage) refreshButtonLocator() playwright.Locator {
 		Exact: playwright.Bool(true),
 	})
 }
+
+// NavigateToServiceSession opens the single-service page for a canonical ID or UUID and waits
+// for the service heading.
+func (sp *SessionsPage) NavigateToServiceSession(ctx context.Context, identifier, serviceName string) error {
+	if err := sp.Navigate(ctx, thirdPartySessionsRoute+"/"+identifier); err != nil {
+		return err
+	}
+	return sp.WaitForServiceHeading(ctx, serviceName)
+}
+
+// WaitForServiceHeading waits for the service detail heading.
+func (sp *SessionsPage) WaitForServiceHeading(_ context.Context, serviceName string) error {
+	heading := sp.page().GetByRole("heading", playwright.PageGetByRoleOptions{Name: serviceName, Level: playwright.Int(2), Exact: playwright.Bool(true)})
+	if err := heading.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("service heading %q did not appear: %w", serviceName, err)
+	}
+	return nil
+}
+
+// ServiceSessionStatus returns the detail page's session status text.
+func (sp *SessionsPage) ServiceSessionStatus(_ context.Context) (string, error) {
+	text, err := sp.page().Locator("[data-testid='service-session-status']").InnerText()
+	if err != nil {
+		return "", fmt.Errorf("failed to read service session status: %w", err)
+	}
+	return text, nil
+}
+
+// DependentAgentNames returns the agents listed as depending on the service.
+func (sp *SessionsPage) DependentAgentNames(_ context.Context) ([]string, error) {
+	names, err := sp.page().Locator("[data-testid='service-dependent-agents'] li").AllInnerTexts()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read dependent agents: %w", err)
+	}
+	return names, nil
+}
+
+// TerminateAndConfirm terminates the session through the existing confirmation dialog.
+func (sp *SessionsPage) TerminateAndConfirm(_ context.Context, serviceName string) error {
+	if err := sp.terminateButtonLocator().First().Click(); err != nil {
+		return fmt.Errorf("failed to click terminate button: %w", err)
+	}
+	dialog := sp.page().GetByRole("dialog")
+	if err := dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Terminate session with " + serviceName, Exact: playwright.Bool(true)}).Click(); err != nil {
+		return fmt.Errorf("failed to confirm termination: %w", err)
+	}
+	return nil
+}

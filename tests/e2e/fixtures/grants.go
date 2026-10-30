@@ -281,3 +281,83 @@ func GrantWithService(principal, agentID, serviceID string, scopes []string) *st
 		UpdatedAt:             now,
 	}
 }
+
+// IncrementalCast is the shared cast of specs/055-incremental-service-authorization/spec.md.
+type IncrementalCast struct {
+	GitHub, Jira, Identity                  *model.ThirdpartyOAuth2ProviderEntity
+	IdentityAccess, GitHubRead, IssueTriage *storagedomain.PermissionSet
+	JiraRead                                *storagedomain.PermissionSet
+	Agent                                   *storagedomain.Agent
+	Grant                                   *storagedomain.UserGrant
+}
+
+// SeedIncrementalCast stores the services, permission sets and agent of the shared cast plus
+// Alice's grant (Identity Access and GitHub Read Access, valid for one day) and a usable
+// Corporate Identity session. GitHub and Jira sessions are left to the scenario.
+func SeedIncrementalCast(ctx context.Context, store *storageadapter.Adapter, principal, providerURL string) (*IncrementalCast, error) {
+	cast := &IncrementalCast{
+		GitHub:   GitHubProductionService(providerURL),
+		Jira:     JiraCloudService(providerURL),
+		Identity: CorporateIdentityService(providerURL),
+	}
+	for _, service := range []*model.ThirdpartyOAuth2ProviderEntity{cast.GitHub, cast.Jira, cast.Identity} {
+		if err := store.Services().Create(ctx, service); err != nil {
+			return nil, err
+		}
+	}
+	permissionSet := func(name string, service id.ServiceID, requirement storagedomain.RequirementType, scopes ...string) *storagedomain.PermissionSet {
+		return &storagedomain.PermissionSet{
+			ID:            id.NewPermissionSetID(),
+			Name:          name,
+			Description:   name + " for the incremental authorization cast",
+			ServiceScopes: []storagedomain.ServiceScope{{ServiceID: service, Scopes: scopes, RequirementType: requirement}},
+		}
+	}
+	cast.IdentityAccess = permissionSet("Identity Access", cast.Identity.ID, storagedomain.RequirementTypeMandatory, "profile")
+	cast.GitHubRead = permissionSet("GitHub Read Access", cast.GitHub.ID, storagedomain.RequirementTypeOptional, "repo", "user:email")
+	cast.IssueTriage = permissionSet("GitHub Issue Triage", cast.GitHub.ID, storagedomain.RequirementTypeOptional, "repo")
+	cast.JiraRead = permissionSet("Jira Read Access", cast.Jira.ID, storagedomain.RequirementTypeOptional, "read:jira-work")
+	for _, set := range []*storagedomain.PermissionSet{cast.IdentityAccess, cast.GitHubRead, cast.IssueTriage, cast.JiraRead} {
+		if err := store.PermissionSets().Create(ctx, set); err != nil {
+			return nil, err
+		}
+	}
+	cast.Agent = DataAnalysisAssistant(cast.IdentityAccess.ID, cast.GitHubRead.ID, cast.IssueTriage.ID, cast.GitHub.ID)
+	if err := store.Agents().Create(ctx, cast.Agent); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	validUntil := now.Add(24 * time.Hour).Truncate(time.Second)
+	cast.Grant = &storagedomain.UserGrant{
+		ID:         id.NewGrantID(),
+		Principal:  id.Principal(principal),
+		AgentID:    cast.Agent.ID,
+		ValidUntil: &validUntil,
+		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{
+			{PermissionSetID: cast.IdentityAccess.ID, IncludedServiceIDs: []id.ServiceID{cast.Identity.ID}},
+			{PermissionSetID: cast.GitHubRead.ID, IncludedServiceIDs: []id.ServiceID{cast.GitHub.ID}},
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.UserGrants().Create(ctx, cast.Grant); err != nil {
+		return nil, err
+	}
+	if err := store.UserSessions().Create(ctx, SessionForServiceWithScopes(principal, cast.Identity.ID.String(), []string{"profile"})); err != nil {
+		return nil, err
+	}
+	return cast, nil
+}
+
+// AddJiraRequirement lets the cast agent use Jira through an optional requirement and set.
+func (c *IncrementalCast) AddJiraRequirement() {
+	c.Agent.PermissionSets = append(c.Agent.PermissionSets, storagedomain.AgentPermissionSetEntry{
+		PermissionSetID: c.JiraRead.ID,
+		RequirementType: storagedomain.RequirementTypeOptional,
+	})
+	c.Agent.ServiceRequirements = append(c.Agent.ServiceRequirements, storagedomain.ServiceRequirement{
+		ServiceID:       c.Jira.ID,
+		RequirementType: storagedomain.RequirementTypeOptional,
+		RequiredScopes:  []string{"read:jira-work"},
+	})
+}

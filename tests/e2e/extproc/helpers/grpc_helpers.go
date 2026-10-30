@@ -27,6 +27,7 @@ type ProcessingRequestBuilder struct {
 	subjectToken             string
 	resourceURI              string
 	hasTokenExchangeMetadata bool
+	tokenExchangeExtras      map[string]*structpb.Value
 	endOfStream              bool // set EndOfStream=true on HttpHeaders (simulates header-only GET)
 }
 
@@ -273,6 +274,16 @@ func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resou
 	return b
 }
 
+// WithTokenExchangeMetadataField adds an optional aib.tokenexchange field, such as the
+// route's resource_metadata_url, with any protobuf value type.
+func (b *ProcessingRequestBuilder) WithTokenExchangeMetadataField(name string, value *structpb.Value) *ProcessingRequestBuilder {
+	if b.tokenExchangeExtras == nil {
+		b.tokenExchangeExtras = map[string]*structpb.Value{}
+	}
+	b.tokenExchangeExtras[name] = value
+	return b
+}
+
 // WithAgentgatewayMCPServer adds an mcp_server field to the agentgateway filter metadata,
 // alongside protocol. Calling this method always includes the field in the built metadata
 // (even with an empty string), which BuildWithMetadata's default-injection (below) treats as
@@ -338,12 +349,14 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 		}
 	}
 	if b.hasTokenExchangeMetadata {
-		filterMetadata["aib.tokenexchange"] = &structpb.Struct{
-			Fields: map[string]*structpb.Value{
-				"subject_token": structpb.NewStringValue(b.subjectToken),
-				"resource_uri":  structpb.NewStringValue(b.resourceURI),
-			},
+		fields := map[string]*structpb.Value{
+			"subject_token": structpb.NewStringValue(b.subjectToken),
+			"resource_uri":  structpb.NewStringValue(b.resourceURI),
 		}
+		for name, value := range b.tokenExchangeExtras {
+			fields[name] = value
+		}
+		filterMetadata["aib.tokenexchange"] = &structpb.Struct{Fields: fields}
 	}
 	if len(filterMetadata) != 0 {
 		req.MetadataContext = &corev3.Metadata{FilterMetadata: filterMetadata}

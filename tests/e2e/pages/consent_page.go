@@ -1568,3 +1568,69 @@ func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 	}
 	return parsed.Query().Get(param), nil
 }
+
+func (cp *ConsentPage) requestedServiceBanner(serviceName string) playwright.Locator {
+	return cp.page().Locator("[data-testid='requested-service-banner']").Filter(playwright.LocatorFilterOptions{HasText: serviceName})
+}
+
+// WaitForRequestedService waits for the banner naming a service requested by the client.
+func (cp *ConsentPage) WaitForRequestedService(_ context.Context, serviceName string) error {
+	if err := cp.requestedServiceBanner(serviceName).WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("requested service banner for %q did not appear: %w", serviceName, err)
+	}
+	return nil
+}
+
+// RequestedServiceStatus returns the banner's visible usability text for a requested service.
+func (cp *ConsentPage) RequestedServiceStatus(_ context.Context, serviceName string) (string, error) {
+	text, err := cp.requestedServiceBanner(serviceName).Locator("[data-testid='requested-service-status']").InnerText()
+	if err != nil {
+		return "", fmt.Errorf("failed to read requested service status for %q: %w", serviceName, err)
+	}
+	return strings.TrimSpace(text), nil
+}
+
+// LoginRequestedService starts provider sign-in from the requested-service banner.
+func (cp *ConsentPage) LoginRequestedService(_ context.Context, serviceName string) error {
+	return cp.requestedServiceBanner(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Log in to " + serviceName,
+	}).Click()
+}
+
+// IsRequestedCandidate reports whether a permission set is marked as covering a requested service.
+func (cp *ConsentPage) IsRequestedCandidate(_ context.Context, permissionSetName string) (bool, error) {
+	count, err := cp.permissionSetCard(permissionSetName).Locator("[data-testid='requested-candidate-badge']").Count()
+	if err != nil {
+		return false, fmt.Errorf("failed to read requested candidate marker for %q: %w", permissionSetName, err)
+	}
+	return count > 0, nil
+}
+
+// SaveDisabledReason returns the accessible description explaining why Save is disabled.
+func (cp *ConsentPage) SaveDisabledReason(_ context.Context) (string, error) {
+	describedBy, err := cp.getConsentActionButton("Save").GetAttribute("aria-describedby")
+	if err != nil {
+		return "", fmt.Errorf("failed to read Save description reference: %w", err)
+	}
+	if describedBy == "" {
+		return "", nil
+	}
+	text, err := cp.page().Locator("#" + describedBy).InnerText()
+	if err != nil {
+		return "", fmt.Errorf("failed to read Save description: %w", err)
+	}
+	return strings.TrimSpace(text), nil
+}
+
+// ClickSave submits the existing-grant Save action.
+func (cp *ConsentPage) ClickSave(_ context.Context) error {
+	return cp.getConsentActionButton("Save").Click()
+}
+
+// TakeRequestedServiceScreenshot captures the consent page in a requested-service state.
+func (cp *ConsentPage) TakeRequestedServiceScreenshot(ctx context.Context, name string) error {
+	return cp.TakeScreenshot(ctx, name)
+}
