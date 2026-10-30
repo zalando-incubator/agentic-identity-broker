@@ -249,8 +249,9 @@ only at Save is insufficient. No browser-submitted service UUIDs replace the sea
                         description: {type: string}
                         scope_url: {type: string, format: uri, description: Current Virtual Service Scope / page URL.}
                     session:
-                      allOf: [{$ref: "#/components/schemas/SessionStatus"}]
-                      nullable: true
+                      oneOf:
+                        - {$ref: "#/components/schemas/SessionStatus"}
+                        - {type: object, nullable: true, enum: [null]}
                     dependent_agents:
                       type: array
                       items: {$ref: "#/components/schemas/AffectedAgent"}
@@ -262,7 +263,7 @@ only at Save is insufficient. No browser-submitted service UUIDs replace the sea
 Spec Journey 2, Step 1:
 
 ```json
-{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents","scope_url":"https://broker.example.com/sessions/github"},"session":null,"dependent_agents":[{"id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
+{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents","scope_url":"https://broker.example.com/sessions/github"},"session":null,"dependent_agents":[{"agent_id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
 ```
 
 - `dependent_agents` lists only agents whose grants the authenticated principal owns and that

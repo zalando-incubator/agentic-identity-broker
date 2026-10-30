@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.1.0
+  version: 1.2.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -344,6 +344,16 @@ paths:
         - Show available services and permissions
         - Help users make informed consent decisions
         - Link to governance and documentation
+
+        **Requested Services**:
+
+        With a valid `session_token`, `requested_service_ids` and
+        `requested_service_coverage` describe the services requested by virtual scopes in the
+        sealed authorization request. Both arrays are always present and are empty without
+        requested services. IDs and scope-to-service bindings are server-derived.
+        Save requires selection, required-scope coverage, usable baseline and usable contributions
+        from every selected covering permission set. Unselected unusable candidates do not block
+        Save. Login or refresh invalidates the snapshot; submission verifies fresh server state.
       operationId: getAgentDetail
       tags:
         - Consent
@@ -371,10 +381,33 @@ paths:
               schema:
                 $ref: "#/components/schemas/GetAgentDetailResponse"
               examples:
+                requestedService:
+                  summary: Requested GitHub with complementary candidate coverage and unusable session
+                  value:
+                    data:
+                      agent:
+                        agentId: 550e8400-e29b-41d4-a716-446655440000
+                        displayName: Data Analysis Assistant
+                        description: Analyzes datasets using delegated services
+                      services: []
+                      requested_service_ids: [880e8400-e29b-41d4-a716-446655440010]
+                      requested_service_coverage:
+                        - service_id: 880e8400-e29b-41d4-a716-446655440010
+                          required_scopes: [repo, "user:email"]
+                          usability: unusable
+                          covering_permission_sets:
+                            - permission_set_id: 770e8400-e29b-41d4-a716-446655440001
+                              supplied_required_scopes: [repo, "user:email"]
+                              usability: unusable
+                            - permission_set_id: 770e8400-e29b-41d4-a716-446655440003
+                              supplied_required_scopes: [repo]
+                              usability: unusable
                 agentWithServices:
                   summary: Agent with multiple services
                   value:
                     data:
+                      requested_service_ids: []
+                      requested_service_coverage: []
                       agent:
                         agentId: 550e8400-e29b-41d4-a716-446655440000
                         displayName: Data Analysis Assistant
@@ -508,7 +541,8 @@ paths:
         - Use `session_token` query parameter to resume an OAuth2 authorization flow after consent
         - Applies to all agent modes: local, proxy, and CIMD
         - Token is a self-contained JWE carrying all authorization session claims (agent_id, principal, original_url, TTL) — no server-side session lookup is performed
-        - Returns HTTP 201 with `redirect_url` field containing the original authorization URL (with original `state`, `redirect_uri`, PKCE, and `client_id` parameters intact)
+        - Returns HTTP 201 with `redirect_url` containing the sealed original authorization URL (original `state`, `redirect_uri`, PKCE, and `client_id` intact) plus the same `session_token` JWE, without renewing its expiry
+        - Authorization re-entry independently verifies the request, principal, agent, expiry and scope-to-service bindings before code issuance or upstream redirect; the continuation token is never forwarded
         - Frontend must navigate to `redirect_url` using `window.location.href` to resume the OAuth2 flow
         - Returns `400 Bad Request` with error code `session_expired` if the token is invalid or expired
         - Returns `400 Bad Request` if the session agent does not match the agent in the URL path
@@ -525,6 +559,11 @@ paths:
         - All scopes must be valid for the specified services
         - At least one scope required per service
         - Returns `400 Bad Request` with details if validation fails
+        - When sealed requested services exist, each must be selected, cover required scopes and
+          have a usable session for the submitted selection's effective provider scopes. This
+          check runs after existing structural validation and before any persistence. Failure
+          returns `400 requested service not satisfied`, leaves the grant and expiry unchanged,
+          and returns no `redirect_url`.
 
         **Use Cases**:
 
@@ -615,7 +654,7 @@ paths:
                           - 880e8400-e29b-41d4-a716-446655440010
                       created_at: "2025-12-19T10:00:00Z"
                       updated_at: "2025-12-19T10:00:00Z"
-                    redirect_url: /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcb&response_type=code&state=abc123
+                    redirect_url: /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcb&response_type=code&state=abc123&session_token=SYNTHETIC_JWE
         "204":
           description: Grant revoked successfully (empty granted_permission_sets)
         "400":
@@ -635,6 +674,11 @@ paths:
                   value:
                     error: invalid request
                     message: "grant validation failed: permission set <permission_set_id> is not declared by the agent"
+                requestedServiceNotSatisfied:
+                  summary: Requested service is not covered or usable; no grant is written
+                  value:
+                    error: requested service not satisfied
+                    message: "requested services must be selected, cover required scopes and have a usable session: 880e8400-e29b-41d4-a716-446655440010"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -761,6 +805,85 @@ paths:
                     session: null
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/third-party/sessions/{service}:
+    get:
+      summary: Get a service and the authenticated user's session
+      description: |
+        Resolves a current canonical ID or UUID and returns the service even when no session
+        exists (`session: null`). Unknown services return 404. Only dependent agents whose
+        grants belong to the authenticated principal are included. A definitively unusable
+        session has `is_expired: true`. This read never attempts a provider refresh or changes
+        grants. Refresh and terminate use the existing UUID-based session routes.
+        The legacy `GET /api/third-party/{serviceId}/session` remains UUID-only and returns
+        404 when no session exists.
+      operationId: getServiceSessionDetail
+      tags:
+        - Third-Party Sessions
+      security:
+        - preAuth: []
+      parameters:
+        - name: service
+          in: path
+          required: true
+          description: Current canonical ID or UUID of the third-party service.
+          schema:
+            type: string
+            maxLength: 128
+          example: github
+      responses:
+        "200":
+          description: Service detail, with a nullable session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceSessionDetailResponse"
+              examples:
+                noSession:
+                  summary: Known service with no session for the authenticated principal
+                  value:
+                    data:
+                      service:
+                        id: 880e8400-e29b-41d4-a716-446655440010
+                        canonical_id: github
+                        display_name: GitHub Production
+                        description: Repository access for delegated agents
+                        scope_url: https://broker.example.com/sessions/github
+                      session: null
+                      dependent_agents:
+                        - agent_id: 550e8400-e29b-41d4-a716-446655440000
+                          display_name: Data Analysis Assistant
+                activeSession:
+                  summary: Known service with an active session
+                  value:
+                    data:
+                      service:
+                        id: 880e8400-e29b-41d4-a716-446655440010
+                        canonical_id: github
+                        display_name: GitHub Production
+                        scope_url: https://broker.example.com/sessions/github
+                      session:
+                        session_id: 990e8400-e29b-41d4-a716-446655440001
+                        initiated_at: "2026-10-29T10:00:00Z"
+                        access_token_expires_at: "2026-10-29T11:00:00Z"
+                        is_expired: false
+                        has_refresh_token: true
+                        scope: [repo, "user:email"]
+                        dependent_agent_count: 0
+                        tokens_encrypted: true
+                      dependent_agents: []
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: not_found
+                message: service not found
         "500":
           $ref: "#/components/responses/InternalError"
   /api/third-party/{serviceId}/oauth2/authorize:
@@ -1295,6 +1418,31 @@ paths:
         - Redirects to the upstream authorization endpoint with PKCE parameters
         - Agent ID is embedded in the state token for callback correlation
 
+        **Virtual Service Scopes**:
+        - A virtual scope is `<server.enduser.public_url without trailing slash>/sessions/<identifier>`.
+          Recognition uses an exact, case-sensitive configured prefix, never the request Host.
+          The identifier is a lowercase canonical UUID or a canonical ID matching
+          `^[A-Za-z0-9._-]{1,128}$` that is not UUID-shaped. Empty identifiers, extra slashes,
+          query, fragment, percent-encoding and uppercase UUID forms under that prefix are malformed.
+          External-origin and case-variant lookalikes remain ordinary scopes.
+        - Each virtual scope requires a usable, grant-covered service for this request only,
+          without changing permanent agent requirements or selecting optional permission sets.
+          Virtual scopes are exempt from `allowed_scopes` but not service eligibility checks.
+        - After redirect validation, malformed, unknown or agent-ineligible services redirect
+          with `invalid_scope` and `requested service scope is not permitted`, preserving `state`.
+        - Uncovered services, insufficient required-scope coverage, missing or definitively unusable
+          sessions redirect to `/agents/{agent-id}?session_token=<JWE>`. The JWE seals requested
+          service IDs and scope-to-UUID bindings. Unverifiable transient usability instead redirects
+          with `temporarily_unavailable`.
+        - When every requested service is satisfied, local issuance records exact requested scope
+          forms and bindings; proxy authorization removes all virtual scopes upstream and omits
+          an empty scope parameter.
+        - Protected post-Save re-entry validates the same JWE's expiry, principal, agent and
+          original request (excluding only the continuation `session_token`), then re-resolves
+          every binding before issuance or upstream redirect. Identity reassignment returns
+          `invalid_scope`. Invalid context uses existing invalid-session handling, never fresh
+          unbound resolution. Re-entering consent preserves original bindings and expiry.
+
         **Error Handling** (RFC 6749 §4.1.2.1):
 
         Direct JSON responses (no redirect — RFC 6749 §4.1.2.1):
@@ -1348,9 +1496,22 @@ paths:
         - name: scope
           in: query
           required: false
-          description: Space-delimited list of requested OAuth2 scopes.
+          description: |
+            Space-delimited OAuth2 scopes, optionally including virtual service scopes.
+            Each named service is required for this request only. Virtual scopes are exempt
+            from the agent's allowed_scopes list and are never forwarded upstream.
           schema:
             type: string
+        - name: session_token
+          in: query
+          required: false
+          description: |
+            Opaque JWE for server-built post-Save continuation. The server independently
+            authenticates expiry, principal, agent, original request and scope-to-service
+            bindings. Consumed locally; never forwarded upstream or to the client callback.
+          schema:
+            type: string
+            minLength: 1
         - name: code_challenge
           in: query
           required: false
@@ -1462,6 +1623,32 @@ paths:
         credential headers such as `Authorization`, cookies, or proxy identity headers. The broker
         returns only `Content-Type`, `Cache-Control`, `Pragma`, and `WWW-Authenticate` from upstream
         responses. It never returns upstream cookies or arbitrary response headers.
+        ### Local Virtual Service Scope Issuance and Refresh
+        Local token-response `scope` and access-token JWT `scope` contain the same granted set,
+        including virtual scopes in their exact requested forms. Refresh may request only a
+        subset of the predecessor's current scopes; omitted scope uses that current set.
+        Successful narrowing persists the narrowed successor scope, but retains all original
+        service-to-UUID bindings as continuing-service assurance. Every refresh rechecks all
+        bound services against current eligibility, grant-derived effective provider scopes and
+        session usability, including bindings outside the narrowed scope. Retained bindings
+        cannot re-grant removed scopes; scope-less refresh never restores them.
+        Before rotation, widening returns `400 invalid_scope` with
+        `scope <scope> requires interactive authorization`. A definitively unsatisfied binding
+        returns `400 invalid_scope` with
+        `scope <scope> is no longer satisfied; interactive authorization required`.
+        Transient unverifiability returns `500 server_error`. None of these failures rotates
+        or revokes the refresh token. Existing revoked-grant `invalid_grant` and replay handling
+        retain precedence. Only UUID scopes survive canonical-ID renames; no aliases are kept.
+        `client_credentials` with a virtual scope returns `400 invalid_scope` with
+        `service scopes require a user authorization`.
+
+        ### Proxy Refresh
+        The broker strips virtual scopes from the forwarded `scope` form field and omits
+        the field when empty. The upstream response and refresh rotation are preserved under
+        the existing response-header allowlist. No post-response service-usability veto is
+        applied; successful proxy refresh does not attest to broker-managed service usability.
+        Upstream token claims are never modified.
+
         ### Token Exchange Grant (RFC 8693)
         Exchange a token issued by the Upstream OAuth2 Server for a third-party OAuth2 token
         stored in the token vault.
@@ -1497,7 +1684,8 @@ paths:
         - A missing session, or an expired session without a usable refresh token, returns
           400 `invalid_grant`. Its `error_uri` starts authorization for the resolved service
           at `<public URL>/api/third-party/{service-id}/oauth2/authorize` with an encoded
-          `<public URL>/sessions` return URI.
+          `<public URL>/sessions/<identifier>` return URI. The identifier is the resolved
+          service's current canonical ID, or UUID if it has no canonical ID.
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
           `invalid_grant`, the broker returns 400 `invalid_grant` with the same service-specific
           `error_uri`. The stored tokens are left unchanged, and the refresh token is recorded
@@ -1514,6 +1702,13 @@ paths:
           return 401 `invalid_client`. Neither is a provider-session recovery request.
         - Descriptions are credential-free protocol summaries, not stable diagnostic identifiers.
           Clients use `error` and the optional `error_uri` to choose the recovery flow.
+
+        Recoverable errors after resource resolution also include the resolved service's current
+        virtual `scope`, in canonical form or UUID form without a canonical ID. This includes
+        missing, expired or empty grants, uncovered services, missing/unusable sessions and
+        insufficient stored scopes. Unknown resources, invalid credentials, policy denials and
+        server errors carry neither recovery scope nor action URI. The broker sends no
+        `WWW-Authenticate` header; gateways may copy the scope into their challenge.
 
         ### Token Exchange Grant (RFC 8693) — User Impersonation (local mode only)
         Mints a locally issued access token representing a subject user and attributing the acting
@@ -1648,11 +1843,13 @@ paths:
                   client_secret: "secret-xyz"
       responses:
         "200":
-          description: Successful token exchange or authorization code exchange
+          description: Successful token exchange, authorization code exchange, refresh, or client credentials grant
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TokenExchangeResponse"
+                anyOf:
+                  - $ref: "#/components/schemas/TokenExchangeResponse"
+                  - $ref: "#/components/schemas/OAuth2TokenResponse"
               examples:
                 success:
                   summary: Successful Token Exchange Response
@@ -1661,6 +1858,22 @@ paths:
                     token_type: "Bearer"
                     issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
                     expires_in: 3600
+                local_service_scope:
+                  summary: Locally issued scopes match the signed JWT scope claim
+                  value:
+                    access_token: SYNTHETIC_LOCAL_JWT
+                    token_type: Bearer
+                    expires_in: 3600
+                    refresh_token: SYNTHETIC_REFRESH_2
+                    scope: "openid offline_access https://broker.example.com/sessions/github"
+                narrowed_local_refresh:
+                  summary: Narrowed response and successor scope, retaining all original assurance bindings
+                  value:
+                    access_token: SYNTHETIC_NARROWED_JWT
+                    token_type: Bearer
+                    expires_in: 3600
+                    refresh_token: SYNTHETIC_REFRESH_3
+                    scope: "openid offline_access"
                 impersonation_success:
                   summary: Successful Impersonation Response
                   value:
@@ -1696,13 +1909,30 @@ paths:
                   value:
                     error: "invalid_grant"
                     error_description: "User session is unavailable. Please re-authenticate."
-                    error_uri: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+                    error_uri: "https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub"
+                    scope: "https://broker.example.com/sessions/github"
                 refresh_rejected:
                   summary: Provider rejected the stored refresh token
                   value:
                     error: "invalid_grant"
                     error_description: "User session is unavailable. Please re-authenticate."
-                    error_uri: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+                    error_uri: "https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub"
+                    scope: "https://broker.example.com/sessions/github"
+                refresh_scope_widening:
+                  summary: Local refresh cannot add or restore a removed virtual scope; token is not consumed
+                  value:
+                    error: invalid_scope
+                    error_description: "scope https://broker.example.com/sessions/github requires interactive authorization"
+                refresh_service_unsatisfied:
+                  summary: Local refresh recheck failed; token is not consumed
+                  value:
+                    error: invalid_scope
+                    error_description: "scope https://broker.example.com/sessions/github is no longer satisfied; interactive authorization required"
+                userless_service_scope:
+                  summary: Client credentials cannot request service scopes
+                  value:
+                    error: invalid_scope
+                    error_description: service scopes require a user authorization
                 missing_upstream_client_id:
                   summary: Agent has no upstream client_id (proxy mode)
                   value:
@@ -1758,6 +1988,7 @@ paths:
                     error: "access_denied"
                     error_description: "User authorization is insufficient. Please re-consent."
                     error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+                    scope: "https://broker.example.com/sessions/github"
                 impersonation_access_denied:
                   summary: Impersonation - no rule permits the request
                   value:
@@ -1781,6 +2012,10 @@ paths:
                   value:
                     error: "server_error"
                     error_description: "An unexpected error occurred"
+                service_usability_unverifiable:
+                  summary: Local refresh service usability cannot be verified; token is not consumed
+                  value:
+                    error: server_error
                 cimd_dependency_failure:
                   summary: CIMD metadata or key set unavailable
                   value:
@@ -2954,7 +3189,10 @@ components:
           enum:
             - connected
             - not_connected
-          description: User's current connection status with this service
+          description: |
+            Connection usability for the saved selection's effective provider scopes, not an
+            unsaved selection or every candidate permission set. Requested-service Save gating
+            separately evaluates the baseline and selected candidate contributions.
     GetAgentDetailResponse:
       type: object
       required:
@@ -2965,6 +3203,8 @@ components:
           required:
             - agent
             - services
+            - requested_service_ids
+            - requested_service_coverage
           properties:
             agent:
               $ref: "#/components/schemas/AgentDetail"
@@ -3009,12 +3249,67 @@ components:
                 Same as services field but with reduced detail.
 
                 "
+            requested_service_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: Server-derived services named by virtual scopes in the sealed session_token; empty without requested services.
+            requested_service_coverage:
+              type: array
+              items:
+                $ref: "#/components/schemas/RequestedServiceCoverage"
+              description: Baseline and candidate contribution usability from one verified session snapshot; empty without requested services.
             cimd_metadata:
               $ref: "#/components/schemas/CIMDMetadata"
               nullable: true
               description: |
                 CIMD trust metadata present when the authorization request used a URL-format
                 client_id. Null for agents with opaque (UUID) client identifiers.
+    RequestedServiceCoverage:
+      type: object
+      required: [service_id, required_scopes, usability, covering_permission_sets]
+      properties:
+        service_id:
+          type: string
+          format: uuid
+        required_scopes:
+          type: array
+          items:
+            type: string
+          description: The agent's configured required provider scopes for this service.
+        usability:
+          $ref: "#/components/schemas/RequestedServiceUsability"
+        covering_permission_sets:
+          type: array
+          items:
+            type: object
+            required: [permission_set_id, supplied_required_scopes, usability]
+            properties:
+              permission_set_id:
+                type: string
+                format: uuid
+              supplied_required_scopes:
+                type: array
+                items:
+                  type: string
+                description: Subset of required_scopes supplied by this candidate for the service.
+              usability:
+                allOf:
+                  - $ref: "#/components/schemas/RequestedServiceUsability"
+                description: |
+                  Usability for this candidate's effective provider-scope contribution against
+                  the same verified snapshot as the baseline. Only explicit fixed-scope
+                  requirements intersect with the required-scope ceiling; otherwise use the
+                  full contribution. Raw permission-set scopes are not exposed.
+    RequestedServiceUsability:
+      type: string
+      enum: [usable, missing, unusable, unavailable]
+      description: |
+        Baseline usability checks configured required scopes (empty baseline for require_all_scopes
+        or no explicit requirements); selected candidates must independently be usable too.
+        unavailable means verification could not complete now; retry rather than treating it
+        as a definitive login requirement. Submission rechecks fresh state.
     CIMDMetadata:
       type: object
       required:
@@ -3281,8 +3576,12 @@ components:
         redirect_url:
           type: string
           format: uri-reference
-          description: "Optional redirect URL returned when a valid session_token query parameter was present. Contains the original authorization request URL so the frontend can resume the OAuth2 flow via window.location.href (not XHR)."
-          example: /oauth2/authorize?client_id=example&redirect_uri=http://localhost:9002/callback
+          description: |
+            Optional server-built continuation returned with a valid session_token. Contains the
+            sealed original authorization URL plus the same session_token JWE, without renewing
+            its expiry. Follow unchanged via window.location.href (not XHR). The authorization
+            endpoint independently revalidates the protected request and service bindings.
+          example: /oauth2/authorize?client_id=example&redirect_uri=http://localhost:9002/callback&session_token=SYNTHETIC_JWE
 
     # OAuth2 Schemas
     OAuth2ErrorResponse:
@@ -3359,8 +3658,11 @@ components:
         scope:
           type: string
           description: |
-            Granted scopes.
-            Space-separated list of scopes if different from requested.
+            Local issuance returns the exact granted scope set, matching the access-token JWT
+            scope claim and including virtual scopes in their requested forms. Refresh returns
+            the requested subset of the predecessor's current scopes, or its current scopes
+            when omitted. Successor scope stays narrowed; all original service bindings remain
+            assurance obligations and cannot restore removed scopes.
           example: "openid profile"
 
     OAuth2MetadataResponse:
@@ -3888,6 +4190,44 @@ components:
         tokens_encrypted:
           type: boolean
           description: Indicates tokens are stored encrypted (always true)
+    ServiceSessionDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [service, session, dependent_agents]
+          properties:
+            service:
+              type: object
+              required: [id, display_name, scope_url]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                canonical_id:
+                  type: string
+                  nullable: true
+                display_name:
+                  type: string
+                description:
+                  type: string
+                scope_url:
+                  type: string
+                  format: uri
+                  description: Current virtual service scope and service-page URL.
+            session:
+              oneOf:
+                - $ref: "#/components/schemas/SessionStatus"
+                - type: object
+                  nullable: true
+                  enum: [null]
+              description: Null when the known service has no session for this principal.
+            dependent_agents:
+              type: array
+              items:
+                $ref: "#/components/schemas/AffectedAgent"
+              description: Only agents with service-referencing grants owned by this principal.
     AffectedAgent:
       type: object
       required:
@@ -4136,9 +4476,10 @@ components:
             - invalid_client
             - invalid_grant
             - invalid_target
+            - invalid_scope
             - access_denied
             - server_error
-          description: RFC 8693 error code.
+          description: OAuth2 token endpoint error code, including RFC 8693 exchange failures.
           example: "access_denied"
         error_description:
           type: string
@@ -4147,8 +4488,17 @@ components:
         error_uri:
           type: string
           format: uri
-          description: URI for broker action. Recoverable third-party sessions link to the resolved service's OAuth2 initiation GET with an encoded same-origin `/sessions` return URI. Grant failures link to the agent's consent page.
-          example: "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+          description: URI for broker action. Recoverable third-party sessions link to the resolved service's OAuth2 initiation GET with an encoded same-origin `/sessions/<identifier>` return URI (current canonical ID, or UUID when absent). Grant failures link to the agent's consent page. Non-recoverable errors omit this member.
+          example: "https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub"
+        scope:
+          type: string
+          format: uri
+          description: |
+            Current virtual service scope for a resolved service, canonical or UUID when no
+            canonical ID exists. Present only with error_uri on recoverable grant/session/scope
+            failures after resource resolution. Never present on unresolved or non-recoverable
+            errors. Gateways may use it in an insufficient_scope challenge.
+          example: https://broker.example.com/sessions/github
 
     # ---- Tool Approval Schemas ----
     ApprovalError:

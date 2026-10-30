@@ -1370,7 +1370,7 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
-**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI; changing its target within the documented recovery purpose does not itself require a version increase ([ADR 044](adrs/044-service-specific-session-recovery-url.md)). End-User OpenAPI `1.2.0` documents the approved Feature 055 additions: virtual scopes, protected consent continuation, requested-service coverage and the additive service-session detail read. [ADRs 045](adrs/045-service-session-recovery-return.md) and [046](adrs/046-virtual-service-scopes.md) record those decisions; runtime implementation remains incomplete in [the feature checkpoint](specs/055-incremental-service-authorization/quickstart.md#implementation-checkpoint--2026-10-30). Admin API versioning is separate.
 
 (List any third-party services or external APIs the system interacts with.)
 
