@@ -1034,6 +1034,24 @@ test("a blocked implementation resumes under its approval although it changed th
   })), /changed after the approval/);
 });
 
+test("implementation may tick and add tasks, but only after it started and never in the reviewed spec or plan", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
+  const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
+  const partial = comment(result("implement", { status: "blocked", next_step: "Install ginkgo" }), { id: 60 });
+  const ticked = { [`${spec}/tasks.md`]: "- [X] T001 Implement feature\n- [ ] T002 Record the new finding" };
+  const attempt = (comments, extra) => route(fixture("pull_request_target", payload, {
+    comments, extra, reactions: [thumbs()], tree: "tree-2",
+  }));
+  assert.equal((await attempt([...reviewed, partial], ticked)).action, "implement");
+  const resumed = fixture("pull_request_target", {}, {
+    comments: [...reviewed, partial], extra: ticked, reactions: [thumbs()], tree: "tree-2",
+  });
+  assert.equal((await prepare({ ...resumed, inputs: { phase: "implement", pr: 42 } })).previous.phase, "reanalyze");
+  await assert.rejects(attempt(reviewed, ticked), /tasks\.md changed after reanalyze/);
+  await assert.rejects(attempt([...reviewed, partial], { ...ticked, [`${spec}/plan.md`]: "Revised plan" }),
+    /plan\.md changed after reanalyze/);
+});
+
 test("the approval comment lists each item with a pinned link, replaces the previous one, and binds the reviewed state", async () => {
   const head = "a".repeat(40);
   const contract = `${spec}/contracts/api.yaml`;

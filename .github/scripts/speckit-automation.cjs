@@ -151,6 +151,12 @@ function requireResult(result, required, hashes, { clean = false, run } = {}) {
   }
 }
 
+// Implementation ticks and adds tasks, so tasks.md is only held to the reanalysis until it starts.
+function reviewedDocuments(entries, reanalysis) {
+  const started = entries.some((entry) => entry.result.phase === "implement" && entry.comment.id > reanalysis.comment.id);
+  return started ? ["spec.md", "plan.md"] : documents;
+}
+
 // Later phases (plan, remediate) may revise the specification and record its hash,
 // so the specification is compared with the latest result rather than the clarification.
 function requireSpecification(entries, hashes) {
@@ -354,7 +360,7 @@ async function route({ github, context }) {
   if (action === "implement") {
     const analysis = latest(entries, ["analyze", "reanalyze"]);
     if (analysis?.result.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
-    requireResult(analysis.result, documents, current.hashes, { clean: true });
+    requireResult(analysis.result, reviewedDocuments(entries, analysis), current.hashes, { clean: true });
     await approval(github, repo, pr, current.feature, analysis.comment, entries);
   }
   return routed(action);
@@ -392,7 +398,8 @@ async function prepare({ github, context, inputs }) {
       if (inputs.phase === "implement" && data.previous?.phase !== "reanalyze") {
         throw new Error("Independent reanalysis is required before implementation");
       }
-      const required = inputs.phase === "tasks" ? ["spec.md", "plan.md"] : documents;
+      const required = inputs.phase === "tasks" ? ["spec.md", "plan.md"] :
+        inputs.phase === "implement" ? reviewedDocuments(entries, upstream) : documents;
       requireResult(data.previous, required, current.hashes, {
         clean: inputs.phase === "implement",
         run: ["tasks", "analyze", "remediate", "reanalyze"].includes(inputs.phase) ? run : undefined,
