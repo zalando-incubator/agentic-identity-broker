@@ -290,13 +290,15 @@ func (r *InMemoryUserSessionRepository) CountSessionsByExpiry(ctx context.Contex
 		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	type groupKey struct {
 		serviceID     id.ServiceID
 		accessExpiry  storage.AccessExpiryClass
 		refreshUsable bool
 	}
 	counts := make(map[groupKey]int)
-	r.mu.RLock()
 	for _, session := range r.sessions {
 		key := groupKey{serviceID: session.ServiceID, accessExpiry: storage.AccessExpiryExpired}
 		switch {
@@ -311,24 +313,11 @@ func (r *InMemoryUserSessionRepository) CountSessionsByExpiry(ctx context.Contex
 			(session.RefreshTokenExpiresAt == nil || session.RefreshTokenExpiresAt.After(now))
 		counts[key]++
 	}
-	r.mu.RUnlock()
-
-	// Provider writes read sessions while holding the provider lock, so take it only after RUnlock.
-	canonicalIDs := make(map[id.ServiceID]string)
-	if r.provider != nil {
-		r.provider.mu.RLock()
-		for key := range counts {
-			if record := r.provider.providers[key.serviceID]; record != nil && record.entity.CanonicalID != nil {
-				canonicalIDs[key.serviceID] = *record.entity.CanonicalID
-			}
-		}
-		r.provider.mu.RUnlock()
-	}
 
 	groups := make([]storage.SessionExpiryGroup, 0, len(counts))
 	for key, count := range counts {
 		groups = append(groups, storage.SessionExpiryGroup{
-			ServiceID: key.serviceID, ServiceCanonicalID: canonicalIDs[key.serviceID], AccessExpiry: key.accessExpiry, RefreshUsable: key.refreshUsable, Count: count,
+			ServiceID: key.serviceID, AccessExpiry: key.accessExpiry, RefreshUsable: key.refreshUsable, Count: count,
 		})
 	}
 	return groups, nil

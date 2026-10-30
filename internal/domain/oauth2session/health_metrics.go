@@ -86,10 +86,18 @@ type SessionHealthSnapshot struct {
 	CanonicalIDs map[id.ServiceID]string
 }
 
+// ServiceCanonicalIDReader resolves canonical IDs for the service_id attribute.
+// *thirdparty.ThirdpartyOAuth2ProviderService satisfies it.
+type ServiceCanonicalIDReader interface {
+	CanonicalIDs(ctx context.Context, ids []id.ServiceID) (map[id.ServiceID]string, error)
+}
+
 // SessionHealthMetrics publishes the oauth2_sessions gauge. Each metric collection runs one
-// grouped count query; a failed query publishes nothing for that collection.
+// grouped count query and one canonical ID lookup; a failed query publishes nothing for that
+// collection, while a failed lookup falls back to UUIDs.
 type SessionHealthMetrics struct {
 	repo         ports.UserSessionHealthRepository
+	services     ServiceCanonicalIDReader
 	lookahead    time.Duration
 	queryTimeout time.Duration
 	logger       *slog.Logger
@@ -100,14 +108,14 @@ type SessionHealthMetrics struct {
 }
 
 // NewSessionHealthMetrics registers the oauth2_sessions gauge on the global meter provider.
-func NewSessionHealthMetrics(repo ports.UserSessionHealthRepository, lookahead, queryTimeout time.Duration, logger *slog.Logger) (*SessionHealthMetrics, error) {
+func NewSessionHealthMetrics(repo ports.UserSessionHealthRepository, services ServiceCanonicalIDReader, lookahead, queryTimeout time.Duration, logger *slog.Logger) (*SessionHealthMetrics, error) {
 	meter := otel.Meter("oauth2session")
 	gauge, err := meter.Int64ObservableGauge("oauth2_sessions",
 		metric.WithDescription("Stored third-party sessions by service, access-token expiry class and refreshability"), metric.WithUnit("{session}"))
 	if err != nil {
 		return nil, fmt.Errorf("create oauth2_sessions gauge: %w", err)
 	}
-	m := &SessionHealthMetrics{repo: repo, lookahead: lookahead, queryTimeout: queryTimeout, logger: logger, gauge: gauge}
+	m := &SessionHealthMetrics{repo: repo, services: services, lookahead: lookahead, queryTimeout: queryTimeout, logger: logger, gauge: gauge}
 	m.registration, err = meter.RegisterCallback(m.observe, gauge)
 	if err != nil {
 		return nil, fmt.Errorf("register oauth2_sessions callback: %w", err)
@@ -123,7 +131,7 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 	if err != nil {
 		return SessionHealthSnapshot{}, err
 	}
-	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthKey]int), CanonicalIDs: make(map[id.ServiceID]string)}
+	snapshot := SessionHealthSnapshot{Counts: make(map[id.ServiceID]map[SessionHealthKey]int)}
 	for _, group := range groups {
 		if group.Count <= 0 {
 			return SessionHealthSnapshot{}, fmt.Errorf("session expiry group count %d must be positive", group.Count)
@@ -138,22 +146,32 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 			snapshot.Counts[group.ServiceID] = series
 		}
 		series[key] += group.Count
-		if group.ServiceCanonicalID != "" {
-			snapshot.CanonicalIDs[group.ServiceID] = group.ServiceCanonicalID
-		}
+	}
+	serviceIDs := make([]id.ServiceID, 0, len(snapshot.Counts))
+	for serviceID := range snapshot.Counts {
+		serviceIDs = append(serviceIDs, serviceID)
+	}
+	snapshot.CanonicalIDs, err = m.services.CanonicalIDs(queryCtx, serviceIDs)
+	if err != nil {
+		// Same rule as the counters: a service without a resolvable canonical ID keeps its UUID.
+		m.logger.WarnContext(ctx, "session health canonical ID lookup failed, using service UUIDs", "error_kind", string(storageErrorKind(err)))
+		snapshot.CanonicalIDs = nil
 	}
 	return snapshot, nil
+}
+
+func storageErrorKind(err error) storage.ErrorKind {
+	var storageErr *storage.StorageError
+	if errors.As(err, &storageErr) {
+		return storageErr.Kind
+	}
+	return storage.ErrorKindUnknown
 }
 
 func (m *SessionHealthMetrics) observe(ctx context.Context, observer metric.Observer) error {
 	snapshot, err := m.snapshot(ctx)
 	if err != nil {
-		kind := storage.ErrorKindUnknown
-		var storageErr *storage.StorageError
-		if errors.As(err, &storageErr) {
-			kind = storageErr.Kind
-		}
-		m.logger.WarnContext(ctx, "session health query failed", "error_kind", string(kind))
+		m.logger.WarnContext(ctx, "session health query failed", "error_kind", string(storageErrorKind(err)))
 		return nil
 	}
 	for serviceID, series := range snapshot.Counts {

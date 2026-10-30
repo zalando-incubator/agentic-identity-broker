@@ -31,18 +31,16 @@ LIMIT $4`
 
 // countSessionsByExpiryQuery mirrors storage.UserSession.AccessTokenExpiresBy ($1 is the
 // inclusive threshold), SessionIsUsable ($2 is now) and CanRefresh without reading token material.
-const countSessionsByExpiryQuery = `SELECT us.service_id,
-       COALESCE(s.canonical_id, '') AS service_canonical_id,
-       CASE WHEN us.access_token_expires_at IS NULL THEN 'unknown'
-            WHEN us.access_token_expires_at > $1 THEN 'after_threshold'
-            WHEN us.access_token_expires_at > $2 THEN 'due'
+const countSessionsByExpiryQuery = `SELECT service_id,
+       CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
+            WHEN access_token_expires_at > $1 THEN 'after_threshold'
+            WHEN access_token_expires_at > $2 THEN 'due'
             ELSE 'expired' END AS access_expiry,
-       (COALESCE(octet_length(us.encrypted_refresh_token), 0) > 0
-        AND (us.refresh_token_expires_at IS NULL OR us.refresh_token_expires_at > $2)) AS refresh_usable,
+       (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
+        AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
        COUNT(*) AS session_count
-FROM user_sessions us
-LEFT JOIN thirdparty_oauth2_services s ON s.id = us.service_id
-GROUP BY 1, 2, 3, 4`
+FROM user_sessions
+GROUP BY 1, 2, 3`
 
 // SQL projection of storage.SessionIsUsable; both active-session reads share this predicate.
 const usableSessionPredicate = `(access_token_expires_at IS NULL OR access_token_expires_at > NOW()
@@ -533,11 +531,10 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 }
 
 type sessionExpiryGroupRecord struct {
-	ServiceID          id.ServiceID `db:"service_id"`
-	ServiceCanonicalID string       `db:"service_canonical_id"`
-	AccessExpiry       string       `db:"access_expiry"`
-	RefreshUsable      bool         `db:"refresh_usable"`
-	Count              int          `db:"session_count"`
+	ServiceID     id.ServiceID `db:"service_id"`
+	AccessExpiry  string       `db:"access_expiry"`
+	RefreshUsable bool         `db:"refresh_usable"`
+	Count         int          `db:"session_count"`
 }
 
 // CountSessionsByExpiry groups stored sessions by service, access-expiry class, and refresh usability.
@@ -559,7 +556,7 @@ func (r *PostgresUserSessionRepository) CountSessionsByExpiry(ctx context.Contex
 			return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, nil, "unexpected access expiry class")
 		}
 		groups = append(groups, storage.SessionExpiryGroup{
-			ServiceID: record.ServiceID, ServiceCanonicalID: record.ServiceCanonicalID, AccessExpiry: class, RefreshUsable: record.RefreshUsable, Count: record.Count,
+			ServiceID: record.ServiceID, AccessExpiry: class, RefreshUsable: record.RefreshUsable, Count: record.Count,
 		})
 	}
 	return groups, nil

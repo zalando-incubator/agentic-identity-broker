@@ -498,7 +498,7 @@ sum by (service_id, failure_detail) (
 - **FR-027**: `session_sweep_refreshed_total`, `session_sweep_failed_total`, `proactive_refresh_triggered_total`, and `proactive_refresh_failed_total` MUST carry the session's `service_id` next to `triggered_by`.
 - **FR-028**: `session_sweep_failed_total` and `proactive_refresh_failed_total` MUST also carry `failure_detail`, the detail code that `session.oauth2.refresh_failed` logs for the same failure.
 - **FR-029**: `session_sweep_skipped_total` and `proactive_refresh_dropped_total` MUST keep `triggered_by` as their only attribute.
-- **FR-030**: `service_id` on `oauth2_sessions` and on the counters of FR-027 MUST be the service's canonical ID when one is set and its UUID otherwise. The gauge MUST read the canonical ID in its health query (FR-020). The counters MUST read it when they record and MUST use the UUID when that read fails. Sessions of a deleted service are counted under its UUID.
+- **FR-030**: `service_id` on `oauth2_sessions` and on the counters of FR-027 MUST be the service's canonical ID when one is set and its UUID otherwise. The gauge MUST read the canonical IDs once per export cycle, and the counters when they record. Both MUST use the UUID when that read fails. Sessions of a deleted service are counted under its UUID.
 
 **Documentation**
 
@@ -618,7 +618,7 @@ The values schema MUST validate these values. The chart README and release notes
 ### Database Requirements *(if applicable)*
 
 - **DB-001**: No schema change and no migration.
-- **DB-002**: The health gauge reads existing session columns through one additive, read-only repository operation. The operation returns per-service counts by health state. No existing operation can produce these counts: the sweep's expiry listing excludes sessions without a recorded expiry, and the per-service count has no state breakdown. This operation is the only port addition. It MUST be implemented for the in-memory and PostgreSQL backends with parity tests. Each group also carries its service's canonical ID, read in the same query (FR-030).
+- **DB-002**: The health gauge reads existing session columns through one additive, read-only repository operation. The operation returns per-service counts by health state. No existing operation can produce these counts: the sweep's expiry listing excludes sessions without a recorded expiry, and the per-service count has no state breakdown. This operation is the only port addition. It MUST be implemented for the in-memory and PostgreSQL backends with parity tests.
 - **DB-003**: The query MUST NOT read or decrypt token material.
 - **DB-004**: The sweep's candidate selection is unchanged.
 

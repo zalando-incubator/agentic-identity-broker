@@ -33,10 +33,8 @@ const (
 // SessionExpiryGroup counts stored sessions of one service sharing an access-expiry class and
 // refresh usability. Each (ServiceID, AccessExpiry, RefreshUsable) appears at most once per result.
 type SessionExpiryGroup struct {
-	ServiceID id.ServiceID
-	// ServiceCanonicalID is the service's canonical ID, or empty when it has none or no longer exists.
-	ServiceCanonicalID string
-	AccessExpiry       AccessExpiryClass
+	ServiceID    id.ServiceID
+	AccessExpiry AccessExpiryClass
 	// RefreshUsable means a refresh token is present and its expiry is nil or after now (same as CanRefresh).
 	RefreshUsable bool
 	// Count is the number of sessions in this group, > 0.

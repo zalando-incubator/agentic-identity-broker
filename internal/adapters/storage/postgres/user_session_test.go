@@ -1028,24 +1028,6 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		})
 	}
 
-	t.Run("H12 groups carry the canonical ID of a service that has one", func(t *testing.T) {
-		adapter, cleanup := setupUserSessionTestDB(t)
-		defer cleanup()
-		canonical, uncanonical := id.NewServiceID(), id.NewServiceID()
-		insertTestService(t, adapter, canonical)
-		insertTestService(t, adapter, uncanonical)
-		_, err := adapter.db.ExecContext(context.Background(), `UPDATE thirdparty_oauth2_services SET canonical_id = 'calendar' WHERE id = $1`, canonical)
-		require.NoError(t, err)
-		seedExpiryTestSession(t, adapter, canonical, expiryTestID(1), &after)
-		seedExpiryTestSession(t, adapter, uncanonical, expiryTestID(2), &after)
-		got, err := NewUserSessionRepository(adapter).CountSessionsByExpiry(context.Background(), threshold, now)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []storage.SessionExpiryGroup{
-			{ServiceID: canonical, ServiceCanonicalID: "calendar", AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
-			{ServiceID: uncanonical, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
-		}, got)
-	})
-
 	t.Run("H9 expired context", func(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()

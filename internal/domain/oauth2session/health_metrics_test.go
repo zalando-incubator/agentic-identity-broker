@@ -40,6 +40,18 @@ func (f *fakeHealthRepo) CountSessionsByExpiry(ctx context.Context, threshold, n
 	return f.count(ctx)
 }
 
+// fakeCanonicalIDs answers every canonical ID lookup with the same result.
+type fakeCanonicalIDs struct {
+	ids map[id.ServiceID]string
+	err error
+}
+
+func (f fakeCanonicalIDs) CanonicalIDs(context.Context, []id.ServiceID) (map[id.ServiceID]string, error) {
+	return f.ids, f.err
+}
+
+type noCanonicalIDs = fakeCanonicalIDs
+
 func (f *fakeHealthRepo) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -106,7 +118,7 @@ func healthWarnings(t *testing.T, buf *bytes.Buffer) []map[string]any {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "session health query failed" {
+		if record["level"] == "WARN" {
 			records = append(records, record)
 		}
 	}
@@ -157,7 +169,7 @@ func TestSessionHealthMetricsObservesZeroFilledSeriesPerService(t *testing.T) {
 		}, nil
 	}}
 	logger, _ := healthLogger()
-	metrics, err := oauth2session.NewSessionHealthMetrics(repo, 5*time.Minute, time.Second, logger)
+	metrics, err := oauth2session.NewSessionHealthMetrics(repo, noCanonicalIDs{}, 5*time.Minute, time.Second, logger)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = metrics.Close() })
 
@@ -196,28 +208,43 @@ func TestSessionHealthMetricsObservesZeroFilledSeriesPerService(t *testing.T) {
 }
 
 func TestSessionHealthMetricsUsesCanonicalIDAsServiceIDWhereSet(t *testing.T) {
-	reader := installMeterReader(t)
 	calendar, tickets := id.NewServiceID(), id.NewServiceID()
-	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) {
-		return []storage.SessionExpiryGroup{
-			{ServiceID: calendar, ServiceCanonicalID: "calendar", AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
-			{ServiceID: calendar, ServiceCanonicalID: "calendar", AccessExpiry: storage.AccessExpiryExpired, Count: 1},
-			{ServiceID: tickets, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
-		}, nil
-	}}
-	logger, _ := healthLogger()
-	metrics, err := oauth2session.NewSessionHealthMetrics(repo, 5*time.Minute, time.Second, logger)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = metrics.Close() })
-
-	points, ok := collectHealth(t, reader)
-	require.True(t, ok, "oauth2_sessions must be exported")
-	got := map[string]int64{}
-	for _, p := range points {
-		got[p.service] += p.value
+	tests := []struct {
+		name     string
+		services fakeCanonicalIDs
+		want     map[string]int64
+		warnings int
+	}{
+		{"canonical ID where set", fakeCanonicalIDs{ids: map[id.ServiceID]string{calendar: "calendar"}}, map[string]int64{"calendar": 3, tickets.String(): 1}, 0},
+		{"UUIDs when the lookup fails", fakeCanonicalIDs{err: storage.NewStorageError("GetCanonicalIDs", storage.ErrorKindTimeout, context.DeadlineExceeded, "timeout")},
+			map[string]int64{calendar.String(): 3, tickets.String(): 1}, 1},
 	}
-	assert.Equal(t, map[string]int64{"calendar": 3, tickets.String(): 1}, got, "a service without a canonical ID keeps its UUID")
-	assert.Len(t, points, 16, "eight series per service with sessions")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := installMeterReader(t)
+			repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) {
+				return []storage.SessionExpiryGroup{
+					{ServiceID: calendar, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
+					{ServiceID: calendar, AccessExpiry: storage.AccessExpiryExpired, Count: 1},
+					{ServiceID: tickets, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
+				}, nil
+			}}
+			logger, logs := healthLogger()
+			metrics, err := oauth2session.NewSessionHealthMetrics(repo, tt.services, 5*time.Minute, time.Second, logger)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = metrics.Close() })
+
+			points, ok := collectHealth(t, reader)
+			require.True(t, ok, "oauth2_sessions must be exported")
+			got := map[string]int64{}
+			for _, p := range points {
+				got[p.service] += p.value
+			}
+			assert.Equal(t, tt.want, got, "a service without a canonical ID keeps its UUID")
+			assert.Len(t, points, 16, "eight series per service with sessions")
+			assert.Len(t, healthWarnings(t, logs), tt.warnings)
+		})
+	}
 }
 
 func TestSessionHealthMetricsReportsNoPointsWhenQueryFails(t *testing.T) {
@@ -241,7 +268,7 @@ func TestSessionHealthMetricsReportsNoPointsWhenQueryFails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := installMeterReader(t)
 			logger, logs := healthLogger()
-			metrics, err := oauth2session.NewSessionHealthMetrics(&fakeHealthRepo{count: tt.count}, 5*time.Minute, 20*time.Millisecond, logger)
+			metrics, err := oauth2session.NewSessionHealthMetrics(&fakeHealthRepo{count: tt.count}, noCanonicalIDs{}, 5*time.Minute, 20*time.Millisecond, logger)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = metrics.Close() })
 
@@ -261,7 +288,7 @@ func TestSessionHealthMetricsCloseStopsQueries(t *testing.T) {
 	reader := installMeterReader(t)
 	repo := &fakeHealthRepo{count: func(context.Context) ([]storage.SessionExpiryGroup, error) { return nil, nil }}
 	logger, _ := healthLogger()
-	metrics, err := oauth2session.NewSessionHealthMetrics(repo, 5*time.Minute, time.Second, logger)
+	metrics, err := oauth2session.NewSessionHealthMetrics(repo, noCanonicalIDs{}, 5*time.Minute, time.Second, logger)
 	require.NoError(t, err)
 	collectHealth(t, reader)
 	require.Equal(t, 1, repo.callCount())
