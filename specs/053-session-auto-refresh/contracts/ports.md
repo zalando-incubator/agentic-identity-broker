@@ -1,6 +1,6 @@
 # Contract: Ports, domain services, and handler changes
 
-**Feature**: `053-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024 | Research R9, R11 to R13
+**Feature**: `053-session-auto-refresh` | DB-001 to DB-004, FR-017 to FR-024, FR-030 | Research R9, R11 to R13
 
 ## 1. New port: `UserSessionHealthRepository` (`internal/ports/storage.go`)
 
@@ -78,7 +78,7 @@ Callback behavior:
 1. `now := m.now()`, `threshold := now.Add(lookahead)`.
 2. Run `CountSessionsByExpiry` under `context.WithTimeout(ctx, queryTimeout)`.
 3. On error, or if a group fails classification, observe nothing. Log `session health query failed` at WARN with `error_kind` (the storage error kind) and return `nil`.
-4. Otherwise, build the snapshot, zero-fill all eight `(expiry, refreshable)` combinations for every service present, and observe one point per `(service_id, expiry, refreshable)` with exactly those three attributes.
+4. Otherwise, build the snapshot, zero-fill all eight `(expiry, refreshable)` combinations for every service present, and observe one point per `(service_id, expiry, refreshable)` with exactly those three attributes. `service_id` is the service's canonical ID when it has one, otherwise its UUID (FR-030). The canonical IDs come from one `ThirdpartyOAuth2ProviderService.CanonicalIDs` call per cycle for the services in the snapshot, under the same query timeout; when that call fails, every service keeps its UUID and the callback logs a WARN with the storage error kind.
 
 Unit tests (`health_metrics_test.go`, ManualReader pattern from `sweep_test.go:262-266`):
 - classification table for all eight group shapes

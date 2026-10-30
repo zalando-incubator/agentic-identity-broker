@@ -24,6 +24,7 @@
 ### Session 2026-10-28
 
 - Q: Should refresh outcomes be broken down by service? → A: Yes. A single failure count cannot tell an expected provider limit from a newly broken service. The sweep's refreshed and failed counters and the background refresh's triggered and failed counters carry `service_id`. Both failed counters also carry `failure_detail`. The skipped and dropped counters keep `triggered_by` only, because they measure the sweep and the worker pool rather than a service. This supersedes the single-attribute rule in the observability contract of [029-proactive-token-refresh](../029-proactive-token-refresh/contracts/observability.md).
+- Q: How do operators tell which service a `service_id` is? → A: `service_id` is the service's canonical ID when one is set and its UUID otherwise, on the session-health gauge and the refresh counters alike. Canonical IDs are unique and never UUID-shaped, so each value still names one service, and dashboards need no join. Setting or changing a canonical ID starts new series for that service.
 
 ### Session 2026-10-29
 
@@ -100,12 +101,13 @@ An operator sees refresh failures rise and wants to know which third-party servi
 
 **Why this priority**: Providers limit refresh-token lifetimes differently, so some failures are expected. Only a per-service breakdown separates them from a service that stopped working. The priority is P2 because refreshes themselves do not depend on it.
 
-**Independent Test**: Store due sessions for two services, one refreshable and one without a refresh token. Run one real sweep and one token exchange whose background refresh the provider rejects. Read the counters and confirm their `service_id` and `failure_detail` values.
+**Independent Test**: Store due sessions for two services, one refreshable and one without a refresh token. Run one real sweep and one token exchange whose background refresh the provider rejects. Read the counters and confirm their `service_id` and `failure_detail` values. Repeat with a canonical ID on one service and confirm that it replaces that service's UUID.
 
 **Acceptance Scenarios**:
 
 1. **Given** a real sweep refreshes a session of one service and cannot refresh a session of another service, **When** metrics are read, **Then** `session_sweep_refreshed_total` counts the first under its `service_id`, and `session_sweep_failed_total` counts the second under its `service_id` with the failure's `failure_detail`.
 2. **Given** a token exchange starts a background refresh that the provider rejects, **When** metrics are read, **Then** `proactive_refresh_triggered_total` and `proactive_refresh_failed_total` count it under the session's `service_id`, and the failed counter carries `failure_detail="refresh_rejected"`.
+3. **Given** one service has a canonical ID and another has none, **When** a real sweep refreshes a session of the first and cannot refresh a session of the second, **Then** the counters and `oauth2_sessions` carry the canonical ID as `service_id` for the first and the UUID for the second.
 
 ---
 
@@ -115,7 +117,8 @@ An operator sees refresh failures rise and wants to know which third-party servi
 - A run takes longer than one schedule period: the next run is skipped rather than started concurrently, and the active deadline ends a stuck run.
 - The broker restarts mid-sweep, for example during a rolling update: the job gets a transport error and fails. Sessions already refreshed stay refreshed. The next run evaluates the remainder, or a retry does when `sessionSweep.backoffLimit` allows one.
 - No sessions exist: the sweep completes with all counts at zero, the job succeeds, and the gauge reports no series.
-- A third-party service is deleted while its sessions remain: those sessions are counted under that `service_id` until they are removed.
+- A third-party service is deleted while its sessions remain: those sessions are counted under that service's UUID until they are removed.
+- An administrator sets, changes, or removes a service's canonical ID: the gauge uses the new `service_id` from the next export cycle, and the counters from their next event. A query whose window spans the change sees both values.
 - A provider issues access tokens shorter than the sweep lookahead: every run refreshes all of that provider's sessions. This is safe, but adds one refresh per session per run. The operations guide explains the tradeoff.
 - The sweep lookahead is shorter than the schedule period: sessions expiring between runs are refreshed only when an agent uses them. The documentation warns about this pairing, and the shipped defaults avoid it.
 - The request reaches the broker without an identity the admin server accepts: the broker returns `500 server_misconfiguration` before it starts a sweep. The job fails, and no `completed` run appears in metrics.
@@ -419,9 +422,9 @@ curl: (52) Empty reply from server
 
 **Observable result**: The job completes with one failed and one succeeded pod. The 18:00Z run is not lost: all 50 sessions are refreshed before they expire. The broker records one completed sweep duration, from the retry, and none for the interrupted attempt.
 
-### Journey 6 — Operator finds which service fails refreshes (User Story 4, Scenarios 1 and 2)
+### Journey 6 — Operator finds which service fails refreshes (User Story 4, Scenarios 1 to 3)
 
-**Cast**: Same release and services as Journey 2. At 2026-10-16T18:00:00Z the hourly sweep finds two due sessions: `u-0b19` for `svc-calendar` (`3f9c…`) with a usable refresh token, and `u-4a60` for `svc-tickets` (`a1d2…`) whose access token expired and who has no refresh token. At 18:10Z the agent of `u-7f3a` exchanges a `svc-calendar` token that expires within the lookahead, and the provider answers the background refresh with `400 {"error":"invalid_grant"}`.
+**Cast**: Same release and services as Journey 2. After Journey 2, the administrator gave `svc-calendar` the canonical ID `calendar`; `svc-tickets` has none. At 2026-10-16T18:00:00Z the hourly sweep finds two due sessions: `u-0b19` for `svc-calendar` (`3f9c…`) with a usable refresh token, and `u-4a60` for `svc-tickets` (`a1d2…`) whose access token expired and who has no refresh token. At 18:10Z the agent of `u-7f3a` exchanges a `svc-calendar` token that expires within the lookahead, and the provider answers the background refresh with `400 {"error":"invalid_grant"}`.
 
 **Step 1 — the sweep responds**
 
@@ -432,13 +435,13 @@ curl: (52) Empty reply from server
 **Step 2 — the counters after both events**
 
 ```text
-session_sweep_refreshed_total{triggered_by="sweep",service_id="3f9c…"}                                          1
-session_sweep_failed_total{triggered_by="sweep",service_id="a1d2…",failure_detail="access_token_expired"}       1
-proactive_refresh_triggered_total{triggered_by="background",service_id="3f9c…"}                                 1
-proactive_refresh_failed_total{triggered_by="background",service_id="3f9c…",failure_detail="refresh_rejected"}  1
+session_sweep_refreshed_total{triggered_by="sweep",service_id="calendar"}                                          1
+session_sweep_failed_total{triggered_by="sweep",service_id="a1d2…",failure_detail="access_token_expired"}          1
+proactive_refresh_triggered_total{triggered_by="background",service_id="calendar"}                                 1
+proactive_refresh_failed_total{triggered_by="background",service_id="calendar",failure_detail="refresh_rejected"}  1
 ```
 
-No attribute names a user or session.
+No attribute names a user or session. `oauth2_sessions` reports `svc-calendar` under `service_id="calendar"` from the same point on.
 
 **Step 3 — the operator's query**
 
@@ -449,7 +452,7 @@ sum by (service_id, failure_detail) (
 )
 ```
 
-**Observable result**: The operator sees that `svc-tickets` fails only because a user has to reconnect, and that the provider of `svc-calendar` rejects refresh tokens. Neither conclusion needs broker logs.
+**Observable result**: The chart's legend shows `calendar refresh_rejected` and `a1d2… access_token_expired`. The operator sees that `svc-tickets` fails only because a user has to reconnect, and that the provider of `svc-calendar` rejects refresh tokens. Neither conclusion needs broker logs. Giving `svc-tickets` a canonical ID would replace its UUID in the legend too.
 
 ## Requirements *(mandatory)*
 
@@ -495,6 +498,7 @@ sum by (service_id, failure_detail) (
 - **FR-027**: `session_sweep_refreshed_total`, `session_sweep_failed_total`, `proactive_refresh_triggered_total`, and `proactive_refresh_failed_total` MUST carry the session's `service_id` next to `triggered_by`.
 - **FR-028**: `session_sweep_failed_total` and `proactive_refresh_failed_total` MUST also carry `failure_detail`, the detail code that `session.oauth2.refresh_failed` logs for the same failure.
 - **FR-029**: `session_sweep_skipped_total` and `proactive_refresh_dropped_total` MUST keep `triggered_by` as their only attribute.
+- **FR-030**: `service_id` on `oauth2_sessions` and on the counters of FR-027 MUST be the service's canonical ID when one is set and its UUID otherwise. The gauge MUST read the canonical IDs once per export cycle, and the counters when they record. Both MUST use the UUID when that read fails. Sessions of a deleted service are counted under its UUID.
 
 **Documentation**
 

@@ -333,7 +333,7 @@ T014 (E2E) is the test for this story. It must be red before T028.
 
 ## Phase 7: User Story 4 - Refresh Outcomes Per Service in Metrics (Priority: P2)
 
-**Goal**: `service_id` on the sweep refreshed and failed counters and the background triggered and failed counters, plus `failure_detail` on both failed counters (FR-027 to FR-029).
+**Goal**: `service_id` on the sweep refreshed and failed counters and the background triggered and failed counters, plus `failure_detail` on both failed counters (FR-027 to FR-029). `service_id` is the canonical ID where a service has one (FR-030).
 
 **Independent Test**: T062 passes. The sweep and background refresh unit tests pass.
 
@@ -347,6 +347,10 @@ T014 (E2E) is the test for this story. It must be red before T028.
 - [X] T064 [US4] In `internal/domain/oauth2session/sweep.go`, record the refreshed and failed counters with `service_id`, and the failed counter also with `failure_detail` from the failure metadata. Leave the skipped counter unchanged.
 - [X] T065 [US4] In `internal/domain/oauth2session/background_refresh.go`, record the triggered and failed counters with `service_id`, and the failed counter also with `failure_detail`. Leave the dropped counter unchanged.
 - [X] T066 [P] [US4] Update the metrics table and example queries in `docs/operations/session-sweep.md`, the session metrics paragraph in `ARCHITECTURE.md`, `contracts/observability.md`, and add a superseded note to `specs/029-proactive-token-refresh/contracts/observability.md`.
+- [X] T067 [US4] Add US4-S3 to `tests/e2e/session_metrics_test.go`. Add canonical ID cases, including a failed lookup, to the health metrics, sweep, and background refresh unit tests. Confirm all are red before T068.
+- [X] T068 [US4] In `internal/domain/oauth2session`, use the canonical ID as `service_id`. The gauge takes a `ServiceCanonicalIDReader` (the provider service, wired in `app/builder.go`) and looks the IDs up once per export cycle. The counters look them up once per service and sweep run, and once per background refresh in the worker, which now records the triggered counter (FR-030).
+- [X] T069 [US4] Removed: canonical IDs are resolved in the domain, not in `CountSessionsByExpiry`.
+- [X] T070 [P] [US4] Document the `service_id` values in `docs/operations/session-sweep.md`, `ARCHITECTURE.md`, `contracts/observability.md`, `contracts/ports.md`, and `data-model.md`.
 
 ---
 
