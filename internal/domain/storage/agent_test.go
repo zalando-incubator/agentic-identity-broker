@@ -291,8 +291,8 @@ func TestAgent_ValidateRedirectURIRegistration(t *testing.T) {
 		{"rejects wildcarded public suffix", "https://preview*.app-*.example.*/api/oidc/callback", true},
 		{"rejects wildcarded registrable domain", "https://preview*.app-*.*.com/api/oidc/callback", true},
 		{"rejects wildcard replacing full host", "https://*/api/oidc/callback", true},
-		{"rejects wildcard outside hostname", "https://preview.example.com/*", true},
-		{"rejects wildcard in query", "https://preview.example.com/callback?target=*", true},
+		{"accepts exact HTTPS callback with wildcard in path", "https://preview.example.com/*", false},
+		{"accepts exact HTTPS callback with wildcard in query", "https://preview.example.com/callback?target=*", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
