@@ -110,8 +110,13 @@ var _ = Describe("Incremental Service Authorization Gateway Challenge", func() {
 		returned := journey.follow(recoveryURL.RequestURI())
 		returned = journey.followCallback(returned)
 		Expect(returned.Path).To(Equal("/sessions/github"))
-		retried, bodyResponse := toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(retried)).To(Equal("Bearer synthetic-github-access"))
+		// ExtProc's existing re-authentication cooldown (ADR 012) bounds how soon a retry reaches the broker.
+		var bodyResponse *extprocv3.ProcessingResponse
+		Eventually(func() string {
+			var retried *extprocv3.ProcessingResponse
+			retried, bodyResponse = toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
+			return extprochelpers.ExtractMutatedAuthorizationHeader(retried)
+		}, 10*time.Second, 250*time.Millisecond).Should(Equal("Bearer synthetic-github-access"))
 		Expect(bodyResponse).To(extprochelpers.BeForwardedRequestBody())
 	})
 
