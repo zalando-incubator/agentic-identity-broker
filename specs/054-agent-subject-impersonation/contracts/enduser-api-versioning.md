@@ -1,12 +1,12 @@
-# Proposed End-User API 2.0.0 compatibility contract
+# End-User API 2.0.0 compatibility contract
 
-**Status**: Proposed; plan Approval Items A10. No maintainer approval is recorded.
+**Status**: Approved; plan Approval Items A10, comment [6495558326](https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6495558326).
 
 ## Release-status assessment
 
 The checked-out `api/enduser/openapi.yaml:92` declares End-User API `1.0.0` and already documents `POST /oauth2/token`. The existing impersonation flow in `ARCHITECTURE.md` §3.1.y and Accepted ADR 032 requires delegation without the new category distinction. No supplied evidence establishes that this affected contract is unreleased or has never been deployed. Do not equate this new feature's unimplemented status with an unreleased baseline contract. Conservatively treat the baseline contract as released; delivery must meet Constitution IV/X's major-version requirement regardless of later release-status evidence.
 
-## Recommended decision (Proposed A10)
+## Decision (approved A10)
 
 Change `api/enduser/openapi.yaml` `info.version` from `1.0.0` to `2.0.0` before implementing the changed behavior. End-User API 2.0.0 replaces the previous contract on the existing routes, including `POST /oauth2/token`; there is no versioned route, selector, compatibility alias, or parallel legacy behavior. The OpenAPI major version is distinct from the broker release tag and from the Admin API version. This follows the major-contract-bump pattern already documented for Admin API 2.0.0 in `ARCHITECTURE.md` (feature 051), not an exemption from versioning.
 

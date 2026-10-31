@@ -3,7 +3,7 @@
 # Feature: 054-agent-subject-impersonation (spec API-001..API-005, research R4–R6/R12)
 # Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
 #
-# STATUS: Proposed; sign-off via plan.md Approval Items A4/A10 (Constitution Principles IV and X).
+# STATUS: Approved (PR #293 comment 6495558326); sign-off via plan.md Approval Items A4/A10 (Constitution Principles IV and X).
 # C2-C4 were endorsed earlier on PR #293 (review inline comments and maintainer comment
 # 6477637352); C1 was WITHDRAWN. After approval, implementation Phase 2 applies the delta to
 # api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim,

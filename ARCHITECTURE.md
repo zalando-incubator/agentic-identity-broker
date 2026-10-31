@@ -1455,6 +1455,8 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
 - [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
 - [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
+- [ADR 032: User Delegation Required for OAuth2 Impersonation](adrs/032-impersonation-requires-user-delegation.md) - Accepted. Impersonation mints only for an active user delegation; decisions 1–2 are superseded in part by ADR 045 for agent-category requests.
+- [ADR 045: Agent-Subject Impersonation](adrs/045-agent-subject-impersonation.md) - Accepted. Signed exact-target agent subjects are issued without user delegation; agent-subject tokens are detected by `agent_subject_expression` and rejected by third-party exchange.
 
 ### Security & Encryption
 
@@ -1772,11 +1774,11 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **Allowed Subject Categories**: Per-rule eligibility list containing one or two distinct values from `human` and `agent`; omitted means `[human]`. A classified ineligible request falls through; a human delegation denial remains terminal.
 
-**Agent-Subject Token**: Normal local token with reserved `sub == agent_id == target UUID` and existing `act`, without a new category claim. Default or compliant replacing detection rejects it before human third-party state access; non-matching replacement removes that guarantee.
+**Agent-Subject Token**: An Impersonated Broker Token produced by Self-Agent Issuance: reserved `sub == agent_id == target UUID` and the existing `act`, without a category claim. Third-party exchange detects it with the boolean CEL detector `token_exchange.claim_extraction.agent_subject_expression` (default: guarded `sub == agent_id`) and rejects it before human third-party state access; a non-matching replacement removes that guarantee.
 
-**Resolved Impersonation Subject**: Request-local category and represented identity on `ruleResult`, not a new persisted entity. Human identity is the extracted principal; agent identity is the target UUID despite mandatory successful extraction.
+**Self-Agent Issuance**: Agent-category impersonation (ADR 045): an eligible, CEL-authorized request whose signed subject `sub` equals the target UUID mints a token for the target agent itself, without user delegation.
 
-**Subject Identity**: For humans, the non-empty identity extracted from a validated signed subject token or an allowed unverified subject JWT via the selected rule's `subject` role `principal_expression`. It is represented as the `sub` claim and, byte-for-byte, as `id.Principal` for the mandatory `(principal, target agent)` user-delegation check. For eligible agents, the represented subject is the target UUID. It may be accompanied by an optional `email` claim produced from the role's optional `email_expression`, fed through the existing local-token `principal` CEL context so `token_claims_expression` mints it unchanged.
+**Subject Identity**: For humans, the non-empty identity extracted from a validated signed subject token or an allowed unverified subject JWT via the selected rule's `subject` role `principal_expression`. It is represented as the `sub` claim and, byte-for-byte, as `id.Principal` for the mandatory `(principal, target agent)` user-delegation check. For eligible agents, the represented subject is the target UUID, even though principal extraction must still succeed. The impersonation audit `subject_identity` field records this represented identity. It may be accompanied by an optional `email` claim produced from the role's optional `email_expression`, fed through the existing local-token `principal` CEL context so `token_claims_expression` mints it unchanged.
 
 **Impersonated Broker Token**: A locally issued token minted by the normal local access-token path, carrying target-derived `agent_id`, subject identity, protected `act.iss`/`act.sub`, optional email, granted JWT `scope`, and normal local-policy claims. The routing URI never forces `aud`; local token policy may emit it or omit it.
 

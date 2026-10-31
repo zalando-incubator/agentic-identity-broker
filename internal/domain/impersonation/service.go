@@ -95,7 +95,7 @@ type AuditRecord struct {
 	IssuerRoles              []string // validated credential roles
 	PrivilegedClientIdentity string   // extracted client identity, when available
 	ActorIdentity            string   // extracted actor identity, when available
-	SubjectIdentity          string   // extracted subject identity, when available
+	SubjectIdentity          string   // represented subject: extracted principal for humans, target UUID for agents
 	OAuthErrorCode           string   // OAuth2 error code on failure
 }
 
