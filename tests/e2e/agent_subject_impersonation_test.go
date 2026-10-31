@@ -300,7 +300,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 				Expect(os.WriteFile(path, []byte(document), 0600)).To(Succeed())
 				loaded, err := bootstrap.LoadCredentialConfiguration(path, nil, nil)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(loaded.OAuth2AuthServer.Impersonation.Rules[0].AllowedSubjectCategories).To(Equal(categories))
+				Expect(loaded.OAuth2AuthServer.Impersonation.Rules[0].AllowedSubjectCategories).To(Equal(ports.SubjectCategoryList(categories)))
 			}
 			cfg := configFor([]string{"agent"})
 			rule := imperUnverifiedRule("unsigned-human", issuer.URL(), issuer.JWKSURL(), "subject_token.sub != ''")

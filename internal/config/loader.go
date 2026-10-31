@@ -85,14 +85,9 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 	}
 
 	// Unmarshal to Config struct
-	var cfg ports.Config
-	if err := l.v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
-		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), c.DecodeHook)
-	}); err != nil {
-		return nil, &config.ConfigError{
-			Expected: "valid configuration structure",
-			Err:      err,
-		}
+	cfg, err := unmarshalConfig(l.v)
+	if err != nil {
+		return nil, err
 	}
 	cfg.ThirdPartyOAuth2.CredentialFiles = credentialFiles
 
@@ -500,10 +495,6 @@ func (l *Loader) loadYAML(skipCredentialFiles bool) (map[string]ports.Credential
 		}
 	}
 
-	if err := validateImpersonationCategoryShape(data); err != nil {
-		return nil, err
-	}
-
 	var credentialFiles map[string]ports.CredentialFileBinding
 	if !skipCredentialFiles {
 		credentialFiles, err = l.decodeCredentialFilesYAML(data)
@@ -706,8 +697,42 @@ func (l *Loader) validateSecurePattern(value string) error {
 	return nil
 }
 
-// bindFlags binds Cobra command flags to Viper configuration.
-// CLI flags have the highest precedence and override all other sources.
+func unmarshalConfig(v *viper.Viper) (ports.Config, error) {
+	var cfg ports.Config
+	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
+		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), rejectNonSequenceSubjectCategoriesHook(), c.DecodeHook)
+		c.DecodeNil = true
+	}); err != nil {
+		return ports.Config{}, &config.ConfigError{
+			Expected: "valid configuration structure",
+			Err:      err,
+		}
+	}
+	return cfg, nil
+}
+
+// rejectNonSequenceSubjectCategoriesHook rejects explicit null, scalars, maps and non-string
+// entries for allowed_subject_categories; omission keeps the human-only default.
+func rejectNonSequenceSubjectCategoriesHook() mapstructure.DecodeHookFuncType {
+	listType := reflect.TypeOf(ports.SubjectCategoryList(nil))
+
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if to != listType {
+			return data, nil
+		}
+		values, ok := data.([]any)
+		if !ok || values == nil {
+			return nil, fmt.Errorf("allowed_subject_categories must be a sequence of strings; omit it for the human-only default")
+		}
+		for _, value := range values {
+			if _, ok := value.(string); !ok {
+				return nil, fmt.Errorf("allowed_subject_categories must be a sequence of strings; omit it for the human-only default")
+			}
+		}
+		return data, nil
+	}
+}
+
 func rejectNumericDurationHook() mapstructure.DecodeHookFuncType {
 	durationType := reflect.TypeOf(time.Duration(0))
 
@@ -730,6 +755,8 @@ func rejectNumericDurationHook() mapstructure.DecodeHookFuncType {
 	}
 }
 
+// bindFlags binds Cobra command flags to Viper configuration.
+// CLI flags have the highest precedence and override all other sources.
 func (l *Loader) bindFlags() error {
 	if l.cmd == nil {
 		// No command set, skip flag binding

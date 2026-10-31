@@ -213,7 +213,7 @@ internal/
 │   ├── diagnostic.go (+ _test.go)                    # two new details
 │   └── service.go (+ service_security_test.go, service_observation_test.go)  # rejection + production grant/session boundary spans
 ├── app/builder.go                                    # pass agent_subject_expression to the token-exchange CEL evaluator
-├── config/loader.go, config/impersonation_shape.go (+ _test.go)  # YAML shape check
+├── config/loader.go (+ impersonation_shape_test.go)  # YAML shape check via decode hook
 ├── config/validator.go (+ impersonation_validator_test.go)
 └── adapters/http/enduser/oauth2_token.go (+ oauth2_token_audit_test.go)  # subject_category attr
 
