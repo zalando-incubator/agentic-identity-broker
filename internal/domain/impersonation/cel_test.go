@@ -95,6 +95,10 @@ func TestCompileAuthorization_BindsField(t *testing.T) {
 	unbound, err := compileAuthorization(`subject_token.sub != "" && client_assertion.sub == "gw"`, 0)
 	require.NoError(t, err)
 	assert.False(t, unbound.Binds(celSubjectToken, "email"))
+
+	indexed, err := compileAuthorization(`subject_token["email"] == "user@example.com"`, 0)
+	require.NoError(t, err)
+	assert.True(t, indexed.Binds(celSubjectToken, "email"))
 }
 
 func TestCompileExtraction_ScopesClaimsToRole(t *testing.T) {

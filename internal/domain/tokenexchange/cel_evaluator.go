@@ -251,6 +251,10 @@ func (e *CELEvaluator) compileAgentSubjectExpression() error {
 		return NewServerError("agent-subject CEL expression must return bool or dyn").
 			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
+	if _, ok := FieldSelections(checked)[CELSubjectTokenVariable+".sub"]; !ok {
+		return NewServerError("agent-subject CEL expression must reference subject_token.sub").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
 	program, err := env.Program(checked)
 	if err != nil {
 		return NewServerErrorWithCause("invalid agent-subject CEL program", err).

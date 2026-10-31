@@ -23,6 +23,7 @@ import (
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
@@ -346,149 +347,177 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			Expect(body).NotTo(HaveKey("error_uri"))
 			assertNoState(target.ID.String())
 		})
-		// US3.4 from specs/054-agent-subject-impersonation/spec.md
-		It("observes detector rejection, replacement and failure before human-state boundaries", func() {
-			service := fixtures.GitHubService()
+	})
+
+	// US3.4 from specs/054-agent-subject-impersonation/spec.md
+	Context("third-party detection of agent-subject tokens", func() {
+		const (
+			compliantDetector   = "(has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id) || (has(subject_token.kind) && subject_token.kind == 'machine')"
+			nonMatchingDetector = "has(subject_token.sub) && subject_token.sub == 'nobody'"
+			failingDetector     = "subject_token.sub"
+			agentSubjectDenial  = "agent-subject tokens cannot be exchanged for third-party service tokens"
+		)
+		type detectorOutcome int
+		const (
+			rejected detectorOutcome = iota
+			continued
+			failed
+		)
+		var service *model.ThirdpartyOAuth2ProviderEntity
+
+		BeforeEach(func() {
+			service = fixtures.GitHubService()
 			service.Endpoints.TokenEndpoint = upstream.URL() + "/oauth/token"
 			service.Endpoints.AuthorizeEndpoint = upstream.URL() + "/oauth/authorize"
-			resetStorage := func() {
-				closeServers()
-				Expect(factory.CloseStorage(store)).To(Succeed())
-				var err error
-				store, err = factory.NewTestStorage()
-				Expect(err).NotTo(HaveOccurred())
-				Expect(store.Agents().Create(ctx, target)).To(Succeed())
-				Expect(store.Agents().Create(ctx, other)).To(Succeed())
-				Expect(store.Services().Create(ctx, service)).To(Succeed())
-				Expect(fixtures.SeedPlaceholderGrantData(ctx, store, service.ID)).To(Succeed())
+			Expect(store.Services().Create(ctx, service)).To(Succeed())
+			Expect(fixtures.SeedPlaceholderGrantData(ctx, store, service.ID)).To(Succeed())
+		})
+
+		configure := func(expression string) *ports.Config {
+			cfg := configFor([]string{"human", "agent"})
+			cfg.TokenExchange = ports.TokenExchangeConfig{
+				ExpectedAudience: fixtures.ImpersonationAudience,
+				ClientAssertion:  ports.ClientAssertionTrustConfig{IssuerURI: issuer.URL(), JWKSURI: issuer.JWKSURL()},
+				ClaimExtraction:  ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.agent_id", AgentSubjectExpression: expression},
+				Authorization:    ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true", EvaluationTimeout: time.Second}},
 			}
-			configure := func(expression string) *ports.Config {
-				cfg := configFor([]string{"human", "agent"})
-				cfg.TokenExchange = ports.TokenExchangeConfig{
-					ExpectedAudience: fixtures.ImpersonationAudience,
-					ClientAssertion:  ports.ClientAssertionTrustConfig{IssuerURI: issuer.URL(), JWKSURI: issuer.JWKSURL()},
-					ClaimExtraction:  ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.agent_id", AgentSubjectExpression: expression},
-					Authorization:    ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true", EvaluationTimeout: time.Second}},
-				}
-				return cfg
-			}
-			observe := func(token string) (int, map[string]any, map[string]int, []string) {
-				traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
-				form := url.Values{"grant_type": {imperGrant}, "subject_token_type": {imperAccessTyp}, "subject_token": {token}, "client_assertion_type": {imperBearerTyp}, "client_assertion": {sign("gateway-prod", fixtures.ImpersonationAudience)}, "resource": {"https://api.github.com"}}
-				req, err := http.NewRequest(http.MethodPost, enduser.BaseURL()+"/oauth2/token", strings.NewReader(form.Encode()))
-				Expect(err).NotTo(HaveOccurred())
-				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-				req.Header.Set("traceparent", fmt.Sprintf("00-%s-0123456789abcdef-01", traceID))
-				resp, err := helpers.HTTPClient().Do(req)
-				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = resp.Body.Close() }()
-				var body map[string]any
-				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-				Eventually(func() bool {
-					for _, span := range recorder.Ended() {
-						if span.SpanContext().TraceID().String() == traceID && span.SpanKind() == trace.SpanKindServer {
-							return true
-						}
-					}
-					return false
-				}, 5*time.Second, 10*time.Millisecond).To(BeTrue(), "completed sampled HTTP trace required")
-				counts := map[string]int{}
-				var details []string
+			return cfg
+		}
+		observe := func(token string) (int, map[string]any, map[string]int, []string) {
+			traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
+			form := url.Values{"grant_type": {imperGrant}, "subject_token_type": {imperAccessTyp}, "subject_token": {token}, "client_assertion_type": {imperBearerTyp}, "client_assertion": {sign("gateway-prod", fixtures.ImpersonationAudience)}, "resource": {"https://api.github.com"}}
+			req, err := http.NewRequest(http.MethodPost, enduser.BaseURL()+"/oauth2/token", strings.NewReader(form.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("traceparent", fmt.Sprintf("00-%s-0123456789abcdef-01", traceID))
+			resp, err := helpers.HTTPClient().Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			var body map[string]any
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+			Eventually(func() bool {
 				for _, span := range recorder.Ended() {
-					if span.SpanContext().TraceID().String() != traceID {
-						continue
-					}
-					counts[span.Name()]++
-					for _, attr := range span.Attributes() {
-						if string(attr.Key) == "token_exchange.failure_detail" {
-							details = append(details, attr.Value.AsString())
-						}
+					if span.SpanContext().TraceID().String() == traceID && span.SpanKind() == trace.SpanKindServer {
+						return true
 					}
 				}
-				return resp.StatusCode, body, counts, details
-			}
-			controls := func() {
-				grant := seedGrant("observation-control", false)
-				token := mint("observation-control")
-				Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
-				status, body, spans, _ := observe(token)
-				Expect(status).To(Equal(http.StatusForbidden))
-				Expect(body["error_uri"]).To(ContainSubstring("/agents/"))
-				Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
-				Expect(spans["tokenexchange.get_valid_access_token"]).To(BeZero())
-				grant = fixtures.ActiveGrant("observation-control", target.ID.String(), service.ID.String(), []string{"repo", "user"})
-				Expect(store.UserGrants().Create(ctx, grant)).To(Succeed())
-				session := fixtures.GitHubSessionForPrincipal("observation-control")
-				Expect(store.UserSessions().Create(ctx, session)).To(Succeed())
-				status, body, spans, _ = observe(token)
-				Expect(status).To(Equal(http.StatusOK), "%v", body)
-				Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
-				Expect(spans["tokenexchange.get_valid_access_token"]).To(Equal(1))
-				Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
-				Expect(store.UserSessions().Delete(ctx, session.ID)).To(Succeed())
-			}
-			for _, expression := range []string{"", "(has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id) || (has(subject_token.kind) && subject_token.kind == 'machine')", "false", "subject_token.sub"} {
-				for _, sameTextHuman := range []bool{false, true} {
-					resetStorage()
-					if expression == "subject_token.sub" {
-						boot(configure(""), true)
-						controls()
-					}
-					boot(configure(expression), true)
-					if expression != "subject_token.sub" {
-						controls()
-					}
-					token := mint(target.ID.String())
-					var grant *storage.UserGrant
-					var session *storage.UserSession
-					if sameTextHuman {
-						grant = fixtures.ActiveGrant(target.ID.String(), target.ID.String(), service.ID.String(), []string{"repo", "user"})
-						session = fixtures.GitHubSessionForPrincipal(target.ID.String())
-						Expect(store.UserGrants().Create(ctx, grant)).To(Succeed())
-						Expect(store.UserSessions().Create(ctx, session)).To(Succeed())
-					}
-					upstream.Reset()
-					status, body, spans, details := observe(token)
-					if expression == "false" {
-						Expect(body["error_description"]).NotTo(Equal("agent-subject tokens cannot be exchanged for third-party service tokens"))
-						Expect(details).NotTo(ContainElement("subject_category_unsupported"))
-						Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
-						if sameTextHuman {
-							Expect(spans["tokenexchange.get_valid_access_token"]).To(Equal(1))
-						} else {
-							Expect(status).To(Equal(http.StatusForbidden))
-							Expect(body["error"]).To(Equal("access_denied"))
-							Expect(body["error_uri"]).To(ContainSubstring("/agents/"))
-							Expect(details).To(ContainElement("grant_missing"))
-						}
-					} else {
-						if expression == "subject_token.sub" {
-							Expect(status).To(Equal(http.StatusInternalServerError))
-							Expect(body["error"]).To(Equal("server_error"))
-						} else {
-							Expect(status).To(Equal(http.StatusForbidden))
-							Expect(body["error"]).To(Equal("access_denied"))
-							Expect(body["error_description"]).To(Equal("agent-subject tokens cannot be exchanged for third-party service tokens"))
-							Expect(details).To(ContainElement("subject_category_unsupported"))
-						}
-						Expect(body).NotTo(HaveKey("error_uri"))
-						Expect(spans["tokenexchange.verify_agent_access"]).To(BeZero())
-						Expect(spans["tokenexchange.get_valid_access_token"]).To(BeZero())
-					}
-					Expect(upstream.GetTokenRequests()).To(BeEmpty())
-					if sameTextHuman {
-						storedGrant, err := store.UserGrants().Get(ctx, grant.ID)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(storedGrant).To(Equal(grant))
-						storedSession, err := store.UserSessions().Get(ctx, session.ID)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(storedSession).To(Equal(session))
-						Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
-						Expect(store.UserSessions().Delete(ctx, session.ID)).To(Succeed())
-					} else {
-						assertNoState(target.ID.String())
+				return false
+			}, 5*time.Second, 10*time.Millisecond).To(BeTrue(), "completed sampled HTTP trace required")
+			counts := map[string]int{}
+			var details []string
+			for _, span := range recorder.Ended() {
+				if span.SpanContext().TraceID().String() != traceID {
+					continue
+				}
+				counts[span.Name()]++
+				for _, attr := range span.Attributes() {
+					if string(attr.Key) == "token_exchange.failure_detail" {
+						details = append(details, attr.Value.AsString())
 					}
 				}
+			}
+			return resp.StatusCode, body, counts, details
+		}
+		// assertHumanControls proves the observed spans reach human state for a human token,
+		// so their absence for an agent-subject token is meaningful.
+		assertHumanControls := func() {
+			grant := seedGrant("observation-control", false)
+			token := mint("observation-control")
+			Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
+			status, body, spans, _ := observe(token)
+			Expect(status).To(Equal(http.StatusForbidden))
+			Expect(body["error_uri"]).To(ContainSubstring("/agents/"))
+			Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
+			Expect(spans["tokenexchange.get_valid_access_token"]).To(BeZero())
+			grant = fixtures.ActiveGrant("observation-control", target.ID.String(), service.ID.String(), []string{"repo", "user"})
+			Expect(store.UserGrants().Create(ctx, grant)).To(Succeed())
+			session := fixtures.GitHubSessionForPrincipal("observation-control")
+			Expect(store.UserSessions().Create(ctx, session)).To(Succeed())
+			status, body, spans, _ = observe(token)
+			Expect(status).To(Equal(http.StatusOK), "%v", body)
+			Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
+			Expect(spans["tokenexchange.get_valid_access_token"]).To(Equal(1))
+			Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
+			Expect(store.UserSessions().Delete(ctx, session.ID)).To(Succeed())
+		}
+
+		DescribeTable("observes detector rejection, replacement and failure before human-state boundaries",
+			func(expression string, outcome detectorOutcome, sameTextHuman bool) {
+				if outcome == failed {
+					boot(configure(""), true)
+					assertHumanControls()
+				}
+				boot(configure(expression), true)
+				if outcome != failed {
+					assertHumanControls()
+				}
+				token := mint(target.ID.String())
+				var grant *storage.UserGrant
+				var session *storage.UserSession
+				if sameTextHuman {
+					grant = fixtures.ActiveGrant(target.ID.String(), target.ID.String(), service.ID.String(), []string{"repo", "user"})
+					session = fixtures.GitHubSessionForPrincipal(target.ID.String())
+					Expect(store.UserGrants().Create(ctx, grant)).To(Succeed())
+					Expect(store.UserSessions().Create(ctx, session)).To(Succeed())
+				}
+				upstream.Reset()
+
+				status, body, spans, details := observe(token)
+				switch outcome {
+				case rejected:
+					Expect(status).To(Equal(http.StatusForbidden))
+					Expect(body["error"]).To(Equal("access_denied"))
+					Expect(body["error_description"]).To(Equal(agentSubjectDenial))
+					Expect(details).To(ContainElement("subject_category_unsupported"))
+				case failed:
+					Expect(status).To(Equal(http.StatusInternalServerError))
+					Expect(body["error"]).To(Equal("server_error"))
+				case continued:
+					Expect(body["error_description"]).NotTo(Equal(agentSubjectDenial))
+					Expect(details).NotTo(ContainElement("subject_category_unsupported"))
+					Expect(spans["tokenexchange.verify_agent_access"]).To(Equal(1))
+					if sameTextHuman {
+						Expect(spans["tokenexchange.get_valid_access_token"]).To(Equal(1))
+					} else {
+						Expect(status).To(Equal(http.StatusForbidden))
+						Expect(body["error"]).To(Equal("access_denied"))
+						Expect(body["error_uri"]).To(ContainSubstring("/agents/"))
+						Expect(details).To(ContainElement("grant_missing"))
+					}
+				}
+				if outcome != continued {
+					Expect(body).NotTo(HaveKey("error_uri"))
+					Expect(spans["tokenexchange.verify_agent_access"]).To(BeZero())
+					Expect(spans["tokenexchange.get_valid_access_token"]).To(BeZero())
+				}
+				Expect(upstream.GetTokenRequests()).To(BeEmpty())
+
+				if !sameTextHuman {
+					assertNoState(target.ID.String())
+					return
+				}
+				storedGrant, err := store.UserGrants().Get(ctx, grant.ID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(storedGrant).To(Equal(grant))
+				storedSession, err := store.UserSessions().Get(ctx, session.ID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(storedSession).To(Equal(session))
+			},
+			Entry("default detector rejects", "", rejected, false),
+			Entry("default detector rejects despite same-text human state", "", rejected, true),
+			Entry("compliant replacement rejects", compliantDetector, rejected, false),
+			Entry("compliant replacement rejects despite same-text human state", compliantDetector, rejected, true),
+			Entry("non-matching replacement continues to grant checks", nonMatchingDetector, continued, false),
+			Entry("non-matching replacement continues to same-text human state", nonMatchingDetector, continued, true),
+			Entry("detector failure fails closed", failingDetector, failed, false),
+			Entry("detector failure fails closed despite same-text human state", failingDetector, failed, true),
+		)
+
+		It("rejects a replacement detector that does not reference subject_token.sub at startup", func() {
+			for _, expression := range []string{"false", "true", "subject_token.azp == subject_token.agent_id"} {
+				_, err := bootstrap.NewServerFactory(configure(expression), bootstrap.TestLogger(slog.LevelInfo)).BuildApp(store)
+				Expect(err).To(HaveOccurred(), "expression=%s", expression)
+				Expect(err.Error()).To(ContainSubstring("subject_token.sub"))
 			}
 		})
 	})

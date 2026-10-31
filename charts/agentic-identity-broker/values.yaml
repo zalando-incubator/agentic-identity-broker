@@ -653,9 +653,10 @@ broker:
     claimExtraction:
       # -- Optional replacing CEL detector. Empty/omitted uses the guarded default below.
       # has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
-      # Compile/type errors fail startup; runtime errors/timeouts/non-boolean results fail closed.
+      # Compile/type errors and expressions not referencing subject_token.sub fail startup;
+      # runtime errors/timeouts/non-boolean results fail closed.
       # Overrides must preserve broker agent-token matching, e.g. keep the default as a disjunct.
-      # A non-matching override (such as false) removes categorical rejection and protection
+      # A non-matching override that references sub removes categorical rejection and protection
       # against access to same-text human credentials. Equal-claim human/external tokens also match.
       agentSubjectExpression: ""
       # -- CEL expression to extract the user principal from subject_token.

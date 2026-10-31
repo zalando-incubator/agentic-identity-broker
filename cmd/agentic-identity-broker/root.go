@@ -460,7 +460,7 @@ func init() {
 
 	// Third-party OAuth2 client registration configuration
 	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
-	rootCmd.PersistentFlags().String("token_exchange.claim_extraction.agent_subject_expression", "", "replacing CEL agent-subject detector (empty uses guarded sub == agent_id)")
+	rootCmd.PersistentFlags().String("token_exchange.claim_extraction.agent_subject_expression", "", "replacing CEL agent-subject detector; must reference subject_token.sub (empty uses guarded sub == agent_id)")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")
