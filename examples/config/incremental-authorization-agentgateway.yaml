@@ -1,4 +1,4 @@
-# Agentgateway route for the approved Feature 055 design (implementation pending).
+# Agentgateway route for incremental service authorization (docs/guides/incremental-authorization.md).
 # This is not a broker or ExtProc process configuration.
 binds:
   - port: 4000

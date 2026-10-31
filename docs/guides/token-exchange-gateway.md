@@ -98,20 +98,19 @@ Set `resource_uri` to a CEL string literal. It must resolve to an absolute `http
 
 The configured `resource_uri` must exactly match the protected resource that is registered with the broker.
 
-### Incremental authorization metadata (approved design)
+### Incremental authorization metadata
 
-Feature 055's implementation is pending. Its approved additive challenge contract allows
-Agentgateway to supply optional `resource_metadata_url` beside `resource_uri` in the literal
+The [incremental authorization guide](incremental-authorization.md) explains the full recovery
+flow. Agentgateway can supply optional `resource_metadata_url` beside `resource_uri` in the literal
 `aib.tokenexchange` namespace. The producer is the Agentgateway route, not the broker or the
 ExtProc process configuration. See the
 [complete route example](../../examples/config/incremental-authorization-agentgateway.yaml),
 [broker overlay](../../examples/config/incremental-authorization.yaml), and
-[configuration validation rules](../configuration.md#incremental-service-authorization-approved-design).
+[configuration validation rules](../configuration.md#incremental-service-authorization).
 
 Omit that field for the default variant; no metadata URL is inferred. An absent/invalid value
-omits only the optional `resource_metadata` challenge attribute. The approved challenge also
-carries the broker's service `scope` and preserves `error_uri` and URL elicitation. The running
-baseline behavior described below remains unchanged until implementation completes.
+omits only the optional `resource_metadata` challenge attribute. The challenge also carries the
+broker's service `scope` and preserves `error_uri` and URL elicitation.
 
 ADRs 011 and 036 keep the producer/consumer deployment boundary explicit. The
 `charts/agentic-identity-broker/` chart does not deploy Agentgateway or the standalone ExtProc
@@ -127,7 +126,7 @@ The response is a 503 JSON immediate response. Diagnostics never contain the sub
 
 If exchange fails, the sidecar does not forward the original credential. Generic errors, broker 4xx responses without `error_uri` (including 429), 5xx errors, network errors, and timeouts return HTTP 500. The body is `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
 
-If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It forwards the broker URI unchanged in the RFC 6750 challenge and JSON-RPC `-32042` URL elicitation body (`id: null`). For provider-session recovery, the broker URI starts that service's third-party OAuth2 authorization with PKCE and returns to `/sessions` after the provider callback.
+If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It forwards the broker URI unchanged in the RFC 6750 challenge and JSON-RPC `-32042` URL elicitation body (`id: null`). The challenge appends the broker's service `scope` and the route's optional `resource_metadata`, in that order, when each value is valid. For provider-session recovery, the broker URI starts that service's third-party OAuth2 authorization with PKCE and returns to the service page `/sessions/<identifier>` after the provider callback.
 
 ```http
 HTTP/1.1 403 Forbidden

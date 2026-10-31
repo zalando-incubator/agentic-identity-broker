@@ -1665,7 +1665,7 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **Session Usability**: The verified ability of a `UserSession` to supply a service's effective provider scopes with matching established client identity now. ADR 046 defines `usable`, `missing`, `unusable_definitive`, and `unverifiable_transient`. Valid, scope-sufficient access remains usable with absent or expired refresh; expired access requires a successful eligible refresh. Stored refreshability is only eligibility to attempt refresh, not verification of current usability. Unknown refresh-token expiry permits an attempt but does not guarantee success.
 
-**Virtual Service Scope**: A broker-only scope `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered session for one ThirdpartyOAuth2Service. It never grants provider scopes, selects permission sets, or changes permanent Agent requirements. ADR 046 defines the approved design; implementation is tracked in Feature 055.
+**Virtual Service Scope**: A broker-only scope `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered session for one ThirdpartyOAuth2Service. It never grants provider scopes, selects permission sets, or changes permanent Agent requirements. ADR 046 defines it; `internal/domain/servicescope/` owns its grammar, resolution, coverage and evaluation.
 
 **Requested Service Set**: The deduplicated services selected by authorization Virtual Service Scopes or original refresh assurance bindings. It adds request-local requirements without changing the Agent's configuration.
 
