@@ -2,6 +2,8 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
+**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and validation remain incomplete.
+
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in
 [plan.md](./plan.md#approval-items) and need maintainer sign-off.

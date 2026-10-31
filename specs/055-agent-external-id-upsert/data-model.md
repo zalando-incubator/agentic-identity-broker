@@ -2,6 +2,8 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
+**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and validation remain incomplete.
+
 No new entity, aggregate, table, typed ID, or configuration is introduced. The feature changes one
 invariant on the existing Agent aggregate, adds a domain operation, and adds one migration.
 

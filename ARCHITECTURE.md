@@ -539,6 +539,30 @@ origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
 
+**Agent external-ID reconciliation (feature 055, approved design; implementation pending)**:
+A non-nil External ID is non-empty and identifies at most one Agent by exact, case-sensitive
+comparison; nil is allowed on any number of agents. UUIDs remain stable relationship keys, while
+canonical IDs and client IDs retain their separate existing rules. Collection
+`PUT /api/agents?external_id={value}` selects only by external ID, creates with `201` and a
+UUID-addressed relative `Location`, or returns `200` on update/no-op. The domain applies the
+approved omitted-identity/metadata-replacement policy and compares the effective definition before
+writing; a replay preserves timestamps and emits no mutation audit. Client URIs are compared as a
+set and presented byte-sorted on a copy. All Admin Agent responses use UTC microsecond-truncated
+RFC3339Nano timestamps. Reconcile creation uses microsecond now; a sequential real update uses
+max(microsecond now, observed UpdatedAt truncated to microseconds + 1 microsecond), preserves
+CreatedAt, and may lead wall time slightly. There is no concurrent revision guarantee.
+
+Both adapters enforce external-ID uniqueness atomically; memory maintains a locked lookup index
+and PostgreSQL uses a partial unique index. Reconcile adds one indexed read to a normal write and
+no-op performs only reads. One conflict-driven reread handles a lost create race; different
+concurrent definitions remain last-writer-wins with coherent, atomic writes. Invalid selectors fail
+closed. The new route inherits the existing admin proxy, Host, cross-origin and JSON boundaries.
+Migration `046` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
+blocks on duplicate/empty values without changing rows, and preserves UUIDs/grants through rollback.
+See [ADR 045](adrs/045-unique-agent-external-id-upsert.md) and the
+[upgrade runbook](docs/operations/agent-external-id-uniqueness.md). Implementation and PostgreSQL
+acceptance validation must finish before release; approval alone does not establish delivery.
+
 **Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 
 The optional `lookahead_duration` accepts a positive ISO 8601 duration in days, hours, minutes, or seconds. `dry_run` previews classifications without provider calls or writes. `page_size` accepts 1 through 1000. Omitted values use configuration defaults. Invalid JSON or unknown fields return 400. A missing operator principal or repository failure returns 500. A completed sweep returns 200 counts even when all candidates fail. The count invariant is `refreshed + skipped + failed = total_evaluated`.
@@ -1382,6 +1406,15 @@ Purpose: [Briefly describe its function, e.g., "Payment processing."]
 
 Integration Method: [e.g., REST API, SDK]
 
+**Admin API 3.0.0 (feature 055, approved; implementation pending)** replaces released `2.1.0`
+on the existing routes. Unique/non-empty external IDs introduce intentional `409 conflict` and
+`400 validation failed` outcomes on existing writes; filtered GET keeps its array shape with
+zero or one result. Shared URI ordering and microsecond timestamps are also approved contract
+changes. No versioned compatibility route is added, and the end-user and ExtProc contracts are
+unchanged. Migration `046` and consumer adaptation precede deployment. The contract version is
+not a broker release announcement. [ADR 045](adrs/045-unique-agent-external-id-upsert.md) cites the
+maintainer approval.
+
 ## 6. Deployment & Infrastructure
 
 Cloud Provider: [e.g., AWS, GCP, Azure, On-premise]
@@ -1428,6 +1461,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
 - [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
 - [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
+- [ADR 045: Unique Agent External ID and Create-or-Update](adrs/045-unique-agent-external-id-upsert.md) - Approved adapter-enforced uniqueness, domain reconciliation, safe migration 046, and Admin API 3.0.0
 
 ### Frontend & User Interface
 
@@ -1551,7 +1585,7 @@ Define any project-specific terms or acronyms.)
 
 **Canonical ID**: Optional case-sensitive administrative identifier for an Agent, ThirdpartyOAuth2Provider, or PermissionSet. It is a 1–128-character URL-safe, non-UUID token, unique only within its resource type. Canonical IDs are resolved at the administrative boundary and never replace UUID primary keys, foreign keys, JSONB references, or encryption contexts.
 
-**External ID**: An optional Agent identifier from an external governance system, such as a URN. It is not a Canonical ID or a Stable Identifier. Several Agents can share one External ID. The admin agent-list filter compares it exactly and returns zero or more Agents. The filter accepts 1–255 Unicode code points. The write contract does not change.
+**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 045 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior; implementation is pending.
 
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 
