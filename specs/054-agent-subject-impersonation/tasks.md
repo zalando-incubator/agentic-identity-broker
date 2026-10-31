@@ -275,7 +275,7 @@ N/A under API-004. No frontend component, Storybook story, semantic-token/WCAG c
 
 ## Phase R: Architecture Review Remediation (PR #293 comment `6546623321`)
 
-**Purpose**: Resolve the six 🟡 findings of the architecture review on head `f106060`. A11 and A12 are approved through the referenced comment.
+**Purpose**: Resolve the six 🟡 findings of the architecture review on head `f106060`. A11 and A12 were approved by mjungsbluth on 2026-10-31 through the referenced comment.
 
 - [X] T077 [R] Index ADR 032/045 in `ARCHITECTURE.md` §10, add the ADR 032 partial-supersession note, replace stale Proposed statuses and draft ADR links in feature documents, and align glossary terms and the `AuditRecord.SubjectIdentity` comment (findings 4, 5)
 - [X] T078 [R] Write failing tests, then make `impersonation.ParseAllowedSubjectCategories` the single category rule for domain and config validation, remove `ports.SubjectCategory*`, and replace `internal/config/impersonation_shape.go` with a `ports.SubjectCategoryList` decode hook (finding 3)
