@@ -6,6 +6,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/stretchr/testify/mock"
 )
@@ -19,6 +20,14 @@ type mockConsentService struct {
 	revokeConsentForPrincipalFunc func(ctx context.Context, principal id.Principal, agentID id.AgentID) error
 	getAgentDelegationsFunc       func(ctx context.Context, principal id.Principal) ([]consent.AgentDelegation, error)
 	getUserGrantsFunc             func(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error)
+	requestedServiceCoverageFunc  func(ctx context.Context, principal id.Principal, agentID id.AgentID, serviceIDs []id.ServiceID) ([]servicescope.Outcome, error)
+}
+
+func (m *mockConsentService) RequestedServiceCoverage(ctx context.Context, principal id.Principal, agentID id.AgentID, serviceIDs []id.ServiceID) ([]servicescope.Outcome, error) {
+	if m.requestedServiceCoverageFunc != nil {
+		return m.requestedServiceCoverageFunc(ctx, principal, agentID, serviceIDs)
+	}
+	return []servicescope.Outcome{}, nil
 }
 
 func (m *mockConsentService) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID, principal id.Principal) (*consent.AgentConsentDetail, error) {

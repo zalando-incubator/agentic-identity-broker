@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -126,6 +128,8 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	// FR-029: Validate JWE session_token when present.
 	sessionToken := r.URL.Query().Get("session_token")
 	var sessionRedirectURI string
+	var requestedServiceIDs []id.ServiceID
+	var serviceScopeBindings map[string]id.ServiceID
 	if sessionToken != "" {
 		claims, err := h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, parsedAgentID, id.Principal(principalValue))
 		if err != nil {
@@ -150,6 +154,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		requestedServiceIDs, serviceScopeBindings = claims.RequestedServiceIDs, claims.ServiceScopeBindings
 		sessionRedirectURI = claims.OriginalURL
 		if sessionRedirectURI == "" {
 			h.logger.Error("authorization session token contains empty original_url",
@@ -209,6 +214,8 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		AgentID:               parsedAgentID,
 		ValidUntil:            req.ValidUntil,
 		GrantedPermissionSets: entries,
+		RequestedServiceIDs:   requestedServiceIDs,
+		ServiceScopeBindings:  serviceScopeBindings,
 	}
 
 	handleGrantError := func(err error) {
@@ -266,6 +273,12 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if errors.Is(err, consent.ErrRequestedServiceNotSatisfied) {
+			h.writeError(w, http.StatusBadRequest, "requested service not satisfied",
+				strings.TrimPrefix(err.Error(), consent.ErrRequestedServiceNotSatisfied.Error()+": "))
+			return
+		}
+
 		if errors.Is(err, consent.ErrGrantValidation) {
 			h.logger.WarnContext(r.Context(), "grant validation failed",
 				"agent_id", agentID,
@@ -297,7 +310,12 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{"data": h.toGrantResponse(grant)}
 	if sessionRedirectURI != "" {
-		resp["redirect_url"] = sessionRedirectURI
+		// The protected continuation carries the same JWE; authorize re-entry revalidates it.
+		separator := "?"
+		if strings.Contains(sessionRedirectURI, "?") {
+			separator = "&"
+		}
+		resp["redirect_url"] = sessionRedirectURI + separator + "session_token=" + url.QueryEscape(sessionToken)
 	}
 	h.writeJSON(w, http.StatusCreated, resp)
 }

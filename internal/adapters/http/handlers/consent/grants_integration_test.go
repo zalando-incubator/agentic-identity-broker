@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -395,7 +396,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.Equal(t, originalURL, resp["redirect_url"])
+	assert.Equal(t, originalURL+"&session_token="+url.QueryEscape(sessionToken), resp["redirect_url"], "the continuation carries the same session token (API-CONSENT)")
 
 	storedGrant, err := grantRepo.FindByPrincipalAndAgent(ctx, principalValue, agentID)
 	require.NoError(t, err)

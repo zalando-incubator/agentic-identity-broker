@@ -359,6 +359,15 @@ func (s *ThirdpartyOAuth2ProviderService) ResolveID(ctx context.Context, value s
 	return entity.ID, nil
 }
 
+// GetByCanonicalID returns the provider currently named by a type-scoped canonical ID.
+func (s *ThirdpartyOAuth2ProviderService) GetByCanonicalID(ctx context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	repo, ok := s.repo.(ports.ThirdpartyOAuth2ProviderCanonicalIDRepository)
+	if !ok {
+		return nil, storage.NewStorageError("GetByCanonicalID", storage.ErrorKindNotFound, nil, "provider not found")
+	}
+	return repo.GetByCanonicalID(ctx, canonicalID)
+}
+
 // CanonicalIDs returns canonical IDs for the requested providers.
 func (s *ThirdpartyOAuth2ProviderService) CanonicalIDs(ctx context.Context, ids []id.ServiceID) (map[id.ServiceID]string, error) {
 	if repo, ok := s.repo.(ports.ThirdpartyOAuth2ProviderCanonicalIDRepository); ok {

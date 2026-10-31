@@ -457,13 +457,13 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_JSONResponseFormat(t *testing.T) {
 
 type mockCodeIssuer struct{}
 
-func (m *mockCodeIssuer) IssueAuthorizationCode(_ context.Context, _ *ports.AuthorizationRequest, _ id.Principal) (string, error) {
+func (m *mockCodeIssuer) IssueAuthorizationCode(_ context.Context, _ *ports.AuthorizationRequest, _ id.Principal, _ map[string]id.ServiceID) (string, error) {
 	return "test-code", nil
 }
 
 type errCodeIssuer struct{ err error }
 
-func (m *errCodeIssuer) IssueAuthorizationCode(_ context.Context, _ *ports.AuthorizationRequest, _ id.Principal) (string, error) {
+func (m *errCodeIssuer) IssueAuthorizationCode(_ context.Context, _ *ports.AuthorizationRequest, _ id.Principal, _ map[string]id.ServiceID) (string, error) {
 	return "", m.err
 }
 
