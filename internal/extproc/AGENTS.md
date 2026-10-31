@@ -150,6 +150,8 @@ Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 
 Read token-exchange inputs only from the flat `aib.tokenexchange` dynamic-metadata namespace. Do not use raw `Authorization`, `:path`, `:scheme`, `:authority`, or any other HTTP attribute as a token-exchange input.
 
+The optional `resource_metadata_url` field in the same namespace is advisory challenge input only (Feature 055). ExtProc validates it only when building a 403 `insufficient_scope` challenge and appends it after the broker's service `scope` as `resource_metadata`; invalid values are omitted and logged as `challenge_metadata_invalid` without the value. It never affects exchange, caching or OPA input.
+
 Validate `subject_token` before `resource_uri`. Both fields must be strings. The subject token must be nonblank and have no case-insensitive `Bearer ` prefix. The resource URI must be nonblank, absolute, HTTP or HTTPS, and have a host. Pass accepted metadata values to `Exchanger.Exchange` without modification.
 
 Invalid subject-token metadata returns the fixed 503 `invalid_subject_token` response. Invalid resource metadata returns the fixed 503 `invalid_resource` response. Validate before protocol metadata checks, MCP transport checks, OPA input construction, or OPA evaluation. Invalid metadata must not reach OPA.

@@ -165,8 +165,8 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
-| 045 | `adrs/045-service-session-recovery-return.md` | Approved service-page recovery return and existing persisted refresh rejection; Feature 055 implementation pending |
-| 046 | `adrs/046-virtual-service-scopes.md` | Approved virtual service scopes, shared usability/coverage and immutable refresh assurance; Feature 055 implementation pending |
+| 045 | `adrs/045-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`) and existing persisted refresh rejection (Feature 055) |
+| 046 | `adrs/046-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
 
 ## Domain Glossary
 
