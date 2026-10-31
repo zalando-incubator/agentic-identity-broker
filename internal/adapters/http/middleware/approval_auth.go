@@ -155,6 +155,10 @@ func newUnauthorizedApprovalAuthError(message string, cause error) *approvalAuth
 	return &approvalAuthError{status: http.StatusUnauthorized, code: "unauthorized", message: message, cause: cause}
 }
 
+func newForbiddenApprovalAuthError(message string, cause error) *approvalAuthError {
+	return &approvalAuthError{status: http.StatusForbidden, code: "forbidden", message: message, cause: cause}
+}
+
 func newServiceUnavailableApprovalAuthError(message string, cause error) *approvalAuthError {
 	return &approvalAuthError{status: http.StatusServiceUnavailable, code: "service_unavailable", message: message, cause: cause}
 }
@@ -218,13 +222,15 @@ func (a *ApprovalRequestAuthenticator) authenticateSubjectToken(ctx context.Cont
 	}
 
 	subjectClaims := jwtclaims.FromToken(subjectJWT)
-	principalValue, err := a.celEvaluator.ExtractPrincipal(subjectClaims)
-	if err != nil {
+	principalValue, agentIDValue, err := a.celEvaluator.ResolveHumanSubject(subjectClaims)
+	switch {
+	case errors.Is(err, tokenexchange.ErrAgentSubjectToken):
+		return "", id.AgentID{}, nil, newForbiddenApprovalAuthError("agent-subject tokens cannot authenticate approval requests", err)
+	case errors.Is(err, tokenexchange.ErrAgentSubjectDetection):
+		return "", id.AgentID{}, nil, newServiceUnavailableApprovalAuthError("agent-subject detection is unavailable", err)
+	case err != nil && principalValue == "":
 		return "", id.AgentID{}, nil, newUnauthorizedApprovalAuthError("subject token principal extraction failed", err)
-	}
-
-	agentIDValue, err := a.celEvaluator.ExtractAgentID(subjectClaims)
-	if err != nil {
+	case err != nil:
 		return "", id.AgentID{}, nil, newUnauthorizedApprovalAuthError("subject token agent extraction failed", err)
 	}
 

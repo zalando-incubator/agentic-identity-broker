@@ -111,6 +111,19 @@ There is no `error_uri`: human consent cannot recover this denial. Default detec
 
 See the [exchange concepts](../concepts/token-exchange.md#agent-subject-boundary), [diagnostic reference](../reference/token-exchange.md#agent-subject-boundary), and [detector example](../../examples/config/token-exchange.yaml).
 
+### Approval endpoints
+
+The same detector guards the approval endpoints that authenticate a subject token (ADR 045 decision 6a). An agent-subject token presented to `POST /api/approvals` or `POST /api/approvals/{id}/consume` is rejected before any approval is read or written:
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{"error":"forbidden","message":"agent-subject tokens cannot authenticate approval requests"}
+```
+
+A detection failure returns `503 service_unavailable`. `GET /api/approvals` authenticates only the client assertion and is unaffected.
+
 ## Migrate to End-User API 2.0.0
 
 API 2.0.0 replaces the previous End-User contract on existing routes, including `POST /oauth2/token`. No runtime version selector, parallel compatibility route, endpoint removal or deprecation is introduced. The contract version is separate from broker release tags and the Admin API version. Treat the baseline as released; the checked-out baseline declares 1.1.0, while the feature's approved proposal described 1.0.0. Both require this major bump.

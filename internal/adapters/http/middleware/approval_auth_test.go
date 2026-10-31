@@ -319,3 +319,69 @@ func TestRequireApprovalSubjectToken(t *testing.T) {
 		assert.Empty(t, capturedAuth.GatewayClientID)
 	})
 }
+
+// ADR 045 decision 6a: agent-subject tokens never authenticate as a human approval principal.
+func TestApprovalAuthRejectsAgentSubjectTokens(t *testing.T) {
+	agentID := id.NewAgentID()
+	agentClaims := validApprovalJWTClaims(agentID.String())
+	agentClaims["agent_id"] = agentID.String()
+	agentClaims["azp"] = agentID.String()
+
+	for _, tc := range []struct {
+		name       string
+		middleware func(*ApprovalRequestAuthenticator) func(http.Handler) http.Handler
+		path       string
+		withAssert bool
+	}{
+		{"create", RequireApprovalSubjectTokenAndClientAssertion, "/api/approvals", true},
+		{"consume", RequireApprovalSubjectToken, "/api/approvals/id/consume", false},
+	} {
+		t.Run(tc.name+" rejects detected agent-subject token", func(t *testing.T) {
+			auth, privateKey := newApprovalRequestAuthenticatorForTest(t, "true")
+			called := false
+			handler := tc.middleware(auth)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			req.Header.Set("Authorization", "Bearer "+signApprovalJWT(t, privateKey, agentClaims))
+			if tc.withAssert {
+				req.Header.Set(ApprovalClientAssertionHeaderName, signApprovalJWT(t, privateKey, validApprovalJWTClaims("gateway")))
+			}
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			assert.False(t, called)
+			assert.Equal(t, http.StatusForbidden, rec.Code)
+			resp := decodeApprovalAuthError(t, rec)
+			assert.Equal(t, "forbidden", resp["error"])
+			assert.Equal(t, "agent-subject tokens cannot authenticate approval requests", resp["message"])
+		})
+	}
+
+	t.Run("detector failure fails closed", func(t *testing.T) {
+		auth, privateKey := newApprovalRequestAuthenticatorForTest(t, "true")
+		evaluator, err := tokenexchange.NewCELEvaluator(tokenexchange.CELEvaluatorConfig{
+			PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp",
+			AgentSubjectExpression: "subject_token.sub == subject_token.missing", AuthorizationExpression: "true",
+		})
+		require.NoError(t, err)
+		auth.celEvaluator = evaluator
+		called := false
+		handler := RequireApprovalSubjectToken(auth)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			called = true
+		}))
+		claims := validApprovalJWTClaims("alice@example.com")
+		claims["azp"] = agentID.String()
+		req := httptest.NewRequest(http.MethodPost, "/api/approvals/id/consume", nil)
+		req.Header.Set("Authorization", "Bearer "+signApprovalJWT(t, privateKey, claims))
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.False(t, called)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		assert.Equal(t, "service_unavailable", decodeApprovalAuthError(t, rec)["error"])
+	})
+}
