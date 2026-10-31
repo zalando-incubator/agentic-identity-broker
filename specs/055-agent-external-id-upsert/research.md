@@ -38,7 +38,9 @@ client-ID, and client-URI conflicts without parsing messages (ADR 004 error wrap
 
 **Decision**: Add no repository method. The reconcile operation reads with the existing
 `AgentRepository.ListByExternalID`, then writes with the existing `Create` or `Update`. After the
-migration, `ListByExternalID` returns zero or one agent. More than one result is an invariant
+migration, `ListByExternalID` returns zero or one agent. Memory resolves `byExternalID` under the
+read lock and clones the selected primary-map agent instead of scanning the registry; PostgreSQL
+uses the unique external-ID index. More than one result is an invariant
 breach, which the service reports as an internal error and never resolves by choosing a survivor.
 
 **Rationale**: ADR 004 and Principle IX cap repository interfaces. `AgentRepository` already
@@ -67,7 +69,7 @@ retry (R3) gives the required race behavior on both adapters with the existing m
    continue with step 4 against it; otherwise return the original conflict.
 4. **One match**: apply the FR-012 update policy to obtain the effective definition. If it equals
    the stored definition (R4), return the stored agent with outcome `unchanged` and write nothing.
-   Otherwise set `UpdatedAt`, validate as `Update` does (client-ID uniqueness excludes the selected
+   Otherwise set `UpdatedAt` using R4's microsecond advancement rule, validate as `Update` does (client-ID uniqueness excludes the selected
    agent), and call `repo.Update`; outcome `updated`.
 5. Return the agent and an outcome (`created`, `updated`, `unchanged`). The handler maps `created`
    to `201` + `Location` and the others to `200`.
@@ -98,14 +100,37 @@ metadata URLs; service requirements (order-sensitive, with `nil` and empty `requ
 permission declarations (order-sensitive); redirect URIs and allowed scopes (order-sensitive, `nil`
 equals empty); and client URIs as a set. Timestamps and `ClearCanonicalID` are excluded.
 
-**Rationale**: FR-008 and FR-012 need "same effective state" semantics. PostgreSQL returns client
-URIs sorted from `agent_client_uris`, and the memory adapter keeps input order, so only a set
-comparison agrees across adapters (FR-013). Other collections round-trip in order in both
-adapters, so order-sensitive comparison is correct and avoids introducing new normalization, which
-the spec excludes.
+**Stable ordering (Proposed, API-ORDER)**: Sort a copied `client_uris` slice in ascending Go
+string byte order in every Admin Agent response (POST, both PUT forms, single GET, list/filter
+GET), including the immediate create/update response. Preserve URI spelling, optional omission,
+other collection order, and stored order. PostgreSQL retrieval order/collation and memory input
+order cannot then change a replay representation. Test creation and actual update with at least
+two valid client URIs submitted in reverse lexical order, followed by identical and reordered-set
+replays on both stores and under both reference preferences.
 
-**Alternatives considered**: Comparing rendered JSON responses (depends on presentation and
-`Prefer`); always writing and restoring `updated_at` (still writes, triggers audit logs, and races).
+**Timestamp precision (Proposed, API-TIMESTAMPS)**: Collection PUT creation uses UTC now truncated
+to microseconds for both timestamps. Actual reconcile update uses the later of UTC now truncated
+to microseconds and the observed stored `UpdatedAt` truncated to microseconds plus one microsecond.
+Preserve `CreatedAt`; no-op writes nothing and returns stored times. Persist reconcile times at
+microsecond precision on both stores. Present every Admin Agent timestamp in UTC after truncating
+to microseconds, using `time.RFC3339Nano` (zero to six fractional digits, no trailing zeroes).
+Existing POST/ID-addressed PUT timestamp assignment is otherwise unchanged; no schema change.
+Sequential real updates advance even in the same displayed second, with a frozen clock, or after
+clock rollback. Rapid changes may put `updated_at` slightly ahead of wall time; concurrent writes
+retain R3's last-writer-wins semantics, not a global revision guarantee.
+
+**Rationale**: FR-008 and FR-012 need "same effective state" semantics. Set equality alone does
+not stabilize write/replay presentation, so client-URI ordering is explicit at the presentation
+boundary. Other collections already round-trip in order in both adapters. Microseconds match
+PostgreSQL persistence and expose real rapid changes without full-second logical jumps. Tests
+use fixed observed/clock values in test-local helpers, real store read-back, same-second HTTP
+update then replay, and unchanged audit/write counts without sleeps or test-only production APIs.
+
+**Alternatives considered**: Preserve input order (needs persisted ordinal positions in PostgreSQL);
+compare rendered JSON (depends on `Prefer`); always write then restore timestamps (still mutates);
+retain whole-second HTTP formatting and advance by at least a full second (larger wall-clock drift);
+use nanosecond persistence (PostgreSQL cannot round-trip it). Ordering and precision changes remain
+Proposed because existing response behavior is externally visible.
 
 ## R5 — HTTP adapter shape
 

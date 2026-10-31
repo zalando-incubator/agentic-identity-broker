@@ -35,7 +35,15 @@ that creates or updates by an alternate key.
    update, and `200` with no write when the effective definition is unchanged. It never selects by
    UUID, canonical ID, or client ID. The body is `AgentCreateRequest`. The update branch follows
    the FR-012 field policy: omitted `client_id` and `canonical_id` are preserved (ADR 017), and
-   metadata and collections are replaced.
+   metadata and collections are replaced. No-op compares client URIs as a set; shared Admin Agent
+   presentation sorts a copied URI slice in ascending Go string byte order on all write/read
+   responses, without changing URI spelling, stored order, or other collections. Collection PUT
+   creation persists UTC microsecond now for both timestamps; each sequential actual update uses
+   max(UTC microsecond now, observed UpdatedAt truncated to microseconds + 1 microsecond), preserving
+   CreatedAt exactly. No-op preserves stored times without a write. All Admin Agent timestamps use
+   UTC microsecond-truncated RFC3339Nano presentation (zero to six fractional digits); other writes
+   retain existing timestamp assignment. These presentation changes are Proposed API-ORDER and
+   API-TIMESTAMPS, not an approval or a concurrent revision guarantee.
 3. **Race handling without locks.** The domain service reads by external ID, then calls the
    existing repository `Create` or `Update`. If `Create` reports any conflict, the service re-reads
    by external ID once and, when a holder now exists, continues on the update branch. No new
@@ -55,7 +63,10 @@ that creates or updates by an alternate key.
 - Sync jobs reconcile one registry entry with one retry-safe call.
 - Existing clients that relied on shared or empty external IDs receive `409` or `400` and must
   migrate. Upgrades stop until operators resolve legacy duplicates and empties.
-- `GET /api/agents?external_id=` keeps its array shape but returns at most one agent.
+- `GET /api/agents?external_id=` keeps its array shape but returns at most one agent. Admin Agent
+  responses consistently sort client URIs and expose microseconds instead of whole-second-only
+  timestamps; existing consumers must tolerate the proposed precision/ordering change. Rapid
+  sequential changes may put `updated_at` slightly ahead of wall time; it is not an ETag.
 - A future alternate-key reconcile operation for another resource should follow this pattern:
   adapter-enforced uniqueness, collection `PUT` with a required selector, bounded conflict re-read,
   and effective-definition no-op detection.
@@ -74,5 +85,9 @@ that creates or updates by an alternate key.
   implementation.
 - **Automatic duplicate cleanup in the migration**: violates FR-004 and can lose governed agents
   and their grants.
+- **Preserve client-URI input order**: requires persisted PostgreSQL ordinal positions to match
+  memory; response-only sorting avoids a schema addition and makes create/update replays stable.
+- **Whole-second timestamp advancement**: preserves former formatting but requires a full-second
+  logical jump for rapid changes, causing larger wall-clock drift than the microsecond minimum.
 - **Keep Admin API 2.x**: treats a behavior change that breaks existing callers as a fix, which
   Principles IV and X forbid.
