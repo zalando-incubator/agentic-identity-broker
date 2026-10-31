@@ -5,8 +5,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,6 +78,19 @@ func (k *LocalKey) Sign(claims map[string]any) (string, error) {
 		return "", fmt.Errorf("sign: %w", err)
 	}
 	return string(signed), nil
+}
+
+// PrivatePEM returns the private key as a PKCS #8 PEM block, the form a gateway reads its signing key file in.
+func (k *LocalKey) PrivatePEM() string {
+	raw, err := jwk.Export[any](k.private)
+	if err != nil {
+		panic(fmt.Sprintf("export key: %v", err))
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(raw)
+	if err != nil {
+		panic(fmt.Sprintf("marshal PKCS #8 key: %v", err))
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
 // PublicMap returns the public JWK members of the key.
