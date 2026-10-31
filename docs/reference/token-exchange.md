@@ -38,6 +38,18 @@ request under RFC 8693. The same endpoint also supports `authorization_code` and
 `client_credentials`. See [API overview](/docs/reference/api) and
 [OAuth2 server modes](/docs/concepts/oauth2-server-modes).
 
+Requests require exactly one `Content-Type` field. Per RFC 6749 Section 3.2, a parameter sent
+without a value is treated as omitted. A singleton form parameter with more than one non-empty
+value returns `400 invalid_request`. The singleton parameters are `grant_type`, `client_id`,
+`client_secret`, `code`, `redirect_uri`, `refresh_token`, `code_verifier`, `scope`,
+`subject_token`, `subject_token_type`, `client_assertion`, `client_assertion_type`,
+`actor_token`, `actor_token_type`, and `requested_token_type`.
+
+The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2.1. Repeated
+`resource` values that normalize to the same URI are accepted. Because the broker returns one
+service token, distinct `resource` values return `400 invalid_target` per RFC 8693 Section
+2.2.2.
+
 ## Key concepts
 
 ### Tokens
@@ -93,6 +105,9 @@ applies only when the request does not activate user impersonation.
 | `client_assertion` | JWT string | The gateway's authentication token, validated against upstream JWKS. |
 | `client_assertion_type` | `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` | The client authentication method. |
 | `resource` | URI string | Target service resource URI (for example `https://api.github.com`). |
+
+Both type identifiers must match exactly. Missing identifiers, empty values, case changes,
+and surrounding whitespace return `400 invalid_request`. The broker does not supply defaults.
 
 ### Optional parameters
 
@@ -455,6 +470,8 @@ rejected scopes.
 
 Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
 The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+When one token-exchange grant and its audience identify an impersonation request, repeated nonempty parameters also produce this event before credential authentication.
+The event records `invalid_request` and the resolved target, without unvalidated identities or credential values.
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 

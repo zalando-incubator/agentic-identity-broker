@@ -1466,6 +1466,23 @@ paths:
         Exchange a token issued by the Upstream OAuth2 Server for a third-party OAuth2 token
         stored in the token vault.
 
+        Third-party exchange requires the exact `subject_token_type`
+        `urn:ietf:params:oauth:token-type:access_token` and `client_assertion_type`
+        `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. Missing, empty, or different
+        identifiers return `400 invalid_request`; the broker does not supply defaults.
+
+        All token grants require exactly one `Content-Type` field. Per RFC 6749 Section 3.2, a
+        parameter sent without a value is treated as omitted. A singleton form parameter with
+        more than one non-empty value returns `400 invalid_request`. These parameters are
+        `grant_type`, `client_id`, `client_secret`, `code`, `redirect_uri`, `refresh_token`,
+        `code_verifier`, `scope`, `subject_token`, `subject_token_type`, `client_assertion`,
+        `client_assertion_type`, `actor_token`, `actor_token_type`, and `requested_token_type`.
+
+        The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2.1.
+        Repeated `resource` values that normalize to the same URI are accepted. Distinct
+        `resource` values return `400 invalid_target` because the broker returns one service
+        token.
+
         The token exchange flow:
         1. Gateway authenticates using client_assertion JWT (gateway identity)
         2. System validates subject_token JWT (contains principal + agent identifier)
@@ -3990,7 +4007,7 @@ components:
           type: string
           description: |
             Type of the subject_token.
-            - `urn:ietf:params:oauth:token-type:access_token`: third-party token exchange (default).
+            - `urn:ietf:params:oauth:token-type:access_token`: required exact type for third-party token exchange, with no default.
             - `urn:ietf:params:oauth:token-type:jwt`: user impersonation (local mode only). A
               signed subject is signature-verified; a rule declaring `verification: none` accepts
               an unsigned (`alg:none`) subject JWT and rejects signed JWSs on that path. An

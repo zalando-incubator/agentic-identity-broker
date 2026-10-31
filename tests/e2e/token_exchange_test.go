@@ -188,28 +188,35 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S2 from specs/013-token-exchange/spec.md
-		It("[US1-S2] should look up service by resource URI in protected_resources", func() {
-			// Given: Service with protected_resources is configured (to be added in Phase 3)
-			mockUpstream.WithSuccessfulTokenResponse().
-				WithAccessToken("third-party-token-456")
-
+		DescribeTable("[US1-S2] resolves repeated resources to the expected vault token", func(resources []string, wantError string) {
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
 				"subject_token":         {tokenFixtures.SubjectToken},
 				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
 				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 				"client_assertion":      {tokenFixtures.ClientAssertion},
-				"resource":              {"https://api.github.com"},
+				"resource":              resources,
 			}
-
-			// When: Token exchange request includes resource parameter
 			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
-
-			// Then: System looks up service by resource URI
+			if wantError != "" {
+				Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+				var body map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				Expect(body["error"]).To(Equal(wantError))
+				Expect(body).NotTo(HaveKey("access_token"))
+				return
+			}
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-		})
+			Expect(resp).To(matchers.HaveTokenExchangeSuccess().WithAccessToken("github-token-xyz"))
+		},
+			Entry("identical resources", []string{"https://api.github.com", "https://api.github.com"}, ""),
+			Entry("normalized identical resources", []string{"https://api.github.com/", "https://api.github.com"}, ""),
+			Entry("empty resource omitted", []string{"", "https://api.github.com"}, ""),
+			Entry("distinct resources rejected", []string{"https://api.github.com", "https://other.example.com"}, "invalid_target"),
+			Entry("invalid resource rejected", []string{"https://api.github.com", "not a uri"}, "invalid_request"),
+		)
 
 		// Spec Reference: US1-S3 from specs/013-token-exchange/spec.md
 		It("[US1-S3] should return RFC 8693 response with access_token and token_type", func() {
