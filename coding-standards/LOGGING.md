@@ -2,6 +2,8 @@
 
 This standard applies to all Go code in `cmd/` and `internal/`. Read it before you add or change a log call.
 
+Scope: log records only. OpenTelemetry traces and metrics are out of scope.
+
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
@@ -75,7 +77,6 @@ oauth2_server.token.issued
 | Operation | `operation` | Enumerated value, for example `encrypt`, `decrypt` |
 
 - An attribute that a dashboard groups by must have a closed value set. Use typed string constants.
-- Use an attribute as a metric label only if its value set is closed.
 
 ## 3. Levels
 
@@ -117,7 +118,7 @@ A principal identifies a person, for example by email or subject. It is personal
 4. The principal policy handler in `internal/adapters/telemetry` renders each `id.Principal` attribute. It is the only component that renders a principal. It runs before the fan-out to stdout and OpenTelemetry, so all sinks get the same output.
 5. The keys `principal`, `operator_principal`, and `actor` are reserved for principals. The policy handler also applies to a plain string value under a reserved key. This is a safety net, not a substitute for rule 2.
 6. `SecurityContext.Actor` is an `id.Principal`. The context handler adds it to records through the same policy.
-7. Do not put a principal in a message, an error string, a span attribute, or a metric label. A span is linked to its logs through `trace_id`.
+7. Do not put a principal in a message or an error string.
 8. Log a principal only on audit, security, and per-owner records. Do not log a principal on `Debug` records.
 9. Do not log `principal.PrincipalProfile` or any of its fields (display name, email, picture URL).
 10. ExtProc must not import `internal/domain/id`. ExtProc logs a principal only under a reserved key, so the shared telemetry handler applies the same policy.
