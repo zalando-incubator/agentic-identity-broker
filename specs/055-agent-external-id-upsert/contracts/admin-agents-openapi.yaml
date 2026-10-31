@@ -1,0 +1,305 @@
+# Proposed Admin API contract changes for feature 055.
+# Status: Proposed — awaiting maintainer sign-off (plan.md Approval Items API-UPSERT,
+# API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER, API-TIMESTAMPS). Implementation merges these operations and
+# components into api/admin/openapi.yaml after approval. Component references point to
+# the existing document.
+openapi: 3.0.3
+info:
+  title: Agentic Identity Broker - Admin Server API (feature 055 delta)
+  version: 3.0.0
+  description: |
+    Admin API 3.0.0 replaces released 2.1.0 on the existing routes (API-VERSION).
+
+    ### External ID Contract (Admin API 3.0.0)
+
+    - A set `external_id` identifies at most one agent. Comparison is exact and case-sensitive.
+    - `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` when another
+      agent holds the resulting external ID, and `400 validation failed` for `""`.
+    - `PUT /api/agents?external_id=` creates or updates the agent holding that external ID.
+    - `GET /api/agents?external_id=` returns `[]` or a one-element array.
+    - Agents without an external ID remain unrestricted in number.
+
+    ### Stable Agent Response Presentation (Proposed)
+
+    API-ORDER: Every Admin Agent response (POST, collection PUT, ID-addressed PUT,
+    single GET, and list/filter GET) returns `client_uris` in ascending Go string
+    byte order. URI spelling, other collection ordering and empty-field omission
+    are unchanged. Stored order is irrelevant; equal-URI-set collection PUT replay does not write.
+
+    API-TIMESTAMPS: Every Admin Agent `created_at` and `updated_at` is UTC RFC 3339
+    with microsecond precision: truncate to microseconds and use RFC3339Nano
+    formatting (zero to six fractional digits, trailing zeroes omitted). This
+    replaces whole-second presentation; names and date-time schemas do not change.
+    Collection PUT creation sets both stored times to UTC now truncated to microseconds.
+    Each sequential actual reconcile update preserves `created_at` and sets `updated_at`
+    to max(UTC now truncated to microseconds, observed stored `updated_at` truncated
+    to microseconds + 1 microsecond). Thus rapid same-second changes are observable,
+    even with a frozen/backward clock. It may lead wall time slightly; it is not a
+    concurrent-write revision or ETag. No-op replay preserves stored times and writes
+    nothing. Other write operations retain existing timestamp assignment.
+paths:
+  /api/agents:
+    get:
+      summary: List agents, optionally filtered by external ID
+      description: |
+        Retrieve registered agents. Without `external_id`, return all agents.
+        With one `external_id`, return the agent that holds it, if any.
+        External IDs are unique, so the array contains zero or one agent.
+        Do not trim, normalize, or interpret the value as a pattern. The filter
+        does not match agent IDs, canonical IDs, or client IDs.
+
+        Percent-encode reserved characters in the value, such as `&`, `+`, and `;`.
+        Invalid filters return `400` with `error: invalid external_id`.
+        This includes empty or repeated values, invalid UTF-8, NUL, more than
+        255 Unicode code points, malformed percent-encoding, and an unencoded `;`.
+        Unknown parameters and malformed query parts outside `external_id`
+        retain their existing handling.
+
+        Returns a direct array of agent objects (no envelope), in no guaranteed order.
+      operationId: listAgents
+      x-change: The `multiple_agents` example applies to the unfiltered list; parameters, array shape, and errors are unchanged from 2.1.0. Shared Agent presentation follows API-ORDER/API-TIMESTAMPS above, including single-agent GET.
+
+    post:
+      summary: Create a new agent
+      operationId: createAgent
+      x-change: |
+        Adds to the existing description:
+
+        **external_id uniqueness**: When supplied, `external_id` must be non-empty and must not be
+        held by another agent. An empty string returns `400 validation failed`. A held value
+        returns `409 conflict` with message `external_id is already held by another agent`.
+        Omit `external_id` or send `null` for agents without one; any number of agents may omit it.
+      responses:
+        '400':
+          description: Invalid request, including an empty external_id
+          content:
+            application/json:
+              schema:
+                $ref: '../../../api/admin/openapi.yaml#/components/schemas/ErrorResponse'
+              examples:
+                empty_external_id:
+                  value:
+                    error: validation failed
+                    message: external_id cannot be empty when provided
+        '409':
+          $ref: '#/components/responses/AgentConflictError'
+
+    put:
+      summary: Create or update the agent holding an external ID
+      description: |
+        Idempotently reconcile the agent identified by an external governance ID.
+
+        - No agent holds `external_id`: create one and return `201 Created` with `Location`.
+        - An agent holds it: update that agent and return `200 OK`. The selector never matches
+          agent IDs, canonical IDs, or client IDs.
+        - Replaying an identical request with no intervening change returns `200` with the
+          unchanged representation, including `updated_at`. Nothing is written.
+        - Concurrent first requests with one external ID create exactly one agent.
+          Without `If-Match`, concurrent different definitions are last-writer-wins; each
+          successful request applies its complete definition.
+
+        **Selector**: exactly one `external_id` query parameter, 1–255 Unicode code points,
+        valid UTF-8, no NUL, valid percent-encoding, and no unencoded `;`. Percent-encode `&`,
+        `+`, and `;`. Otherwise `400 invalid external_id`.
+
+        **Body**: `AgentCreateRequest`. Omitted `external_id` takes the selector. A supplied
+        `external_id` must equal the decoded selector; a different value, `""`, or `null`
+        returns `400 invalid external_id`.
+
+        **Update-branch field policy** (FR-012):
+
+        | Fields | Omitted | `null` | Value |
+        | --- | --- | --- | --- |
+        | `client_id` | preserved | `400 validation failed` | replaced |
+        | `canonical_id` | preserved | removed | replaced |
+        | `governance_url`, `user_documentation_url`, `agent_interface_url` | removed | removed | replaced |
+        | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | emptied | emptied | replaced |
+        | `display_name`, `description`, `permission_sets` | `400` | `400` | replaced |
+
+        On creation, omitted optional fields are absent or empty and no `client_id` is generated.
+        Grants and other relationships of an updated agent are not changed. To clear an existing
+        `client_id`, use `PUT /api/agents/{agent-id}` with `client_id: null`.
+
+        Invalid definitions, attributes, and references on either branch return `400`
+        with the existing `validation failed` envelope. Canonical-ID conflicts,
+        configuration-dependent `client_id` conflicts (`multi_agent_client.enabled`),
+        and client-URI identity conflicts return `409 conflict` on both branches.
+        Failed requests change no agent. Shared Agent ordering and timestamp presentation
+        follow API-ORDER/API-TIMESTAMPS above on create, update, and replay.
+      operationId: reconcileAgentByExternalId
+      tags:
+        - Agents
+      parameters:
+        - $ref: '#/components/parameters/ExternalIdSelector'
+        - $ref: '../../../api/admin/openapi.yaml#/components/parameters/PreferCanonicalReferences'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../../api/admin/openapi.yaml#/components/schemas/AgentCreateRequest'
+            examples:
+              desired_state:
+                summary: Desired agent definition
+                value:
+                  canonical_id: research-assistant
+                  external_id: urn:example:ai-registry:agent:7f3a9c
+                  display_name: Research Assistant
+                  description: Helps with academic research
+                  permission_sets:
+                    - permission_set_id: github-read
+                      requirement_type: mandatory
+      responses:
+        '200':
+          description: The agent holding the external ID was updated, or already matched the request.
+          headers:
+            Preference-Applied:
+              $ref: '../../../api/admin/openapi.yaml#/components/headers/PreferenceApplied'
+            Vary:
+              $ref: '../../../api/admin/openapi.yaml#/components/headers/VaryPrefer'
+          content:
+            application/json:
+              schema:
+                $ref: '../../../api/admin/openapi.yaml#/components/schemas/Agent'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440000
+                canonical_id: research-assistant
+                external_id: urn:example:ai-registry:agent:7f3a9c
+                display_name: Research Assistant v2
+                description: Helps with academic research
+                permission_sets:
+                  - permission_set_id: github-read
+                    requirement_type: mandatory
+                created_at: '2026-10-30T08:00:00Z'
+                updated_at: '2026-10-30T09:00:00Z'
+        '201':
+          description: No agent held the external ID; one was created.
+          headers:
+            Location:
+              description: Relative URI of the created agent, addressed by UUID.
+              schema:
+                type: string
+              example: /api/agents/550e8400-e29b-41d4-a716-446655440000
+            Preference-Applied:
+              $ref: '../../../api/admin/openapi.yaml#/components/headers/PreferenceApplied'
+            Vary:
+              $ref: '../../../api/admin/openapi.yaml#/components/headers/VaryPrefer'
+          content:
+            application/json:
+              schema:
+                $ref: '../../../api/admin/openapi.yaml#/components/schemas/Agent'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440000
+                canonical_id: research-assistant
+                external_id: urn:example:ai-registry:agent:7f3a9c
+                display_name: Research Assistant
+                description: Helps with academic research
+                permission_sets:
+                  - permission_set_id: github-read
+                    requirement_type: mandatory
+                created_at: '2026-10-30T08:00:00Z'
+                updated_at: '2026-10-30T08:00:00Z'
+        '400':
+          description: Invalid selector, body external_id, or agent definition. No agent changes.
+          content:
+            application/json:
+              schema:
+                $ref: '../../../api/admin/openapi.yaml#/components/schemas/ErrorResponse'
+              examples:
+                missing_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id selector is required
+                empty_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id must be 1 to 255 characters
+                repeated_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id must appear at most once
+                malformed_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id contains malformed percent-encoding
+                body_mismatch:
+                  value:
+                    error: invalid external_id
+                    message: body external_id must equal the selector
+                body_null:
+                  value:
+                    error: invalid external_id
+                    message: external_id must not be null
+                null_client_id:
+                  value:
+                    error: validation failed
+                    message: client_id must be a nonempty string when supplied
+                missing_permission_sets:
+                  value:
+                    error: validation failed
+                    message: at least one permission set entry is required
+        '409':
+          $ref: '#/components/responses/AgentConflictError'
+        '500':
+          $ref: '../../../api/admin/openapi.yaml#/components/responses/InternalServerError'
+
+  /api/agents/{agent-id}:
+    put:
+      summary: Update agent
+      operationId: updateAgent
+      x-change: |
+        Adds to the existing description: when supplied, `external_id` must be non-empty and must
+        not be held by another agent (`400 validation failed` / `409 conflict`). Retaining the
+        agent's own external ID is not a conflict. Documents the `409` response, which also
+        covers existing canonical-ID, client-ID, and client-URI conflicts.
+      responses:
+        '400':
+          description: Invalid request, including an empty external_id
+          content:
+            application/json:
+              schema:
+                $ref: '../../../api/admin/openapi.yaml#/components/schemas/ErrorResponse'
+              examples:
+                empty_external_id:
+                  value:
+                    error: validation failed
+                    message: external_id cannot be empty when provided
+        '409':
+          $ref: '#/components/responses/AgentConflictError'
+
+components:
+  parameters:
+    ExternalIdSelector:
+      name: external_id
+      in: query
+      required: true
+      description: Exact, case-sensitive external governance ID that selects the agent. Percent-encode reserved characters.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      example: urn:example:ai-registry:agent:7f3a9c
+  responses:
+    AgentConflictError:
+      description: Another agent holds a requested unique identifier. No agent changes.
+      content:
+        application/json:
+          schema:
+            $ref: '../../../api/admin/openapi.yaml#/components/schemas/ErrorResponse'
+          examples:
+            external_id:
+              value:
+                error: conflict
+                message: external_id is already held by another agent
+            canonical_id:
+              value:
+                error: conflict
+                message: agent canonical_id already exists
+            client_id:
+              value:
+                error: conflict
+                message: agent with this client_id already exists
+            client_uri:
+              value:
+                error: conflict
+                message: client URI already registered to another agent

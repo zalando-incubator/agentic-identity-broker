@@ -165,6 +165,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 045 | `adrs/045-unique-agent-external-id-upsert.md` | Approved unique Agent external IDs, collection PUT reconciliation, safe migration 046, and Admin API 3.0.0; implementation pending |
 
 ## Domain Glossary
 

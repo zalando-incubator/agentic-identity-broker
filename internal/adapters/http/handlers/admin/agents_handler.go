@@ -126,6 +126,10 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // CreateAgent handles POST /api/agents
 func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

@@ -772,6 +772,11 @@ for grants that reference the set.
 
 An agent is the AI agent that requests delegated access. Create one with `POST /api/agents`.
 
+**Feature 055 delivery status:** Admin API 3.0.0 has maintainer approval; implementation and
+mandatory acceptance validation are pending. The uniqueness/reconcile descriptions below are its
+approved contract, not a release announcement. Before upgrading, follow the
+[external-ID uniqueness runbook](../operations/agent-external-id-uniqueness.md).
+
 The fields:
 
 - `display_name` and `description` — Required values for the consent interface.
@@ -781,7 +786,7 @@ The fields:
   [delegation and consent](/docs/concepts/delegation-and-consent#mandatory-vs-optional-requirements).
 - `client_id` — Optional. Use it only for an agent that uses an upstream OAuth2 client ID.
   Omit it for agents identified in another way.
-- `external_id` — Optional external governance identifier, such as a URN. Several agents can share one external ID.
+- `external_id` — Optional external governance identifier, such as a URN. In Admin API 3.0.0 a set value must be non-empty and unique across agents by exact, case-sensitive equality. Any number of agents may omit it or store null. Empty strings return `400 validation failed`; a value held by another agent returns `409 conflict`.
 - `redirect_uris` — Optional. Register HTTPS, loopback HTTP (`localhost`, `127.0.0.1`, or `[::1]`), or native-app private-use callbacks such as `com.example.app:/oauth2redirect/example-provider` and `github-app://oauth/callback`. The broker stores accepted entries unchanged and in order. Private-use entries must be canonical, lowercase, unencoded, and free of fragments.
 - `governance_url`, `user_documentation_url`, and `agent_interface_url` — Optional URLs for
   the consent interface.
@@ -819,11 +824,93 @@ curl 'http://localhost:14000/api/agents?external_id=urn%3Aexample%3Aai-registry%
   -H 'X-Remote-User: admin@example.com'
 ```
 
-The response is an array with zero, one, or several agents. External IDs are not unique.
+In Admin API 3.0.0 the response remains an array, containing zero or one agent. Set external IDs are unique.
 The filter matches the complete value exactly and respects case. It does not search agent UUIDs or canonical IDs.
 Percent-encode reserved characters such as `&`, `+`, and `;` in the value. An unencoded semicolon is invalid.
 If `external_id` is empty, repeated, undecodable, or longer than 255 Unicode code points, the broker returns `400` with `error: invalid external_id`.
 Omit the parameter to list every agent. Filtered responses also accept `Prefer: reference-id=canonical` for nested references.
+
+### Reconcile one registry entry without a preliminary lookup
+
+Admin API 3.0.0 adds `PUT /api/agents?external_id={value}`. Supply one selector with 1–255
+Unicode code points, valid UTF-8, no NUL, and correct percent encoding. It selects only by external
+ID, never UUID, canonical ID or client ID. Missing, empty, repeated, malformed, or unencoded
+semicolon selectors return `400 invalid external_id` and change nothing.
+
+Use the existing `AgentCreateRequest`, with required display name, description and nonempty valid
+permission declarations. This example requires an existing permission set with canonical ID
+`github-read` (or replace it with its UUID). The first call creates an Agent with `201`, a UUID
+`id` and relative `Location: /api/agents/{uuid}`. Identical completed replays return `200` with the
+same representation and timestamps; changing the definition updates the same UUID with `200`.
+
+```bash
+curl -i -X PUT 'http://localhost:14000/api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c' \
+  -H 'X-Remote-User: admin@example.com' \
+  -H 'Content-Type: application/json' \
+  -H 'Prefer: reference-id=canonical' \
+  -d '{
+    "canonical_id": "research-assistant",
+    "display_name": "Research Assistant",
+    "description": "Helps with academic research",
+    "permission_sets": [{"permission_set_id":"github-read","requirement_type":"mandatory"}],
+    "client_uris": ["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]
+  }'
+```
+
+The response uses `github-read` for the nested reference and includes
+`Preference-Applied: reference-id=canonical` and `Vary: Prefer`. The Agent identity and `Location`
+remain UUID-addressed. Without the preference, nested references use UUIDs.
+
+All Admin Agent responses (POST, both PUT forms, single GET and list/filter GET) present
+`client_uris` in ascending Go string byte order. Thus this request returns `a-client.json` before
+`z-client.json`; changing only their input order is a no-op. URI spelling, stored order, other
+collections, and empty-field omission do not change.
+
+All Admin Agent timestamps are UTC RFC 3339 with zero to six fractional digits, microsecond
+truncation and no trailing zeroes. Reconcile creation uses the same microsecond instant for both
+timestamps. A sequential real update sets `updated_at` to the later of microsecond now and the
+observed value plus one microsecond, preserving `created_at`. A rapid update can therefore move
+`2026-10-30T09:00:00Z` to `2026-10-30T09:00:00.000001Z`; its identical replay and next GET retain
+that precise value. It can lead wall time slightly under rapid changes or a backward clock.
+This is not an ETag or concurrent-write ordering guarantee. Other write operations retain their
+existing timestamp assignment.
+
+Collection PUT's replacement policy is not a general patch:
+
+| Body field | Omitted on update | Explicit null | Supplied value |
+| --- | --- | --- | --- |
+| `client_id` | Preserve | `400 validation failed` | Replace under existing conflict rules |
+| `canonical_id` | Preserve | Clear | Replace |
+| `external_id` | Take selector | `400 invalid external_id` | Must equal selector |
+| Three metadata URLs | Clear | Clear | Replace |
+| `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | Empty | Empty | Replace whole collection |
+| `display_name`, `description`, `permission_sets` | Reject | Reject | Replace; references must be valid |
+
+For example, sending only the three required fields preserves existing client/canonical IDs but
+clears metadata and optional collections; replaying it is then unchanged. Adding
+`"canonical_id": null` clears the canonical ID. Sending `"client_id": null` instead rejects the
+whole request; to clear a client ID use the existing ID-addressed PUT. An omitted external ID takes
+the selector, but a different, empty or null body external ID returns `400 invalid external_id`.
+
+Canonical-ID, configuration-dependent client-ID and client-URI conflicts return `409 conflict` on
+both branches. Invalid definitions/references return `400 validation failed`. Failures leave
+Agents and relationships unchanged. Actual updates never reassign grants. Identical concurrent
+first calls yield one creation and the remaining existing-Agent responses. Different concurrent
+definitions remain last-writer-wins; no bulk sync, delete-by-external-ID, or `If-Match` is added.
+
+### Migrate agent consumers to Admin API 3.0.0
+
+This approved breaking contract replaces released Admin API 2.1.0 on the existing routes, without
+a compatibility endpoint. It does not change the end-user or ExtProc APIs or client-ID sharing
+configuration. Update consumers to accept 400/409 uniqueness errors, zero-or-one filtered arrays,
+byte-sorted client URIs and fractional timestamps. Do not assume each PUT advances `updated_at`.
+
+Migration 046 blocks the release if legacy duplicates or empty IDs remain. Use the
+[runbook](../operations/agent-external-id-uniqueness.md) to inventory **every** affected UUID/value,
+coordinate writers, assign distinct IDs or deliberately clear them through complete ID-addressed
+PUTs, inspect dirty metadata, retry, and verify rollback/reapply. UUIDs, grants and all relationships
+are preserved; neither migration nor broker chooses survivors or deletes data. Do not deploy until
+implementation and the required PostgreSQL/E2E tests are complete.
 
 ### Allow a native-app callback for a CIMD agent
 
