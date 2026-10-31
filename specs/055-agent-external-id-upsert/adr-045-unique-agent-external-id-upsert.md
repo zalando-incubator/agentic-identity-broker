@@ -42,9 +42,10 @@ that creates or updates by an alternate key.
    repository method or advisory lock is added. Without `If-Match`, concurrent different
    definitions are last-writer-wins.
 4. **Safe migration.** Migration `046` locks `agents`, inventories duplicate and empty external IDs,
-   and fails with a report of every affected value and agent UUID before changing anything. It
-   never clears, merges, deletes, or reassigns data. An operator runbook covers remediation, retry,
-   and rollback. The migration remains atomic; ADR 039's non-atomic exception is not extended.
+   and fails before changing anything with a report covering both duplicate groups and empty-value
+   agent UUIDs. The report lists the first 100 of each category with remaining counts; the runbook
+   provides the complete read-only inventory of every affected value and UUID. It never clears,
+   merges, deletes, or reassigns data. The runbook covers remediation, retry, and rollback. The migration remains atomic; ADR 039's non-atomic exception is not extended.
 5. **Versioning.** The new `409` and `400` outcomes on existing create and update operations are
    breaking. The Admin API moves from `2.1.0` to `3.0.0` on the existing routes, following
    ARCHITECTURE.md §5 and the feature 051 precedent.

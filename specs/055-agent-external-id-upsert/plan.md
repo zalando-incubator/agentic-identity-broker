@@ -124,12 +124,12 @@ confirmation gate, which is the expected sign-off. No violation needs Complexity
 | ID | Type | Decision | Details |
 |---|---|---|---|
 | API-UPSERT | API | Add `PUT /api/agents?external_id={value}`: required single selector, `AgentCreateRequest` body, `201` + UUID `Location` on create, `200` on update and on no-op replay with unchanged `updated_at`, `400 invalid external_id` for selector/body external-ID errors, `409` for identifier conflicts, `Prefer: reference-id=canonical` support | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:68-222 |
-| API-OMISSION | API | Update-branch field policy: preserve omitted `client_id`/`canonical_id`, `canonical_id: null` clears, `client_id: null` → `400 validation failed`, metadata and optional collections replaced (omitted or null → absent/empty) | specs/055-agent-external-id-upsert/spec.md:473-484 |
+| API-OMISSION | API | Update-branch field policy: preserve omitted `client_id`/`canonical_id`, `canonical_id: null` clears, `client_id: null` → `400 validation failed`, metadata and optional collections replaced (omitted or null → absent/empty) | specs/055-agent-external-id-upsert/spec.md:480-491 |
 | API-UNIQUE | API | External IDs unique when set: `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` (`external_id is already held by another agent`) and `400 validation failed` for `""`; `PUT /api/agents/{agent-id}` documents `409`; `GET ?external_id=` returns zero or one agent (ID-addressed PUT delta at lines 223-246 of the same file) | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:13-67 |
 | API-VERSION | API | Bump Admin API from `2.1.0` to `3.0.0` on the existing routes | specs/055-agent-external-id-upsert/research.md:151-161 |
-| ADR-045 | ADR | Draft ADR 045: unique Agent External ID and create-or-update by external ID | specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md:1-77 |
+| ADR-045 | ADR | Draft ADR 045: unique Agent External ID and create-or-update by external ID | specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md:1-78 |
 | DB-046 | Decision | Migration `046`: lock `agents`, block with a report of all duplicate/empty values and agent UUIDs without changing data, then add `uq_agents_external_id` and `chk_agents_external_id_not_empty` and drop `idx_agents_external_id`; DOWN restores the old index without touching rows; new operator runbook | specs/055-agent-external-id-upsert/data-model.md:102-152 |
-| DEC-054 | Decision | Supersede feature 054's non-uniqueness clarification and FR-011; replace its shared-ID E2E scenario; leave the 054 spec unchanged as history | specs/055-agent-external-id-upsert/research.md:219-230 |
+| DEC-054 | Decision | Supersede feature 054's non-uniqueness clarification and FR-011; remove its shared-ID E2E scenario and cover zero-or-one results once in US4.1; leave the 054 spec unchanged as history | specs/055-agent-external-id-upsert/research.md:220-231 |
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in ADR 045's Status line and moves
@@ -150,7 +150,7 @@ specs/055-agent-external-id-upsert/
 │   └── admin-agents-openapi.yaml              # Phase 1 — Admin API 3.0.0 delta
 ├── adr-045-unique-agent-external-id-upsert.md # Draft ADR (Proposed)
 ├── checklists/requirements.md
-└── tasks.md                                   # Phase 2 (/speckit-tasks; not created here)
+└── tasks.md                                   # Phase 2 — 70 implementation/verification tasks
 ```
 
 ### Source Code (repository root)
@@ -194,7 +194,7 @@ already wires `agents.Service` and `AgentsHandler`.
 
 | Phase | Purpose | Required? |
 |-------|---------|-----------|
-| **Phase 0** | Pre-implementation refactoring — isolate structural changes from feature work | Included |
+| **Phase 0** | Significant pre-implementation refactoring | Skipped; small request-helper extraction belongs to US1 |
 | **Phase 1** | Setup — record approval, move ADR draft | Required |
 | **Phase 2** | Design Preconditions (domain model, API, DB, E2E tests) | **MANDATORY** |
 | **Phase 2.7** | Entity Boilerplate | Skipped |
@@ -202,9 +202,10 @@ already wires `agents.Service` and `AgentsHandler`.
 | **Phase 3+** | User Stories — US1/US2 (P1), US3 (P1), US4 (P2) | Required |
 | **Phase N** | Constitution Compliance verification | **MANDATORY** |
 
-- [x] Phase 0 (refactoring): include — extract the shared `AgentRequest` → `storage.Agent`
-  conversion and validation from `CreateAgent` and `UpdateAgent` into one private helper, with no
-  behavior change, so the reconcile handler reuses it.
+- [x] Phase 0 (refactoring): skip — no significant structural refactor is needed. The small private
+  `AgentRequest` → `storage.Agent` helper extraction is integral to US1 handler work, with existing
+  create/update regression tests kept green. This avoids a separate refactoring PR, which the
+  constitution requires only when that optional phase applies.
 - [x] Phase 2.7 (entity boilerplate): skip — no new entity, table, or repository.
 
 Ordering constraints for tasks:
@@ -214,7 +215,8 @@ Ordering constraints for tasks:
    (a minimal `ReconcileAgent` stub returning `501` lets the suite compile).
 3. Store invariant (sentinel, `Agent` validation, memory index, PostgreSQL mapping, migration).
 4. Domain reconcile, then handler and route.
-5. Retire the 054 shared-ID E2E scenario in the same change that enforces uniqueness.
+5. Remove the superseded 054 shared-ID E2E scenario and its duplicate fixture in the same change
+   that enforces uniqueness; US4.1 has exactly one replacement `It()` in the new suite.
 6. Docs, runbook, ARCHITECTURE.md; compliance gates.
 
 ## Testing Strategy
@@ -259,9 +261,10 @@ Ordering constraints for tasks:
 | US4.2 | same | `It("should keep the empty-filter 400 and the unfiltered list")` |
 | US4.3 | same | `It("should honor canonical references on create-or-update responses and replays")` |
 
-`tests/e2e/agent_external_id_filter_test.go`: the `It("should return every agent sharing an
-external ID and no others")` scenario and its `researchEU` fixture are replaced (DEC-054); its
-remaining feature 054 scenarios keep running unchanged.
+`tests/e2e/agent_external_id_filter_test.go`: remove the `It("should return every agent sharing an
+external ID and no others")` scenario and its `researchEU` fixture (DEC-054). The single US4.1
+`It()` in `agent_external_id_upsert_test.go` covers the new zero-or-one rule; do not duplicate it in
+the old suite. The remaining feature 054 scenarios keep running unchanged.
 
 **Red Phase Requirements**: Tests compile against a `ReconcileAgent` stub and fail on concrete
 assertions (status codes, `Location`, timestamps, stored agents, migration errors). No `XIt`,
@@ -271,8 +274,8 @@ assertions (status codes, `Location`, timestamps, stored agents, migration error
 
 - Fixtures: `fixtures.AdminPrincipal()`, `fixtures.LocalAgent()`, permission sets seeded through
   storage, and the shared spec cast (UUIDs, canonical IDs, external IDs).
-- New fixture helper: an external-ID agent builder in `tests/e2e/fixtures/` if two or more tests
-  need it.
+- Shared external-ID agent builder: `tests/e2e/fixtures/agent_external_id.go`, reused by the new
+  scenarios and based on the existing agent fixtures.
 
 **Bootstrap Strategy**:
 
@@ -281,8 +284,8 @@ assertions (status codes, `Location`, timestamps, stored agents, migration error
 - US3: new `bootstrap.NewPostgresFixtureAtVersion(ctx, 45)` plus `MigrateUp()` on the fixture, so a
   test seeds legacy rows before `046` and starts the broker afterward.
 
-**Helper Utilities**: Existing `server.AuthenticatedGET`/request helpers; a small PUT helper in
-the test file unless `tests/e2e/helpers/` already provides one.
+**Helper Utilities**: Existing `server.AuthenticatedGET`/request helpers; shared collection-PUT
+request helper in `tests/e2e/helpers/agent_external_id.go` if the existing helpers do not cover it.
 
 ### Unit & Integration Tests
 

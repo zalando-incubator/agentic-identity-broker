@@ -55,6 +55,13 @@ This specification proposes superseding [feature 054](../054-agent-external-id-f
 - Q: Which Admin API version carries these changes? → A: **Proposed (approval item API-VERSION)**: Admin API `3.0.0` on the existing routes. Released Admin API `2.1.0` accepts shared and empty external IDs, so new `409` and `400` outcomes on create and update are breaking under the architecture's versioning policy. API-004 now names this version. Main alternative: a minor `2.2.0` bump that treats uniqueness as a bug fix, which the constitution forbids without explicit confirmation.
 - Q: Do the example exchanges match the existing Agent presentation? → A: Corrected without changing requirements. The existing Agent response omits empty `redirect_uris`, `allowed_scopes`, and other empty optional collections and renders an absent canonical ID as `"canonical_id": null`; the examples now show that. The omission fixture no longer combines a client ID with client URIs, which existing validation forbids. The canonical-ID conflict example uses the existing message `agent canonical_id already exists`.
 
+### Session 2026-10-30 (task reconciliation)
+
+- Task design requires no significant standalone refactoring phase: the small shared request-helper extraction is part of collection-PUT implementation and must retain existing create/update behavior. Rationale: follows the constitution's separate-PR rule for significant refactoring without introducing an unnecessary prerequisite PR. Main alternative: a significant standalone refactor, which is not needed for this feature. No functional requirement changes.
+- The superseded feature 054 shared-ID acceptance test is removed, not retargeted into a second US4.1 test. US4.1 has one new zero-or-one lookup test; US2.1 covers duplicate-create rejection. Rationale: maintains the mandatory 1:1 scenario mapping. Main alternative: duplicate US4.1 coverage in both files, which violates the mapping rule. No functional requirement changes.
+- Migration report wording is reconciled with the planned bounded diagnostic: both categories are reported, the first 100 entries in each category plus remaining counts appear in the error, and the runbook inventories every affected value and UUID. Rationale: retains FR-004 and US3.2's actionable reporting without unbounded error output. Main alternative: an unbounded error containing the complete inventory. DB-046 and ADR-045 remain Proposed; no requirement or approval changes.
+- Removed the clarification-phase-only exclusion of planning and task generation from Out of Scope because these are feature delivery artifacts, not excluded product behavior. Application implementation and approval recording remain outside this document-editing session; product scope is unchanged.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario has a stable identifier (`US1.1`, etc.) for a later 1:1 E2E test mapping under Constitution Principle XIII. Migration scenarios also require real PostgreSQL integration coverage. This phase specifies behavior; it does not create or run implementation tests.
@@ -578,4 +585,4 @@ Planning must update the existing External ID glossary entry and relevant archit
 - Changing external-ID exact matching, source-system scoping, adding patterns, pagination, or sorting.
 - Changing client-ID sharing configuration or canonical-ID syntax.
 - New frontend, end-user API, OAuth2, or ExtProc behavior.
-- Implementation, plan, tasks, ADR acceptance, and recording approval in this clarification phase.
+- Application implementation, ADR acceptance, and recording approval during document-only phases.
