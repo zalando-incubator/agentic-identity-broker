@@ -5,17 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -124,6 +120,24 @@ func NewTokenExchangeService(
 	}, nil
 }
 
+// DelegationResolver returns the resolver for exchange steps 2–9a over this service's
+// dependencies. It is stateless, so access evaluation and exchange resolve identically.
+func (s *TokenExchangeService) DelegationResolver() *DelegationResolver {
+	var consentBaseURL string
+	if s.oauth2SessionService != nil {
+		consentBaseURL = s.oauth2SessionService.GetCallbackBaseURL()
+	}
+	return &DelegationResolver{
+		jwtValidator:         s.jwtValidator,
+		celEvaluator:         s.celEvaluator,
+		providerService:      s.providerService,
+		consentService:       s.consentService,
+		permissionSetService: s.permissionSetService,
+		agentRepository:      s.agentRepository,
+		consentBaseURL:       consentBaseURL,
+	}
+}
+
 // Exchange processes a complete token exchange request.
 // PHASE 5+: Full implementation deferred to Phase 5+.
 // For Phase 4, resource-based service discovery is implemented in HTTP handler.
@@ -169,8 +183,7 @@ func NewTokenExchangeService(
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
 	var serviceRef ServiceRef
-	var registeredAgentID id.AgentID
-	var grant *storage.UserGrant
+	var authRef AuthorizationRef
 	stage := StageRequestValidation
 	defer func() {
 		if err == nil {
@@ -188,7 +201,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) && !errors.As(err, &sessionErr) {
 			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
 		}
-		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(registeredAgentID, grant))
+		err = tokenErr.WithObservation(diagnostic, serviceRef, authRef)
 	}()
 	if ctx.Err() != nil {
 		return nil, NewServerErrorWithCause("token exchange canceled", ctx.Err()).WithDiagnostic(NewDiagnostic(stage, DetailCallerCanceled))
@@ -199,138 +212,27 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 
-	// Step 2: Validate subject_token JWT
-	stage = StageSubjectValidation
-	subjectTokenJWT, err := s.jwtValidator.ValidateSubjectToken(ctx, req.SubjectToken)
+	// Steps 2–9a: authoritative delegation resolution shared with access evaluation.
+	delegation, err := s.DelegationResolver().Resolve(ctx, DelegationRequest{
+		SubjectToken:    req.SubjectToken,
+		ClientAssertion: req.ClientAssertion,
+		Resource:        req.Resource,
+		GrantType:       req.GrantType,
+		Scope:           req.Scope,
+	})
 	if err != nil {
-		return nil, err
-	}
-
-	// Step 3: Validate client_assertion JWT
-	stage = StageClientValidation
-	clientAssertionJWT, err := s.jwtValidator.ValidateClientAssertion(ctx, req.ClientAssertion)
-	if err != nil {
-		return nil, err
-	}
-
-	// Step 4: Extract principal from subject_token via CEL
-	stage = StageIdentityResolution
-	subjectTokenClaims := jwtclaims.FromToken(subjectTokenJWT)
-	principal, err := s.celEvaluator.ExtractPrincipal(subjectTokenClaims)
-	if err != nil {
-		return nil, err
-	}
-
-	// ADR 033 §3: finalize the request security context at the post-validation
-	// token-exchange seam. The subject-token principal (Actor) and the validated
-	// client_assertion subject (CallingPeer) are both known here. Finalizing before
-	// the authorization decision guarantees a denied exchange still carries
-	// actor/calling_peer on the security-sensitive failure audit path.
-	callingPeer, _ := clientAssertionJWT.Subject()
-	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
-
-	// Step 5: Extract agent_id from subject_token via CEL
-	agentID, err := s.celEvaluator.ExtractAgentID(subjectTokenClaims)
-	if err != nil {
-		return nil, err
-	}
-
-	// Step 6: Authorize privileged client via CEL expression evaluation
-	stage = StageClientAuthorization
-	clientAssertionClaims := jwtclaims.FromToken(clientAssertionJWT)
-	requestContext := &CELRequestContext{
-		Resource:  req.Resource,
-		GrantType: req.GrantType,
-		Scope:     req.Scope,
-		Principal: principal,
-		AgentID:   agentID,
-	}
-	authorized, err := s.celEvaluator.AuthorizePrivilegedClient(clientAssertionClaims, subjectTokenClaims, *requestContext)
-	if err != nil {
-		return nil, err
-	}
-	if !authorized {
-		return nil, NewAccessDeniedError("privileged client authorization failed").WithDiagnostic(NewDiagnostic(stage, DetailClientPolicyDenied))
-	}
-
-	// Step 7: Normalize resource URI
-	normalizedResource := Normalize(req.Resource)
-
-	// Step 8: Lookup service by resource URI
-	stage = StageResourceResolution
-	service, err := s.providerService.FindByProtectedResource(ctx, normalizedResource)
-	if err != nil {
-		if IsTokenExchangeError(err) {
-			// InvalidTarget error from repository
-			return nil, err
+		var tokenErr *TokenExchangeError
+		if errors.As(err, &tokenErr) {
+			stage = tokenErr.Diagnostic().Stage()
+			serviceRef = tokenErr.Service()
+			authRef = tokenErr.Authorization()
 		}
-		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err).WithDiagnostic(NewDiagnostic(stage, DetailResourceRepositoryUnavailable))
+		return nil, err
 	}
+	principal, agent, service, grant := delegation.Principal, delegation.Agent, delegation.Service, delegation.Grant
 	serviceRef = ServiceRef{ID: service.ID}
-
-	// Step 9: Verify user has granted agent access to service (T059-T065)
-	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
-	// This prevents information leakage: if grant is missing, return access_denied (no permission).
-	// Only if grant exists but session is missing do we return invalid_grant (no session).
-	//
-	// T059: Agent ID extracted from subject_token (already done in Step 5)
-	// T060 (Feature 021): agentID is the broker-internal agent UUID (resolved by CEL).
-	// Parse it as UUID and look up by primary key — no GetByClientID needed.
-	stage = StageIdentityResolution
-	parsedAgentID, parseErr := id.ParseAgentID(agentID)
-	if parseErr != nil {
-		return nil, NewServerErrorWithCause("agent identity configuration is invalid", parseErr).WithDiagnostic(NewDiagnostic(stage, DetailAgentInvalid))
-	}
-	agent, err := s.agentRepository.Get(ctx, parsedAgentID)
-	if err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return nil, NewServerErrorWithCause("agent is not configured", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentMissing))
-		}
-		return nil, NewServerErrorWithCause("failed to lookup agent", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentRepositoryUnavailable))
-	}
-	registeredAgentID = agent.ID
-	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
-	// ConsentService.VerifyAgentAccess checks:
-	// - T061: Query UserGrant by principal + agent UUID
-	// - T062: Check grant status: active, not revoked, not expired
-	// - T063: Return error for missing grant
-	// - T064: Return error for revoked grant
-	// - T065: Return error for expired grant
-	stage = StageGrantAuthorization
-	grant, err = s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
-	if err != nil {
-		// Map ConsentService errors to TokenExchange errors
-		if errors.Is(err, consent.ErrAgentAccessDenied) {
-			// T063: User has not granted agent access
-			return nil, NewAccessDeniedError("user has not granted permission for this agent to access the requested service").
-				WithCause(err).WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantMissing))
-		}
-		if errors.Is(err, consent.ErrGrantExpired) {
-			// T065: User grant has expired
-			return nil, NewAccessDeniedError("user grant has expired").WithCause(err).
-				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantExpired))
-		}
-		// System/repository error
-		return nil, NewServerErrorWithCause("failed to verify user grant", err).WithDiagnostic(NewDiagnostic(stage, DetailGrantRepositoryUnavailable))
-	}
-
-	// Step 9a: Authorize the requested service against the grant (FR-010, SR-007).
-	// Fail closed for every agent: the grant must cover the requested service before any
-	// session lookup or credential decryption. Agents that declare neither PermissionSets
-	// nor ServiceRequirements are not exempt.
-	if len(grant.GrantedPermissionSets) == 0 {
-		return nil, NewAccessDeniedError("grant has no permission set entries; re-consent required").
-			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantEmpty))
-	}
-	effectiveScopes, coverageDetail, err := s.resolveEffectiveScopes(ctx, grant, agent, service.ID)
-	if err != nil {
-		return nil, err
-	}
-	if coverageDetail != DetailNone {
-		return nil, NewAccessDeniedError("service is not authorized by the grant; re-consent required").
-			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, coverageDetail))
-	}
-	serviceScopes := effectiveScopes[service.ID]
+	authRef = authorizationRef(agent.ID, grant)
+	serviceScopes := delegation.EffectiveScopes
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
 	// This single call handles:
@@ -404,169 +306,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	response.Principal = principal
 	response.AgentID = agent.ID.String()
 	response.Service = serviceRef
-	response.Authorization = authorizationRef(registeredAgentID, grant)
+	response.Authorization = authRef
 
 	return response, nil
-}
-
-func authorizationRef(agentID id.AgentID, grant *storage.UserGrant) AuthorizationRef {
-	ref := AuthorizationRef{AgentID: agentID}
-	if grant == nil {
-		return ref
-	}
-	ref.GrantID = grant.ID
-	ref.GrantUpdatedAt = grant.UpdatedAt
-	if grant.ValidUntil != nil {
-		ref.GrantValidUntil = *grant.ValidUntil
-		ref.GrantHasValidUntil = true
-	}
-	return ref
-}
-
-func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
-	return strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agentID.String()
-}
-
-// resolveEffectiveScopes resolves permission sets from the grant and computes
-// per-service effective scopes by taking the union across all permission sets
-// and intersecting with the agent's service requirement scope ceiling (FR-013).
-//
-// Coverage details describe the requested service; structural reference and repository
-// failures retain their diagnostic on the error and return DetailNone separately.
-func (s *TokenExchangeService) resolveEffectiveScopes(
-	ctx context.Context,
-	grant *storage.UserGrant,
-	agent *storage.Agent,
-	requestedServiceID id.ServiceID,
-) (map[id.ServiceID][]string, FailureDetail, error) {
-	declaredPS := make(map[id.PermissionSetID]bool, len(agent.PermissionSets))
-	for _, aps := range agent.PermissionSets {
-		declaredPS[aps.PermissionSetID] = true
-	}
-
-	// Collect PS IDs from grant
-	psIDs := make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
-	for i, entry := range grant.GrantedPermissionSets {
-		if !declaredPS[entry.PermissionSetID] {
-			return nil, DetailNone, NewAccessDeniedError("grant references a permission set not declared by the agent; re-consent required").
-				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantPermissionSetUndeclared))
-		}
-		psIDs[i] = entry.PermissionSetID
-	}
-
-	// Resolve permission sets (TTL cache transparent)
-	resolvedSets, err := s.permissionSetService.GetByIDs(ctx, psIDs)
-	if err != nil {
-		return nil, DetailNone, NewServerErrorWithCause("failed to resolve permission sets", err).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantRepositoryUnavailable))
-	}
-
-	// Index resolved PSets by ID for lookup
-	psIndex := make(map[id.PermissionSetID]*storage.PermissionSet, len(resolvedSets))
-	for _, ps := range resolvedSets {
-		psIndex[ps.ID] = ps
-	}
-
-	// Build included service IDs index from grant entries
-	grantIndex := make(map[id.PermissionSetID]map[id.ServiceID]bool, len(grant.GrantedPermissionSets))
-	for _, entry := range grant.GrantedPermissionSets {
-		included := make(map[id.ServiceID]bool, len(entry.IncludedServiceIDs))
-		for _, svcID := range entry.IncludedServiceIDs {
-			included[svcID] = true
-		}
-		grantIndex[entry.PermissionSetID] = included
-	}
-
-	// Compute per-service scope union across all permission sets,
-	// filtering to only included_service_ids per grant entry
-	perServiceScopes := make(map[id.ServiceID]map[string]bool)
-	requestedServiceIncluded, requestedServiceDefined := false, false
-	for _, entry := range grant.GrantedPermissionSets {
-		ps, ok := psIndex[entry.PermissionSetID]
-		if !ok {
-			// Fail closed: any PS referenced by a stored grant must still exist.
-			// Whether mandatory or optional, a missing PS means the grant is stale.
-			return nil, DetailNone, NewAccessDeniedError("grant references a missing permission set; re-consent required").
-				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantPermissionSetMissing))
-		}
-		included := grantIndex[entry.PermissionSetID]
-		if included[requestedServiceID] {
-			requestedServiceIncluded = true
-		}
-		for _, ss := range ps.ServiceScopes {
-			if !included[ss.ServiceID] {
-				continue // Service not included in this grant entry
-			}
-			if ss.ServiceID == requestedServiceID {
-				requestedServiceDefined = true
-			}
-			if perServiceScopes[ss.ServiceID] == nil {
-				perServiceScopes[ss.ServiceID] = make(map[string]bool)
-			}
-			for _, scope := range ss.Scopes {
-				perServiceScopes[ss.ServiceID][scope] = true
-			}
-		}
-	}
-
-	// Build per-service SR indexes: explicit-scope ceilings vs. all-scopes passthroughs.
-	hasSR := len(agent.ServiceRequirements) > 0
-	srCeiling := make(map[id.ServiceID]map[string]bool)
-	srAllScopes := make(map[id.ServiceID]bool)
-	for _, sr := range agent.ServiceRequirements {
-		if sr.RequireAllScopes {
-			srAllScopes[sr.ServiceID] = true
-			continue
-		}
-		ceiling := make(map[string]bool, len(sr.RequiredScopes))
-		for _, scope := range sr.RequiredScopes {
-			ceiling[scope] = true
-		}
-		srCeiling[sr.ServiceID] = ceiling
-	}
-
-	// FR-013: when the agent declares service_requirements, PS-covered services outside the
-	// SR set are ignored. A require_all_scopes service takes the full PS union; other SR
-	// services are intersected with their required_scopes ceiling. Agents with no SR use
-	// PS-derived scopes directly.
-	effectiveScopes := make(map[id.ServiceID][]string, len(perServiceScopes))
-	coverageDetail := DetailNone
-	for svcID, scopeSet := range perServiceScopes {
-		_, hasCeiling := srCeiling[svcID]
-		allScopes := srAllScopes[svcID]
-		if hasSR && !hasCeiling && !allScopes {
-			if svcID == requestedServiceID {
-				coverageDetail = DetailGrantServiceRequirementExcluded
-			}
-			continue // service not declared in agent service_requirements
-		}
-		var scopes []string
-		if !hasSR || allScopes {
-			for scope := range scopeSet {
-				scopes = append(scopes, scope)
-			}
-		} else {
-			ceiling := srCeiling[svcID]
-			for scope := range scopeSet {
-				if ceiling[scope] {
-					scopes = append(scopes, scope)
-				}
-			}
-		}
-		sort.Strings(scopes)
-		if len(scopes) == 0 && len(scopeSet) > 0 {
-			if svcID == requestedServiceID {
-				coverageDetail = DetailGrantScopeIntersectionEmpty
-			}
-			continue // fully capped out — drop (fail-closed for a zero-scope ceiling)
-		}
-		effectiveScopes[svcID] = scopes
-	}
-
-	if !requestedServiceIncluded {
-		return effectiveScopes, DetailGrantServiceOmitted, nil
-	}
-	if !requestedServiceDefined {
-		return effectiveScopes, DetailGrantServiceDefinitionMissing, nil
-	}
-	return effectiveScopes, coverageDetail, nil
 }

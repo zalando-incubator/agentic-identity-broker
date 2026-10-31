@@ -25,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -212,6 +213,16 @@ func run(cmd *cobra.Command, _ []string) error {
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
 	default:
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
+	}
+	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 045).
+	if cfg.DelegationContext.Enabled {
+		resolver, err := delegation.NewResolverFromConfig(sigCtx, cfg, exchanger)
+		if err != nil {
+			return err
+		}
+		defer resolver.Shutdown()
+		svc.WithDelegationResolver(resolver)
+		logger.Info("Delegation context enabled", "policy_decision_point", cfg.DelegationContext.PolicyDecisionPoint)
 	}
 	var stopApprovalSyncer func()
 	if approvalSync != nil {

@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.1.0
+  version: 1.2.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -117,6 +117,11 @@ tags:
     description: Server metadata discovery endpoint for OIDC compatibility (RFC 8414)
   - name: Third-Party Sessions
     description: OAuth2 session management with third-party services
+  - name: AuthZEN
+    description: |
+      AuthZEN 1.0 Policy Decision Point for delegation (ADR 045). Available whenever token
+      exchange is configured. The path names and snake_case members are defined by the AuthZEN
+      Authorization API 1.0 standard.
 paths:
   /health:
     get:
@@ -2583,6 +2588,232 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuth2Error"
+  /.well-known/authzen-configuration:
+    get:
+      summary: AuthZEN Policy Decision Point metadata
+      description: |
+        Returns the AuthZEN 1.0 PDP metadata. `policy_decision_point` is
+        `server.enduser.public_url` without a trailing slash; consumers must compare it exactly
+        with their expected identifier before sending credentials. Batch and search endpoints
+        are not supported and are therefore omitted. Available only when token exchange is
+        configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed.
+      operationId: getAuthZENConfiguration
+      tags:
+        - AuthZEN
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AuthZENRequestIdHeader"
+      responses:
+        "200":
+          description: PDP metadata
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "max-age=3600"
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthZENConfiguration"
+              example:
+                policy_decision_point: https://broker.example.com
+                access_evaluation_endpoint: https://broker.example.com/access/v1/evaluation
+        "404":
+          description: Token exchange is not configured.
+  /access/v1/evaluation:
+    post:
+      summary: AuthZEN Access Evaluation for a user delegation
+      description: |
+        Evaluates whether the verified user's delegation to the agent identified by the subject
+        token covers one protected resource. The evaluation uses the same authoritative resolution
+        as RFC 8693 token exchange (subject and caller validation, the unchanged
+        `token_exchange.authorization.cel.expression` with
+        `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`, resource
+        normalization and grant authorization) but never reads or refreshes a provider session
+        and never returns a credential.
+
+        - A permit returns `decision: true` with a Delegation Context and
+          `Cache-Control: private, max-age=<0..60>`, bounded by the grant expiry.
+        - A grant denial returns `decision: false` with the diagnostic code and the consent URL.
+        - Request, authentication, caller-policy and dependency failures return an
+          `ErrorResponse` and never a decision.
+
+        Unknown request members, including AuthZEN `properties` and other `context` members, are
+        ignored as required by the AuthZEN 1.0 HTTPS binding; the supported values below are
+        required exactly. The body is limited to 64 KiB. Every non-permit response is
+        `Cache-Control: no-store`. A supplied `X-Request-ID` is echoed on every response.
+      operationId: evaluateAccess
+      tags:
+        - AuthZEN
+      security:
+        - ClientAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AuthZENRequestIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessEvaluationRequest"
+            examples:
+              permitRequest:
+                summary: Evaluate Alice's delegation to the repository API
+                value:
+                  subject:
+                    type: urn:ietf:params:oauth:token-type:jwt
+                    id: eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhbGljZUBleGFtcGxlLmNvbSJ9.c2lnbmF0dXJl
+                  action:
+                    name: urn:ietf:params:oauth:grant-type:token-exchange
+                  resource:
+                    type: protected_resource
+                    id: https://api.example.com/repos
+                  context:
+                    agent: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        "200":
+          description: A permit or a delegation denial
+          headers:
+            Cache-Control:
+              description: "`private, max-age=<0..60>` for a permit, `no-store` for a denial"
+              schema:
+                type: string
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AccessEvaluationPermit"
+                  - $ref: "#/components/schemas/AccessEvaluationDenial"
+              examples:
+                permit:
+                  summary: Permit with canonical IDs
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                        canonical_id: data-assistant
+                      resource:
+                        id: 880e8400-e29b-41d4-a716-446655440010
+                        canonical_id: repo-api
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                        valid_until: "2026-10-26T10:30:00Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          canonical_id: repo-reader
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              canonical_id: repo-api
+                              scopes: ["read:repo"]
+                permitWithoutCanonicalIds:
+                  summary: Permit where no canonical IDs are configured (members omitted)
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                      resource:
+                        id: 880e8400-e29b-41d4-a716-446655440010
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              scopes: ["read:repo"]
+                denyGrantMissing:
+                  summary: No active grant; the user can consent at the URL
+                  value:
+                    decision: false
+                    context:
+                      reason_admin:
+                        code: grant_missing
+                      reason_user:
+                        consent_url: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+        "400":
+          description: |
+            Malformed or oversized body, missing or unsupported member, invalid or expired
+            subject token, `context.agent` mismatch, or unregistered resource.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                badRequestIdentitySubject:
+                  value:
+                    error: invalid_request
+                    message: invalid access evaluation request
+                badRequestAgentMismatch:
+                  value:
+                    error: invalid_request
+                    message: invalid access evaluation request
+        "401":
+          description: |
+            Missing, invalid or expired client assertion. `WWW-Authenticate: Bearer`, with
+            `error="invalid_token"` for an invalid credential.
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+                example: 'Bearer error="invalid_token"'
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unauthorizedMissingAssertion:
+                  value:
+                    error: unauthorized
+                    message: client authentication required
+        "403":
+          description: The token-exchange caller policy rejects the gateway or resource.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbiddenCallerPolicy:
+                  value:
+                    error: forbidden
+                    message: caller is not authorized for access evaluation
+        "404":
+          description: Token exchange is not configured.
+        "500":
+          description: Configuration or dependency failure. Never a decision.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                serverError:
+                  value:
+                    error: server_error
+                    message: access evaluation failed
 components:
   securitySchemes:
     SessionAuth:
@@ -2601,7 +2832,9 @@ components:
       type: http
       scheme: bearer
       description: |
-        Gateway client assertion validated via CEL expression for machine-facing approval endpoints.
+        Gateway client assertion validated via CEL expression for machine-facing approval endpoints
+        and for AuthZEN Access Evaluation (the token-exchange client-assertion trust anchor and the
+        unchanged token-exchange caller policy).
     PrincipalHeader:
       type: apiKey
       in: header
@@ -2640,6 +2873,13 @@ components:
         type: string
         format: uuid
       example: 550e8400-e29b-41d4-a716-446655440000
+    AuthZENRequestIdHeader:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: AuthZEN request identifier. Echoed unchanged on every response.
+      schema:
+        type: string
     TraceparentHeader:
       name: traceparent
       in: header
@@ -2647,7 +2887,208 @@ components:
       description: W3C Trace Context propagation header.
       schema:
         type: string
+  headers:
+    AuthZENRequestId:
+      description: The supplied request identifier, echoed. Absent when none was supplied.
+      schema:
+        type: string
   schemas:
+    AuthZENConfiguration:
+      type: object
+      required: [policy_decision_point, access_evaluation_endpoint]
+      additionalProperties: false
+      properties:
+        policy_decision_point:
+          type: string
+          format: uri
+          example: https://broker.example.com
+        access_evaluation_endpoint:
+          type: string
+          format: uri
+          example: https://broker.example.com/access/v1/evaluation
+    AccessEvaluationRequest:
+      type: object
+      required: [subject, action, resource]
+      description: Unknown members are ignored (AuthZEN 1.0 HTTPS binding).
+      properties:
+        subject:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: ["urn:ietf:params:oauth:token-type:jwt"]
+            id:
+              type: string
+              minLength: 1
+              description: Signed subject JWT. Never echoed or logged.
+        action:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              enum: ["urn:ietf:params:oauth:grant-type:token-exchange"]
+        resource:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: [protected_resource]
+            id:
+              type: string
+              format: uri
+              description: Protected-resource URI, normalized as in token exchange.
+        context:
+          type: object
+          properties:
+            agent:
+              type: string
+              format: uuid
+              description: |
+                Optional consistency anchor. Must equal the agent resolved from the verified subject
+                token; a mismatch returns 400 before any grant is read.
+    AccessEvaluationPermit:
+      type: object
+      required: [decision, context]
+      properties:
+        decision:
+          type: boolean
+          enum: [true]
+        context:
+          $ref: "#/components/schemas/DelegationContext"
+    AccessEvaluationDenial:
+      type: object
+      required: [decision, context]
+      properties:
+        decision:
+          type: boolean
+          enum: [false]
+        context:
+          type: object
+          required: [reason_admin, reason_user]
+          properties:
+            reason_admin:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  enum:
+                    - grant_missing
+                    - grant_expired
+                    - grant_empty
+                    - grant_permission_set_undeclared
+                    - grant_permission_set_missing
+                    - grant_service_omitted
+                    - grant_service_definition_missing
+                    - grant_service_requirement_excluded
+                    - grant_scope_intersection_empty
+            reason_user:
+              type: object
+              required: [consent_url]
+              properties:
+                consent_url:
+                  type: string
+                  format: uri
+                  example: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+    DelegationEntityRef:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        canonical_id:
+          type: string
+          minLength: 1
+          description: Omitted when unset; never null.
+    DelegationContext:
+      type: object
+      description: Credential-free delegation. Optional members are omitted when unset, never null.
+      required: [subject, agent, resource, grant, permission_sets]
+      properties:
+        subject:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              minLength: 1
+              description: Verified principal
+        agent:
+          $ref: "#/components/schemas/DelegationEntityRef"
+        resource:
+          type: object
+          required: [id, resource_uri, scopes]
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: Resolved service UUID
+            canonical_id:
+              type: string
+              minLength: 1
+              description: Omitted when unset
+            resource_uri:
+              type: string
+              format: uri
+              description: Normalized URI
+            scopes:
+              type: array
+              items:
+                type: string
+              description: Effective scopes after the agent's scope ceiling, sorted
+        grant:
+          type: object
+          required: [id, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            updated_at:
+              type: string
+              format: date-time
+            valid_until:
+              type: string
+              format: date-time
+              description: Omitted when the grant does not expire
+        permission_sets:
+          type: array
+          minItems: 1
+          description: Grant order
+          items:
+            type: object
+            required: [id, services]
+            properties:
+              id:
+                type: string
+                format: uuid
+              canonical_id:
+                type: string
+                minLength: 1
+                description: Omitted when unset
+              services:
+                type: array
+                description: |
+                  Grant-included services, in grant order. Scopes are this permission set's
+                  contributions, not the effective ceiling; `[]` when it defines none.
+                items:
+                  type: object
+                  required: [id, scopes]
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    canonical_id:
+                      type: string
+                      minLength: 1
+                      description: Omitted when unset
+                    scopes:
+                      type: array
+                      items:
+                        type: string
     HealthResponse:
       type: object
       required:
@@ -4111,10 +4552,15 @@ components:
             items:
               type: string
               format: uuid
+          deprecated: true
           description: |
             Map of granted permission sets associated with the token exchange.
             Keys are permission set UUIDs, values are arrays of service UUIDs.
             Only present when the token exchange is scoped to specific permission sets.
+
+            Deprecated: superseded by the AuthZEN Delegation Context from
+            `POST /access/v1/evaluation`. Removal is scheduled for one release after the ExtProc
+            delegation resolver ships and requires end-user API 2.0.0.
         principal:
           type: string
           description: Verified subject-token principal; omitted when unresolved.

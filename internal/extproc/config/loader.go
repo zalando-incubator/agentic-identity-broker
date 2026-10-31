@@ -92,6 +92,10 @@ func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Duration("tool_approvals.approval_cache_idle_ttl", 0, "approval cache idle TTL (default: 5m)")
 	cmd.Flags().Duration("tool_approvals.request_timeout", 0, "approval request timeout (default: 5s)")
 	cmd.Flags().Duration("tool_approvals.max_staleness", 0, "maximum tolerated approval-cache staleness before cached approvals stop authorizing (default: 60s)")
+	cmd.Flags().Bool("delegation_context.enabled", false, "resolve broker delegation context before every policy decision (default: false)")
+	cmd.Flags().String("delegation_context.policy_decision_point", "", "expected AuthZEN PDP identifier (default: origin of oauth2.token_endpoint)")
+	cmd.Flags().Duration("delegation_context.request_timeout", 0, "delegation discovery and evaluation request timeout (default: 5s)")
+	cmd.Flags().Duration("delegation_context.max_staleness", 0, "maximum delegation permit reuse (default: 60s)")
 	cmd.Flags().String("sessions.extraction.http_header", "", "agent session HTTP header (default: Mcp-Session-Id)")
 	// Telemetry flags
 	cmd.Flags().Bool("telemetry.enabled", false, "enable OpenTelemetry (default: false)")
@@ -298,6 +302,25 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.max_staleness"); return d },
 		},
 		{
+			"delegation_context.enabled", configutil.Key("delegation_context", "enabled"),
+			func() interface{} { b, _ := cmd.Flags().GetBool("delegation_context.enabled"); return b },
+		},
+		{
+			"delegation_context.policy_decision_point", configutil.Key("delegation_context", "policy_decision_point"),
+			func() interface{} {
+				s, _ := cmd.Flags().GetString("delegation_context.policy_decision_point")
+				return s
+			},
+		},
+		{
+			"delegation_context.request_timeout", configutil.Key("delegation_context", "request_timeout"),
+			func() interface{} { d, _ := cmd.Flags().GetDuration("delegation_context.request_timeout"); return d },
+		},
+		{
+			"delegation_context.max_staleness", configutil.Key("delegation_context", "max_staleness"),
+			func() interface{} { d, _ := cmd.Flags().GetDuration("delegation_context.max_staleness"); return d },
+		},
+		{
 			"sessions.extraction.http_header", configutil.Key("sessions", "extraction", "http_header"),
 			func() interface{} { s, _ := cmd.Flags().GetString("sessions.extraction.http_header"); return s },
 		},
@@ -379,6 +402,10 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault(configutil.Key("tool_approvals", "approval_cache_idle_ttl"), "5m")
 	v.SetDefault(configutil.Key("tool_approvals", "request_timeout"), "5s")
 	v.SetDefault(configutil.Key("tool_approvals", "max_staleness"), "60s")
+	v.SetDefault(configutil.Key("delegation_context", "enabled"), false)
+	v.SetDefault(configutil.Key("delegation_context", "policy_decision_point"), "")
+	v.SetDefault(configutil.Key("delegation_context", "request_timeout"), "5s")
+	v.SetDefault(configutil.Key("delegation_context", "max_staleness"), "60s")
 	v.SetDefault(configutil.Key("sessions", "extraction", "http_header"), "Mcp-Session-Id")
 	applyTelemetryDefaults(v)
 }

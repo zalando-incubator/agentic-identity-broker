@@ -57,6 +57,8 @@ const (
 	DetailResponseWriteFailed     FailureDetail = "response_write_failed"
 	DetailInternalUnclassified    FailureDetail = "internal_unclassified"
 	DetailCallerCanceled          FailureDetail = "caller_canceled"
+	DetailDelegationDenied        FailureDetail = "delegation_denied"
+	DetailDelegationUnavailable   FailureDetail = "delegation_unavailable"
 
 	RecoveryNone             RecoveryAction = "none"
 	RecoveryReconsent        RecoveryAction = "reconsent"
@@ -96,7 +98,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.outcome, d.action = OutcomeAuthenticationFailed, RecoveryNone
 	case DetailAuthorizationDenied, DetailPolicyDenied:
 		d.outcome, d.action = OutcomeAuthorizationDenied, RecoveryNone
-	case DetailConsentRequired:
+	case DetailConsentRequired, DetailDelegationDenied:
 		d.outcome, d.action, d.target = OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
 	case DetailReauthRequired:
 		d.outcome, d.action = OutcomeReauthRequired, RecoveryNone
@@ -106,7 +108,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.outcome, d.action = OutcomeConfigurationError, RecoveryFixConfiguration
 	case DetailCallerCanceled:
 		d.outcome, d.action = OutcomeCanceled, RecoveryNone
-	case DetailBrokerUnavailable, DetailBrokerResponseInvalid, DetailProviderUnavailable, DetailProviderResponseInvalid, DetailCircuitOpen, DetailPolicyEvaluationFailed, DetailResponseWriteFailed, DetailInternalUnclassified:
+	case DetailBrokerUnavailable, DetailBrokerResponseInvalid, DetailProviderUnavailable, DetailProviderResponseInvalid, DetailCircuitOpen, DetailPolicyEvaluationFailed, DetailResponseWriteFailed, DetailInternalUnclassified, DetailDelegationUnavailable:
 	default:
 		d.detail = DetailInternalUnclassified
 	}

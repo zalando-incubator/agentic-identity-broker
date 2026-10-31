@@ -71,6 +71,8 @@ type EnduserRouteConfig struct {
 //	GET    /oauth2/authorize                          - Authorization endpoint
 //	POST   /oauth2/token                              - Token endpoint
 //	GET    /.well-known/oauth-authorization-server    - Metadata endpoint
+//	GET    /.well-known/authzen-configuration         - AuthZEN PDP metadata (token exchange only)
+//	POST   /access/v1/evaluation                      - AuthZEN Access Evaluation (token exchange only)
 //
 //	SPA Serving (optional):
 //	GET    /*                                         - Serve static SPA files
@@ -179,6 +181,17 @@ func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteCo
 	r.Route("/.well-known", func(discoveryRouter chi.Router) {
 		if h.OAuth2Metadata != nil {
 			discoveryRouter.Get("/oauth-authorization-server", h.OAuth2Metadata.ServeHTTP)
+		}
+		if h.AuthZENConfiguration != nil {
+			discoveryRouter.Get("/authzen-configuration", h.AuthZENConfiguration.ServeHTTP)
+		}
+	})
+
+	// AuthZEN Access Evaluation (machine-facing, no principal middleware). The /access
+	// namespace is always reserved so a disabled deployment returns 404 instead of the SPA.
+	r.Route("/access", func(accessRouter chi.Router) {
+		if h.AuthZENEvaluation != nil {
+			accessRouter.With(middleware.OAuth2AuditMiddleware(cfg.Logger)).Post("/v1/evaluation", h.AuthZENEvaluation.ServeHTTP)
 		}
 	})
 

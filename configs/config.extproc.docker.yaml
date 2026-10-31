@@ -61,3 +61,13 @@ tool_approvals:
   approval_cache_idle_ttl: 5m
   request_timeout: 5s
   max_staleness: 60s
+
+# Broker delegation context (ADR 045) is opt-in and disabled here. ExtProc compares the
+# discovered AuthZEN policy_decision_point with its expected identifier exactly. In Compose the
+# broker publishes http://localhost:3000, which this container cannot reach, so enabling it
+# requires a broker public_url that resolves inside the Compose network and matches below.
+# delegation_context:
+#   enabled: true
+#   policy_decision_point: "http://identity-broker:8000"
+#   request_timeout: 5s
+#   max_staleness: 60s

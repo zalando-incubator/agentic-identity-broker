@@ -425,3 +425,35 @@ func TestBuildOPAInputHeadersOnly_TargetServerName_Propagated(t *testing.T) {
 	assert.Equal(t, "sess-abc123", mcp["session_id"])
 	assert.Equal(t, "github-mcp", mcp["target_server_name"])
 }
+
+func TestContextInput_SerializesDelegationMembersOnlyWhenPresent(t *testing.T) {
+	disabled, err := json.Marshal(authorization.ContextInput{GrantedPermissionSetsAvailable: true,
+		GrantedPermissionSets: map[string][]string{"ps": {"svc"}}, AgentSessionID: "s"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"granted_permission_sets_available":true,"granted_permission_sets":{"ps":["svc"]},"agent_session_id":"s"}`, string(disabled))
+
+	enabled, err := json.Marshal(authorization.ContextInput{
+		GrantedPermissionSetsAvailable: true,
+		GrantedPermissionSets:          map[string][]string{"ps": {}},
+		Principal:                      "alice@example.com",
+		Agent:                          &authorization.AgentContext{ID: "a"},
+		Resource:                       &authorization.ResourceContext{ID: "r", ResourceURI: "https://api.example.com", Scopes: []string{}},
+		Grant:                          &authorization.GrantContext{ID: "g", UpdatedAt: "2026-10-26T09:59:00Z"},
+		PermissionSets:                 []authorization.PermissionSetContext{{ID: "ps", Services: []authorization.ServiceContext{}}},
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"granted_permission_sets_available":true,"granted_permission_sets":{"ps":[]},
+		"principal":"alice@example.com","agent":{"id":"a"},
+		"resource":{"id":"r","resource_uri":"https://api.example.com","scopes":[]},
+		"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},
+		"permission_sets":[{"id":"ps","services":[]}]}`, string(enabled))
+	assert.NotContains(t, string(enabled), "null")
+}
+
+func TestBuildOPAInputHeadersOnlyWithContext_CarriesSuppliedContext(t *testing.T) {
+	supplied := authorization.ContextInput{GrantedPermissionSetsAvailable: true, Principal: "alice@example.com"}
+	input, err := authorization.BuildOPAInputHeadersOnlyWithContext("mcp", map[string]string{":method": "GET"}, "github-mcp", supplied)
+	require.NoError(t, err)
+	assert.Equal(t, supplied, input["context"])
+	assert.Equal(t, "mcp_headers_only", input["type"])
+}

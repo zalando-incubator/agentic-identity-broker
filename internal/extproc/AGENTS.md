@@ -30,6 +30,13 @@ internal/extproc/
     syncer.go        ETag long-poll synchronization
     precedence.go    ExtProc candidate ranking and selection
 
+  delegation/
+    discovery.go     AuthZEN PDP metadata discovery and exact identifier verification
+    client.go        Access Evaluation client: typed permit decoding, max-age, deadline
+    context.go       Typed permit context validation (unknown members dropped)
+    resolver.go      Permit-only cache with singleflight, no stale fallback
+    setup.go         NewResolverFromConfig: production composition shared by root.go and E2E
+
   httpclient/
     httpclient.go    Traced outbound HTTP client construction
 
@@ -103,6 +110,8 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once; `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
 | `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
 | `BuildOPAInputHeadersOnly(protocol, headers, targetServerName)` | Constructs the separate header-only policy input |
+| `BuildOPAInputHeadersOnlyWithContext(..., ContextInput)` | Header-only input with a supplied (enabled delegation) context |
+| `AgentContext`, `ResourceContext`, `GrantContext`, `PermissionSetContext`, `ServiceContext` | Enabled-mode `input.context` members `agent`, `resource`, `grant`, `permission_sets`; `principal` is a string. All `omitempty`; nested `canonical_id`/`valid_until` omitted when unset; scope and service arrays always arrays |
 
 ### `internal/extproc/server`
 
@@ -110,7 +119,8 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, `logger` |
+| `DelegationResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 045) |
+| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
 | `NewServerWithApprovalGate(cfg, exchanger, authorizer, gate, logger)` | Constructor with OPA and approval handling enabled |
@@ -133,18 +143,19 @@ The `cmd/extproc-token-exchange/` composition layer can import `internal/ports`.
 It can also import `internal/adapters/telemetry` for OpenTelemetry (ADR 027).
 Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 
-### 2. Three port interfaces: Exchanger, Authorizer, and ApprovalGate
+### 2. Four port interfaces: Exchanger, Authorizer, ApprovalGate, and DelegationResolver
 
-`Exchanger` in `server/server.go`, `authorization.Authorizer` in `authorization/authorizer.go`, and `ApprovalGate` in `server/server.go` are the service boundaries in this process.
+`Exchanger` in `server/server.go`, `authorization.Authorizer` in `authorization/authorizer.go`, `ApprovalGate` in `server/server.go`, and `DelegationResolver` in `server/delegation.go` are the service boundaries in this process.
 
-- `Server` depends on all three interfaces. Use `TokenExchanger` as the production `Exchanger` implementation. Use `OPAAuthorizer` as the production `Authorizer` implementation. Use `approval.Gate` as the production `ApprovalGate` implementation.
+- `Server` depends on the first three interfaces and optionally on `DelegationResolver`. Use `TokenExchanger` as the production `Exchanger` implementation. Use `OPAAuthorizer` as the production `Authorizer` implementation. Use `approval.Gate` as the production `ApprovalGate` implementation.
 - Use `_test.go` helpers or `tests/e2e/extproc/bootstrap/` for ExtProc startup and readiness tests.
 - Keep the `authorizer` field on `Server` as `authorization.Authorizer`. Keep the `approvalGate` field as `ApprovalGate`. Do not add an adapter layer or `map[string]any` indirection.
 - If `authorizer == nil` (OPA disabled), run token exchange during `RequestHeaders`. Do not buffer the body. This adds zero overhead.
 - If a request has a body and OPA is enabled, exchange tokens in `RequestHeaders`. Then evaluate OPA in `RequestBody`.
 - For header-only requests, evaluate first.
 - Run `ApprovalGate` only after OPA returns `approval_required` for a standalone MCP tool call.
-- Use mock or stub implementations of all three interfaces in tests.
+- `DelegationResolver` (ADR 045) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
+- Use mock or stub implementations of all four interfaces in tests.
 
 ### 2a. OPA Authorization Pipeline (when enabled)
 
@@ -174,6 +185,19 @@ RequestHeaders(end_of_stream=true) → validate subject metadata → validate re
                                   → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: Exchanger.Exchange(subject, resource) + Authorization header mutation
                                                                          → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```
+
+With `delegation_context.enabled` (ADR 045 supersedes ADR 028's ordering and input in this mode):
+
+```
+Body-bearing:  RequestHeaders → metadata/protocol/transport checks
+               → Exchanger.Exchange ∥ DelegationResolver.Resolve (wait for both)
+               → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body
+RequestBody    → now < Deadline? else 503 → OPA with permit-derived context (each batch element re-checks)
+Header-only:   → DelegationResolver.Resolve → denial 403 / error 503
+               → now < Deadline? else 503 → OPA → allow: Exchange
+```
+
+The permit maps through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets` and `granted_permission_sets_available: true`; `agent_session_id` is unchanged and the approval gate still uses the exchange identity. The permit cache is independent of the token cache: no stale-on-error, denials and errors never cached.
 
 `authorization.InputBuilder.Build` selects a parser by `protocol`:
 
@@ -288,6 +312,10 @@ Read `config/config.go` and `config/loader.go` for the complete schema and defau
 | `tool_approvals.request_timeout` | `5s` | Must be positive when approval handling is enabled |
 | `tool_approvals.max_staleness` | `60s` | Freshness bound for approval-cache matches |
 | `sessions.extraction.http_header` | `Mcp-Session-Id` | Must be a valid, non-empty HTTP field name |
+| `delegation_context.enabled` | `false` | Requires `authorization.enabled` when true |
+| `delegation_context.policy_decision_point` | `""` | Defaults to the origin of `oauth2.token_endpoint`; set explicitly for a path-prefixed broker |
+| `delegation_context.request_timeout` | `5s` | Discovery and evaluation timeout; must be positive |
+| `delegation_context.max_staleness` | `60s` | Upper bound on permit reuse; must be positive |
 | `telemetry.enabled` | `false` | |
 | `telemetry.service_name` | `extproc-token-exchange` | |
 | `telemetry.exporter.protocol` | `grpc` | |
@@ -297,6 +325,7 @@ Use `examples/config/extproc-token-exchange.yaml` for base token-exchange config
 Use `examples/config/extproc-opa-authorization.yaml` for OPA.
 Use `examples/config/extproc-telemetry.yaml` for OpenTelemetry.
 Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
+Use `examples/config/extproc-delegation-context.yaml` for broker delegation context.
 
 ## Docker Compose
 

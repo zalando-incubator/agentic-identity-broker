@@ -1330,6 +1330,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		app.ApprovalRequestAuthenticator = httpmiddleware.NewApprovalRequestAuthenticator(approvalJWTValidator, approvalCELEvaluator)
 	}
 
+	var authzenConfiguration *enduser.AuthZENConfigurationHandler
+	var authzenEvaluation *enduser.AuthZENEvaluationHandler
 	if tokenExchangeEnabled {
 		if app.ConsentService == nil {
 			return nil, fmt.Errorf("token exchange service requires consent service, but storage repositories (Agents, Services, UserGrants) are not available")
@@ -1349,6 +1351,13 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			return nil, fmt.Errorf("failed to create token exchange service: %w", err)
 		}
 		app.TokenExchangeService = tokenExchangeService
+
+		accessEvaluationService, err := tokenexchange.NewAccessEvaluationService(tokenExchangeService.DelegationResolver(), app.ProviderService)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create access evaluation service: %w", err)
+		}
+		authzenConfiguration = enduser.NewAuthZENConfigurationHandler(b.config.Server.EndUser.PublicURL)
+		authzenEvaluation = &enduser.AuthZENEvaluationHandler{Evaluator: accessEvaluationService, Logger: b.logger}
 	}
 
 	app.jwksPublisherHealth = jwksPublisherHealth
@@ -1376,6 +1385,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			Impersonation: impersonationService,
 		},
 		OAuth2Metadata:       oauth2MetadataHandler,
+		AuthZENConfiguration: authzenConfiguration,
+		AuthZENEvaluation:    authzenEvaluation,
 		ApprovalCreate:       approval.NewCreateHandler(app.ApprovalService),
 		ApprovalGet:          approval.NewGetHandler(app.ApprovalService),
 		ApprovalApprove:      approval.NewApproveHandler(app.ApprovalService),
