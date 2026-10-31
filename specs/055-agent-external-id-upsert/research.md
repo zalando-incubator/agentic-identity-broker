@@ -172,9 +172,10 @@ the `golang-migrate` driver batches statements:
    `SET LOCAL statement_timeout = '5s'` bounds the whole block.
 2. Inventory: aggregate duplicate values with their agent UUIDs and empty values with their agent
    UUIDs using explicit columns. If either set is non-empty, `RAISE EXCEPTION` with
-   `MESSAGE 'agent external_id uniqueness migration blocked'`, `DETAIL` listing every duplicate
-   value with affected UUIDs and every empty-value UUID, and `HINT` naming the runbook. Nothing
-   is changed. The message covers both categories in one report (US3.2).
+   `MESSAGE 'agent external_id uniqueness migration blocked'`, `DETAIL` listing the first 100
+   duplicate groups with affected UUIDs and the first 100 empty-value UUIDs, with remaining counts,
+   and `HINT` naming the runbook's complete inventory queries. Nothing is changed. The message
+   covers both categories in one report (US3.2).
 3. `CREATE UNIQUE INDEX uq_agents_external_id ON agents (external_id) WHERE external_id IS NOT NULL`.
 4. `ALTER TABLE agents ADD CONSTRAINT chk_agents_external_id_not_empty CHECK (external_id <> '')`.
 5. `DROP INDEX idx_agents_external_id` — the unique index now serves the filter.
@@ -221,9 +222,9 @@ remainder; the runbook's read-only queries list everything.
 **Decision**: Feature 054's non-uniqueness clarification and FR-011 are superseded by this
 feature. `specs/054-agent-external-id-filter/` stays unchanged as a historical record. Its E2E file
 `tests/e2e/agent_external_id_filter_test.go` currently seeds two agents with one external ID and
-asserts both are returned. Implementation replaces that `It` with an assertion that the second
-agent's creation is rejected and the filter returns one agent, retargeting it to
-`specs/055-agent-external-id-upsert/spec.md` US4.1. The ARCHITECTURE.md glossary entry for
+asserts both are returned. Implementation removes that superseded `It` and its shared-ID fixture.
+The new suite contains exactly one US4.1 `It` for zero-or-one lookup results; US2.1 separately covers
+rejection of the second creation. This avoids two tests mapping to US4.1. The ARCHITECTURE.md glossary entry for
 External ID and the agent-management guide drop "several Agents can share one External ID".
 
 **Rationale**: Principle XIII forbids an E2E test that asserts superseded behavior; Principle V
