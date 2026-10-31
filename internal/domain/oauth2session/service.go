@@ -2120,3 +2120,70 @@ func usabilityFromError(err error) servicescope.Usability {
 	}
 	return servicescope.UsabilityUnverifiableTransient
 }
+
+// ServiceSessionDetail is the single-service session view behind a Virtual Service Scope page.
+type ServiceSessionDetail struct {
+	Service         *model.ThirdpartyOAuth2ProviderEntity
+	ScopeURL        string
+	Session         *storage.UserSession
+	DependentAgents []AgentInfo
+}
+
+// GetServiceSessionDetail resolves a current canonical ID or lowercase UUID and returns the
+// service, the principal's session (nil when none) and only the principal's dependent agents.
+// It never refreshes provider tokens and never changes a grant. Unknown or malformed
+// identifiers return ErrServiceNotFound.
+func (s *OAuth2SessionService) GetServiceSessionDetail(ctx context.Context, principal id.Principal, identifier string) (*ServiceSessionDetail, error) {
+	scope, kind := servicescope.Parse(servicescope.Format(s.config.CallbackBaseURL, id.ServiceID{}, &identifier), s.config.CallbackBaseURL)
+	if identifier == "" || kind != servicescope.KindVirtual {
+		return nil, ErrServiceNotFound
+	}
+	var (
+		service *model.ThirdpartyOAuth2ProviderEntity
+		err     error
+	)
+	if scope.Form == servicescope.FormUUID {
+		serviceID, parseErr := id.ParseServiceID(scope.Identifier)
+		if parseErr != nil {
+			return nil, ErrServiceNotFound
+		}
+		service, err = s.providerService.Get(ctx, serviceID)
+	} else {
+		service, err = s.providerService.GetByCanonicalID(ctx, scope.Identifier)
+	}
+	if err != nil {
+		if ports.IsNotFoundErr(err) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, fmt.Errorf("resolve service: %w", err)
+	}
+	if service == nil {
+		return nil, ErrServiceNotFound
+	}
+
+	session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, service.ID)
+	if err != nil && !ports.IsNotFoundErr(err) {
+		return nil, fmt.Errorf("find session: %w", err)
+	}
+	agentIDs, err := s.grantRepo.ListByPrincipalAndServiceID(ctx, principal, service.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list dependent agents: %w", err)
+	}
+	dependentAgents := make([]AgentInfo, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		agent, err := s.agentRepo.Get(ctx, agentID)
+		if err != nil {
+			if ports.IsNotFoundErr(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get dependent agent: %w", err)
+		}
+		dependentAgents = append(dependentAgents, AgentInfo{ID: agent.ID, DisplayName: agent.DisplayName})
+	}
+	return &ServiceSessionDetail{
+		Service:         service,
+		ScopeURL:        s.ServiceScope(service),
+		Session:         session,
+		DependentAgents: dependentAgents,
+	}, nil
+}
