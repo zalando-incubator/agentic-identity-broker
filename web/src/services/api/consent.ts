@@ -132,6 +132,8 @@ export class ConsentApiService {
       permission_sets: responseData.permission_sets,
       active_session_service_ids: responseData.active_session_service_ids,
       service_requirements: responseData.service_requirements,
+      requested_service_ids: responseData.requested_service_ids ?? [],
+      requested_service_coverage: responseData.requested_service_coverage ?? [],
     };
 
     const rawServices = responseData.services ?? [];
