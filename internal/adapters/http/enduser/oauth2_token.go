@@ -251,6 +251,9 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 	if record.ActorIdentity != "" {
 		attrs = append(attrs, "actor_identity", record.ActorIdentity)
 	}
+	if record.SubjectCategory != "" {
+		attrs = append(attrs, "subject_category", string(record.SubjectCategory))
+	}
 	if record.SubjectIdentity != "" {
 		attrs = append(attrs, "subject_identity", record.SubjectIdentity)
 	}
@@ -405,6 +408,12 @@ func writeTokenExchangeErrorJSON(w http.ResponseWriter, status int, body map[str
 
 func tokenExchangeErrorDescription(err *tokenexchange.TokenExchangeError) string {
 	diagnostic := err.Diagnostic()
+	if diagnostic.Detail() == tokenexchange.DetailSubjectCategoryIneligible {
+		return "impersonation not permitted"
+	}
+	if diagnostic.Detail() == tokenexchange.DetailSubjectCategoryUnsupported {
+		return "agent-subject tokens cannot be exchanged for third-party service tokens"
+	}
 	if diagnostic.Detail() == tokenexchange.DetailResourceMissing {
 		return "resource parameter is required"
 	}

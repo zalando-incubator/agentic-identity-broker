@@ -4,6 +4,8 @@
 
 Accepted
 
+> **Superseded in part by [ADR 045](./045-agent-subject-impersonation.md)**: decisions 1 and 2 do not apply to eligible, signed agent-category requests. Human-category requests are unchanged.
+
 ## Context
 
 Feature 037 lets a privileged client request a local broker token whose `sub` is supplied by a signed or explicitly permitted unverified subject credential. The feature originally authenticated the client, validated every credential, and applied a rule-level CEL predicate, but minted the token without checking that the subject had delegated the resolved target agent.

@@ -1045,6 +1045,9 @@ var impersonationRoleKeys = []string{
 // validateImpersonationRule validates a single rule's roles, authorization predicate, and
 // trusted issuers (CR-003, CR-005, CR-007, CR-008).
 func validateImpersonationRule(rule *ports.ImpersonationRuleConfig, rbase string, security *ports.SecurityConfig) error {
+	if _, _, err := impersonation.ParseAllowedSubjectCategories(rule.AllowedSubjectCategories); err != nil {
+		return formatValidationError(rbase+".allowed_subject_categories", "", "1–2 distinct human/agent strings; omit for human only", nil)
+	}
 	validRole := map[string]bool{
 		string(ports.CredentialRoleClientAssertion): true,
 		string(ports.CredentialRoleActor):           true,

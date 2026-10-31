@@ -36,10 +36,12 @@ type compiledIssuer struct {
 
 // compiledRule is a startup-compiled impersonation rule ready for first-match evaluation.
 type compiledRule struct {
-	name    string
-	roles   map[ports.CredentialRole]*compiledRole
-	issuers []*compiledIssuer
-	authz   *authorizationProgram
+	name        string
+	roles       map[ports.CredentialRole]*compiledRole
+	issuers     []*compiledIssuer
+	authz       *authorizationProgram
+	allowsHuman bool
+	allowsAgent bool
 }
 
 // compileRule compiles a rule's authorization predicate, per-role extraction, and per-issuer
@@ -155,11 +157,17 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 		}
 	}
 
+	allowsHuman, allowsAgent, err := ParseAllowedSubjectCategories(cfg.AllowedSubjectCategories)
+	if err != nil {
+		return nil, fmt.Errorf("rule %q: %w", cfg.Name, err)
+	}
 	return &compiledRule{
-		name:    cfg.Name,
-		roles:   roles,
-		issuers: issuers,
-		authz:   authz,
+		allowsHuman: allowsHuman,
+		allowsAgent: allowsAgent,
+		name:        cfg.Name,
+		roles:       roles,
+		issuers:     issuers,
+		authz:       authz,
 	}, nil
 }
 
@@ -167,6 +175,9 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 // startup, independently of internal/config.Validate, so a directly constructed config cannot
 // start the broker with an invalid impersonation rule (fail closed regardless of the loader).
 func validateRuleInvariants(cfg ports.ImpersonationRuleConfig) error {
+	if _, _, err := ParseAllowedSubjectCategories(cfg.AllowedSubjectCategories); err != nil {
+		return fmt.Errorf("rule %q: %w", cfg.Name, err)
+	}
 	if cfg.Authorization.Type != "cel" {
 		return fmt.Errorf("rule %q: authorization.type must be \"cel\"", cfg.Name)
 	}

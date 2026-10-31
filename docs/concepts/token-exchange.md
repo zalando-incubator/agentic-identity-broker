@@ -63,7 +63,9 @@ sequenceDiagram
     A->>G: Request to third-party resource<br/>(agent token as Bearer)
     G->>B: POST /oauth2/token (RFC 8693)<br/>client_assertion + subject_token + resource
     B->>B: Authenticate gateway (client_assertion vs upstream JWKS)
-    B->>B: Extract user + agent from subject_token (CEL)
+    B->>B: Extract principal and finalize security capture
+    B->>B: Detect agent subject (match/error rejects before human state)
+    B->>B: Extract agent from subject_token (CEL)
     B->>B: Resolve service by resource → protected_resources
     B->>B: CEL policy: may this exchange happen?
     B->>B: Verify active grant (user delegated this agent + service)
@@ -93,6 +95,16 @@ The two gates form a fail-closed AND condition. ExtProc OPA can restrict a call 
 CEL allowed. Broker CEL can reject an exchange even when OPA allows the downstream call.
 Neither gate can grant access that the other rejected. A rejected exchange returns an error.
 The sidecar does not forward the original agent token.
+
+## Agent-subject boundary
+
+Local impersonation can issue a token for an agent acting for itself under an explicitly agent-permitting signed rule. The raw verified `sub` must exactly equal the audience-selected target UUID. Its reserved output `sub` and `agent_id` are equal, and `act` remains present; no category claim is added. No human delegation or grant/session creation is involved. Human subjects still require delegation. A signed exact-target subject on a human-only/omitted rule is ineligible even with same-text human delegation.
+
+This does **not** introduce third-party agent identities. Third-party exchange evaluates `token_exchange.claim_extraction.agent_subject_expression` after validated principal extraction and security capture, before agent extraction, authorization or human grant/session/provider access. Its default is `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. Matches return `403 access_denied`, description `agent-subject tokens cannot be exchanged for third-party service tokens`, and no consent `error_uri`. This includes same-text human state and trusted external issuer tokens. Equal-claim legacy, mapped-principal and unsigned-subject human outputs are also rejected by default. Consent cannot recover these denials.
+
+A configured expression fully replaces the default. Keep matching broker agent-subject tokens, for example by retaining the default as a disjunct. **A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access.** Existing checks can then read human grants/sessions and return consent errors; exchange success is not promised. Detection errors/timeouts and dynamic non-boolean output instead fail closed with `500 server_error`, no `error_uri`, and no human-state access. They never become false.
+
+See the [End-User API 2.0.0 migration guide](../api/enduser-api.md#migrate-to-end-user-api-200) before upgrading, the [configuration reference](../configuration.md#agent-subject-detection-for-third-party-exchange), [detector example](../../examples/config/token-exchange.yaml) and [diagnostic reference](../reference/token-exchange.md#agent-subject-boundary). Correct human identity collisions and explicitly reestablish consent; do not automatically rewrite grants or disable detection as a compatibility fix.
 
 ## Related
 

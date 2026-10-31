@@ -593,7 +593,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		app.chainShutdown(func(context.Context) error { return trustDir.Close() })
 	}
 
-	approvalAuthRequested := b.config.TokenExchange.ClaimExtraction.PrincipalExpression != "" ||
+	approvalAuthRequested := b.config.TokenExchange.ClaimExtraction.AgentSubjectExpression != "" ||
+		b.config.TokenExchange.ClaimExtraction.PrincipalExpression != "" ||
 		b.config.TokenExchange.ClaimExtraction.AgentIDExpression != "" ||
 		b.config.TokenExchange.Authorization.CEL.Expression != ""
 	if approvalAuthRequested && clientAssertionIssuerURI == "" {
@@ -1271,6 +1272,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		}
 
 		celConfig := tokenexchange.CELEvaluatorConfig{
+			AgentSubjectExpression:  b.config.TokenExchange.ClaimExtraction.AgentSubjectExpression,
 			PrincipalExpression:     b.config.TokenExchange.ClaimExtraction.PrincipalExpression,
 			AgentIDExpression:       b.config.TokenExchange.ClaimExtraction.AgentIDExpression,
 			AuthorizationExpression: b.config.TokenExchange.Authorization.CEL.Expression,

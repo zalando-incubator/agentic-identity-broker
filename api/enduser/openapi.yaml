@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.1.0
+  version: 2.0.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -1551,12 +1551,56 @@ paths:
         whose target is unknown returns `invalid_target`.
         No-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 
-        After a rule authorizes the request, the broker requires an active user delegation for the
-        extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
+        After a rule authorizes a human-category request, the broker requires an active user
+        delegation for the extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
         with the existing RFC 6749 `error_uri` response member set to the authenticated user's
         target-agent consent page. The response intentionally does not distinguish a missing delegation
         from an expired one. An unverified subject has no exemption; a delegation lookup failure returns
         `500 server_error` without `error_uri`.
+
+        #### Agent subjects
+        Each impersonation rule lists accepted `allowed_subject_categories`: `human`, `agent`,
+        or both. Omission means `[human]`. No request parameter selects the category. A request
+        is agent-category only when the rule's subject role is signed, its credential verifies,
+        and its raw string `sub` is byte-for-byte equal to the canonical UUID of the target
+        selected by `audience`. Every other request is human-category, including every unsigned
+        (`verification: none`) subject. Aliases, display names, other agents' UUIDs and different
+        UUID spelling do not qualify. All configured principal extractions must still succeed;
+        an eligible agent's represented subject is the target UUID, not necessarily the extracted principal.
+
+        A category-ineligible rule falls through. No match returns the existing generic
+        `403 access_denied` (`impersonation not permitted`) without `error_uri`. Signed exact
+        equality on human-only or omitted-category rules is ineligible even with active same-text
+        human delegation. Eligible, CEL-authorized agents need no delegation, never return a
+        consent-required `error_uri`, and create no grant or session. Human delegation denials
+        remain terminal and are never retried as agents.
+
+        Agent tokens have reserved `sub` and `agent_id` equal to the target UUID and existing
+        `act` (`iss`: verified actor issuer, `sub`: extracted actor). No category claim is added.
+        `token_claims_expression` cannot override those reserved identities. Subject email
+        extraction is not evaluated and no credential-derived email is supplied; output email
+        remains policy-owned. Issuer, signing, lifetime, scope and audience policy are unchanged.
+
+        #### Third-party exchange of agent-subject tokens
+        After validating credentials and extracting the principal, before agent-ID extraction,
+        authorization, resources, grants or sessions, third-party exchange evaluates
+        `token_exchange.claim_extraction.agent_subject_expression`. Its guarded default is
+        `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`.
+        A match returns `403 access_denied` with description
+        `agent-subject tokens cannot be exchanged for third-party service tokens`, no `error_uri`,
+        and no human grant, session or provider access, including same-text human state.
+        Default detection also rejects equal-claim legacy, mapped/unsigned human and trusted
+        external issuer tokens. An evaluation error, timeout or dynamic non-boolean output
+        returns `500 server_error` without consent recovery or human-state access, never false.
+
+        A configured expression replaces the default entirely, with no additional built-in check.
+        It must reference `subject_token.sub`; otherwise the broker refuses to start, so `false`
+        cannot be configured. Operators must retain broker agent-token matching, for example by
+        preserving the default as a disjunct. A non-matching result continues existing checks,
+        which may read matching human grants/sessions and return consent errors. Such overrides
+        remove categorical rejection and same-text human-credential isolation; they are not a
+        compatibility fix. End-User API 2.0.0 replaces the prior contract on existing routes for
+        these intentional denials; consumers must migrate collisions before deployment.
       operationId: tokenExchange
       tags:
         - OAuth2 Token
@@ -1627,6 +1671,17 @@ paths:
                   subject_token_type: "urn:ietf:params:oauth:token-type:jwt"
                   subject_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
                   scope: "read"
+              token_exchange_impersonation_agent_subject:
+                summary: Agent-subject impersonation (signed sub equals target UUID)
+                value:
+                  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange"
+                  audience: "https://broker.example.com/impersonation/research-agent"
+                  client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                  client_assertion: "SYNTHETIC_CLIENT_JWS"
+                  actor_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  actor_token: "SYNTHETIC_ACTOR_JWS"
+                  subject_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  subject_token: "SYNTHETIC_AGENT_JWS"
               token_exchange_impersonation_unverified:
                 summary: "User Impersonation Request with an unverified subject (verification: none)"
                 value:
@@ -1658,6 +1713,21 @@ paths:
                   summary: Successful Token Exchange Response
                   value:
                     access_token: "ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    token_type: "Bearer"
+                    issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
+                    expires_in: 3600
+                impersonation_agent_subject_success:
+                  summary: Agent-subject impersonation response
+                  description: |
+                    Decoded access_token payload (excerpt):
+                    {"iss": "https://broker.example.com",
+                     "sub": "550e8400-e29b-41d4-a716-446655440000",
+                     "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+                     "aud": "https://policy.example.com",
+                     "act": {"iss": "https://idp.example.com", "sub": "research-runner"},
+                     "scope": "", "iat": 1793005200, "exp": 1793008800}
+                  value:
+                    access_token: "SYNTHETIC_BROKER_AGENT_JWS"
                     token_type: "Bearer"
                     issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
                     expires_in: 3600
@@ -1763,6 +1833,16 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "impersonation not permitted"
+                impersonation_subject_category_ineligible:
+                  summary: Impersonation - no rule accepts the subject category
+                  value:
+                    error: "access_denied"
+                    error_description: "impersonation not permitted"
+                agent_subject_third_party_exchange:
+                  summary: Third-party exchange - detector matches an agent-subject token
+                  value:
+                    error: "access_denied"
+                    error_description: "agent-subject tokens cannot be exchanged for third-party service tokens"
                 impersonation_consent_required:
                   summary: Impersonation - user delegation required
                   value:
@@ -1830,8 +1910,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "403":
+          description: |
+            The subject token is an agent-subject token (`token_exchange.claim_extraction.agent_subject_expression`
+            matched, ADR 045 decision 6a). Error code `forbidden`. Agent-subject tokens cannot act as a human
+            principal for approvals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "429":
           description: Rate limit exceeded for (principal, agent_id) pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:
@@ -2249,7 +2344,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
         "403":
-          description: Subject token principal does not match approval owner
+          description: |
+            Subject token principal does not match approval owner, or the subject token is an agent-subject
+            token (`token_exchange.claim_extraction.agent_subject_expression` matched, ADR 045 decision 6a).
+            Error code `forbidden`.
           content:
             application/json:
               schema:
@@ -2262,6 +2360,12 @@ paths:
                 $ref: "#/components/schemas/ApprovalError"
         "422":
           description: Approval is not once-persistence or not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:

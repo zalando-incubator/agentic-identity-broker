@@ -70,6 +70,10 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		credentialFiles = yamlCredentialFiles
 	}
 
+	if value, present := os.LookupEnv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION"); present && value == "" {
+		l.v.Set(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), "")
+	}
+
 	// Phase 4: Expand environment variables (User Story 2)
 	if err := l.expandEnvVars(); err != nil {
 		return nil, err
@@ -81,14 +85,9 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 	}
 
 	// Unmarshal to Config struct
-	var cfg ports.Config
-	if err := l.v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
-		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), c.DecodeHook)
-	}); err != nil {
-		return nil, &config.ConfigError{
-			Expected: "valid configuration structure",
-			Err:      err,
-		}
+	cfg, err := unmarshalConfig(l.v)
+	if err != nil {
+		return nil, err
 	}
 	cfg.ThirdPartyOAuth2.CredentialFiles = credentialFiles
 
@@ -307,6 +306,7 @@ func (l *Loader) setDefaults() {
 	// Operators can override it to match whatever audience their JWTs carry.
 	l.v.SetDefault(configutil.Key("token_exchange", "expected_audience"), tokenexchange.DefaultBrokerAudience)
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
@@ -699,8 +699,42 @@ func (l *Loader) validateSecurePattern(value string) error {
 	return nil
 }
 
-// bindFlags binds Cobra command flags to Viper configuration.
-// CLI flags have the highest precedence and override all other sources.
+func unmarshalConfig(v *viper.Viper) (ports.Config, error) {
+	var cfg ports.Config
+	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
+		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), rejectNonSequenceSubjectCategoriesHook(), c.DecodeHook)
+		c.DecodeNil = true
+	}); err != nil {
+		return ports.Config{}, &config.ConfigError{
+			Expected: "valid configuration structure",
+			Err:      err,
+		}
+	}
+	return cfg, nil
+}
+
+// rejectNonSequenceSubjectCategoriesHook rejects explicit null, scalars, maps and non-string
+// entries for allowed_subject_categories; omission keeps the human-only default.
+func rejectNonSequenceSubjectCategoriesHook() mapstructure.DecodeHookFuncType {
+	listType := reflect.TypeOf(ports.SubjectCategoryList(nil))
+
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if to != listType {
+			return data, nil
+		}
+		values, ok := data.([]any)
+		if !ok || values == nil {
+			return nil, fmt.Errorf("allowed_subject_categories must be a sequence of strings; omit it for the human-only default")
+		}
+		for _, value := range values {
+			if _, ok := value.(string); !ok {
+				return nil, fmt.Errorf("allowed_subject_categories must be a sequence of strings; omit it for the human-only default")
+			}
+		}
+		return data, nil
+	}
+}
+
 func rejectNumericDurationHook() mapstructure.DecodeHookFuncType {
 	durationType := reflect.TypeOf(time.Duration(0))
 
@@ -723,6 +757,8 @@ func rejectNumericDurationHook() mapstructure.DecodeHookFuncType {
 	}
 }
 
+// bindFlags binds Cobra command flags to Viper configuration.
+// CLI flags have the highest precedence and override all other sources.
 func (l *Loader) bindFlags() error {
 	if l.cmd == nil {
 		// No command set, skip flag binding
@@ -843,6 +879,12 @@ func (l *Loader) bindFlags() error {
 		if flag.Changed {
 			cliKeys = append(cliKeys, credentialFilesConfigKey)
 		}
+	}
+
+	if l.cmd.Flags().Changed("token_exchange.claim_extraction.agent_subject_expression") {
+		expression, _ := l.cmd.Flags().GetString("token_exchange.claim_extraction.agent_subject_expression")
+		l.v.Set(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), expression)
+		cliKeys = append(cliKeys, "token_exchange.claim_extraction.agent_subject_expression")
 	}
 
 	// Record CLI source if any flags were set

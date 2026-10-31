@@ -42,6 +42,33 @@ token_exchange:
     #   - "subject_token.preferred_username"     # Custom: use preferred_username
     principal_expression: "subject_token.sub"
 
+    # Optional agent-subject detector. Omitted/empty uses this exact guarded default:
+    # agent_subject_expression: >-
+    #   has(subject_token.sub) && has(subject_token.agent_id) &&
+    #   subject_token.sub == subject_token.agent_id
+    # Environment: IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION
+    # CLI: --token_exchange.claim_extraction.agent_subject_expression
+    # Explicit CLI > environment > YAML > evaluator default; an explicit empty
+    # highest-precedence value selects the default. Both inputs work without YAML.
+    # A configured non-empty expression REPLACES the default (no second built-in check)
+    # and must reference subject_token.sub, otherwise startup fails.
+    # Preserve broker agent-token matching, for example:
+    # agent_subject_expression: >-
+    #   (has(subject_token.sub) && has(subject_token.agent_id) &&
+    #    subject_token.sub == subject_token.agent_id) ||
+    #   (has(subject_token.token_use) && subject_token.token_use == 'machine')
+    # Matches: 403 access_denied, no consent error_uri and no human-state access.
+    # Compile errors/static non-boolean output fail startup. Runtime errors/timeouts
+    # or dynamic non-boolean output fail closed with 500 server_error, never false.
+    # The default also rejects colliding legacy/mapped/unsigned human tokens and
+    # trusted external issuer tokens with equal sub/agent_id. Correct human identity
+    # mappings and explicitly reestablish consent; do not rewrite stored grants.
+    # WARNING: a non-matching override such as 'false' removes categorical rejection
+    # AND protection against same-text human grant/session access. Existing checks
+    # then apply, possibly reading human credentials or returning consent errors.
+    # Do not use it as an upgrade-compatibility fix. See End-User API 2.0.0 migration:
+    # docs/api/enduser-api.md#migrate-to-end-user-api-200
+
     # agent_id_expression extracts the agent/application client ID from subject_token.
     # Expression MUST return the agent's internal UUID (agent.id), NOT the upstream client_id string.
     #

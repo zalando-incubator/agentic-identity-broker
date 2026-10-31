@@ -165,12 +165,16 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection; End-User API 2.0.0 |
 
 ## Domain Glossary
 
 | Term | Definition |
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
+| **Subject Category** | `agent` only for a verified signed raw `sub` exactly equal to the audience-selected target UUID; otherwise `human`. |
+| **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |

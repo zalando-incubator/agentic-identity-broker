@@ -1604,7 +1604,48 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 #### oauth2_authorization_server.impersonation
 
-**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every rule-authorized request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted subject is used unchanged as the grant principal; this is mandatory for signed and unverified subjects, with no configuration opt-out. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every eligible human-category request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted human subject is used unchanged as the grant principal; this remains mandatory for signed and unverified humans, with no configuration opt-out. Accepted ADR 045 narrowly exempts eligible signed self-agent requests, as described below. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+
+##### Subject categories and self-agent issuance
+
+`rules[].allowed_subject_categories` is an optional YAML-only string list, like the existing rule list. Omission alone means `[human]`. A present list must contain one or two distinct, case-sensitive values from `human` and `agent`; either dual order is valid. Empty lists, unknown/case-mismatched values, duplicates, explicit null, scalars, mappings, non-string entries and null entries fail startup. Errors identify `oauth2_authorization_server.impersonation.rules[i].allowed_subject_categories`, without credential content. Direct configurations enforce the same value invariants.
+
+The broker classifies a request as `agent` only after the rule's signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target's canonical UUID. Everything else is `human`, including every unsigned subject. No alias/case/UUID normalization, extracted-principal mapping, or request parameter selects the category. Eligibility is checked separately, before CEL authorization and delegation. Ineligible rules fall through; no matching rule returns generic `403 access_denied` without consent recovery. Signed exact-target equality is rejected on human-only/omitted rules even with active same-text delegation.
+
+| Allowed categories | Human subject | Signed exact-target subject |
+| --- | --- | --- |
+| Omitted / `[human]` | Active delegation required | Ineligible |
+| `[agent]` | Ineligible | No delegation required |
+| `[human, agent]` / `[agent, human]` | Active delegation required | No delegation required |
+
+Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
+
+See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), [examples index](../examples/config/README.md), and [API 2.0.0 collision migration](api/enduser-api.md#migrate-to-end-user-api-200).
+
+##### Agent-subject detection for third-party exchange
+
+`token_exchange.claim_extraction.agent_subject_expression` is an optional CEL boolean over validated `subject_token` claims. Empty or omitted selects the exact guarded default:
+
+```cel
+has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+```
+
+The scalar setting supports YAML, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION`, and `--token_exchange.claim_extraction.agent_subject_expression`. Explicit CLI overrides environment, which overrides YAML, which overrides the evaluator default; an unchanged CLI flag does not shadow a lower source. Environment/CLI work with no YAML key or file. An explicitly empty highest-precedence value selects the evaluator default, not a lower source. Rule lists remain YAML-only.
+
+The expression compiles once at startup. Syntax errors, undeclared variables, a static output type other than boolean/dynamic, or an expression that does not reference `subject_token.sub` fail startup. Evaluation uses the existing CEL timeout. Runtime errors/timeouts return `500 server_error` (`identity_resolution/cel_evaluation_failed`); dynamic non-boolean output returns `500 server_error` (`identity_resolution/cel_configuration`). Neither is treated as false. Matching tokens receive `403 access_denied` (`identity_resolution/subject_category_unsupported`) without `error_uri`, before any grant/session/provider access. The default matches all broker agent-subject tokens, but also legacy human, mapped-principal/unsigned human and trusted external issuer tokens with equal `sub`/`agent_id`; fix identity collisions through the migration guide, not consent fabrication.
+
+A non-empty override **replaces the default entirely**. A configured expression must reference `subject_token.sub` (field selection, `has()`, or `subject_token["sub"]`); otherwise startup fails with a CEL configuration error, so `false`, `true`, or an `azp`-only comparison cannot be configured. Keep broker agent-token matching, for example:
+
+```yaml
+token_exchange:
+  claim_extraction:
+    agent_subject_expression: >-
+      (has(subject_token.sub) && has(subject_token.agent_id) &&
+       subject_token.sub == subject_token.agent_id) ||
+      (has(subject_token.token_use) && subject_token.token_use == 'machine')
+```
+
+**Warning:** A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access. Existing checks may then consult matching human grants/sessions and return consent errors; this is not support for third-party agent identity or guaranteed exchange success. Do not use it as an upgrade-compatibility fix. See [token-exchange examples](../examples/config/token-exchange.yaml), [concepts](concepts/token-exchange.md), [reference](reference/token-exchange.md), and [token endpoint](api/enduser-api.md#agent-subject-token-exchange).
 
 **Configuration block** (nested under `oauth2_authorization_server`, `local` mode only):
 
@@ -1613,12 +1654,13 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 | `impersonation.audience_prefix` | URI | — | Absolute HTTP(S) URI; host required; no userinfo/query/fragment/trailing slash | Yes (CR-001) | Routing-only prefix. Exactly one `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent; it never sets the issued token `aud`. |
 | `impersonation.rules` | list | — | Non-empty, ordered | Yes (CR-002) | Ordered rules evaluated first-match. |
 | `impersonation.rules[].name` | string | — | Unique across rules | Yes (CR-003) | Operator-facing rule identifier. |
+| `impersonation.rules[].allowed_subject_categories` | list of strings | `[human]` when omitted | One or two distinct `human`/`agent` values | No | Category eligibility, independent of signed raw-sub classification; YAML-only. |
 | `impersonation.rules[].roles` | map | — | Keys `client_assertion`, `actor`, `subject` | Yes (CR-003) | Role semantics keyed by role name; all three roles MUST be defined. |
 | `impersonation.rules[].roles.<role>.expected_audience` | string | — | Non-empty string | Yes for signed roles without `audience_requirement: absent` | The `aud` each signed credential for this role must carry. Omit it for an unverified subject (`verification: none`) or when `audience_requirement` is `absent`. |
 | `impersonation.rules[].roles.<role>.audience_requirement` | enum | — | `absent` | No | Signed roles only. `absent` accepts only a credential with no `aud` claim and rejects a credential with an `aud`. It is mutually exclusive with `expected_audience`, forbidden on an unverified subject, and requires the authorization predicate to reference this role (CR-009). |
 | `impersonation.rules[].roles.<role>.principal_expression` | string | — | CEL expression | Yes | CEL extracting a non-empty identity from the role's token. |
 | `impersonation.rules[].roles.subject.verification` | enum | `jwks` | `jwks`, `none` | No | `subject` role only. `jwks` = signed subject validated against a trusted issuer; `none` = unverified unsigned `alg:none` subject JWT under `subject_token_type=urn:ietf:params:oauth:token-type:jwt` (broker profile extension, ADR 031). |
-| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting the subject's email; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
+| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting a human subject's email; not evaluated for agents; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
 | `impersonation.rules[].trusted_issuers` | list | — | Non-empty | Yes (CR-008) | Trust anchors permitted to sign this rule's credentials. |
 | `impersonation.rules[].trusted_issuers[].issuer_uri` | string | — | Valid URI | Yes | Matched against a credential's `iss`. |
 | `impersonation.rules[].trusted_issuers[].jwks_uri` | string | Discovered from `issuer_uri` | Valid URI | No | Explicit JWKS endpoint; discovered from issuer metadata when empty. |

@@ -1,0 +1,77 @@
+# Configuration Contract: Agent-Subject Detection on Third-Party Token Exchange
+#
+# Feature: 054-agent-subject-impersonation (spec FR-011, FR-012, SR-005, CFG-003, CFG-005; research R5, R6)
+# Source: PR #293 maintainer review. The spec requires no separate category claim, so the broker
+# detects agent-subject tokens with a configurable CEL expression that defaults to `sub == agent_id`.
+#
+# SCOPE: Overlay of the existing token_exchange block, not a bootable configuration. Every other
+# token_exchange key, default, and validation is unchanged. The key uses the existing
+# configuration system and its file, environment, and CLI precedence.
+# Environment: IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION
+# CLI: --token_exchange.claim_extraction.agent_subject_expression
+# Precedence: explicitly supplied CLI > environment > YAML > evaluator default.
+# The production Cobra root command registers the string flag with an empty default;
+# the broker loader explicitly binds that flag and environment key. An unchanged flag
+# does not shadow a lower-precedence source. Both inputs work without a YAML key/file.
+# An explicitly empty highest-precedence value selects the evaluator's guarded default,
+# not a lower-precedence expression. Omitted values likewise use the default.
+# These transport names follow existing broker naming conventions (approved A3/U1).
+#
+# ATTRIBUTE
+#   token_exchange.claim_extraction.agent_subject_expression
+#     type:     string (CEL expression), optional
+#     input:    subject_token  (validated subject_token claims, the same variable as
+#                               principal_expression and agent_id_expression)
+#     output:   bool. true => the subject token represents an agent acting for itself, and the
+#                             third-party exchange is rejected with 403 access_denied.
+#                     false => the existing exchange flow continues.
+#     default:  has(subject_token.sub) && has(subject_token.agent_id) &&
+#               subject_token.sub == subject_token.agent_id
+#               (the guarded form of `sub == agent_id`; tokens without either claim are not agents)
+#     override: a configured expression REPLACES the default (C4; proposed, plan Approval Items A3
+#               and A6). There is no additional built-in check. The operator MUST keep it
+#               matching broker-issued agent-subject tokens, for example by keeping the default as a
+#               disjunct. A non-matching override (for example `false`) lets broker agent-subject
+#               tokens continue to the existing exchange flow and removes the categorical
+#               rejection and same-text human-credential protection (clarified FR-011/SR-005,
+#               spec session 2026-10-28); documentation warns about this.
+#
+# STARTUP OUTCOMES (fail closed, before traffic)
+#   key omitted or empty                      -> valid, default expression
+#   valid boolean expression                  -> valid
+#   syntax error / undeclared variable        -> invalid: startup fails (FR-017 precedent)
+#   static non-boolean output (e.g. 'agent')  -> invalid: startup fails
+#   statically dyn (e.g. subject_token.sub)   -> valid at startup; a non-boolean runtime result
+#                                                fails closed (see RUNTIME OUTCOMES)
+#
+# RUNTIME OUTCOMES (third-party exchange, after principal extraction, before agent-ID extraction)
+#   true                    -> 403 access_denied, no error_uri,
+#                              "agent-subject tokens cannot be exchanged for third-party service tokens",
+#                              diagnostic identity_resolution / subject_category_unsupported
+#   false                   -> continue (unchanged behavior)
+#   evaluation error/timeout-> 500 server_error, identity_resolution / cel_evaluation_failed
+#   non-boolean result      -> 500 server_error, identity_resolution / cel_configuration
+#   In the first, third, and fourth rows, no grant, session, or provider is consulted.
+#
+# FAIL-CLOSED COLLISIONS (documented, not consent bypasses)
+#   - A broker human token whose minted principal is the exact target UUID text (possible only
+#     through an unsigned subject or a principal_expression mapping another claim) is rejected.
+#   - A trusted external issuer whose subject tokens carry equal sub and agent_id is rejected.
+
+token_exchange:
+  claim_extraction:
+    principal_expression: subject_token.sub
+    agent_id_expression: subject_token.agent_id
+    # Optional. Shown with an override that keeps the default as a disjunct and additionally
+    # detects an external issuer's machine tokens.
+    agent_subject_expression: >-
+      (has(subject_token.sub) && has(subject_token.agent_id) &&
+       subject_token.sub == subject_token.agent_id) ||
+      (has(subject_token.token_use) && subject_token.token_use == 'machine')
+
+# HELM (charts/agentic-identity-broker)
+#   values.schema.json tokenExchange.claimExtraction.properties.agentSubjectExpression:
+#     {"type": "string", "description": "Optional CEL boolean detecting agent-subject tokens; default sub == agent_id"}
+#   templates/configmap.yaml: renders `agent_subject_expression` only when the value is non-empty,
+#     so the broker default applies otherwise.
+#   values.yaml: commented example with the default; README.md documents the key and default.

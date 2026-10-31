@@ -367,8 +367,9 @@ The existing request-security logger decorator supplies authenticated `actor` an
 
 User impersonation is a separate RFC 8693 profile on this endpoint. It is available only
 when `oauth2_authorization_server.mode` is `local`. Proxy and hybrid modes reject the
-request without forwarding it upstream. Impersonation does not get a third-party token,
-require a user grant, or accept `resource`.
+request without forwarding it upstream. Impersonation does not get a third-party token or
+accept `resource`. Eligible humans require an active user grant; eligible signed self-agent
+subjects do not, under ADR 045.
 
 The token contains subject claim `sub` and actor claim `act`. In RFC 8693 terms, this is
 delegation. This feature uses the name "impersonation" for operators. `act` preserves actor
@@ -394,7 +395,7 @@ Send these form fields:
 | `actor_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
 | `actor_token` | Signed JWT | Required. Its validated issuer and identity populate `act.iss` and `act.sub`. |
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
-| `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates `sub`. |
+| `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates human `sub`; eligible agent `sub` is target-derived. |
 | `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. |
 | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token` | Optional. Another value returns `invalid_request`. |
 
@@ -428,6 +429,12 @@ subjects. A signed client assertion and the subject-binding CEL predicate author
 caller-provided claims. The predicate must bind `subject_token.email` before the broker
 issues an email claim.
 
+### Category eligibility
+
+`allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. Other subjects, including all unsigned subjects, are human. No aliases, UUID normalization, principal-expression mapping or request category input is used. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+
+Every principal extraction and CEL authorization remains mandatory. Eligible agents skip delegation and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and delegation principal. Missing/expired delegation is terminal `403 access_denied` with the established target consent `error_uri`; verifier failure is `500 server_error` without one. A denied human never retries as agent. Unsigned rules may list `agent`, but it has no effect; ADR 031 controls remain intact.
+
 ### Response and errors
 
 Success returns a locally signed broker JWT. It does not return a provider credential:
@@ -454,13 +461,32 @@ rejected scopes.
 ### Audit events
 
 Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
-The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`. After classification it also contains `subject_category` (`human` or `agent`); `subject_identity` is the represented/minted subject. It contains no wholesale claims.
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
 See [Configuration](/docs/configuration) and
 `examples/config/impersonation.yaml` for operator setup and examples.
 
+
+## Agent-subject boundary
+
+Third-party exchange evaluates `token_exchange.claim_extraction.agent_subject_expression` after validated principal extraction and security capture finalization, before agent extraction, authorization, resources, grants or sessions. The default is:
+
+```cel
+has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+```
+
+A matching result returns `403 access_denied`, description `agent-subject tokens cannot be exchanged for third-party service tokens`, with no `error_uri` or human grant/session/provider access, even with same-text human state. Default detection also rejects equal-claim legacy, mapped-principal/unsigned human and trusted external issuer tokens. An evaluation error/timeout returns `500 server_error` (`identity_resolution/cel_evaluation_failed`); dynamic non-boolean output returns `500 server_error` (`identity_resolution/cel_configuration`). Neither is treated as false or consults human state. Compilation errors, static output types other than boolean/dynamic, and expressions that do not reference `subject_token.sub` fail startup.
+
+A non-empty override **replaces the default entirely**. A configured expression must reference `subject_token.sub` (field selection, `has()`, or `subject_token["sub"]`); otherwise startup fails with a CEL configuration error, so `false`, `true`, or an `azp`-only comparison cannot be configured. Operators must retain broker agent-token matching, for example by preserving the default as a disjunct. **A non-matching override that references `sub`, such as `has(subject_token.sub) && subject_token.sub == 'nobody'`, removes categorical rejection and same-text human-credential isolation.** Existing checks can then read human grants/sessions and return consent errors. This is not supported third-party agent identity or guaranteed exchange success.
+
+| Diagnostic detail | Failure stage | Exchange kind | External result |
+| --- | --- | --- | --- |
+| `subject_category_ineligible` | `client_authorization` | `impersonation` | Rule fall-through; no match is generic `403 access_denied`, no `error_uri` |
+| `subject_category_unsupported` | `identity_resolution` | `third_party` | `403 access_denied`, no `error_uri` |
+
+See the [token-endpoint request/claims/denial examples](../api/enduser-api.md#agent-subject-token-exchange), [End-User API 2.0.0 migration guide](../api/enduser-api.md#migrate-to-end-user-api-200), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [configuration](../configuration.md#agent-subject-detection-for-third-party-exchange), and [detector example](../../examples/config/token-exchange.yaml). Correct human identity collisions and explicitly reestablish delegation/session state; never automatically rewrite grants or disable detection as a compatibility fix.
 
 ## Configuration
 

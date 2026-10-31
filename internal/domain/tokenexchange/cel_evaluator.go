@@ -15,6 +15,9 @@ import (
 // CELEvaluatorConfig holds CEL-specific configuration for expression evaluation.
 // This is extracted from ports.TokenExchangeConfig to avoid circular imports.
 type CELEvaluatorConfig struct {
+	// AgentSubjectExpression replaces the guarded equality detector when non-empty.
+	AgentSubjectExpression string
+
 	// PrincipalExpression is a CEL expression for extracting the principal from subject_token
 	PrincipalExpression string
 
@@ -50,7 +53,8 @@ type CELEvaluatorConfig struct {
 // per SC-005 (100ms default).
 type CELEvaluator struct {
 	// config contains token exchange configuration including CEL expressions
-	config CELEvaluatorConfig
+	config              CELEvaluatorConfig
+	agentSubjectProgram cel.Program
 
 	// principalProgram is the compiled CEL program for principal extraction
 	// Compiled at startup, evaluated at runtime
@@ -104,6 +108,9 @@ func NewCELEvaluator(config CELEvaluatorConfig) (*CELEvaluator, error) {
 		return nil, err
 	}
 
+	if err := evaluator.compileAgentSubjectExpression(); err != nil {
+		return nil, err
+	}
 	return evaluator, nil
 }
 
@@ -223,6 +230,53 @@ func (e *CELEvaluator) compileExpression(expr string) (cel.Program, error) {
 	}
 
 	return program, nil
+}
+
+func (e *CELEvaluator) compileAgentSubjectExpression() error {
+	expression := e.config.AgentSubjectExpression
+	if expression == "" {
+		expression = DefaultAgentSubjectExpression
+	}
+	env, err := cel.NewEnv(cel.Variable(CELSubjectTokenVariable, cel.MapType(cel.StringType, cel.DynType)))
+	if err != nil {
+		return NewServerErrorWithCause("invalid agent-subject CEL environment", err).
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	checked, issues := env.Compile(expression)
+	if issues.Err() != nil {
+		return NewServerErrorWithCause("invalid agent-subject CEL expression at startup", issues.Err()).
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	if checked.OutputType() != cel.BoolType && checked.OutputType() != cel.DynType {
+		return NewServerError("agent-subject CEL expression must return bool or dyn").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	if _, ok := FieldSelections(checked)[CELSubjectTokenVariable+".sub"]; !ok {
+		return NewServerError("agent-subject CEL expression must reference subject_token.sub").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	program, err := env.Program(checked)
+	if err != nil {
+		return NewServerErrorWithCause("invalid agent-subject CEL program", err).
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	e.agentSubjectProgram = program
+	return nil
+}
+
+func (e *CELEvaluator) IsAgentSubject(subjectTokenClaims map[string]interface{}) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), e.evaluationTimeout)
+	defer cancel()
+	result, err := e.evaluateWithTimeout(ctx, e.agentSubjectProgram, map[string]interface{}{CELSubjectTokenVariable: subjectTokenClaims})
+	if err != nil {
+		return false, celEvaluationError("agent-subject detection failed", StageIdentityResolution, err)
+	}
+	value, ok := result.(types.Bool)
+	if !ok {
+		return false, NewServerError("agent-subject expression did not return a boolean").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
+	}
+	return bool(value), nil
 }
 
 // ExtractPrincipal extracts the user principal from subject_token JWT claims.

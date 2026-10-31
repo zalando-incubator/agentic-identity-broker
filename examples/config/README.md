@@ -478,6 +478,16 @@ An active `UserGrant` for `(extracted subject, target agent)` is mandatory for e
 ./agentic-identity-broker --config ./examples/config/impersonation.yaml
 ```
 
+### `impersonation-agent-subject.yaml` — Signed Self-Agent Issuance
+
+Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human delegation and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects always require active delegation.
+
+Omitting `allowed_subject_categories` means `[human]`; signed exact-target collisions are rejected even with active same-text delegation. Unsigned subjects remain human, even if a rule lists `agent`. See the [End-User API 2.0.0 migration guide](../../docs/api/enduser-api.md#migrate-to-end-user-api-200) before upgrading. The [token-exchange example](token-exchange.yaml) describes default third-party rejection, replacing overrides and their security responsibility.
+
+```bash
+./agentic-identity-broker --config ./examples/config/impersonation-agent-subject.yaml
+```
+
 ### `trust-anchor-local-jwks.yaml` — Inline and File-Based Trust Anchor Key Sets
 
 Complete, loadable `local`-mode configuration in which three trust anchors take their public verification keys from configuration instead of a remote `jwks_uri` or issuer discovery. No outbound request is made for those keys.
