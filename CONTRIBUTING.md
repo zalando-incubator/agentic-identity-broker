@@ -104,6 +104,8 @@ Follow hexagonal architecture:
 - **Ports** (`internal/ports/`): Interface boundaries
 - **Adapters** (`internal/adapters/`): HTTP, storage, config
 
+Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md).
+
 ### Frontend
 
 All components must use the design system at `/web/src/design-system/`:

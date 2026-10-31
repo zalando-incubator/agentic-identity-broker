@@ -39,6 +39,7 @@ go generate ./internal/domain/id/
 3. Authenticate before validating UUID syntax. Unauthenticated requests return 401, not 400.
 4. Use typed IDs for entity values. Convert to string only when an external API requires it.
 5. Use `ServiceID.String()` for a service context. Signing key contexts use `KeyID` and `kid`. Do not use both.
+6. Log a `Principal` as the typed value, not `String()`. The principal policy in `coding-standards/LOGGING.md` section 5 depends on the type.
 
 ## Adding a New Entity ID
 
