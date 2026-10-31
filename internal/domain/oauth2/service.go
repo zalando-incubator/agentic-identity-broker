@@ -561,7 +561,7 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 		TokenEndpoint:                     fmt.Sprintf("%s/oauth2/token", issuer),
 		ResponseTypesSupported:            s.config.SupportedResponseTypes,
 		GrantTypesSupported:               grantTypes,
-		ScopesSupported:                   s.config.SupportedScopes,
+		ScopesSupported:                   s.advertisedScopes(),
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
 	}
 
@@ -719,4 +719,13 @@ func (s *AuthorizationService) hasRequiredScopes(sessionScopes []string, require
 	}
 
 	return true
+}
+
+// advertisedScopes returns the configured supported scopes without any broker Virtual Service
+// Scope; discovery never publishes a catalog of broker-managed services (FR-014).
+func (s *AuthorizationService) advertisedScopes() []string {
+	if s.requestedServices == nil {
+		return s.config.SupportedScopes
+	}
+	return slices.DeleteFunc(slices.Clone(s.config.SupportedScopes), s.isBrokerScope)
 }
