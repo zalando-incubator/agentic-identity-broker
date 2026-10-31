@@ -20,8 +20,12 @@ type AuthorizationSessionClaims struct {
 	Principal    id.Principal               `json:"principal"`
 	OriginalURL  string                     `json:"original_url"`
 	CIMDMetadata *ports.SessionCIMDMetadata `json:"cimd_metadata,omitempty"`
-	IssuedAt     time.Time                  `json:"iat"`
-	ExpiresAt    time.Time                  `json:"exp"`
+	// RequestedServiceIDs and ServiceScopeBindings are derived by the server from the virtual
+	// scopes in OriginalURL; browser-supplied values never replace them.
+	RequestedServiceIDs  []id.ServiceID          `json:"requested_service_ids,omitempty"`
+	ServiceScopeBindings map[string]id.ServiceID `json:"service_scope_bindings,omitempty"`
+	IssuedAt             time.Time               `json:"iat"`
+	ExpiresAt            time.Time               `json:"exp"`
 }
 
 // IsExpired reports whether the session token TTL has elapsed.

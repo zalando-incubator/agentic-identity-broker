@@ -508,7 +508,8 @@ func (f *grantDiagnosticsFixture) AssertLifecycleExchange(service *model.Thirdpa
 		Expect(body["granted_permission_sets"]).To(Equal(grantDiagnosticJSONValue(provenance)))
 	} else {
 		Expect(response.StatusCode).To(Equal(http.StatusForbidden))
-		Expect(len(body)).To(Equal(3))
+		Expect(len(body)).To(Equal(4))
+		Expect(body["scope"]).To(Equal(f.Config.Server.EndUser.PublicURL + "/sessions/" + service.ID.String()))
 		Expect(body["error"]).To(Equal("access_denied"))
 		Expect(body["error_description"]).To(Equal("User authorization is insufficient. Please re-consent."))
 		Expect(body["error_uri"]).To(Equal(f.Config.Server.EndUser.PublicURL + "/agents/" + f.Agent.ID.String()))
@@ -556,7 +557,8 @@ var _ = Describe("Grant Denial Classification", func() {
 			Expect(response.StatusCode).To(Equal(http.StatusForbidden))
 			var body map[string]any
 			Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
-			Expect(len(body)).To(Equal(3), "denial wire schema must contain only the established OAuth error fields")
+			Expect(len(body)).To(Equal(4), "denial wire schema adds only the service scope to the established OAuth error fields")
+			Expect(body["scope"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/sessions/" + fixture.S2.ID.String()))
 			Expect(body["error"]).To(Equal("access_denied"))
 			Expect(body["error_description"]).To(Equal("User authorization is insufficient. Please re-consent."))
 			Expect(body["error_uri"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/agents/" + fixture.Agent.ID.String()))
@@ -636,18 +638,21 @@ var _ = Describe("Grant Observation Context", func() {
 				}))
 			case http.StatusForbidden:
 				outcome = "authorization_denied"
-				Expect(len(body)).To(Equal(3), "denial JSON must retain only the established OAuth fields")
+				Expect(len(body)).To(Equal(4), "denial JSON adds only the service scope to the established OAuth fields")
+				Expect(body["scope"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/sessions/" + fixture.S1.ID.String()))
 				Expect(body["error"]).To(Equal("access_denied"))
 				Expect(body["error_description"]).To(Equal("User authorization is insufficient. Please re-consent."))
 				Expect(body["error_uri"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/agents/" + fixture.Agent.ID.String()))
 			case http.StatusBadRequest:
 				outcome = "reauth_required"
-				Expect(len(body)).To(Equal(3), "missing-session JSON must retain only the established OAuth fields")
+				Expect(len(body)).To(Equal(4), "missing-session JSON adds only the service scope to the established OAuth fields")
 				Expect(body["error"]).To(Equal("invalid_grant"))
 				Expect(body["error_description"]).To(Equal("User session is unavailable. Please re-authenticate."))
 				publicURL := fixture.Config.Server.EndUser.PublicURL
-				recoveryURI := publicURL + "/api/third-party/" + fixture.S1.ID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+				serviceScope := publicURL + "/sessions/" + fixture.S1.ID.String()
+				recoveryURI := publicURL + "/api/third-party/" + fixture.S1.ID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(serviceScope)
 				Expect(body["error_uri"]).To(Equal(recoveryURI))
+				Expect(body["scope"]).To(Equal(serviceScope))
 			case http.StatusInternalServerError:
 				outcome = "configuration_error"
 				Expect(len(body)).To(Equal(2), "an unregistered candidate must not add identity or recovery fields to the OAuth error")

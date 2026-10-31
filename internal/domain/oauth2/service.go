@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -68,6 +69,16 @@ type AuthorizationService struct {
 	sessionTokenService *sessiontoken.Service
 	config              *OAuth2Config
 	logger              *slog.Logger
+	requestedServices   *servicescope.Resolver
+	serviceEvaluator    *servicescope.Evaluator
+}
+
+// WithRequestedServices enables Virtual Service Scopes: each requested service is required for
+// that request only, evaluated for grant coverage and verified session usability (ADR 046).
+func (s *AuthorizationService) WithRequestedServices(resolver *servicescope.Resolver, evaluator *servicescope.Evaluator) *AuthorizationService {
+	s.requestedServices = resolver
+	s.serviceEvaluator = evaluator
+	return s
 }
 
 // NewAuthorizationService creates an AuthorizationService.
@@ -191,6 +202,15 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ErrorDecision("invalid_redirect_uri", "redirect_uri must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", ""), nil
 	}
 
+	continuation, rejected := s.authorizationContinuation(req, principal, agent)
+	if rejected != nil {
+		return rejected, nil
+	}
+	requested, rejected := s.resolveRequestedServices(ctx, req, agent, continuation)
+	if rejected != nil {
+		return rejected, nil
+	}
+
 	// Step 1c: Validate requested scopes against agent's allowed scopes.
 	// redirect_uri is validated above, so a redirect-with-error is now safe.
 	if len(agent.AllowedScopes) > 0 && req.Scope != "" {
@@ -199,7 +219,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			allowedSet[scope] = true
 		}
 		for _, scope := range strings.Fields(req.Scope) {
-			if oidcscope.IsReservedRefreshTokenScope(scope) {
+			if oidcscope.IsReservedRefreshTokenScope(scope) || s.isBrokerScope(scope) {
 				continue
 			}
 			if !allowedSet[scope] {
@@ -246,7 +266,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 	if needsConsent {
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.Error("failed to build consent URL", "error", buildErr)
@@ -290,7 +310,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 				"reason", unusableReason,
 			)
 		}
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.Error("failed to build consent URL", "error", buildErr)
@@ -340,7 +360,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 					"error", err.Error(),
 				)
 			}
-			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
+			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
 			if buildErr != nil {
 				if s.logger != nil {
 					s.logger.Error("failed to build consent URL", "error", buildErr)
@@ -358,6 +378,19 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			}
 			return ports.ConsentDecision(consentURL), nil
 		}
+	}
+
+	if rejected := s.checkRequestedServices(ctx, req, principal, agent, grant, requested, func() *ports.AuthorizationDecision {
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
+		if buildErr != nil {
+			if s.logger != nil {
+				s.logger.Error("failed to build consent URL", "error", buildErr)
+			}
+			return s.redirectError(req, "server_error", "server error")
+		}
+		return ports.ConsentDecision(consentURL)
+	}); rejected != nil {
+		return rejected, nil
 	}
 
 	// Active grant exists and all mandatory requirements satisfied — proceed.
@@ -393,7 +426,11 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			RedirectURL: errRedirect,
 		}, nil
 	}
-	return ports.ProceedDecision(upstreamURL, agent.ClientType()), nil
+	decision := ports.ProceedDecision(upstreamURL, agent.ClientType())
+	if len(requested.Bindings) > 0 {
+		decision.ServiceScopeBindings = requested.Bindings
+	}
+	return decision, nil
 }
 
 // buildUpstreamAuthorizeURL constructs the upstream authorization endpoint URL
@@ -417,9 +454,13 @@ func (s *AuthorizationService) buildUpstreamAuthorizeURL(req *ports.Authorizatio
 	q.Set("redirect_uri", req.RedirectURI)
 	q.Set("response_type", req.ResponseType)
 
-	// Add optional parameters if present
-	if req.Scope != "" {
-		q.Set("scope", req.Scope)
+	// Add optional parameters if present. Broker virtual scopes never reach the upstream IdP.
+	scope := req.Scope
+	if s.requestedServices != nil {
+		scope = servicescope.StripVirtual(scope, s.requestedServices.PublicURL())
+	}
+	if scope != "" {
+		q.Set("scope", scope)
 	}
 	if req.State != "" {
 		q.Set("state", req.State)
@@ -452,7 +493,11 @@ func (s *AuthorizationService) buildUpstreamAuthorizeURL(req *ports.Authorizatio
 // ALL agent modes (local, proxy, CIMD) receive a JWE session_token sealing the
 // authorization context (agent_id, principal, original_url, TTL). CIMD agents
 // additionally embed cimd_metadata; for local/proxy agents cimd_metadata is nil.
-func (s *AuthorizationService) buildConsentURL(_ context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent, cimdMeta *ports.CIMDMetadataDTO) (string, error) {
+func (s *AuthorizationService) buildConsentURL(_ context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent, cimdMeta *ports.CIMDMetadataDTO, requested *servicescope.RequestedServiceSet, continuation string) (string, error) {
+	if continuation != "" {
+		// Re-entering consent keeps the authenticated session token, its bindings and expiry.
+		return fmt.Sprintf("%s/agents/%s?session_token=%s", s.config.PublicURL, agent.ID, url.QueryEscape(continuation)), nil
+	}
 	var meta *ports.SessionCIMDMetadata
 	if cimdMeta != nil {
 		meta = &ports.SessionCIMDMetadata{
@@ -468,6 +513,10 @@ func (s *AuthorizationService) buildConsentURL(_ context.Context, req *ports.Aut
 	claims, err := sessiontoken.NewAuthorizationSessionClaims(agent.ID, principal, req.OriginalURL, meta)
 	if err != nil {
 		return "", fmt.Errorf("failed to create authorization session claims: %w", err)
+	}
+	if !requested.Empty() {
+		claims.RequestedServiceIDs = requested.ServiceIDs()
+		claims.ServiceScopeBindings = requested.Bindings
 	}
 	token, err := s.sessionTokenService.Create(claims)
 	if err != nil {
@@ -512,7 +561,7 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 		TokenEndpoint:                     fmt.Sprintf("%s/oauth2/token", issuer),
 		ResponseTypesSupported:            s.config.SupportedResponseTypes,
 		GrantTypesSupported:               grantTypes,
-		ScopesSupported:                   s.config.SupportedScopes,
+		ScopesSupported:                   s.advertisedScopes(),
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_post", "client_secret_basic"},
 	}
 
@@ -670,4 +719,13 @@ func (s *AuthorizationService) hasRequiredScopes(sessionScopes []string, require
 	}
 
 	return true
+}
+
+// advertisedScopes returns the configured supported scopes without any broker Virtual Service
+// Scope; discovery never publishes a catalog of broker-managed services (FR-014).
+func (s *AuthorizationService) advertisedScopes() []string {
+	if s.requestedServices == nil {
+		return s.config.SupportedScopes
+	}
+	return slices.DeleteFunc(slices.Clone(s.config.SupportedScopes), s.isBrokerScope)
 }

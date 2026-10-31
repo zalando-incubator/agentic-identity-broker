@@ -857,7 +857,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 	Describe("US5: Session Error Handling", func() {
 		recoveryURI := func() string {
 			publicURL := config.Server.EndUser.PublicURL
-			return publicURL + "/api/third-party/" + githubID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+			return publicURL + "/api/third-party/" + githubID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions/"+githubID.String())
 		}
 
 		// Spec Reference: US5-S1 from specs/013-token-exchange/spec.md
@@ -1011,7 +1011,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(callback.StatusCode).To(Equal(http.StatusFound))
 			landingURL, err := url.Parse(callback.Header.Get("Location"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(landingURL.Scheme + "://" + landingURL.Host + landingURL.Path).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+			Expect(landingURL.Scheme + "://" + landingURL.Host + landingURL.Path).To(Equal(config.Server.EndUser.PublicURL + "/sessions/" + githubID.String()))
 			Expect(landingURL.Query().Get("success")).To(Equal("true"))
 			Expect(callback.Body.Close()).To(Succeed())
 

@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -14,8 +15,9 @@ var errProxyClientMissing = errors.New("agent has no upstream client_id configur
 const tokenProxySuccessStatus = 200
 
 type TokenOutcomeService struct {
-	proxy    ports.OAuth2TokenProxy
-	verifier ports.MultiAgentVerifier
+	proxy     ports.OAuth2TokenProxy
+	verifier  ports.MultiAgentVerifier
+	publicURL string
 }
 
 func NewTokenOutcomeService(proxy ports.OAuth2TokenProxy, verifier ports.MultiAgentVerifier) *TokenOutcomeService {
@@ -27,6 +29,13 @@ func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, conten
 		return nil, ports.TokenProxyClientMissing, errProxyClientMissing
 	}
 	form.Set("client_id", resolution.ClientID.String())
+	if s.publicURL != "" && form.Has("scope") {
+		if scope := servicescope.StripVirtual(form.Get("scope"), s.publicURL); scope != "" {
+			form.Set("scope", scope)
+		} else {
+			form.Del("scope")
+		}
+	}
 	return s.proxy.Exchange(ctx, form.Encode(), contentType)
 }
 
@@ -43,4 +52,11 @@ func (s *TokenOutcomeService) CompleteProxy(ctx context.Context, response ports.
 		return ports.TokenProxyCompletion{}, ports.TokenProxyVerificationFailed, err
 	}
 	return ports.TokenProxyCompletion{Body: body, Verified: true}, ports.TokenProxyNoFailure, nil
+}
+
+// WithServiceScopeStripping removes broker Virtual Service Scopes from forwarded token
+// requests. Proxy refresh never checks or attests broker service usability (DEC-002).
+func (s *TokenOutcomeService) WithServiceScopeStripping(publicURL string) *TokenOutcomeService {
+	s.publicURL = publicURL
+	return s
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -87,6 +88,10 @@ type AuthorizationRequest struct {
 
 	// INTERNAL: Full original URL for redirect to consent UI
 	OriginalURL string
+
+	// OPTIONAL: Sealed authorization session JWE carried only by the server-built post-consent
+	// continuation. It is consumed locally and never forwarded upstream or to the client.
+	SessionToken string
 }
 
 // AuthorizationDecision represents the broker's decision for an authorization request.
@@ -110,6 +115,10 @@ type AuthorizationDecision struct {
 
 	// ErrorDesc is the human-readable error description
 	ErrorDesc string
+
+	// ServiceScopeBindings pins each granted Virtual Service Scope to its service UUID
+	// (set on "proceed" actions only; local issuance stores them with the code).
+	ServiceScopeBindings map[string]id.ServiceID
 }
 
 // ProceedDecision returns a decision allowing the authorization request to proceed.
@@ -214,7 +223,8 @@ type AuthorizationCodeIssuer interface {
 	// IssueAuthorizationCode processes a validated authorization request and returns
 	// an authorization code. The handler is responsible for redirect_uri validation
 	// and PKCE enforcement before calling this method.
-	IssueAuthorizationCode(ctx context.Context, req *AuthorizationRequest, principal id.Principal) (code string, err error)
+	// bindings are the Service-Scope Bindings the authorization decision resolved, if any.
+	IssueAuthorizationCode(ctx context.Context, req *AuthorizationRequest, principal id.Principal, bindings map[string]id.ServiceID) (code string, err error)
 }
 
 // SessionCIMDMetadata carries CIMD-resolved client metadata from a validated session token.
@@ -239,10 +249,13 @@ func (m *SessionCIMDMetadata) Validate() error {
 
 // AuthorizationSession is the port-local DTO returned by SessionTokenValidator.
 type AuthorizationSession struct {
-	AgentID      id.AgentID
-	Principal    id.Principal
-	OriginalURL  string
-	CIMDMetadata *SessionCIMDMetadata
+	AgentID              id.AgentID
+	Principal            id.Principal
+	OriginalURL          string
+	CIMDMetadata         *SessionCIMDMetadata
+	RequestedServiceIDs  []id.ServiceID
+	ServiceScopeBindings map[string]id.ServiceID
+	ExpiresAt            time.Time
 }
 
 // SessionTokenValidator validates JWE authorization session tokens.

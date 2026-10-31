@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -514,7 +515,7 @@ func TestCreateGrant_SessionToken_ValidFlow(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.Equal(t, originalURL, resp["redirect_url"])
+	assert.Equal(t, originalURL+"?session_token="+url.QueryEscape(sessionToken), resp["redirect_url"], "the continuation carries the same session token (API-CONSENT)")
 }
 
 // TestCreateGrant_SessionToken_InvalidToken verifies that a tampered or invalid

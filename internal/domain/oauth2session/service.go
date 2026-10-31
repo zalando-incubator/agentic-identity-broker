@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -349,9 +351,15 @@ func (s *OAuth2SessionService) GetCallbackBaseURL() string {
 
 // ServiceAuthorizeURL starts provider authentication for a resolved service and
 // returns the browser to session management after the callback.
-func (s *OAuth2SessionService) ServiceAuthorizeURL(serviceID id.ServiceID) string {
+func (s *OAuth2SessionService) ServiceAuthorizeURL(service *model.ThirdpartyOAuth2ProviderEntity) string {
 	base := strings.TrimRight(s.config.CallbackBaseURL, "/")
-	return base + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(base+"/sessions")
+	return base + "/api/third-party/" + service.ID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(s.ServiceScope(service))
+}
+
+// ServiceScope returns the service's current Virtual Service Scope, which is also its
+// same-origin service page (ADR 045, ADR 046).
+func (s *OAuth2SessionService) ServiceScope(service *model.ThirdpartyOAuth2ProviderEntity) string {
+	return servicescope.Format(s.config.CallbackBaseURL, service.ID, service.CanonicalID)
 }
 
 // InitiateFlowResult contains the data needed to redirect user to authorization.
@@ -2075,4 +2083,107 @@ func tokenAcquisitionError(ctx context.Context, operation Operation, cause error
 		return failure
 	}
 	return failure.WithMetadata(failure.Metadata().WithDependency(dependency))
+}
+
+// ServiceSessionSnapshot verifies the principal's session for one service through
+// GetValidAccessToken, so an expired access token is refreshed once under the existing
+// single-flight and row locking. Only a provider invalid_grant persists unusability, through
+// the existing refresh-expiry marker; transient failures write nothing.
+func (s *OAuth2SessionService) ServiceSessionSnapshot(ctx context.Context, principal id.Principal, serviceID id.ServiceID) servicescope.SessionSnapshot {
+	session, _, err := s.GetValidAccessToken(ctx, principal, serviceID)
+	if err != nil {
+		return servicescope.SessionSnapshot{Usability: usabilityFromError(err)}
+	}
+	return servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: slices.Clone(session.Scope)}
+}
+
+// CheckServiceUsability reports whether the session can supply effectiveScopes now.
+func (s *OAuth2SessionService) CheckServiceUsability(ctx context.Context, principal id.Principal, serviceID id.ServiceID, effectiveScopes []string) servicescope.Usability {
+	return s.ServiceSessionSnapshot(ctx, principal, serviceID).For(effectiveScopes)
+}
+
+func usabilityFromError(err error) servicescope.Usability {
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) {
+		return servicescope.UsabilityUnverifiableTransient
+	}
+	switch operationErr.Metadata().Detail() {
+	case DetailSessionMissing:
+		return servicescope.UsabilityMissing
+	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable, DetailRefreshRejected:
+		return servicescope.UsabilityUnusableDefinitive
+	case DetailCredentialSourceUnavailable:
+		var sourceErr *model.CredentialSourceError
+		if errors.As(err, &sourceErr) && (sourceErr.Reason == model.CredentialSourceReasonIdentityMismatch || sourceErr.Reason == model.CredentialSourceReasonIdentityMissing) {
+			return servicescope.UsabilityUnusableDefinitive
+		}
+	}
+	return servicescope.UsabilityUnverifiableTransient
+}
+
+// ServiceSessionDetail is the single-service session view behind a Virtual Service Scope page.
+type ServiceSessionDetail struct {
+	Service         *model.ThirdpartyOAuth2ProviderEntity
+	ScopeURL        string
+	Session         *storage.UserSession
+	DependentAgents []AgentInfo
+}
+
+// GetServiceSessionDetail resolves a current canonical ID or lowercase UUID and returns the
+// service, the principal's session (nil when none) and only the principal's dependent agents.
+// It never refreshes provider tokens and never changes a grant. Unknown or malformed
+// identifiers return ErrServiceNotFound.
+func (s *OAuth2SessionService) GetServiceSessionDetail(ctx context.Context, principal id.Principal, identifier string) (*ServiceSessionDetail, error) {
+	scope, kind := servicescope.Parse(servicescope.Format(s.config.CallbackBaseURL, id.ServiceID{}, &identifier), s.config.CallbackBaseURL)
+	if identifier == "" || kind != servicescope.KindVirtual {
+		return nil, ErrServiceNotFound
+	}
+	var (
+		service *model.ThirdpartyOAuth2ProviderEntity
+		err     error
+	)
+	if scope.Form == servicescope.FormUUID {
+		serviceID, parseErr := id.ParseServiceID(scope.Identifier)
+		if parseErr != nil {
+			return nil, ErrServiceNotFound
+		}
+		service, err = s.providerService.Get(ctx, serviceID)
+	} else {
+		service, err = s.providerService.GetByCanonicalID(ctx, scope.Identifier)
+	}
+	if err != nil {
+		if ports.IsNotFoundErr(err) {
+			return nil, ErrServiceNotFound
+		}
+		return nil, fmt.Errorf("resolve service: %w", err)
+	}
+	if service == nil {
+		return nil, ErrServiceNotFound
+	}
+
+	session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, service.ID)
+	if err != nil && !ports.IsNotFoundErr(err) {
+		return nil, fmt.Errorf("find session: %w", err)
+	}
+	agentIDs, err := s.grantRepo.ListByPrincipalAndServiceID(ctx, principal, service.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list dependent agents: %w", err)
+	}
+	dependentAgents := make([]AgentInfo, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		agent, err := s.agentRepo.Get(ctx, agentID)
+		if err != nil {
+			if ports.IsNotFoundErr(err) {
+				continue
+			}
+			return nil, fmt.Errorf("get dependent agent: %w", err)
+		}
+		dependentAgents = append(dependentAgents, AgentInfo{ID: agent.ID, DisplayName: agent.DisplayName})
+	}
+	return &ServiceSessionDetail{
+		Service:         service,
+		ScopeURL:        s.ServiceScope(service),
+		Session:         session,
+		DependentAgents: dependentAgents,
+	}, nil
 }

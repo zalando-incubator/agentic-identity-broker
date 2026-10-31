@@ -2574,3 +2574,24 @@ func TestTokenExchangeEarlyAndImpersonationObservationsHaveNoAuthorization(t *te
 		})
 	}
 }
+
+// Exchange error scope member from specs/055-incremental-service-authorization (API-EXCHANGE-CHALLENGE).
+func TestHandleTokenExchangeErrorSerializesServiceScope(t *testing.T) {
+	handler := &OAuth2TokenHandler{}
+	recoverable := tokenexchange.NewInvalidGrantError("User session is unavailable. Please re-authenticate.").
+		WithErrorURI("https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub").
+		WithScope("https://broker.example.com/sessions/github")
+	writer := httptest.NewRecorder()
+	require.NoError(t, handler.handleTokenExchangeError(writer, recoverable))
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
+	assert.Equal(t, "https://broker.example.com/sessions/github", body["scope"])
+	assert.Equal(t, recoverable.ErrorURI(), body["error_uri"])
+	assert.Empty(t, writer.Header().Get("WWW-Authenticate"), "the broker never challenges on /oauth2/token")
+
+	writer = httptest.NewRecorder()
+	require.NoError(t, handler.handleTokenExchangeError(writer, tokenexchange.NewServerError("temporarily unavailable")))
+	body = nil
+	require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
+	assert.NotContains(t, body, "scope")
+}

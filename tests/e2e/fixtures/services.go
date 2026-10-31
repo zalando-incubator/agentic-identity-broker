@@ -239,3 +239,46 @@ func CredentialServiceRequest(canonicalID, providerURL, source string) map[strin
 	}
 	return request
 }
+
+// GitHubProductionService returns the incremental-authorization cast's GitHub Production
+// service (canonical ID github) with a fresh ID and endpoints on the given mock provider.
+func GitHubProductionService(providerURL string) *model.ThirdpartyOAuth2ProviderEntity {
+	return castService(providerURL, "github", "GitHub Production", "https://api.github.com", "repo", "user:email")
+}
+
+// JiraCloudService returns a second requested service (canonical ID jira) with a fresh ID.
+func JiraCloudService(providerURL string) *model.ThirdpartyOAuth2ProviderEntity {
+	return castService(providerURL, "jira", "Jira Cloud", "https://api.atlassian.com", "read:jira-work")
+}
+
+// CorporateIdentityService returns the cast's mandatory identity service with a fresh ID.
+func CorporateIdentityService(providerURL string) *model.ThirdpartyOAuth2ProviderEntity {
+	return castService(providerURL, "corporate-identity", "Corporate Identity", "", "profile")
+}
+
+func castService(providerURL, canonicalID, displayName, resource string, scopes ...string) *model.ThirdpartyOAuth2ProviderEntity {
+	now := time.Now()
+	serviceID := id.NewServiceID()
+	service := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          serviceID,
+		CanonicalID: &canonicalID,
+		DisplayName: displayName,
+		ClientID:    id.ClientID(canonicalID + "-client-id"),
+		Secret:      EncryptedSecret(serviceID.String(), canonicalID+"-client-secret"),
+		Flavor:      model.OAuth2FlavorStandard,
+		IssuerURI:   providerURL,
+		Endpoints: model.OAuth2Endpoints{
+			TokenEndpoint:     providerURL + "/oauth/token",
+			AuthorizeEndpoint: providerURL + "/oauth/authorize",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	for _, scope := range scopes {
+		service.Scopes = append(service.Scopes, model.OAuthScope{ScopeValue: scope, Description: scope})
+	}
+	if resource != "" {
+		service.ProtectedResources = []string{resource}
+	}
+	return service
+}

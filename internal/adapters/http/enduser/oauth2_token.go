@@ -383,6 +383,9 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 		if exchangeErr.ErrorURI() != "" {
 			errBody["error_uri"] = exchangeErr.ErrorURI()
 		}
+		if exchangeErr.Scope() != "" {
+			errBody["scope"] = exchangeErr.Scope()
+		}
 	}
 	return writeTokenExchangeErrorJSON(w, status, errBody)
 }

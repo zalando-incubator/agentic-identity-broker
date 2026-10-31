@@ -638,6 +638,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 // Routes are relative to /api (e.g., "/third-party/sessions" becomes "/api/third-party/sessions")
 func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Get("/third-party/sessions", h.ListSessions)
+	router.Get("/third-party/sessions/{service}", h.GetServiceSessionDetail)
 	router.Get("/third-party/{serviceId}/oauth2/authorize", h.InitiateFlow)
 	router.With(http.NewCrossOriginProtection().Handler).Post("/third-party/{serviceId}/oauth2/authorize", h.InitiateFlow)
 	router.Get("/third-party/{serviceId}/oauth2/callback", h.HandleCallback)

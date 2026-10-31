@@ -143,3 +143,21 @@ func SessionWithoutRefreshToken(principal, serviceID string) *storage.UserSessio
 		UpdatedAt:   now,
 	}
 }
+
+// ExpiredAccessWithRefresh returns a session whose access token expired while its stored
+// refresh token is still considered refreshable, so usability depends on the provider refresh.
+func ExpiredAccessWithRefresh(principal, serviceID string, scopes []string) *storage.UserSession {
+	session := SessionForServiceWithScopes(principal, serviceID, scopes)
+	expired := time.Now().Add(-time.Minute)
+	session.AccessTokenExpiresAt = &expired
+	return session
+}
+
+// RejectedRefreshSession returns a session carrying the persisted provider-rejection marker:
+// expired access and a refresh expiry at the rejection time.
+func RejectedRefreshSession(principal, serviceID string, scopes []string) *storage.UserSession {
+	session := ExpiredAccessWithRefresh(principal, serviceID, scopes)
+	rejectedAt := time.Now().Add(-time.Second)
+	session.RefreshTokenExpiresAt = &rejectedAt
+	return session
+}

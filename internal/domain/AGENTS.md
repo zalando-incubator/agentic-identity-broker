@@ -26,6 +26,7 @@ and declared domain libraries.
 | `permissionset/` | Permission-set lifecycle and resolution | `Service` |
 | `principal/` | Authenticated identity context | `WithPrincipal()`, `FromContext()` |
 | `server/` | Server lifecycle configuration | `Config` |
+| `servicescope/` | Virtual Service Scope grammar, requested-service resolution, shared grant coverage and requested-service evaluation (ADR 046) | `Parse()`, `Resolver`, `Cover()`, `Evaluator` |
 | `storage/` | Domain data models and endpoint discovery | `Agent`, `UserGrant`, `UserSession` |
 | `thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |

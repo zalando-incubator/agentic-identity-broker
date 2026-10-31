@@ -6,6 +6,7 @@
  * - /delegations -> Consent overview (list of agent delegations)
  * - /agents/:agentId -> Agent grant detail page
  * - /sessions -> Third-party OAuth2 sessions management
+ * - /sessions/:service -> One service's session page (Virtual Service Scope URL)
  * - * -> 404 error page
  *
  * Performance Optimizations:
@@ -26,6 +27,9 @@ const ConsentOverviewPage = lazy(() => import('./pages/ConsentOverviewPage'));
 const AgentGrantDetailPage = lazy(() => import('./pages/AgentGrantDetailPage'));
 const ThirdPartySessionsPage = lazy(
   () => import('./pages/ThirdPartySessionsPage'),
+);
+const ThirdPartySessionDetailPage = lazy(
+  () => import('./pages/ThirdPartySessionDetailPage'),
 );
 const ApprovalPage = lazy(() => import('./pages/ApprovalPage'));
 const ToolAuthorizationsPage = lazy(() => import('./pages/ToolAuthorizationsPage'));
@@ -61,6 +65,10 @@ function App() {
               <Route
                 path="/sessions"
                 element={<ThirdPartySessionsPage />}
+              />
+              <Route
+                path="/sessions/:service"
+                element={<ThirdPartySessionDetailPage />}
               />
               <Route
                 path="/approvals/:id"

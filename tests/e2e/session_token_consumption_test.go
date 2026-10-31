@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -137,7 +138,8 @@ var _ = Describe("Session Token Grant Submission", func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 
 			Expect(body).To(HaveKey("redirect_url"))
-			Expect(body["redirect_url"]).To(Equal(originalURL))
+			// API-CONSENT (specs/055-incremental-service-authorization): the continuation carries the same JWE.
+			Expect(body["redirect_url"]).To(Equal(originalURL + "&session_token=" + url.QueryEscape(token)))
 			Expect(body).To(HaveKey("data"))
 		})
 	})

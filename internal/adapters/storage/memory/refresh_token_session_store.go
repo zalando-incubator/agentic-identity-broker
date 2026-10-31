@@ -45,6 +45,9 @@ func (s *RefreshTokenSessionStore) CreateSuccessor(_ context.Context, session *s
 	if !exists || previous.revoked || previous.UsedAt == nil || previous.RequestID != session.RequestID {
 		return storage.NewStorageError("RefreshTokenSessionStore.CreateSuccessor", storage.ErrorKindNotFound, nil, "refresh chain is no longer active")
 	}
+	if !session.ServiceScopeBindings.Equal(previous.ServiceScopeBindings) || !storage.ScopeSubset(session.Scope, previous.Scope) {
+		return storage.NewStorageError("RefreshTokenSessionStore.CreateSuccessor", storage.ErrorKindValidation, nil, "successor must inherit service scope bindings and must not widen scope")
+	}
 	return s.createLocked(session)
 }
 
@@ -54,7 +57,11 @@ func (s *RefreshTokenSessionStore) createLocked(session *storage.RefreshTokenSes
 			fmt.Sprintf("refresh token session with signature %s already exists", session.Signature))
 	}
 
+	if err := session.ServiceScopeBindings.Validate(session.Scope, false); err != nil {
+		return err
+	}
 	copy := refreshTokenSession{RefreshTokenSession: *session}
+	copy.ServiceScopeBindings = session.ServiceScopeBindings.Clone()
 	if session.GrantID != nil {
 		grantID := *session.GrantID
 		copy.GrantID = &grantID
@@ -78,6 +85,7 @@ func (s *RefreshTokenSessionStore) FindBySignature(_ context.Context, signature 
 	}
 
 	copy := session.RefreshTokenSession
+	copy.ServiceScopeBindings = session.ServiceScopeBindings.Clone()
 	if session.GrantID != nil {
 		grantID := *session.GrantID
 		copy.GrantID = &grantID

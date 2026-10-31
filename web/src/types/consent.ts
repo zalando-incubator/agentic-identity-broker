@@ -82,6 +82,33 @@ export interface AgentDetail {
     service_id: string;
     requirement_type: 'mandatory' | 'optional';
   }>;
+
+  /** Services requested by the sealed authorization session (server-derived) */
+  requested_service_ids?: string[];
+
+  /** Coverage and usability of each requested service */
+  requested_service_coverage?: RequestedServiceCoverage[];
+}
+
+/** Session usability for a requested service or one candidate's contribution. */
+export type RequestedServiceUsability = 'usable' | 'missing' | 'unusable' | 'unavailable';
+
+/** A declared permission set that covers a requested service. */
+export interface CoveringPermissionSet {
+  permission_set_id: string;
+  /** Subset of the requirement's required scopes this set supplies for the service */
+  supplied_required_scopes: string[];
+  /** Usability of this set's effective provider-scope contribution */
+  usability: RequestedServiceUsability;
+}
+
+/** Coverage of one requested service (GET /api/consent/agents/{id}). */
+export interface RequestedServiceCoverage {
+  service_id: string;
+  required_scopes: string[];
+  /** Baseline usability for the configured required scopes */
+  usability: RequestedServiceUsability;
+  covering_permission_sets: CoveringPermissionSet[];
 }
 
 /**
@@ -249,6 +276,8 @@ export interface GetAgentDetailResponse {
       service_id: string;
       requirement_type: 'mandatory' | 'optional';
     }>;
+    requested_service_ids?: string[];
+    requested_service_coverage?: RequestedServiceCoverage[];
     cimd_metadata?: CIMDMetadata | null;
   };
 }

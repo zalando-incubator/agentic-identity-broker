@@ -54,6 +54,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
@@ -561,6 +562,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		)
 	}
 
+	var authorizationService *oauth2service.AuthorizationService
+
 	// The external client-assertion trust anchor defaults to the proxy upstream in
 	// proxy and hybrid modes. Local mode has no upstream and requires it explicitly.
 	clientAssertionIssuerURI := b.config.TokenExchange.ClientAssertion.IssuerURI
@@ -697,7 +700,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			clientResolver = oauth2service.NewAgentClientResolver(b.storage.Agents(), b.logger)
 		}
 
-		authService := oauth2service.NewAuthorizationService(
+		authorizationService = oauth2service.NewAuthorizationService(
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
 			clientResolver,
@@ -705,7 +708,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			b.logger,
 			sessionTokenSvc,
 		)
-		app.OAuth2Service = authService
+		app.OAuth2Service = authorizationService
 	}
 
 	// OAuth2SessionService is always created because JWESigningKey is mandatory.
@@ -789,6 +792,21 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	).WithCIMDAssertionSigner(app.CIMDAssertionSigner).
 		WithDiscoveryTokenHTTPClient(discoveryTokenClient).
 		WithCredentialFileReader(credentialfile.New())
+
+	// Virtual Service Scopes (ADR 046) share one resolver and evaluator across authorization,
+	// local issuance and consent.
+	var serviceScopes *servicescope.Resolver
+	var serviceScopeEvaluator *servicescope.Evaluator
+	if app.ProviderService != nil && app.PermissionSetService != nil {
+		serviceScopes = servicescope.NewResolver(app.ProviderService, app.PermissionSetService, b.config.Server.EndUser.PublicURL)
+		serviceScopeEvaluator = servicescope.NewEvaluator(app.PermissionSetService, app.OAuth2SessionService)
+		if authorizationService != nil {
+			authorizationService.WithRequestedServices(serviceScopes, serviceScopeEvaluator)
+		}
+		if app.ConsentService != nil {
+			app.ConsentService.WithRequestedServices(serviceScopes, serviceScopeEvaluator)
+		}
+	}
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(
@@ -1074,6 +1092,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OAuth2 server provider: %w", err)
 		}
+		if serviceScopes != nil {
+			provider.WithServiceScopes(serviceScopes, serviceScopeEvaluator)
+		}
 
 		startupCtx, cancel := newSigningKeyStartupContext(bootstrapTimeout)
 		defer cancel()
@@ -1114,7 +1135,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
 		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
-		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier)
+		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier).
+			WithServiceScopeStripping(b.config.Server.EndUser.PublicURL)
 		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed
