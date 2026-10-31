@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Draft — clarification complete; proposed API decisions await maintainer sign-off; no implementation approval recorded.
+**Status**: Draft — planned; proposed API, ADR, and migration decisions are registered in [plan.md](./plan.md#approval-items) and await maintainer sign-off; no implementation approval recorded.
 
 **Input**: Issue #334, “Admin API: unique agent external_id and idempotent create-or-update”. The supplied feature description is reproduced below.
 
@@ -48,6 +48,12 @@ This specification proposes superseding [feature 054](../054-agent-external-id-f
 ### Session 2026-10-30
 
 - Q: When collection PUT updates an existing agent, what happens to omitted optional fields and explicit nulls? → A: **Proposed (approval item API-OMISSION)**: Preserve omitted `client_id` and `canonical_id`; replace the other managed definition fields. Omitted or null optional metadata URLs become absent; omitted, null, or empty optional arrays become empty. Explicit `canonical_id: null` removes the canonical ID. Reject `client_id: null` with `400 validation failed`, because the reused `AgentCreateRequest` does not allow it; a supplied nonempty client ID replaces the existing value. Body `external_id` still follows FR-007. This resolves FR-012 and completes US1.5–US1.7. Rationale: preserves established identities under ADR 017 while following the existing update path's replacement of metadata and collections, without broadening the create schema. Main alternative: preserve every omitted optional field (handoff option A), which would introduce new patch-like behavior for metadata and collections; full replacement including client ID (option B) would require superseding ADR 017. Planning must register API-OMISSION with authoritative details at FR-012 and its field-policy table. This recommendation is not maintainer approval.
+
+### Session 2026-10-30 (planning reconciliation)
+
+- Q: Which error values do invalid external IDs use on the existing write operations? → A: **Proposed (approval item API-UNIQUE)**: An empty body `external_id` on `POST /api/agents` and `PUT /api/agents/{agent-id}` returns `400` with `error: validation failed`, the existing write-validation envelope. An external ID held by another agent returns `409` with `error: conflict` and message `external_id is already held by another agent`. Collection PUT keeps `error: invalid external_id` for its selector and body external ID (FR-006, FR-007). FR-002 and FR-003 now state these values. Rationale: existing operations already map attribute validation to `validation failed`; the new operation alone owns the selector. Main alternative: `invalid external_id` everywhere, which would add a new error value to the established create and update contracts.
+- Q: Which Admin API version carries these changes? → A: **Proposed (approval item API-VERSION)**: Admin API `3.0.0` on the existing routes. Released Admin API `2.1.0` accepts shared and empty external IDs, so new `409` and `400` outcomes on create and update are breaking under the architecture's versioning policy. API-004 now names this version. Main alternative: a minor `2.2.0` bump that treats uniqueness as a bug fix, which the constitution forbids without explicit confirmation.
+- Q: Do the example exchanges match the existing Agent presentation? → A: Corrected without changing requirements. The existing Agent response omits empty `redirect_uris`, `allowed_scopes`, and other empty optional collections and renders an absent canonical ID as `"canonical_id": null`; the examples now show that. The omission fixture no longer combines a client ID with client URIs, which existing validation forbids. The canonical-ID conflict example uses the existing message `agent canonical_id already exists`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -138,7 +144,7 @@ Existing lookup callers continue to receive arrays with exact-match results and 
 
 ## Concrete Example Journeys *(mandatory)*
 
-The HTTP exchanges below propose the issue's new contract; the current OpenAPI document does not yet define collection PUT. Planning must reconcile these examples with `api/admin/openapi.yaml` before implementation. Existing request attributes, Agent shape, and error envelope follow that document. Error `message` prose is illustrative, not a new stable error-code decision.
+The HTTP exchanges below follow the proposed contract in [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml), which implementation merges into `api/admin/openapi.yaml` after approval. Existing request attributes, Agent shape, and error envelope follow that document. Error `message` prose is illustrative, not a new stable error-code decision.
 
 **Shared cast**: Sync job `ai-registry-sync@example.com`, authenticated by an admin proxy at `broker-admin.example.com`; Research Assistant UUID `550e8400-e29b-41d4-a716-446655440000`, canonical ID `research-assistant`, external ID `urn:example:ai-registry:agent:7f3a9c`; Data Analyst UUID `660e8400-e29b-41d4-a716-446655440001`, canonical ID `data-analyst`, external ID `urn:example:ai-registry:agent:1b44e0`. Permission set `github-read` has UUID `a1b2c3d4-e5f6-7890-abcd-ef1234567890`. IDs and principals are synthetic; all times are 2026-10-30 UTC.
 
@@ -177,7 +183,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
 ```
 
 **Step 3 — 08:00:05: the response was lost, so the job retries**
@@ -196,7 +202,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
 ```
 
 If these same requests are submitted concurrently to an initially empty broker, one gets the step 2 response and the other the step 3 response; both resolve to this same UUID.
@@ -217,14 +223,14 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}
 ```
 
 **Observable result**: One registry entry maps to one stable broker agent. Three calls produced one creation, one no-op, and one real update. No client ID was invented.
 
 **Omission/null subflow — separate fixture for US1.5–US1.7**
 
-This independent fixture uses Research Assistant's synthetic UUID and external ID, but does not change the state consumed by Journey 2. Initially at 08:00:00 it has canonical ID `research-assistant`, client ID `research-upstream`, all three metadata URLs set to distinct HTTPS URLs under `https://example.com/research/`, redirect URI `https://agent.example.com/callback`, allowed scope `openid`, client URI `https://agent.example.com/client.json`, a valid service requirement covered by `github-read`, and the mandatory `github-read` permission declaration. Existing grants reference its UUID.
+This independent fixture uses Research Assistant's synthetic UUID and external ID, but does not change the state consumed by Journey 2. Initially at 08:00:00 it has canonical ID `research-assistant`, client ID `research-upstream`, all three metadata URLs set to distinct HTTPS URLs under `https://example.com/research/`, redirect URI `https://agent.example.com/callback`, allowed scope `openid`, a valid service requirement covered by `github-read`, and the mandatory `github-read` permission declaration. Existing grants reference its UUID. It has no client URIs, because an agent cannot hold both a client ID and client URIs; the request below still exercises `client_uris` omission and null.
 
 At 09:10:00, the job sends only the required definition, omitting optional body fields:
 
@@ -242,7 +248,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:10:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:10:00Z"}
 ```
 
 Both identities survive, the metadata and optional collections are cleared, and the permission declaration remains. Repeating this exact exchange at 09:10:05 returns `200` with the identical body, including `updated_at: 2026-10-30T09:10:00Z`.
@@ -263,10 +269,10 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:11:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":null,"client_id":"research-upstream","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:11:00Z"}
 ```
 
-Repeating at 09:11:05 is a no-op with that same body and timestamp. Empty optional collections use the existing Agent presentation; optional omitted response fields do not imply preservation of their former contents. US1.6 also exercises explicit nulls starting from populated metadata and collections, rather than only from this already-cleared state.
+Repeating at 09:11:05 is a no-op with that same body and timestamp. Under the existing Agent presentation, empty optional collections and absent metadata URLs are omitted and an absent canonical ID is `null`; optional omitted response fields do not imply preservation of their former contents. US1.6 also exercises explicit nulls starting from populated metadata and collections, rather than only from this already-cleared state.
 
 At 09:12:00, the job tries a null client ID, which is not a valid `AgentCreateRequest`:
 
@@ -301,7 +307,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-[{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}]
+[{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}]
 ```
 
 **Step 2 — 09:00:02: look up an unknown registry entry**
@@ -414,7 +420,7 @@ Content-Type: application/json
 HTTP/1.1 409 Conflict
 Content-Type: application/json
 
-{"error":"conflict","message":"canonical_id is already held by another agent"}
+{"error":"conflict","message":"agent canonical_id already exists"}
 ```
 
 **Observable result**: Research Assistant keeps its 09:00 state and Data Analyst keeps its own external ID. No rejected request changes either timestamp or any relationship.
@@ -454,8 +460,8 @@ The schema change succeeds. The three agent UUIDs, permission declarations, and 
 ### Functional Requirements
 
 - **FR-001 (R1)**: A set external ID MUST be globally unique across Agents by exact case-sensitive equality. The invariant MUST hold for every supported storage backend and every agent write path, including concurrent writes. Multiple absent external IDs remain allowed.
-- **FR-002 (R2)**: Existing create and ID-addressed update MUST return `409 Conflict` if a different agent holds the resulting external ID. Updating the owning agent with the same external ID MUST NOT conflict with itself.
-- **FR-003 (R3)**: Existing create, existing update, and create-or-update MUST reject a supplied empty external-ID string with `400`, without modifying data. An absent external ID remains distinct from an empty string.
+- **FR-002 (R2)**: Existing create and ID-addressed update MUST return `409 Conflict` if a different agent holds the resulting external ID. Updating the owning agent with the same external ID MUST NOT conflict with itself. The response uses `error: conflict` and message `external_id is already held by another agent`.
+- **FR-003 (R3)**: Existing create, existing update, and create-or-update MUST reject a supplied empty external-ID string with `400`, without modifying data. Existing create and update use `error: validation failed`; create-or-update uses `error: invalid external_id` (FR-007). An absent external ID remains distinct from an empty string.
 - **FR-004 (R4)**: The schema change MUST fail safely on legacy duplicate or empty external IDs, preserve all records and relationships, and report affected values and agent IDs to the operator. Delivery MUST include an operator runbook covering inventory, deliberate remediation, writer coordination, retry, verification, and rollback. No automatic destructive cleanup is allowed.
 - **FR-005 (R5)**: `PUT /api/agents?external_id={value}` MUST select only by external ID. With no match it creates one agent and returns `201`, `Location`, and an Agent representation. With a match it updates that same agent and returns `200` and its Agent representation. Matching client or canonical IDs MUST NOT select a different agent.
 - **FR-006 (R6)**: PUT MUST require exactly one `external_id` query selector. A valid decoded selector has 1–255 Unicode code points, valid UTF-8, and no NUL. Missing, empty, repeated (even identical), overlong, invalid UTF-8, NUL-containing, malformed-percent-encoded, and unencoded-semicolon selector values MUST return `400 invalid external_id` without writes or agent data. Matching and query decoding otherwise follow feature 054 FR-002 and FR-006–FR-009.
@@ -520,7 +526,7 @@ Planning must update the existing External ID glossary entry and relevant archit
 - **API-001**: Before implementation, document collection PUT, selector rules, `AgentCreateRequest`, Agent responses, `201` and `Location`, `200` no-op behavior, `400`, `409`, existing admin security, and canonical-reference headers in `api/admin/openapi.yaml`.
 - **API-002**: Document external-ID uniqueness and empty-string rejection on existing POST and ID-addressed PUT; update GET's multiple-match descriptions to zero or one without changing its array shape or empty-filter error. Update the agent-management guide accordingly.
 - **API-003**: Use the existing admin JSON error object (`error`, optional explanatory `message`) and reference-presentation contract. Define stable error values and the exact Location convention in the reviewed OpenAPI design; examples use a UUID-addressed relative resource URI.
-- **API-004**: Treat uniqueness and changed write validation as intentional compatibility changes. Follow the architecture's API major-version policy for released contract changes and document migration/release impact. The later approval comment must explicitly cover these changes, omission semantics, and any proposed ADR; issue text alone is not recorded implementation approval.
+- **API-004**: Treat uniqueness and changed write validation as intentional compatibility changes. Follow the architecture's API major-version policy for released contract changes, proposed as Admin API `3.0.0`, and document migration/release impact. The later approval comment must explicitly cover these changes, omission semantics, and any proposed ADR; issue text alone is not recorded implementation approval.
 - **API-005**: Keep the new operation solely on the existing admin collection. Do not introduce end-user or ExtProc lookup/write paths, a new identity namespace, or a different response envelope.
 
 ### Database Requirements
