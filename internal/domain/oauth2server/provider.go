@@ -38,6 +38,7 @@ type Provider struct {
 	accessStrategy   *JWXAccessTokenStrategy
 	refreshStrategy  *RandomRefreshTokenStrategy
 	serviceScopes    *servicescope.Resolver
+	serviceEvaluator *servicescope.Evaluator
 
 	config *fosite.Config
 	logger *slog.Logger
@@ -172,6 +173,9 @@ func (p *Provider) HandleClientCredentials(ctx context.Context, clientID string,
 
 	client := &confidentialClient{clientID: clientID, agent: authClient.Agent, credential: authClient.Credential}
 	scopes := fosite.Arguments(oauth2.SplitScope(requestedScope))
+	if err := p.rejectServiceScopesWithoutUser(scopes); err != nil {
+		return nil, err
+	}
 
 	session := &fosite.DefaultSession{
 		Subject: authClient.Agent.ID.String(),
@@ -477,6 +481,9 @@ func (p *Provider) HandleRefreshToken(
 		return nil, err
 	}
 	if err := narrowRefreshScope(req, scope); err != nil {
+		return nil, err
+	}
+	if err := p.recheckBoundServices(ctx, req); err != nil {
 		return nil, err
 	}
 

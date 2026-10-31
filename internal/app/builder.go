@@ -1092,7 +1092,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			return nil, fmt.Errorf("failed to create OAuth2 server provider: %w", err)
 		}
 		if serviceScopes != nil {
-			provider.WithServiceScopes(serviceScopes)
+			provider.WithServiceScopes(serviceScopes, serviceScopeEvaluator)
 		}
 
 		startupCtx, cancel := newSigningKeyStartupContext(bootstrapTimeout)
@@ -1134,7 +1134,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
 		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
-		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier)
+		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier).
+			WithServiceScopeStripping(b.config.Server.EndUser.PublicURL)
 		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed
