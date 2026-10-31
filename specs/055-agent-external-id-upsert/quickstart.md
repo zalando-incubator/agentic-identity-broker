@@ -3,8 +3,9 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. Status: design only; maintainer approval of the items in
-[plan.md](./plan.md#approval-items) is required before implementation.
+automated suites. Status: partial implementation-phase progress; the supplied maintainer approval
+is recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). Runtime implementation
+and all PostgreSQL acceptance work remain incomplete. Do not deploy this feature.
 
 ## Prerequisites
 
@@ -25,6 +26,39 @@ automated suites. Status: design only; maintainer approval of the items in
 
 Expected: all pass. `tests/e2e/agent_external_id_filter_test.go` no longer asserts that two agents
 share one external ID.
+
+## Current acceptance coverage
+
+The new suite currently authors 15 of 22 scenarios. A focused run compiled and produced 12
+missing-feature failures and three unchanged-compatibility passes. Collection PUT currently has only the approved compiling handler scaffold and returns 501
+instead of the required 201/200/400/409; ordinary duplicate POST/update still returns 201/200 and
+empty-ID POST returns 201 instead of 400. These are semantic red observations, not green delivery.
+No pending or skipped markers were added. The existing feature 054 suite remains unchanged until
+uniqueness enforcement and its replacement coverage are delivered together.
+
+| Scenario | `tests/e2e/agent_external_id_upsert_test.go` location |
+| --- | --- |
+| US1.1 | :125 |
+| US1.5 | :153 |
+| US1.6 | :174 |
+| US1.7 | :194 |
+| US2.1 | :219 |
+| US2.2 | :230 |
+| US2.3 | :243 |
+| US2.4 | :254 |
+| US2.5 | :271 |
+| US2.6 | :282 |
+| US2.7 | :304 |
+| US2.8 | :328 |
+| US4.1 | :349 |
+| US4.2 | :359 |
+| US4.3 | :367 |
+
+Still required: US1.2–US1.4 (both-store replay, microsecond updates and two-broker concurrency),
+US3.1–US3.4 (complete upgrade/remediation/rollback journeys), and remaining detailed variants of
+T014/T015/T018. Both `just test-e2e-docker` and `just test-integration-infra` failed because no
+Docker/Podman runtime is accessible. This is not semantic red evidence and cannot satisfy T019.
+A permitted worker with a usable container runtime must complete that gate before behavior work.
 
 ## Manual journey (in-memory broker)
 

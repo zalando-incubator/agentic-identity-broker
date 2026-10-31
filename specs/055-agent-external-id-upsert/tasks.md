@@ -2,7 +2,7 @@
 
 **Input**: Design documents from `specs/055-agent-external-id-upsert/`.
 **Prerequisites**: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/admin-agents-openapi.yaml`, `quickstart.md`.
-**Status**: Tasks generated; implementation not started. All nine approval items remain Proposed.
+**Status**: Blocked at the mandatory complete-E2E red gate. All nine approval items are covered by the supplied maintainer approval; ADR 045 records it. Documentation and 15 acceptance scenarios are authored; runtime behavior and PostgreSQL acceptance work remain incomplete.
 **Tests**: Mandatory red-green-refactor under Principles VIII and XIII. Write tests first, make them compile using minimal scaffolding where needed, observe concrete semantic failures, implement, then refactor without weakening assertions.
 **Organization**: Shared design and enforcement prerequisites precede independently verifiable user-story increments. Paths are relative to the repository root. `[P]` means different files and no mutual dependency within the stated batch; it does not waive earlier gates.
 
@@ -14,8 +14,8 @@ Sign-off inventory: API-UPSERT, API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Record only the supplied maintainer approval in `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` as `Accepted (approved by <login> on <date>: <url>)`, then move it to `adrs/045-unique-agent-external-id-upsert.md` and leave a feature-local forwarding document at the original path so immutable spec/plan links still resolve; verify the approval covers every item needed by implementation and retain feature-local links to the authoritative record in `specs/055-agent-external-id-upsert/research.md` and `data-model.md` (Principle II; ADR-045).
-- [ ] T002 Review affected source and nearest instructions in `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/ports/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/e2e/AGENTS.md`, and `tests/integration/AGENTS.md`; confirm migration number 046 remains unused and note blockers in `specs/055-agent-external-id-upsert/tasks.md` without renumbering the approved design silently (Principles II, VI, IX; DB-001).
+- [X] T001 Record only the supplied maintainer approval in `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` as `Accepted (approved by <login> on <date>: <url>)`, then move it to `adrs/045-unique-agent-external-id-upsert.md` and leave a feature-local forwarding document at the original path so immutable spec/plan links still resolve; verify the approval covers every item needed by implementation and retain feature-local links to the authoritative record in `specs/055-agent-external-id-upsert/research.md` and `data-model.md` (Principle II; ADR-045).
+- [X] T002 Review affected source and nearest instructions in `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/ports/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/e2e/AGENTS.md`, and `tests/integration/AGENTS.md`; confirm migration number 046 remains unused and note blockers in `specs/055-agent-external-id-upsert/tasks.md` without renumbering the approved design silently (Principles II, VI, IX; DB-001).
 
 Phase 0 is omitted: there is no significant standalone refactor. The small request-helper extraction is feature-integral work in T036. Phase 2.7 is omitted: no new entity, table, typed ID, or repository is introduced.
 
@@ -26,21 +26,21 @@ Phase 0 is omitted: there is no significant standalone refactor. The small reque
 
 ### Phase 2a: Domain Model & Glossary [MANDATORY]
 
-- [ ] T003 Verify Agent aggregate, existing `id.ExternalID`/`id.AgentID`, reconcile outcomes, field presence, equality, and relationship-preservation rules against `specs/055-agent-external-id-upsert/data-model.md`; retain its documented invariant: "when non-nil it MUST be non-empty, and no two Agents may hold equal values (exact, case-sensitive byte equality). `nil` remains allowed on any number of Agents" (FR-001, FR-012, FR-013; Principles V, IX; ADR 013).
-- [ ] T004 Update the existing External ID glossary entry and agent-management architecture in `ARCHITECTURE.md` to identify at most one Agent, distinguish it from UUID/canonical/client IDs, document no-op reconcile and performance/security constraints, and add the approved ADR 045 index entry (FR-001, FR-005, FR-008; Principles II, V).
+- [X] T003 Verify Agent aggregate, existing `id.ExternalID`/`id.AgentID`, reconcile outcomes, field presence, equality, and relationship-preservation rules against `specs/055-agent-external-id-upsert/data-model.md`; retain its documented invariant: "when non-nil it MUST be non-empty, and no two Agents may hold equal values (exact, case-sensitive byte equality). `nil` remains allowed on any number of Agents" (FR-001, FR-012, FR-013; Principles V, IX; ADR 013).
+- [X] T004 Update the existing External ID glossary entry and agent-management architecture in `ARCHITECTURE.md` to identify at most one Agent, distinguish it from UUID/canonical/client IDs, document no-op reconcile and performance/security constraints, and add the approved ADR 045 index entry (FR-001, FR-005, FR-008; Principles II, V).
 
 ### Phase 2b: Configuration Design [MANDATORY]
 
-- [ ] T005 Verify no configuration key/default, example file, or Helm value/template change is needed; check the existing keys in Journey 1 of `specs/055-agent-external-id-upsert/spec.md` against `internal/ports/config.go` and confirm `charts/agentic-identity-broker/` still runs the separate migration Job without adding broker migration tooling (API-005, SR-001; Principle VII; ADR 009). Record applicability in `specs/055-agent-external-id-upsert/tasks.md`.
+- [X] T005 Verify no configuration key/default, example file, or Helm value/template change is needed; check the existing keys in Journey 1 of `specs/055-agent-external-id-upsert/spec.md` against `internal/ports/config.go` and confirm `charts/agentic-identity-broker/` still runs the separate migration Job without adding broker migration tooling (API-005, SR-001; Principle VII; ADR 009). Record applicability in `specs/055-agent-external-id-upsert/tasks.md`.
 
 ### Phase 2c: API Design [MANDATORY]
 
-- [ ] T006 Verify supplied approval covers API-UPSERT, API-OMISSION, API-UNIQUE, and API-VERSION, then merge `specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml` into `api/admin/openapi.yaml` as Admin API 3.0.0, preserving unchanged operations/components/security; include selector/body rules, all response codes, UUID Location, Prefer headers, existing-write conflicts, nullable/omitted fields, and zero-or-one GET descriptions (API-001–API-005; Principles IV, X). Include approval of API-ORDER/API-TIMESTAMPS and merge their shared Agent response descriptions for POST, both PUT forms, single GET, and list/filter GET.
-- [ ] T007 Document the approved 2.1.0 → 3.0.0 compatibility/versioning change on existing routes in `ARCHITECTURE.md` and verify there is no end-user/ExtProc contract change in `api/enduser/openapi.yaml` (API-004, API-005; Principles II, IV, X).
+- [X] T006 Verify supplied approval covers API-UPSERT, API-OMISSION, API-UNIQUE, and API-VERSION, then merge `specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml` into `api/admin/openapi.yaml` as Admin API 3.0.0, preserving unchanged operations/components/security; include selector/body rules, all response codes, UUID Location, Prefer headers, existing-write conflicts, nullable/omitted fields, and zero-or-one GET descriptions (API-001–API-005; Principles IV, X). Include approval of API-ORDER/API-TIMESTAMPS and merge their shared Agent response descriptions for POST, both PUT forms, single GET, and list/filter GET.
+- [X] T007 Document the approved 2.1.0 → 3.0.0 compatibility/versioning change on existing routes in `ARCHITECTURE.md` and verify there is no end-user/ExtProc contract change in `api/enduser/openapi.yaml` (API-004, API-005; Principles II, IV, X).
 
 ### Phase 2d: Database Design [MANDATORY]
 
-- [ ] T008 Verify approved DB-046 design against `specs/055-agent-external-id-upsert/data-model.md`: partial unique index, non-empty check, old index removal/restoration, atomic DO blocks, NOWAIT locking, bounded diagnostics for both categories, complete runbook inventory, no row modification, and dirty-version recovery (FR-004, DB-001–DB-004; Principle IX).
+- [X] T008 Verify approved DB-046 design against `specs/055-agent-external-id-upsert/data-model.md`: partial unique index, non-empty check, old index removal/restoration, atomic DO blocks, NOWAIT locking, bounded diagnostics for both categories, complete runbook inventory, no row modification, and dirty-version recovery (FR-004, DB-001–DB-004; Principle IX).
 - [ ] T009 Create minimal no-op DO-block scaffolding in `migrations/046_unique_agent_external_id.up.sql` and `migrations/046_unique_agent_external_id.down.sql` solely to let migration tests execute and fail on the missing invariant; do not add constraints, cleanup, or functional DDL until T025 (DB-001; Principles VIII, IX).
 
 ### Phase 2e: Frontend/Design System Review [MANDATORY IF FRONTEND]
@@ -49,14 +49,14 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 
 ### Phase 2f: E2E Acceptance Test Design [MANDATORY]
 
-- [ ] T010 Review all four concrete journeys in `specs/055-agent-external-id-upsert/spec.md` against the approved OpenAPI and all 22 acceptance scenarios; confirm real configuration keys, RFC-style exchanges, synthetic IDs/principals, timestamp/omission/null examples, and the absence of applicable UI/JWT outputs (Principles XIII, XIV).
-- [ ] T011 [P] Add shared valid external-ID agent fixtures in `tests/e2e/fixtures/agent_external_id.go` and reusable collection-PUT HTTP helper in `tests/e2e/helpers/agent_external_id.go` using existing fixtures/request utilities, fresh IDs, nonempty permission declarations, and no production test-only API (US1–US4; Principle XIII).
+- [X] T010 Review all four concrete journeys in `specs/055-agent-external-id-upsert/spec.md` against the approved OpenAPI and all 22 acceptance scenarios; confirm real configuration keys, RFC-style exchanges, synthetic IDs/principals, timestamp/omission/null examples, and the absence of applicable UI/JWT outputs (Principles XIII, XIV).
+- [X] T011 [P] Add shared valid external-ID agent fixtures in `tests/e2e/fixtures/agent_external_id.go` and reusable collection-PUT HTTP helper in `tests/e2e/helpers/agent_external_id.go` using existing fixtures/request utilities, fresh IDs, nonempty permission declarations, and no production test-only API (US1–US4; Principle XIII).
 - [ ] T012 [P] Extend `tests/e2e/bootstrap/postgres.go` with `NewPostgresFixtureAtVersion(ctx, 45)` and migration up/down/version-inspection/recovery helpers required by legacy tests, retaining the existing latest-version constructor and cleanup, and production bootstrap for both admin brokers (US1.4, US3.1–US3.4; DB-003; ADR 007).
-- [ ] T013 Add a compiling `ReconcileAgent` stub returning 501 in `internal/adapters/http/handlers/admin/agents_handler.go` and register only `r.Put("/", h.Agents.ReconcileAgent)` in `internal/adapters/http/routing/admin.go` under existing admin middleware; add empty domain signatures only when needed for compiling unit tests (API-001; Principles VIII, XII, XIII).
+- [X] T013 Add a compiling `ReconcileAgent` stub returning 501 in `internal/adapters/http/handlers/admin/agents_handler.go` and register only `r.Put("/", h.Agents.ReconcileAgent)` in `internal/adapters/http/routing/admin.go` under existing admin middleware; add empty domain signatures only when needed for compiling unit tests (API-001; Principles VIII, XII, XIII).
 - [ ] T014 Write seven US1 `It()` blocks in `tests/e2e/agent_external_id_upsert_test.go` for US1.1–US1.7: create/UUID Location, unchanged replay, real update, two-broker concurrent first calls, omitted optional fields, explicit nullable fields with grant preservation, and rejected null client ID plus valid replacement. US1.2/US1.3 carry `Label("docker")` and each runs both store cases inside its single It, so non-Docker runs need no PostgreSQL or skipped cases. US1.4 carries `Label("docker")`, checks two concurrent calls, then ten-call concurrency with a fresh selector; replay coverage submits ten identical requests in both backend modes to prove SC-002/SC-003 (FR-005–FR-010, FR-012, FR-013; Principle XIII). Within the existing US1.2/US1.3 It blocks, exercise create and actual-update replay with at least two valid client URIs supplied in reverse lexical order on both stores; assert byte-sorted full response equality. For same-second advancement on both stores, seed a future stored timestamp through test fixtures, issue a real update then identical replay and GET, and assert the exact +1 microsecond value, unchanged creation time, and no replay write without sleeps or production clock APIs (API-ORDER/API-TIMESTAMPS).
 - [ ] T015 Write eight US2 `It()` blocks in `tests/e2e/agent_external_id_upsert_test.go` for US2.1–US2.8: duplicate POST, UUID/canonical-addressed conflicting update, self-update, all invalid selectors, mismatched/empty/null body external ID, invalid definition/references on both branches, canonical/client conflicts on both branches and both client-sharing modes, and multiple absent/null IDs versus empty writes. Assert no changes to IDs, timestamps, collections, or grants on failure (FR-001–FR-003, FR-006, FR-007, FR-010, FR-013; SC-004; Principle XIII).
 - [ ] T016 Write four `Label("docker")` US3 `It()` blocks in `tests/e2e/agent_external_id_upsert_test.go` for US3.1–US3.4: legacy duplicate inventory, empty/coexisting categories, deliberate runbook remediation and retry followed by real HTTP conflict/lookup checks, and rollback/reapply preserving agents and relationships. Use production admin servers before remediation and after migration, not isolated endpoint fragments (FR-004, DB-001–DB-004; SC-005; Principle XIII).
-- [ ] T017 Write three US4 `It()` blocks in `tests/e2e/agent_external_id_upsert_test.go` for US4.1–US4.3: exact/case-sensitive zero-or-one arrays, literal empty versus absent filter, and canonical nested references on create/update/replay with UUID identity and Prefer headers (FR-010, FR-011; SC-006; Principle XIII).
+- [X] T017 Write three US4 `It()` blocks in `tests/e2e/agent_external_id_upsert_test.go` for US4.1–US4.3: exact/case-sensitive zero-or-one arrays, literal empty versus absent filter, and canonical nested references on create/update/replay with UUID identity and Prefer headers (FR-010, FR-011; SC-006; Principle XIII).
 - [ ] T018 Verify the new suite uses `Describe` → story `Context` → one `It()` per scenario, nearby `// Scenario USx.y from specs/055-agent-external-id-upsert/spec.md` references, fixtures, fresh storage/servers, production Builder, bounded polling without sleeps, and complete HTTP/read-back/relationship assertions. Record scenario-to-`It()` line mappings in `specs/055-agent-external-id-upsert/quickstart.md`, leaving `plan.md` unchanged (Principles VIII, XII, XIII).
 - [ ] T019 Run `just check`, `just test-e2e-backend`, and `just test-e2e-docker` against compiling scaffolding; record concrete missing-feature failures in `specs/055-agent-external-id-upsert/tasks.md`, with unchanged compatibility cases allowed to remain green. Do not count missing tooling/containers, compilation failures, pending tests, or always-fail assertions as red evidence (Principles VIII, XIII).
 
@@ -128,8 +128,8 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 
 ### Implementation for User Story 3
 
-- [ ] T045 [US3] Write `docs/operations/agent-external-id-uniqueness.md` with explicit-column inventory SQL for every duplicate/empty affected agent, bounded error/remainder interpretation, writer coordination without weakening authentication, non-destructive ID-addressed Admin PUT remediation (distinct external ID or omission to clear), dirty-version inspection and `force 45` only after unchanged-schema verification, retry/postchecks, and rollback/reapply prerequisites; retain migration/runtime role separation (FR-004; DB-001, DB-003; SR-003; research R8/R9; ADR 009).
-- [ ] T046 [US3] Link the upgrade runbook from `docs/operations/deployment-checklist.md` and `docs/guides/manage-agents-and-services.md`, warn that release blocks on unresolved duplicates/empties, and document preservation of UUIDs/grants and ordinary API compatibility impact (FR-004; API-002, API-004; SC-005).
+- [X] T045 [US3] Write `docs/operations/agent-external-id-uniqueness.md` with explicit-column inventory SQL for every duplicate/empty affected agent, bounded error/remainder interpretation, writer coordination without weakening authentication, non-destructive ID-addressed Admin PUT remediation (distinct external ID or omission to clear), dirty-version inspection and `force 45` only after unchanged-schema verification, retry/postchecks, and rollback/reapply prerequisites; retain migration/runtime role separation (FR-004; DB-001, DB-003; SR-003; research R8/R9; ADR 009).
+- [X] T046 [US3] Link the upgrade runbook from `docs/operations/deployment-checklist.md` and `docs/guides/manage-agents-and-services.md`, warn that release blocks on unresolved duplicates/empties, and document preservation of UUIDs/grants and ordinary API compatibility impact (FR-004; API-002, API-004; SC-005).
 - [ ] T047 [US3] Execute runbook inventory/remediation/recovery/verification/rollback/reapply against disposable fixtures in `tests/integration/migrations/agent_external_id_migration_test.go` and US3 E2E tests; run `just check`, `just test-integration-infra`, and `just test-e2e-docker`, recording full results in `specs/055-agent-external-id-upsert/tasks.md`. Never clear dirty metadata automatically or claim missing containers as passed validation (DB-003, DB-004; SC-005; Principles I, IX, XIII).
 
 **Checkpoint**: Every affected value/UUID is discoverable and all relationships survive block, deliberate repair, UP, DOWN, and reapplication.
@@ -146,7 +146,7 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 ### Implementation for User Story 4
 
 - [ ] T049 [US4] Apply existing canonical-reference presentation to ReconcileAgent responses in `internal/adapters/http/handlers/admin/agents_handler.go`, retaining `id` and persisted relationships as UUIDs, `Vary: Prefer`, conditional `Preference-Applied: reference-id=canonical`, normal omitted empty optional fields and canonical_id null, and unchanged no-op timestamps; leave GET shape and selector behavior intact (FR-010, FR-011; API-003). Update shared Admin Agent presentation, including any list-specific response path, to sort a copied client_uris slice by Go string byte order and format UTC microsecond-truncated timestamps with RFC3339Nano (zero to six fractional digits). Apply to POST, both PUT forms, single GET and list/filter GET; do not mutate stored data or other collection order. Prove T031/T048 green (API-ORDER/API-TIMESTAMPS).
-- [ ] T050 [US4] Update `docs/guides/manage-agents-and-services.md` with unique nonempty external IDs, zero-or-one exact-match arrays, collection PUT create/replay/update/omission/null/error examples, UUID Location, canonical preferences, and approved Admin API 3.0.0 migration warning (API-002–API-004; FR-010–FR-012; Principle XIV). Document approved shared URI ordering, microsecond response precision, rapid update/replay examples and possible microsecond wall-clock lead (API-ORDER/API-TIMESTAMPS).
+- [X] T050 [US4] Update `docs/guides/manage-agents-and-services.md` with unique nonempty external IDs, zero-or-one exact-match arrays, collection PUT create/replay/update/omission/null/error examples, UUID Location, canonical preferences, and approved Admin API 3.0.0 migration warning (API-002–API-004; FR-010–FR-012; Principle XIV). Document approved shared URI ordering, microsecond response precision, rapid update/replay examples and possible microsecond wall-clock lead (API-ORDER/API-TIMESTAMPS).
 - [ ] T051 [US4] Run `just check`, `just test`, and `just test-e2e-backend`; prove T017/T048 green in `tests/e2e/agent_external_id_upsert_test.go` and `internal/adapters/http/handlers/admin/agents_handler_test.go`, ensure remaining 054 tests pass and no duplicate US4.1 mapping exists, and record SC-006 results in `specs/055-agent-external-id-upsert/tasks.md` (Principles VIII, XIII).
 
 ## 🔒 Phase N: Constitution Compliance Verification [MANDATORY COMPLIANCE SECTION]
@@ -158,10 +158,10 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 
 #### Design Phase Verification [MANDATORY]
 
-- [ ] T052 Verify every task in `specs/055-agent-external-id-upsert/tasks.md` traces to approved scope/scenarios or a binding constraint; exclude unrelated remediation and place only user-approved issue URLs in non-checkbox Future Work notes (Feature Scope & Deferred Findings).
-- [ ] T053 Verify `ARCHITECTURE.md` documents the Agent/External ID invariants, reconcile behavior, performance/security constraints, versioning, and approved ADR 045; verify `specs/055-agent-external-id-upsert/data-model.md` remains aligned (Principles II, V).
-- [ ] T054 Verify no configuration/default or deployment-boundary changes exist in `internal/ports/config.go`, `examples/config/`, `examples/config/README.md`, or `charts/agentic-identity-broker/`; existing journey configuration remains accurate and the separate migration image owns 046 (Principle VII; ADR 009).
-- [ ] T055 Verify `api/admin/openapi.yaml` exactly expresses approved paths/parameters/body/null/omission/status/error/Location/Prefer contracts and Admin API 3.0.0, and record the supplied stakeholder approval reference in `specs/055-agent-external-id-upsert/tasks.md` (Principles IV, X). Include shared byte-sorted client_uris and microsecond timestamp presentation plus the sequential reconcile advancement rule (API-ORDER/API-TIMESTAMPS).
+- [X] T052 Verify every task in `specs/055-agent-external-id-upsert/tasks.md` traces to approved scope/scenarios or a binding constraint; exclude unrelated remediation and place only user-approved issue URLs in non-checkbox Future Work notes (Feature Scope & Deferred Findings).
+- [X] T053 Verify `ARCHITECTURE.md` documents the Agent/External ID invariants, reconcile behavior, performance/security constraints, versioning, and approved ADR 045; verify `specs/055-agent-external-id-upsert/data-model.md` remains aligned (Principles II, V).
+- [X] T054 Verify no configuration/default or deployment-boundary changes exist in `internal/ports/config.go`, `examples/config/`, `examples/config/README.md`, or `charts/agentic-identity-broker/`; existing journey configuration remains accurate and the separate migration image owns 046 (Principle VII; ADR 009).
+- [X] T055 Verify `api/admin/openapi.yaml` exactly expresses approved paths/parameters/body/null/omission/status/error/Location/Prefer contracts and Admin API 3.0.0, and record the supplied stakeholder approval reference in `specs/055-agent-external-id-upsert/tasks.md` (Principles IV, X). Include shared byte-sorted client_uris and microsecond timestamp presentation plus the sequential reconcile advancement rule (API-ORDER/API-TIMESTAMPS).
 - [ ] T056 Verify `migrations/046_unique_agent_external_id.up.sql` and `.down.sql` match documented indexes/check/lock/timeout/report/atomic/no-data-change semantics and sequential numbering; verify complete operator inventory and guarded recovery in `docs/operations/agent-external-id-uniqueness.md` (Principle IX).
 - [ ] T057 Verify linked concrete journeys in `specs/055-agent-external-id-upsert/spec.md` match implementation/contract/configuration and validate manual quickstart exchanges in `specs/055-agent-external-id-upsert/quickstart.md`; confirm no applicable frontend/Playwright/screenshots/Wireloom/JWT output work has been introduced (Principles XI, XIV).
 - [ ] T058 Verify all 22 scenarios have one correctly referenced Ginkgo `It()` each in `tests/e2e/agent_external_id_upsert_test.go`, current quickstart line mappings, production bootstrap, hierarchical structure, fixtures, isolation, semantic red evidence, and no pending/Skip/always-fail/red-phase annotations; remaining 054 tests retain their own mapping (Principles VIII, XIII).
@@ -171,7 +171,7 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 **API & Documentation / Architecture & Documentation**
 
 - [ ] T059 Verify implemented response bodies, headers, errors and persisted UUID references match confirmed `api/admin/openapi.yaml`; verify agent guide/runbook/deployment checklist cover integration and release impact, and no end-user `docs/api/` changes are required (Principles IV, X, XIV).
-- [ ] T060 Verify `adrs/045-unique-agent-external-id-upsert.md` carries the actual supplied approval citation and final approved decision, and feature links in `specs/055-agent-external-id-upsert/research.md` and `data-model.md` resolve after the move; do not amend main-merged ADRs or immutable implementation-phase spec/plan artifacts (Principle II).
+- [X] T060 Verify `adrs/045-unique-agent-external-id-upsert.md` carries the actual supplied approval citation and final approved decision, and feature links in `specs/055-agent-external-id-upsert/research.md` and `data-model.md` resolve after the move; do not amend main-merged ADRs or immutable implementation-phase spec/plan artifacts (Principle II).
 
 **Configuration / Database & Persistence**
 
@@ -196,7 +196,7 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 
 - [ ] T068 Verify all US1–US4 complete journeys in `tests/e2e/agent_external_id_upsert_test.go` turned green without weakening assertions, including ten-call replays/concurrency on both stores, no partial failures, migration/runbook recovery, and UUID/canonical preference compatibility; preserve test design and fixture-only adjustments (Principles VIII, XIII). Include reverse-lexical multi-URI creation/update replay and deterministic same-second advancement/replay on both stores under the existing US1.2/US1.3/US4.3 mappings.
 - [ ] T069 Run full `just test-e2e` as the final guard layer, including existing backend Docker/ExtProc/frontend suites, and record passed commands or genuine blockers with affected task dependencies in `specs/055-agent-external-id-upsert/tasks.md`; do not bypass missing system/container dependencies (Principles VIII, XIII).
-- [ ] T070 Review final intended file diff, update only genuinely completed checkboxes in `specs/055-agent-external-id-upsert/tasks.md`, and record each deferred task/checklist/validation with path:line, reason, and required maintainer action. Keep the PR draft, preserve immutable spec/plan and historical feature 054 docs, and commit progress with the required Copilot co-author trailer before requesting a safe-output push (Feature Scope; Principles II, VIII, XIII).
+- [X] T070 Review final intended file diff, update only genuinely completed checkboxes in `specs/055-agent-external-id-upsert/tasks.md`, and record each deferred task/checklist/validation with path:line, reason, and required maintainer action. Keep the PR draft, preserve immutable spec/plan and historical feature 054 docs, and commit progress with the required Copilot co-author trailer before requesting a safe-output push (Feature Scope; Principles II, VIII, XIII).
 
 Frontend-specific compliance is not applicable because no UI changes are introduced; T054/T057 verify that boundary. `just verify` is not required by this backend-only plan; the explicit static/unit/coverage/infra/complete-E2E gates above are mandatory and must not be reduced.
 
@@ -263,3 +263,85 @@ T001 approval → T002 source/version review
 | SR-001–SR-003 | T005, T013, T034, T037, T039–T042, T045, T063–T065 |
 | SC-001–SC-006 | T014–T017, T030–T032, T038, T043, T047, T051, T067–T068 |
 | Principles II, V–XIV / approval / scope | T001–T019, T052–T070 |
+
+## Implementation progress — 2026-10-31
+
+**Outcome: blocked, not deployable.** 21 tasks are complete and 49 remain unchecked.
+
+- Supplied approval: mjungsbluth, 2026-10-31, https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6541899974. It covers all nine Approval Items, including API-ORDER/API-TIMESTAMPS, migration 046 and feature-054 supersession. ADR 045 records only that approval.
+- Migration number 046 is unused. Domain and persistence design are retained without renumbering. No migration SQL or uniqueness/reconcile behavior has been implemented. Only the T013 compiling handler scaffold returns 501 under existing middleware.
+- Configuration applicability: no new key/default/example/chart change; Journey 1 uses existing server.admin.public_url, server.admin.authentication.preauth.principal_header_name and oauth2_authorization_server.multi_agent_client.enabled. The separate migration image/Helm Job still owns schema work. No frontend, Wireloom, JWT or end-user/ExtProc API work applies.
+- Built-in requirements checklist: 16 checked, zero unchecked; it is requirements-quality evidence, not delivery. Immutable spec/plan status/gate wording is unchanged; the actual approval is cited above and in ADR 045.
+- Authored acceptance coverage: US1.1 and US1.5–US1.7, all eight US2 scenarios, and all three US4 scenarios (15/22). T014/T015 remain unchecked for missing both-store and detailed variants; T018 remains unchecked for incomplete full-suite verification. quickstart.md contains current line mappings.
+- Documentation is written against the approved design, explicitly labeled pending delivery. Runbook SQL inventories both categories fully; metadata force/retry is guarded by actual schema inspection. No runbook execution is claimed.
+
+### Validation evidence
+
+| Command | Actual result |
+| --- | --- |
+| just check | Passed after final Go changes: formatting, vet and lint; 0 issues |
+| just test | Passed after final Go changes, including race-enabled fast packages |
+| just test-e2e-backend | Semantic red: 914 passed, 12 failed, 0 pending, 10 filtered out; all 12 failures belong to this feature |
+| Focused Ginkgo feature run | 15 scenarios compiled and ran: 3 compatibility passes, 12 semantic failures; no pending markers |
+| just test-e2e-docker | Failed: no accessible Docker/Podman runtime; not semantic red evidence |
+| just test-integration-infra | Failed: PostgreSQL/AWS container infrastructure unavailable; not semantic red evidence |
+
+Concrete red failures: collection PUT scaffold returns 501 instead of required 201/200/400/409; duplicate POST returns 201 instead of 409; conflicting ID-addressed update returns 200 instead of 409; empty-ID POST returns 201 instead of 400. Before scaffolding, the same collection tests observed 405. Assertions target real status/body/read-back behavior and were not weakened.
+
+T019 requires all 22 scenarios and permitted PostgreSQL execution, so the mandatory complete-E2E red gate is not satisfied. Dependent behavior, unit/integration TDD, and green/compliance gates were not started or claimed. Independent approved documentation, fixtures, scaffolding and available acceptance-test work are saved.
+
+### Remaining work and required maintainer action
+
+Provide an agent worker with a usable, permitted Docker or Podman runtime (Docker-in-Docker is not supported here), then resume implementation under the existing approval. No additional design sign-off is requested. The worker must finish the missing test/harness work and obtain T019 semantic red evidence before dependent behavior work. All subsequent rows remain deferred because that prerequisite and the implementation they verify are unfinished. Each row states what must be completed; its original task retains detailed dependencies and acceptance requirements.
+
+| Task | Authoritative location | Work still required |
+| --- | --- | --- |
+| T009 | specs/055-agent-external-id-upsert/tasks.md:44 | Create migration test scaffolding with the legacy-schema harness |
+| T012 | specs/055-agent-external-id-upsert/tasks.md:54 | Add version-45 PostgreSQL fixtures and guarded migration helpers |
+| T014 | specs/055-agent-external-id-upsert/tasks.md:56 | Finish US1.2–US1.4, ten-call replay/concurrency and both-store timestamp assertions |
+| T015 | specs/055-agent-external-id-upsert/tasks.md:57 | Finish both client-sharing modes and all collection/grant failure variants in US2 |
+| T016 | specs/055-agent-external-id-upsert/tasks.md:58 | Author all four complete PostgreSQL upgrade/remediation/rollback journeys |
+| T018 | specs/055-agent-external-id-upsert/tasks.md:60 | Verify all 22 scenario mappings, isolation and complete relationship assertions |
+| T019 | specs/055-agent-external-id-upsert/tasks.md:61 | Obtain semantic red evidence for the complete backend and PostgreSQL acceptance suite |
+| T020 | specs/055-agent-external-id-upsert/tasks.md:69 | Write and observe empty-external-ID aggregate validation tests |
+| T021 | specs/055-agent-external-id-upsert/tasks.md:70 | Write and observe memory uniqueness/index/cloning/race tests |
+| T022 | specs/055-agent-external-id-upsert/tasks.md:71 | Write and observe real PostgreSQL constraint/error/atomicity tests |
+| T023 | specs/055-agent-external-id-upsert/tasks.md:72 | Write and observe migration block/apply/rollback/recovery integration tests |
+| T024 | specs/055-agent-external-id-upsert/tasks.md:73 | Add the port sentinel and aggregate empty-ID validation after red evidence |
+| T025 | specs/055-agent-external-id-upsert/tasks.md:74 | Implement and prove the approved migration UP/DOWN green |
+| T026 | specs/055-agent-external-id-upsert/tasks.md:75 | Implement and prove the atomic memory external-ID index green |
+| T027 | specs/055-agent-external-id-upsert/tasks.md:76 | Implement and prove PostgreSQL constraint-specific error mapping green |
+| T028 | specs/055-agent-external-id-upsert/tasks.md:77 | Retire only the superseded 054 shared-ID scenario with uniqueness enforcement |
+| T029 | specs/055-agent-external-id-upsert/tasks.md:78 | Run foundational static/unit/infrastructure gates |
+| T030 | specs/055-agent-external-id-upsert/tasks.md:87 | Write and observe reconcile policy/equality/timestamp/audit unit tests |
+| T031 | specs/055-agent-external-id-upsert/tasks.md:88 | Write and observe handler parsing/presentation/regression unit tests |
+| T032 | specs/055-agent-external-id-upsert/tasks.md:89 | Write and observe bounded conflict-reread and concurrent-definition tests |
+| T033 | specs/055-agent-external-id-upsert/tasks.md:93 | Implement reconcile inputs/outcomes/field policy/effective equality |
+| T034 | specs/055-agent-external-id-upsert/tasks.md:94 | Implement domain reconcile, timestamps, no-op and bounded conflict reread |
+| T035 | specs/055-agent-external-id-upsert/tasks.md:95 | Prove domain tests green and refactor within approved boundaries |
+| T036 | specs/055-agent-external-id-upsert/tasks.md:96 | Extract shared request conversion while preserving ordinary-write contracts |
+| T037 | specs/055-agent-external-id-upsert/tasks.md:97 | Replace the 501 handler scaffold with the complete approved operation |
+| T038 | specs/055-agent-external-id-upsert/tasks.md:98 | Prove US1 journeys and ten-call acceptance green on both stores |
+| T039 | specs/055-agent-external-id-upsert/tasks.md:109 | Write and observe shared selector/body validation domain tables |
+| T040 | specs/055-agent-external-id-upsert/tasks.md:110 | Write and observe raw-query, body and identity-conflict handler tables |
+| T041 | specs/055-agent-external-id-upsert/tasks.md:114 | Implement shared selector/effective-definition validation |
+| T042 | specs/055-agent-external-id-upsert/tasks.md:115 | Complete selector parsing and approved error mappings |
+| T043 | specs/055-agent-external-id-upsert/tasks.md:116 | Prove every US2 rejection leaves definitions and relationships unchanged |
+| T044 | specs/055-agent-external-id-upsert/tasks.md:127 | Verify complete migration/runbook journey coverage |
+| T047 | specs/055-agent-external-id-upsert/tasks.md:133 | Execute runbook recovery and all PostgreSQL migration/E2E checks |
+| T048 | specs/055-agent-external-id-upsert/tasks.md:144 | Write and observe canonical/UUID/shared-presentation regression tests |
+| T049 | specs/055-agent-external-id-upsert/tasks.md:148 | Implement and prove shared canonical/ordering/timestamp presentation green |
+| T051 | specs/055-agent-external-id-upsert/tasks.md:150 | Prove US4 and remaining feature-054 acceptance green |
+| T056 | specs/055-agent-external-id-upsert/tasks.md:165 | Verify final migration semantics and guarded runbook recovery |
+| T057 | specs/055-agent-external-id-upsert/tasks.md:166 | Validate implemented examples and manual quickstart exchanges |
+| T058 | specs/055-agent-external-id-upsert/tasks.md:167 | Verify all 22 one-to-one scenarios and original red evidence |
+| T059 | specs/055-agent-external-id-upsert/tasks.md:173 | Verify runtime responses and persisted references match the approved contract |
+| T061 | specs/055-agent-external-id-upsert/tasks.md:178 | Verify complete runtime configuration/role/timeout boundaries |
+| T062 | specs/055-agent-external-id-upsert/tasks.md:179 | Prove both adapters, real PostgreSQL races and migration data integrity |
+| T063 | specs/055-agent-external-id-upsert/tasks.md:183 | Add and run collection-PUT security-boundary regressions |
+| T064 | specs/055-agent-external-id-upsert/tasks.md:184 | Verify mutation-only audits, no replay writes and credential-free logs |
+| T065 | specs/055-agent-external-id-upsert/tasks.md:188 | Verify final domain/ports/adapters/Builder dependency boundaries |
+| T066 | specs/055-agent-external-id-upsert/tasks.md:192 | Verify complete unit/integration red-green-refactor evidence |
+| T067 | specs/055-agent-external-id-upsert/tasks.md:193 | Pass mandatory static/unit/infra/backend/Docker/coverage gates and SC measurements |
+| T068 | specs/055-agent-external-id-upsert/tasks.md:197 | Turn all US1–US4 complete journeys green without weakening assertions |
+| T069 | specs/055-agent-external-id-upsert/tasks.md:198 | Pass the full backend/Docker/ExtProc/frontend E2E final guard |
