@@ -61,8 +61,8 @@ ID, Client ID, or Stable Identifier, and never selects an agent by those values.
 | metadata URLs (3) | as supplied | clear | clear | replace |
 | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | as supplied or empty | empty | empty | replace whole collection |
 | `display_name`, `description`, `permission_sets` | required | required | rejected | replace |
-| `created_at` | now | preserved | preserved | preserved |
-| `updated_at` | now (= `created_at`) | unchanged on no-op; now on change | same | same |
+| `created_at` | UTC now truncated to microseconds | preserved | preserved | preserved |
+| `updated_at` | same microsecond instant as `created_at` | unchanged on no-op; advancement rule below on change | same | same |
 
 ### Effective-definition equality (FR-008)
 
@@ -70,6 +70,34 @@ Compared: canonical, client, and external IDs; display name; description; three 
 service requirements in order (`nil` and empty `required_scopes` equal); permission declarations
 in order; redirect URIs and allowed scopes in order (`nil` equals empty); client URIs as a set.
 Not compared: `ID`, `CreatedAt`, `UpdatedAt`, `ClearCanonicalID`.
+
+### Stable Agent presentation (Proposed, API-ORDER and API-TIMESTAMPS)
+
+Every Admin Agent response (POST, both PUT forms, single GET, and list/filter GET) presents
+`client_uris` in ascending Go string byte order on a copied slice. Do not mutate the aggregate,
+normalize URI spelling, reorder other collections, or change optional-field omission. Equality
+remains set-based; stored client-URI order is not a domain invariant. Sorting the immediate write
+response as well as subsequent reads guarantees identical create/update replay bodies on both stores,
+independent of PostgreSQL collation or memory input order.
+
+Collection PUT creation sets both timestamps to `time.Now().UTC().Truncate(time.Microsecond)`.
+For an actual update against the observed agent, set:
+
+`UpdatedAt = max(now.UTC().Truncate(time.Microsecond), observed.UpdatedAt.UTC().Truncate(time.Microsecond).Add(time.Microsecond))`.
+
+Preserve `CreatedAt` exactly. No-op returns the stored timestamps without a write. PostgreSQL
+`TIMESTAMPTZ` and memory persist the reconcile timestamp at microsecond precision. Every Admin
+Agent timestamp is presented as UTC, truncated to microseconds, then formatted with
+`time.RFC3339Nano` (zero to six fractional digits, trailing zeroes omitted). Existing POST and
+ID-addressed PUT timestamp assignment is otherwise unchanged. This changes the former whole-second
+HTTP presentation, not the schema or timestamp fields. The advancement rule guarantees a strictly
+later observable timestamp for each sequential actual reconcile update, including a frozen or
+backward-moving clock; it may lead wall time by one microsecond per rapid change. It is not an ETag
+or a total ordering of concurrent writes; the existing last-writer-wins policy remains.
+
+Tests fix the observed timestamp and proposed clock instant in `_test.go` helpers, never by a
+new production clock/configuration API. Exercise same-second update then no-op through the service,
+real persistence and HTTP presentation on both stores; assert exact replay equality and no write.
 
 ### State transitions
 
@@ -98,6 +126,9 @@ A rejected request (400/409) is not a transition and writes nothing.
 `internal/adapters/storage/memory/agent_repository.go` adds `byExternalID map[id.ExternalID]id.AgentID`.
 `Create` and `Update` check it under the write lock before any mutation (external ID first, then
 canonical ID and client URIs); `Update` moves the entry when the value changes; `Delete` removes it.
+`ListByExternalID` uses this map under the read lock, then clones the selected agent from the
+primary map; an absent entry returns an empty array and a present entry a one-element array.
+It never scans the registry. Move/clear/delete/reuse tests verify lookup and index consistency.
 
 ### PostgreSQL schema — migration `046_unique_agent_external_id` (Proposed, DB-046)
 

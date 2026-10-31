@@ -1,6 +1,6 @@
 # Proposed Admin API contract changes for feature 055.
 # Status: Proposed — awaiting maintainer sign-off (plan.md Approval Items API-UPSERT,
-# API-OMISSION, API-UNIQUE, API-VERSION). Implementation merges these operations and
+# API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER, API-TIMESTAMPS). Implementation merges these operations and
 # components into api/admin/openapi.yaml after approval. Component references point to
 # the existing document.
 openapi: 3.0.3
@@ -18,6 +18,25 @@ info:
     - `PUT /api/agents?external_id=` creates or updates the agent holding that external ID.
     - `GET /api/agents?external_id=` returns `[]` or a one-element array.
     - Agents without an external ID remain unrestricted in number.
+
+    ### Stable Agent Response Presentation (Proposed)
+
+    API-ORDER: Every Admin Agent response (POST, collection PUT, ID-addressed PUT,
+    single GET, and list/filter GET) returns `client_uris` in ascending Go string
+    byte order. URI spelling, other collection ordering and empty-field omission
+    are unchanged. Stored order is irrelevant; equal-URI-set collection PUT replay does not write.
+
+    API-TIMESTAMPS: Every Admin Agent `created_at` and `updated_at` is UTC RFC 3339
+    with microsecond precision: truncate to microseconds and use RFC3339Nano
+    formatting (zero to six fractional digits, trailing zeroes omitted). This
+    replaces whole-second presentation; names and date-time schemas do not change.
+    Collection PUT creation sets both stored times to UTC now truncated to microseconds.
+    Each sequential actual reconcile update preserves `created_at` and sets `updated_at`
+    to max(UTC now truncated to microseconds, observed stored `updated_at` truncated
+    to microseconds + 1 microsecond). Thus rapid same-second changes are observable,
+    even with a frozen/backward clock. It may lead wall time slightly; it is not a
+    concurrent-write revision or ETag. No-op replay preserves stored times and writes
+    nothing. Other write operations retain existing timestamp assignment.
 paths:
   /api/agents:
     get:
@@ -38,7 +57,7 @@ paths:
 
         Returns a direct array of agent objects (no envelope), in no guaranteed order.
       operationId: listAgents
-      x-change: Description only. The `multiple_agents` example applies to the unfiltered list; parameters, responses, and errors are unchanged from 2.1.0.
+      x-change: The `multiple_agents` example applies to the unfiltered list; parameters, array shape, and errors are unchanged from 2.1.0. Shared Agent presentation follows API-ORDER/API-TIMESTAMPS above, including single-agent GET.
 
     post:
       summary: Create a new agent
@@ -101,9 +120,12 @@ paths:
         Grants and other relationships of an updated agent are not changed. To clear an existing
         `client_id`, use `PUT /api/agents/{agent-id}` with `client_id: null`.
 
-        Existing validation, canonical-ID conflicts, configuration-dependent `client_id`
-        conflicts (`multi_agent_client.enabled`), and client-URI conflicts apply on both
-        branches and return `409`. Failed requests change no agent.
+        Invalid definitions, attributes, and references on either branch return `400`
+        with the existing `validation failed` envelope. Canonical-ID conflicts,
+        configuration-dependent `client_id` conflicts (`multi_agent_client.enabled`),
+        and client-URI identity conflicts return `409 conflict` on both branches.
+        Failed requests change no agent. Shared Agent ordering and timestamp presentation
+        follow API-ORDER/API-TIMESTAMPS above on create, update, and replay.
       operationId: reconcileAgentByExternalId
       tags:
         - Agents

@@ -62,6 +62,14 @@ This specification proposes superseding [feature 054](../054-agent-external-id-f
 - Migration report wording is reconciled with the planned bounded diagnostic: both categories are reported, the first 100 entries in each category plus remaining counts appear in the error, and the runbook inventories every affected value and UUID. Rationale: retains FR-004 and US3.2's actionable reporting without unbounded error output. Main alternative: an unbounded error containing the complete inventory. DB-046 and ADR-045 remain Proposed; no requirement or approval changes.
 - Removed the clarification-phase-only exclusion of planning and task generation from Out of Scope because these are feature delivery artifacts, not excluded product behavior. Application implementation and approval recording remain outside this document-editing session; product scope is unchanged.
 
+### Session 2026-10-30 (analysis remediation)
+
+- I1: **Proposed (approval item API-ORDER)**: Every Admin Agent response sorts a copied `client_uris` array in ascending Go string byte order, including immediate create/update and list/single GET responses. Set-based effective equality remains; URI spelling, stored order, other collections, and empty-field omission are unchanged. FR-008/FR-011 and US1.2–US1.3 now explicitly cover reverse-ordered multi-URI create/update replays. Rationale: set equality alone cannot keep the write and replay representations identical across stores. Main alternative: persist input ordering in PostgreSQL with ordinal positions, adding unnecessary schema changes.
+- U1: **Proposed (approval item API-TIMESTAMPS)**: Present all Admin Agent timestamps in UTC RFC 3339 with zero to six fractional digits after microsecond truncation (`RFC3339Nano` formatting). Collection PUT creation persists UTC microsecond now; a sequential actual update uses the later of that clock time and observed `updated_at` truncated to microseconds plus one microsecond. No-op preserves stored timestamps exactly; other write operations retain existing timestamp assignment. FR-008/FR-011 and US1.3 now cover a same-second real update followed by unchanged replay on both stores. Rationale: whole-second formatting hides rapid updates; microseconds round-trip in PostgreSQL and memory. This logical minimum may lead wall time slightly and is not concurrent-write ordering. Main alternative: retain whole-second formatting and advance at least one full second, which causes larger wall-clock drift. This response precision change is not maintainer approval.
+- C1: Memory filtered lookup uses `byExternalID` under the read lock and returns a cloned zero-or-one array without scanning the registry. Rationale: fulfills the plan's indexed-lookup goal on both backends; main alternative: limit that goal to PostgreSQL. No requirement or API change.
+- I2: Contract prose now separates invalid definitions/references (`400 validation failed`) from identity conflicts (`409 conflict`), matching FR-007/FR-010 and US2.6–US2.7. Rationale: resolves contradictory prose without changing the intended validation contract; no new sign-off item.
+- I3: Plan wording now distinguishes the bounded migration error (first 100 duplicate groups and empty-value entries plus remainder counts) from the runbook's complete inventory. Rationale: matches the authoritative migration design and existing clarification; no requirement or approval change.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario has a stable identifier (`US1.1`, etc.) for a later 1:1 E2E test mapping under Constitution Principle XIII. Migration scenarios also require real PostgreSQL integration coverage. This phase specifies behavior; it does not create or run implementation tests.
@@ -77,8 +85,8 @@ A governance sync job submits an agent definition under the registry's external 
 **Acceptance Scenarios**:
 
 1. **Given** no agent holds `urn:example:ai-registry:agent:7f3a9c`, **When** the job submits a valid `AgentCreateRequest` to `PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c`, **Then** the broker returns `201 Created`, an Agent representation with that external ID, and `Location` identifying the created agent.
-2. **Given** US1.1 succeeded, **When** the same job replays the identical request without an intervening change, **Then** the broker returns `200 OK` with the same representation, including the same `id`, `created_at`, and `updated_at`, and a lookup returns exactly one agent.
-3. **Given** the agent from US1.1 exists, **When** the job submits the same definition with a changed display name, **Then** the broker returns `200 OK` with the new name, unchanged `id` and `created_at`, an advanced `updated_at`, and the next lookup shows the new name.
+2. **Given** US1.1 succeeded, **When** the same job replays the identical request without an intervening change, **Then** the broker returns `200 OK` with the same representation, including the same `id`, `created_at`, and `updated_at`, and a lookup returns exactly one agent. This includes at least two valid client URIs supplied in reverse lexical order: creation and replay both return the byte-sorted array on memory and PostgreSQL.
+3. **Given** the agent from US1.1 exists, **When** the job submits the same definition with a changed display name, **Then** the broker returns `200 OK` with the new name, unchanged `id` and `created_at`, an advanced `updated_at`, and the next lookup shows the new name. A real update within the same displayed second advances the microsecond timestamp; its next identical replay preserves the full representation. An update supplying at least two valid client URIs in reverse lexical order returns the same sorted array on update and replay on both stores.
 4. **Given** no agent holds the selected external ID, **When** two first calls submit the same valid definition concurrently, **Then** exactly one call creates the agent and returns `201`, the other returns `200`, both identify the same agent, and the subsequent filtered list contains exactly that one agent.
 5. **Given** the selected agent has client and canonical IDs, metadata URLs, and optional collections, **When** the job submits the required definition while omitting all optional body attributes, **Then** the broker preserves both IDs and the selected external ID, removes the metadata URLs, empties the optional collections, replaces the supplied permission declarations, and advances `updated_at` only if the effective definition changes. Replaying that request returns the unchanged representation and timestamps.
 6. **Given** the selected agent has a canonical ID and optional metadata and collections, **When** the job explicitly supplies null for those nullable fields, **Then** the canonical ID and metadata become absent, the optional collections become empty, and the client ID, external ID, UUID, creation time, and unrelated grants remain unchanged. A replay is a no-op.
@@ -182,7 +190,7 @@ X-Remote-User: ai-registry-sync@example.com
 Content-Type: application/json
 Prefer: reference-id=canonical
 
-{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[]}
+{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"client_uris":["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]}
 
 HTTP/1.1 201 Created
 Location: /api/agents/550e8400-e29b-41d4-a716-446655440000
@@ -190,7 +198,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
 ```
 
 **Step 3 — 08:00:05: the response was lost, so the job retries**
@@ -202,14 +210,14 @@ X-Remote-User: ai-registry-sync@example.com
 Content-Type: application/json
 Prefer: reference-id=canonical
 
-{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[]}
+{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"client_uris":["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]}
 
 HTTP/1.1 200 OK
 Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T08:00:00Z"}
 ```
 
 If these same requests are submitted concurrently to an initially empty broker, one gets the step 2 response and the other the step 3 response; both resolve to this same UUID.
@@ -223,17 +231,64 @@ X-Remote-User: ai-registry-sync@example.com
 Content-Type: application/json
 Prefer: reference-id=canonical
 
-{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[]}
+{"canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"redirect_uris":[],"allowed_scopes":[],"client_uris":["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]}
 
 HTTP/1.1 200 OK
 Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}
 ```
 
-**Observable result**: One registry entry maps to one stable broker agent. Three calls produced one creation, one no-op, and one real update. No client ID was invented.
+**Observable result**: One registry entry maps to one stable broker agent. Three calls produced one creation, one no-op, and one real update. No client ID was invented. Both creation and update accept two valid client URIs in reverse lexical order and return the byte-sorted pair; the next identical replay keeps that pair on either store.
+
+**Rapid-update subflow (US1.3) — independent copy of the step 4 state**
+
+At 09:00:00.000001, change the display name again within the same second as the stored
+`updated_at: 2026-10-30T09:00:00Z`. This fixture is independent of Journey 2's v2 agent:
+
+```http
+PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: ai-registry-sync@example.com
+Content-Type: application/json
+Prefer: reference-id=canonical
+
+{"canonical_id":"research-assistant","display_name":"Research Assistant v3","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Preference-Applied: reference-id=canonical
+Vary: Prefer
+
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v3","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00.000001Z"}
+```
+
+At 09:00:00.000002 replay that exact request:
+
+```http
+PUT /api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: ai-registry-sync@example.com
+Content-Type: application/json
+Prefer: reference-id=canonical
+
+{"canonical_id":"research-assistant","display_name":"Research Assistant v3","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/z-client.json","https://agent.example.com/a-client.json"]}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Preference-Applied: reference-id=canonical
+Vary: Prefer
+
+{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v3","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00.000001Z"}
+```
+
+The response and next GET retain the precise `.000001Z` timestamp and sorted URI pair, with no
+replay write or mutation audit. If the clock had not advanced beyond the observed timestamp,
+the minimum increment would still be one microsecond. Automated service tests fix the clock
+input; HTTP tests seed a future stored timestamp to force this minimum deterministically without
+sleeping or adding a production clock API.
 
 **Omission/null subflow — separate fixture for US1.5–US1.7**
 
@@ -314,7 +369,7 @@ Content-Type: application/json
 Preference-Applied: reference-id=canonical
 Vary: Prefer
 
-[{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}]
+[{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"research-assistant","external_id":"urn:example:ai-registry:agent:7f3a9c","display_name":"Research Assistant v2","description":"Helps with academic research","permission_sets":[{"permission_set_id":"github-read","requirement_type":"mandatory"}],"client_uris":["https://agent.example.com/a-client.json","https://agent.example.com/z-client.json"],"created_at":"2026-10-30T08:00:00Z","updated_at":"2026-10-30T09:00:00Z"}]
 ```
 
 **Step 2 — 09:00:02: look up an unknown registry entry**
@@ -450,7 +505,7 @@ Empty external_id: agent 660e8400-e29b-41d4-a716-446655440001
 No agents or relationships were deleted or reassigned.
 ```
 
-This is required report content, not prescribed output formatting. The runbook must provide a read-only inventory procedure that finds both categories even if the migration reports only its first failure.
+This is required report content, not prescribed output formatting. The runbook must provide a read-only inventory procedure that finds both categories beyond the migration error's first 100 duplicate groups and first 100 empty-value entries with remainder counts.
 
 **Step 3 — Operator makes an explicit governance decision**
 
@@ -473,10 +528,10 @@ The schema change succeeds. The three agent UUIDs, permission declarations, and 
 - **FR-005 (R5)**: `PUT /api/agents?external_id={value}` MUST select only by external ID. With no match it creates one agent and returns `201`, `Location`, and an Agent representation. With a match it updates that same agent and returns `200` and its Agent representation. Matching client or canonical IDs MUST NOT select a different agent.
 - **FR-006 (R6)**: PUT MUST require exactly one `external_id` query selector. A valid decoded selector has 1–255 Unicode code points, valid UTF-8, and no NUL. Missing, empty, repeated (even identical), overlong, invalid UTF-8, NUL-containing, malformed-percent-encoded, and unencoded-semicolon selector values MUST return `400 invalid external_id` without writes or agent data. Matching and query decoding otherwise follow feature 054 FR-002 and FR-006–FR-009.
 - **FR-007 (R7)**: PUT MUST require `AgentCreateRequest`, including `display_name`, `description`, and a nonempty `permission_sets` array with valid references. Omitted body `external_id` MUST use the selector. A supplied body external ID MUST equal the decoded selector exactly; different values, empty strings, and explicit `null` MUST return `400 invalid external_id` without mutation.
-- **FR-008 (R8)**: Replaying an identical successful PUT without an intervening change MUST return `200` with the unchanged Agent representation, including `updated_at`. An actual change MUST preserve `id` and `created_at` and advance `updated_at`. Representation comparison assumes the same `Prefer` header; transport status and headers need not be identical between creation and replay.
+- **FR-008 (R8)**: Replaying an identical successful PUT without an intervening change MUST return `200` with the unchanged Agent representation, including `updated_at`. An actual change MUST preserve `id` and `created_at` and advance observable `updated_at`, even within the same second. **Proposed API-ORDER**: Every Admin Agent response MUST present `client_uris` in ascending Go string byte order without changing URI spelling, stored order, other collection order, or optional omission; effective URI-set equality means order-only replay writes nothing. **Proposed API-TIMESTAMPS**: Every Admin Agent timestamp MUST be UTC RFC 3339 with zero to six fractional digits after truncation to microseconds, omitting trailing zeroes. Collection PUT creation sets both stored times to UTC microsecond now; a sequential actual update MUST use `max(UTC microsecond now, observed stored updated_at truncated to microseconds + 1 microsecond)`; no-op MUST preserve stored times. Other writes retain existing timestamp assignment. This can lead wall time slightly and does not promise total ordering of concurrent writes. Representation comparison assumes the same `Prefer` header; transport status and headers need not be identical between creation and replay.
 - **FR-009 (R9)**: Concurrent valid first PUTs with the same external ID MUST create exactly one agent. For identical definitions, one response MUST be `201` and the rest `200`, all identifying the same stable UUID. The complete desired definition MUST be applied coherently; failures MUST NOT leave partial data.
 - **FR-010 (R10)**: Existing canonical-ID conflicts and configuration-dependent client-ID conflicts MUST remain `409` on both PUT branches. Existing validation and uniqueness of other agent attributes and references, including client URIs, remain in force. The operation MUST honor `Prefer: reference-id=canonical` for nested references without changing UUID identity or persisted relationships.
-- **FR-011 (R11)**: GET's feature 054 behavior MUST remain unchanged except that valid filters can now match at most one agent. Results remain arrays (`[]` or one Agent). The literal empty query value remains `400`; omitted filter remains the unfiltered list; exact matching, errors, and reference preferences remain unchanged.
+- **FR-011 (R11)**: GET's feature 054 behavior MUST remain unchanged except that valid filters can now match at most one agent and shared Admin Agent presentation follows the Proposed client-URI ordering and timestamp precision in FR-008. Results remain arrays (`[]` or one Agent). The literal empty query value remains `400`; omitted filter remains the unfiltered list; exact matching, errors, and reference preferences remain unchanged.
 - **FR-012 (Proposed; API-OMISSION)**: Collection PUT MUST reconcile the supplied definition using the following field policy on the update branch. It is a replacement of managed metadata and collections, with preservation of omitted client and canonical identities, not a general patch or unconditional full replacement. On creation, omitted identities and metadata are absent and omitted optional collections are empty; the same null validation applies. No client ID is generated. No-op comparison MUST use the resulting effective definition after applying this policy, so preservation and absent/empty optional input forms do not themselves advance `updated_at`.
 
   | Fields | Omitted on update | Explicit null | Supplied non-null value |
@@ -576,7 +631,7 @@ Planning must update the existing External ID glossary entry and relevant archit
 - Nonempty external-ID write validation beyond the issue's explicit empty-string rule retains existing behavior; the new selector uses the full spec 054 rules. Migration must not silently rewrite other legacy values. Any additional write-validation tightening must be proposed explicitly during planning.
 - The required `permission_sets` array remains nonempty. Tests and examples must use existing permission sets, not empty placeholder declarations.
 - FR-012 is the proposed omission/null policy resolved in this clarification session, not implementation approval. It preserves ADR 017's omitted-client-ID guarantee; no superseding ADR is needed for that policy. Planning must carry its externally visible semantics into the reviewed contract and Approval Items.
-- Replay equivalence is based on unchanged agent state, not JSON whitespace or member order. Broader normalization of collection ordering is not introduced here.
+- Replay equivalence is based on unchanged agent state, not JSON whitespace or member order. Only client-URI response ordering is standardized as Proposed API-ORDER; other collections remain order-sensitive and unnormalized. Proposed API-TIMESTAMPS affects every Admin Agent response consistently; it adds no timestamp field, schema column, clock setting, or ETag.
 
 ## Out of Scope
 
