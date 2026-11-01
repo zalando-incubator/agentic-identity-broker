@@ -119,7 +119,7 @@ A principal identifies a person, for example by email or subject. It is personal
 5. The keys `principal`, `operator_principal`, and `actor` are reserved for principals. The policy handler also applies to a plain string value under a reserved key. This is a safety net, not a substitute for rule 2.
 6. `SecurityContext.Actor` is an `id.Principal`. The context handler adds it to records through the same policy.
 7. Do not put a principal in a message or an error string.
-8. Log a principal only on audit, security, and per-owner records. Do not log a principal on `Debug` records.
+8. Add a principal attribute only to audit, security, and per-owner records. Do not add one to `Debug` records. This rule does not apply to the `actor` that the context handler adds; `actor` is permitted at all levels.
 9. Do not log `principal.PrincipalProfile` or any of its fields (display name, email, picture URL).
 10. ExtProc must not import `internal/domain/id`. ExtProc logs a principal only under a reserved key, so the shared telemetry handler applies the same policy.
 
