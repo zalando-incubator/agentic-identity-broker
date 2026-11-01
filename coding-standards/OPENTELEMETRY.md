@@ -18,6 +18,7 @@ spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-excha
 | Configure telemetry only through `telemetry.*` (`ports.TelemetryConfig`). | Constitution Principle VII. |
 | Telemetry fails open. A failure to create an instrument or to export data must not fail a request or startup. | Observability must not change authentication or authorization results (ADR 033, SR-003). |
 | Instrument outbound HTTP only with `telemetryhttp.NewTransport`. Do not use `otelhttp` on a client. | `telemetryhttp` records no URL, header, or body, and it skips URLs that have a query string. |
+| Apply the principal policy to spans only in the span pipeline that `telemetry.NewProvider` builds. | Each binary that calls `NewProvider` gets the same policy without its own setup (section 4.3). |
 | Instrument inbound HTTP only with the `otelchi` middleware in `internal/adapters/http/server.go`. Do not start a second server span in a handler. | One server span per request, named by route pattern. |
 
 ## 2. Instrumentation Scope
@@ -133,6 +134,7 @@ if err != nil {
 | Outcome | `<scope>.outcome` | Enumerated value |
 | Failure stage and detail | `<scope>.failure_stage`, `<scope>.failure_detail` | Enumerated values |
 | Dependency | `<scope>.dependency` | Enumerated value |
+| Principal | `<scope>.principal` | `id.Principal` through `SpanAttribute`. Refer to section 4.3. |
 | Point in time | `<scope>.<name>_at` | UTC RFC 3339 with nanoseconds |
 | Duration | `<scope>.duration_ms` | Integer milliseconds. Prefer the span duration. |
 
@@ -141,6 +143,26 @@ if err != nil {
 - An attribute value is an enumerated value, a typed ID, a count, a duration, or a timestamp. Use typed string constants for enumerated values.
 - Document each attribute family and its value set in the feature's reference document or observability contract.
 - Set an attribute only when its value is known. Do not invent a placeholder, except `unknown` where the reference document defines it.
+
+### 4.3 Principals
+
+A principal is personal data (`coding-standards/LOGGING.md` section 5). Span attributes go through the same central principal policy as log records, so a change to redaction or pseudonymisation reaches both signals in one change.
+
+1. Set a principal on a span only with `id.Principal.SpanAttribute(key)`. Do not use `attribute.String` with `p.String()` or `string(p)`.
+2. Use a key that ends in `.principal`, for example `approval.principal`. Keys that end in `.principal` are reserved for principals.
+3. The span pipeline that `telemetry.NewProvider` builds renders the value of each reserved key with the principal policy before export. It uses the same policy function as the log handler. It is the only component that renders a principal on a span.
+4. ExtProc must not import `internal/domain/id`. ExtProc receives the principal from the broker's token exchange response as the raw identifier, because it uses the value as the approval sync key. ExtProc sets it only under a reserved key. ExtProc calls `telemetry.NewProvider` (ADR 027), so the same policy applies without separate setup.
+5. Set a principal only on spans of operations that act for one owner, for example the approval and token exchange spans. Do not set it on storage, encryption, or HTTP client spans. The parent span carries it.
+6. Do not put a principal in a span name, a span event, or a status description. The policy does not see them.
+7. Do not use a principal as a metric attribute (section 5.3).
+
+```go
+// Correct
+span.SetAttributes(approval.Principal.SpanAttribute("approval.principal"))
+
+// Incorrect: a plain string under a non-reserved key bypasses the policy
+span.SetAttributes(attribute.String("approval.owner", string(approval.Principal)))
+```
 
 ## 5. Metrics
 
@@ -190,7 +212,7 @@ Spans are exported to systems outside the broker's trust boundary and are kept b
 These data classes are prohibited in span names, span attributes, span events, span status descriptions, metric names, and metric attributes:
 
 - each class in `coding-standards/LOGGING.md` section 6.1;
-- a principal, under any key. A span carries a trace ID, and the correlated log records carry `actor` and `principal` through the principal policy (`coding-standards/LOGGING.md` section 5). Spans have no principal policy;
+- a principal, except as a span attribute under a reserved key through the principal policy (section 4.3);
 - an error value or error string (section 3.4);
 - a full URL, a URL path that contains IDs or caller input, or a requested resource URI. Use the registered ID, for example `token_exchange.service.id`;
 - a request or response header value, except the allowlisted method and the status code;
@@ -208,7 +230,8 @@ These data classes are prohibited in span names, span attributes, span events, s
 | Tool name, MCP method, target server name bounded by configuration | Yes | No |
 | Grant timestamps | Yes | No |
 | Counts and durations | Yes | As measurement values only |
-| Principal, client IP, User-Agent | No | No |
+| Principal | Only per section 4.3 | No |
+| Client IP, User-Agent | No | No |
 
 ### 6.3 Resource Attributes
 
@@ -221,6 +244,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 - Use an `sdkmetric.ManualReader` to assert metric values and attributes.
 - Assert span names, span kinds, status codes, and key attributes. Do not assert status descriptions.
 - For each path that handles a credential, assert that no span attribute, event, or status contains the credential under test. Examples: `internal/extproc/server/exchange_safety_test.go`, `internal/adapters/telemetry/resource_security_test.go`.
+- For each span that sets a principal, assert that the attribute value is the policy output.
 - For each new metric, assert the attribute set, so a new attribute cannot raise cardinality without review.
 
 ## 8. Review Checklist
@@ -233,6 +257,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Span attribute keys are canonical (section 4.1). Values are bounded.
 - [ ] Instruments are created one time, with a description and a unit, and the constructor error is handled.
 - [ ] Metric names follow section 5.2. Metric attributes have closed value sets and no IDs other than those permitted by section 5.3.
-- [ ] No section 6.1 data is in a span or a metric. No principal is in a span or a metric.
+- [ ] No section 6.1 data is in a span or a metric.
+- [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
