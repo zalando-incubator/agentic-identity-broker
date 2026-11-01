@@ -146,7 +146,7 @@ if err != nil {
 
 ### 4.3 Principals
 
-A principal is personal data (`coding-standards/LOGGING.md` section 5). Span attributes go through the same central principal policy as log records, so a change to redaction or pseudonymisation reaches both signals in one change.
+A principal is personal data (`coding-standards/LOGGING.md` section 5). Spec 017 SR-001, as amended, permits it on spans only under these rules. Span attributes go through the same central principal policy as log records, so a change to redaction or pseudonymisation reaches both signals in one change.
 
 1. Set a principal on a span only with `id.Principal.SpanAttribute(key)`. Do not use `attribute.String` with `p.String()` or `string(p)`.
 2. Use a key that ends in `.principal`, for example `approval.principal`. Keys that end in `.principal` are reserved for principals.
