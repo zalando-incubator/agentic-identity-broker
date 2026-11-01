@@ -19,6 +19,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 ### Coding Standards
 
 `coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
+`coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
 
 ### Section-Specific Agent Context
 
@@ -224,6 +225,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
 - **Structured logging** — Follow `coding-standards/LOGGING.md`. Log principals only as `id.Principal`. Never log credentials.
+- **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Never put a principal or credential in a span or metric.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
 ## Database Migrations

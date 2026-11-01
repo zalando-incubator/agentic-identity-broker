@@ -104,7 +104,7 @@ Follow hexagonal architecture:
 - **Ports** (`internal/ports/`): Interface boundaries
 - **Adapters** (`internal/adapters/`): HTTP, storage, config
 
-Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md).
+Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md) and [OpenTelemetry](coding-standards/OPENTELEMETRY.md).
 
 ### Frontend
 
