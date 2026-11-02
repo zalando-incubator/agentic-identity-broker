@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.1.0
+  version: 2.0.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -743,8 +743,7 @@ paths:
                       session_id: 660e8400-e29b-41d4-a716-446655440001
                       initiated_at: "2025-12-20T10:30:00Z"
                       access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      is_expired: false
+                      requires_reauthentication: false
                       has_refresh_token: true
                       scope:
                         - repo
@@ -1055,17 +1054,19 @@ paths:
               example:
                 data:
                   session:
-                    session_id: 660e8400-e29b-41d4-a716-446655440001
+                    id: 660e8400-e29b-41d4-a716-446655440001
+                    service_id: 550e8400-e29b-41d4-a716-446655440000
+                    service_display_name: GitHub
+                    token_type: Bearer
                     initiated_at: "2025-12-20T10:30:00Z"
-                    access_token_expires_at: "2025-12-20T11:30:00Z"
-                    refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                    is_expired: false
+                    requires_reauthentication: false
+                    access_token_expired: false
                     has_refresh_token: true
                     scope:
                       - repo
                       - user:email
                     dependent_agent_count: 2
-                    tokens_encrypted: true
+                    is_encrypted: true
                   dependent_agents:
                     - agent_id: 770e8400-e29b-41d4-a716-446655440000
                       display_name: Code Assistant
@@ -1153,8 +1154,8 @@ paths:
         Forces an immediate OAuth2 access-token refresh for the user's session with a
         third-party service, using the stored refresh token via the RFC 6749 refresh_token
         grant. Unlike the transparent refresh performed during token exchange, this refreshes
-        even when the current access token has not yet expired. Requires a stored, non-expired
-        refresh token.
+        even when the current access token has not yet expired. Requires stored refresh
+        credentials with no recorded provider rejection.
       tags:
         - Third-Party Sessions
       security:
@@ -1191,16 +1192,22 @@ paths:
                 error: not_found
                 message: session not found
         "409":
-          description: No valid refresh token available for this session
+          description: Refresh token absent or rejected by the provider; reauthentication required after rejection
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example:
-                error: refresh_unavailable
-                message: no valid refresh token available for this session
+              examples:
+                refresh_unavailable:
+                  value:
+                    error: refresh_unavailable
+                    message: no valid refresh token available for this session
+                refresh_rejected:
+                  value:
+                    error: refresh_rejected
+                    message: refresh token rejected by provider; reauthentication required
         "502":
-          description: Third-party provider rejected the refresh request
+          description: Non-terminal upstream refresh failure
           content:
             application/json:
               schema:
@@ -1494,15 +1501,14 @@ paths:
           and undeclared or removed permission sets. The broker denies before any token-vault lookup.
 
         **Session Recovery:**
-        - A missing session, or an expired session without a usable refresh token, returns
-          400 `invalid_grant`. Its `error_uri` starts authorization for the resolved service
-          at `<public URL>/api/third-party/{service-id}/oauth2/authorize` with an encoded
-          `<public URL>/sessions` return URI.
-        - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
-          `invalid_grant`, the broker returns 400 `invalid_grant` with the same service-specific
-          `error_uri`. The stored tokens are left unchanged, and the refresh token is recorded
-          as expired. Later exchanges return the same error without contacting the provider
-          until the user reconnects the service.
+        - A missing session, recorded refresh rejection, or expired access token without a
+          stored refresh token returns 400 `invalid_grant`. Its `error_uri` starts authorization
+          for the resolved service at `<public URL>/api/third-party/{service-id}/oauth2/authorize`
+          with an encoded `<public URL>/sessions` return URI.
+        - HTTP 4xx `invalid_grant` (except 429) records provider refresh rejection before
+          returning the same recovery response. The session is retained; ciphertext and
+          access-token expiry remain unchanged. Subsequent broker token issuance stops
+          until successful reauthentication or explicit termination.
         - A missing required client-identity association or a mismatch with the selected client ID
           returns 400 `invalid_grant` with the same service-specific `error_uri`.
           The broker stops before provider authentication and leaves the established session unchanged.
@@ -3795,7 +3801,7 @@ components:
         - token_type
         - scope
         - initiated_at
-        - is_expired
+        - requires_reauthentication
         - access_token_expired
         - has_refresh_token
         - dependent_agent_count
@@ -3818,18 +3824,22 @@ components:
         initiated_at:
           type: string
           format: date-time
-        is_expired:
+        requires_reauthentication:
           type: boolean
-          description: True when neither the access token nor a stored refresh token is usable. An expired access token alone does not expire a refreshable session.
+          description: |
+            True after recorded provider refresh rejection, or after access-token expiry
+            when no refresh token is stored. An expired access token with stored,
+            not-known-rejected refresh credentials does not require reauthentication.
         access_token_expired:
           type: boolean
+          description: Whether the recorded access-token expiry has passed; unknown expiry is not permanent validity
+        is_expired:
+          type: boolean
+          deprecated: true
+          description: Temporary legacy-client compatibility field emitted only when third_party_oauth2.session_api_compatibility is enabled. Equals requires_reauthentication; it is not a refresh-expiry prediction.
         has_refresh_token:
           type: boolean
-        refresh_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
+          description: Whether refresh-token ciphertext is stored, including provider-rejected credentials
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3838,56 +3848,9 @@ components:
           type: boolean
           description: Indicates tokens are stored encrypted
     SessionStatus:
-      type: object
-      required:
-        - session_id
-        - initiated_at
-        - is_expired
-        - has_refresh_token
-        - scope
-        - dependent_agent_count
-        - tokens_encrypted
-      properties:
-        session_id:
-          type: string
-          format: uuid
-          description: Session identifier
-        initiated_at:
-          type: string
-          format: date-time
-          description: When the OAuth2 flow was completed
-        access_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: When the access token expires (null if unknown)
-        refresh_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
-        is_expired:
-          type: boolean
-          description: |
-            True when neither the access token nor a stored refresh token is usable.
-            A session remains usable while its access token is valid or it has a refresh
-            token whose recorded expiry is absent or in the future. An access-only
-            session expires with its access token.
-        has_refresh_token:
-          type: boolean
-          description: Whether a refresh token is stored for this session
-        scope:
-          type: array
-          items:
-            type: string
-          description: OAuth2 scopes granted in this session
-        dependent_agent_count:
-          type: integer
-          minimum: 0
-          description: Number of distinct agents with grants owned by the authenticated session principal that reference this service
-        tokens_encrypted:
-          type: boolean
-          description: Indicates tokens are stored encrypted (always true)
+      description: Session detail uses the same flat validity summary as listing and manual refresh.
+      allOf:
+        - $ref: "#/components/schemas/UserSessionSummary"
     AffectedAgent:
       type: object
       required:

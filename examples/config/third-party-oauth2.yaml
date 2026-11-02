@@ -59,6 +59,10 @@ third_party_oauth2:
 
   # Select credential_source: filesystem without inline credentials on the service.
   # README.md documents multiple pairs, source precedence, and JSON environment/CLI input.
+  # Defaults enabled in preparation and activation while legacy API consumers upgrade.
+  # Adds is_expired equal to requires_reauthentication, without refresh-expiry dates.
+  # Modern consumers can set false explicitly. Cleanup defaults false after the consumer gate.
+  session_api_compatibility: true
 
 # Proactive refresh of third-party access tokens (spec 029).
 # Token exchange returns a valid token immediately. If it expires within
@@ -85,6 +89,7 @@ token_refresh:
 # - IDENTITY_BROKER_STATE_TOKEN_TTL (optional, default: 10m)
 # - IDENTITY_BROKER_PKCE_VERIFIER_LENGTH (optional, default: 32)
 # - IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES (JSON object, default: {})
+# - IDENTITY_BROKER_SESSION_API_COMPATIBILITY (optional, default: true)
 #
 # Example:
 #   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"

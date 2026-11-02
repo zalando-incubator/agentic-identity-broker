@@ -91,12 +91,11 @@ func TestHandleCallback_ReconnectWithoutRefreshTokenClearsStoredRefreshToken(t *
 	}
 	first, err := connect("account-a-code")
 	require.NoError(t, err)
-	refreshExpiry := time.Now().Add(2 * time.Hour)
-	first.Session.RefreshTokenExpiresAt = &refreshExpiry
+	first.Session.RefreshTokenRejected = true
 	require.NoError(t, sessions.Create(ctx, first.Session))
 	before, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
-	assert.Equal(t, first.Session.RefreshTokenExpiresAt, before.RefreshTokenExpiresAt)
+	assert.True(t, before.RefreshTokenRejected)
 
 	result, err := connect("account-b-code")
 	require.NoError(t, err)
@@ -106,7 +105,7 @@ func TestHandleCallback_ReconnectWithoutRefreshTokenClearsStoredRefreshToken(t *
 	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Empty(t, persisted.EncryptedRefreshToken)
-	assert.Nil(t, persisted.RefreshTokenExpiresAt)
+	assert.False(t, persisted.RefreshTokenRejected)
 	access, err := service.DecryptAccessToken(ctx, persisted)
 	require.NoError(t, err)
 	assert.Equal(t, "account-b-access", access)
@@ -114,7 +113,7 @@ func TestHandleCallback_ReconnectWithoutRefreshTokenClearsStoredRefreshToken(t *
 	require.NoError(t, err)
 	assert.Equal(t, "account-b-access", access)
 	assert.False(t, current.CanRefresh())
-	assert.False(t, current.IsExpired())
+	assert.False(t, current.RequiresReauthentication())
 	expired := time.Now().Add(-time.Minute)
 	persisted.AccessTokenExpiresAt = &expired
 	require.NoError(t, sessions.Create(ctx, persisted))
@@ -182,7 +181,7 @@ func TestListUserSessions_ExcludesSpentAccessOnlyConnectionsFromActiveServices(t
 	summaries, err := service.ListUserSessions(ctx, principal)
 	require.NoError(t, err)
 	require.Len(t, summaries, 1)
-	assert.True(t, summaries[0].IsExpired, "a spent access-only connection must require reauthentication")
+	assert.True(t, summaries[0].RequiresReauthentication, "a spent access-only connection must require reauthentication")
 	active, err := sessions.ListActiveByPrincipal(ctx, principal)
 	require.NoError(t, err)
 	assert.Empty(t, active)
@@ -350,11 +349,6 @@ func TestRefreshSession_RFC6749RefreshTokenRetentionAndRotation(t *testing.T) {
 			provider.Endpoints.TokenEndpoint = upstream.URL
 			require.NoError(t, providers.Create(ctx, provider))
 			seedExpiringSession(t, sessions, principal, serviceID, time.Now().Add(-time.Hour), "stored-refresh", []string{"repo"})
-			stored, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
-			require.NoError(t, err)
-			refreshExpiry := time.Now().Add(2 * time.Hour)
-			stored.RefreshTokenExpiresAt = &refreshExpiry
-			require.NoError(t, sessions.Create(ctx, stored))
 
 			_, access, err := service.GetValidAccessToken(ctx, principal, serviceID)
 			require.NoError(t, err)
@@ -370,11 +364,7 @@ func TestRefreshSession_RFC6749RefreshTokenRetentionAndRotation(t *testing.T) {
 			refresh, err := service.DecryptRefreshToken(ctx, persisted)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantRefresh, refresh)
-			if tc.refreshField == "" {
-				assert.Equal(t, &refreshExpiry, persisted.RefreshTokenExpiresAt)
-			} else {
-				assert.Nil(t, persisted.RefreshTokenExpiresAt, "the old expiry does not apply to a replacement refresh token")
-			}
+			assert.False(t, persisted.RefreshTokenRejected)
 			assert.EqualValues(t, 2, calls.Load())
 		})
 	}

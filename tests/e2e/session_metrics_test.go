@@ -288,9 +288,9 @@ var _ = Describe("Session Metrics", func() {
 			})
 
 			// US2-S5 from specs/053-session-auto-refresh/spec.md
-			It("counts expired sessions without a usable refresh token as expired and unrefreshable", func() {
+			It("counts expired sessions with rejected or missing refresh credentials as expired and unrefreshable", func() {
 				now := time.Now()
-				seed(fixtures.ExpiredUnrefreshableSession("lapsed@example.com", calendar, now), fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", calendar, now))
+				seed(fixtures.ExpiredUnrefreshableSession("rejected@example.com", calendar, now), fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", calendar, now))
 				boot()
 				counts, _ := sessionHealthCounts(reader)
 				Expect(counts[calendar.String()]).To(Equal(healthSeries(map[string]int64{"expired/false": 2})))

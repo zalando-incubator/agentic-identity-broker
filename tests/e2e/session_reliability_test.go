@@ -150,8 +150,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(completeConnect().Query().Get("success")).To(Equal("true"))
 		before, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
 		Expect(err).NotTo(HaveOccurred())
-		refreshExpiry := time.Now().Add(time.Hour)
-		before.RefreshTokenExpiresAt = &refreshExpiry
+		before.RefreshTokenRejected = true
 		Expect(testStorage.UserSessions().Create(ctx, before)).To(Succeed())
 
 		mockUpstream.WithAccessToken("account-b-access").WithOmittedRefreshToken()
@@ -160,7 +159,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(session.ID).To(Equal(before.ID))
 		Expect(session.EncryptedRefreshToken).To(BeEmpty())
-		Expect(session.RefreshTokenExpiresAt).To(BeNil())
+		Expect(session.RefreshTokenRejected).To(BeFalse())
 		resp, body := exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 		connectedToken, ok := body["access_token"].(string)

@@ -180,6 +180,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "state_token_ttl"), "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "pkce_verifier_length"), "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
 	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "credential_files"), credentialFilesEnvKey)
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "session_api_compatibility"), "IDENTITY_BROKER_SESSION_API_COMPATIBILITY")
 	// Bind encryption configuration to environment variables
 	// AWS KMS backend - KMS key and DynamoDB cache configuration
 	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "key_arn"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
@@ -203,6 +204,7 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "state_token_ttl"), "10m")
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "pkce_verifier_length"), 32)
 	l.v.SetDefault(configutil.Key("third_party_oauth2", "credential_files"), "{}")
+	l.v.SetDefault(configutil.Key("third_party_oauth2", "session_api_compatibility"), true)
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.
@@ -332,6 +334,7 @@ func (l *Loader) setDefaults() {
 			"request_context.trace.response_enabled",
 			"third_party_oauth2.state_token_ttl", "third_party_oauth2.pkce_verifier_length",
 			credentialFilesConfigKey,
+			"third_party_oauth2.session_api_compatibility",
 			"security.skip_thirdparty_https_validation",
 			"token_refresh.lookahead_duration", "token_refresh.background_workers", "token_refresh.sweep.default_page_size",
 			"token_refresh.health_metrics.enabled", "token_refresh.health_metrics.query_timeout",

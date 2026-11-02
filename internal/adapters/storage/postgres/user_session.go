@@ -12,43 +12,38 @@ import (
 	"github.com/lib/pq"
 )
 
-const userSessionColumns = `id, principal, service_id, callback_id, upstream_client_id,
-encrypted_access_token, encrypted_refresh_token, token_type, access_token_expires_at,
-refresh_token_expires_at, scope, encryption_context, initiated_at, created_at, updated_at`
+const selectUserSessionStateQuery = `SELECT id, principal, service_id, callback_id, upstream_client_id,
+	encrypted_access_token, encrypted_refresh_token, token_type, access_token_expires_at,
+	refresh_token_rejected, scope, encryption_context, initiated_at, created_at, updated_at FROM user_session_state`
 
-const listExpiringSessionsFirstPageQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
+const listExpiringSessionsFirstPageQuery = selectUserSessionStateQuery + `
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND NOT refresh_token_rejected
 ORDER BY access_token_expires_at, id
 LIMIT $2`
 
-const listExpiringSessionsAfterCursorQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
+const listExpiringSessionsAfterCursorQuery = selectUserSessionStateQuery + `
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND NOT refresh_token_rejected
   AND (access_token_expires_at, id) > ($2, $3)
 ORDER BY access_token_expires_at, id
 LIMIT $4`
 
-// countSessionsByExpiryQuery mirrors storage.UserSession.AccessTokenExpiresBy ($1 is the
-// inclusive threshold), SessionIsUsable ($2 is now) and CanRefresh without reading token material.
 const countSessionsByExpiryQuery = `SELECT service_id,
        CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
             WHEN access_token_expires_at > $1 THEN 'after_threshold'
             WHEN access_token_expires_at > $2 THEN 'due'
             ELSE 'expired' END AS access_expiry,
        (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
-        AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
+        AND NOT refresh_token_rejected) AS refresh_usable,
        COUNT(*) AS session_count
-FROM user_sessions
+FROM user_session_state
 GROUP BY 1, 2, 3`
 
-// SQL projection of storage.SessionIsUsable; both active-session reads share this predicate.
-const usableSessionPredicate = `(access_token_expires_at IS NULL OR access_token_expires_at > NOW()
-	OR (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
-		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW())))`
-
-// userSessionRecord is an adapter-local database record struct for user_sessions.
-// It maps directly to the table schema. The Scope field uses pq.StringArray to
+// userSessionRecord maps the stable user_session_state view, independent of the
+// physical table's rollout phase. The Scope field uses pq.StringArray to
 // correctly handle PostgreSQL TEXT[] scanning via pgx/v5/stdlib — the driver
 // returns TEXT[] as a string literal ("{val1,val2}") which []string cannot absorb.
 type userSessionRecord struct {
@@ -61,7 +56,7 @@ type userSessionRecord struct {
 	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
 	TokenType             string                    `db:"token_type"`
 	AccessTokenExpiresAt  *time.Time                `db:"access_token_expires_at"`
-	RefreshTokenExpiresAt *time.Time                `db:"refresh_token_expires_at"`
+	RefreshTokenRejected  bool                      `db:"refresh_token_rejected"`
 	Scope                 pq.StringArray            `db:"scope"`
 	EncryptionContext     storage.EncryptionContext `db:"encryption_context"`
 	InitiatedAt           time.Time                 `db:"initiated_at"`
@@ -70,14 +65,14 @@ type userSessionRecord struct {
 }
 
 type userSessionSummaryRecord struct {
-	ID                    id.SessionID   `db:"id"`
-	ServiceID             id.ServiceID   `db:"service_id"`
-	TokenType             string         `db:"token_type"`
-	Scope                 pq.StringArray `db:"scope"`
-	InitiatedAt           time.Time      `db:"initiated_at"`
-	AccessTokenExpiresAt  *time.Time     `db:"access_token_expires_at"`
-	RefreshTokenExpiresAt *time.Time     `db:"refresh_token_expires_at"`
-	HasRefreshToken       bool           `db:"has_refresh_token"`
+	ID                   id.SessionID   `db:"id"`
+	ServiceID            id.ServiceID   `db:"service_id"`
+	TokenType            string         `db:"token_type"`
+	Scope                pq.StringArray `db:"scope"`
+	InitiatedAt          time.Time      `db:"initiated_at"`
+	AccessTokenExpiresAt *time.Time     `db:"access_token_expires_at"`
+	RefreshTokenRejected bool           `db:"refresh_token_rejected"`
+	HasRefreshToken      bool           `db:"has_refresh_token"`
 }
 
 func recordToSession(r *userSessionRecord) *storage.UserSession {
@@ -90,7 +85,7 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 		EncryptedRefreshToken: r.EncryptedRefreshToken,
 		TokenType:             r.TokenType,
 		AccessTokenExpiresAt:  r.AccessTokenExpiresAt,
-		RefreshTokenExpiresAt: r.RefreshTokenExpiresAt,
+		RefreshTokenRejected:  r.RefreshTokenRejected,
 		Scope:                 []string(r.Scope),
 		EncryptionContext:     r.EncryptionContext,
 		InitiatedAt:           r.InitiatedAt,
@@ -147,57 +142,35 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		upstreamClientID = &clientID
 	}
 
-	// The share lock serializes issuer and audience checks with provider updates,
-	// which take the service row's exclusive lock before counting sessions.
-	const insertQuery = `
-		INSERT INTO user_sessions (
-			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
-			token_type, access_token_expires_at, refresh_token_expires_at, scope,
-			encryption_context, initiated_at, created_at, updated_at, callback_id, upstream_client_id
-		)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
-		FROM thirdparty_oauth2_services AS service
-		WHERE service.id = $3
-			AND ((service.resource_url IS NULL AND $16::text = '' AND $17::text = '')
-				OR (service.resource_url IS NOT NULL AND $16::text <> '' AND $17::text <> ''
-					AND service.issuer_uri = $16::text AND service.authorization_params ->> 'resource' = $17::text))
-		FOR SHARE OF service
-		ON CONFLICT (principal, service_id)
-	`
-	query := insertQuery + `DO NOTHING`
-	if replace {
-		query = insertQuery + `DO UPDATE SET
-			upstream_client_id = EXCLUDED.upstream_client_id,
-			encrypted_access_token = EXCLUDED.encrypted_access_token,
-			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-			token_type = EXCLUDED.token_type,
-			access_token_expires_at = EXCLUDED.access_token_expires_at,
-			refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
-			scope = EXCLUDED.scope,
-			encryption_context = EXCLUDED.encryption_context,
-			callback_id = EXCLUDED.callback_id,
-			updated_at = NOW()
-	`
-	}
+	query := `SELECT upsert_user_session_state($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	result, err := r.adapter.db.ExecContext(execCtx, query,
+	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	if err != nil {
+		return nil, r.wrapError(err, "Create")
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(execCtx, `LOCK TABLE user_session_state IN ACCESS SHARE MODE`); err != nil {
+		return nil, r.wrapError(err, "Create")
+	}
+	// Select the phase-specific function only after the schema fence is held.
+	var written bool
+	err = tx.GetContext(execCtx, &written, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
-		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
+		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenRejected,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource,
+		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource, replace,
 	)
 	if err != nil {
 		return nil, r.wrapError(err, "Create")
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, r.wrapError(err, "Create")
 	}
-	if rows == 0 {
+	if !written {
 		operation := "CreateIfAbsent"
 		if replace {
 			operation = "Create"
@@ -246,7 +219,7 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	}
 
 	var rec userSessionRecord
-	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE id = $1`
+	query := selectUserSessionStateQuery + ` WHERE id = $1`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -267,7 +240,7 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	}
 
 	var rec userSessionRecord
-	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND service_id = $2`
+	query := selectUserSessionStateQuery + ` WHERE principal = $1 AND service_id = $2`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -315,7 +288,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 
 	var rec userSessionRecord
 	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	err = tx.GetContext(readCtx, &rec, `SELECT `+userSessionColumns+` FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	err = tx.GetContext(readCtx, &rec, selectUserSessionStateQuery+` WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
 	cancel()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -340,12 +313,10 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 			return nil, err
 		}
 		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
-			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
-			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10 WHERE id = $11`,
-			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
-			session.RefreshTokenExpiresAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
-			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID)
+		_, err = tx.ExecContext(writeCtx, `SELECT update_user_session_state($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			session.ID, session.EncryptedAccessToken, session.EncryptedRefreshToken,
+			session.AccessTokenExpiresAt, session.RefreshTokenRejected, session.UpdatedAt,
+			session.TokenType, pq.Array(session.Scope), session.EncryptionContext, session.CallbackID, session.UpstreamClientID)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")
@@ -357,7 +328,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	return session, nil
 }
 
-// ListByPrincipal retrieves all sessions for a principal, including expired ones.
+// ListByPrincipal retrieves all sessions for a principal, including those requiring reauthentication.
 // Used for user-visible session lists.
 func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
@@ -365,7 +336,7 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
+	query := selectUserSessionStateQuery + ` WHERE principal = $1 ORDER BY created_at DESC`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -388,9 +359,9 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 	defer cancel()
 	var records []userSessionSummaryRecord
 	err := r.adapter.db.SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at,
-		access_token_expires_at, refresh_token_expires_at,
+		access_token_expires_at, refresh_token_rejected,
 		COALESCE(octet_length(encrypted_refresh_token), 0) > 0 AS has_refresh_token
-		FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`, principal)
+		FROM user_session_state WHERE principal = $1 ORDER BY created_at DESC`, principal)
 	if err != nil {
 		return nil, r.wrapError(err, "ListSummariesByPrincipal")
 	}
@@ -399,14 +370,14 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 		session := storage.UserSession{
 			ID: record.ID, ServiceID: record.ServiceID, TokenType: record.TokenType,
 			Scope: []string(record.Scope), InitiatedAt: record.InitiatedAt,
-			AccessTokenExpiresAt: record.AccessTokenExpiresAt, RefreshTokenExpiresAt: record.RefreshTokenExpiresAt,
+			AccessTokenExpiresAt: record.AccessTokenExpiresAt, RefreshTokenRejected: record.RefreshTokenRejected,
 		}
 		if session.Scope == nil {
 			session.Scope = []string{}
 		}
 		summary := storage.NewUserSessionSummary(&session, "", 0)
 		summary.HasRefreshToken = record.HasRefreshToken
-		summary.IsExpired = !storage.SessionIsUsable(record.AccessTokenExpiresAt, record.RefreshTokenExpiresAt, record.HasRefreshToken)
+		summary.RequiresReauthentication = record.RefreshTokenRejected || (summary.AccessTokenExpired && !record.HasRefreshToken)
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
@@ -419,15 +390,20 @@ func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx cont
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	ids := make([]id.ServiceID, 0)
-	err := r.adapter.db.SelectContext(queryCtx, &ids, `SELECT service_id FROM user_sessions WHERE principal = $1
-		AND `+usableSessionPredicate+` ORDER BY created_at DESC`, principal)
+	err := r.adapter.db.SelectContext(queryCtx, &ids, `SELECT service_id FROM user_session_state WHERE principal = $1
+		AND NOT refresh_token_rejected
+		AND (
+			COALESCE(octet_length(encrypted_refresh_token), 0) > 0
+			OR access_token_expires_at IS NULL
+			OR access_token_expires_at > NOW()
+		) ORDER BY created_at DESC`, principal)
 	if err != nil {
 		return nil, r.wrapError(err, "ListActiveServiceIDsByPrincipal")
 	}
 	return ids, nil
 }
 
-// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
+// ListActiveByPrincipal retrieves sessions that do not require reauthentication.
 // Used for FR-020 consent submission validation.
 func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
@@ -435,7 +411,13 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND ` + usableSessionPredicate + ` ORDER BY created_at DESC`
+	query := selectUserSessionStateQuery + ` WHERE principal = $1
+		AND NOT refresh_token_rejected
+		AND (
+			COALESCE(octet_length(encrypted_refresh_token), 0) > 0
+			OR access_token_expires_at IS NULL
+			OR access_token_expires_at > NOW()
+		) ORDER BY created_at DESC`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()

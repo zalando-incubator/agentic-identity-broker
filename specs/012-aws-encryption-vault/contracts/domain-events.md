@@ -60,7 +60,7 @@ event := SessionEncrypted{
 func (s *OAuth2SessionService) CreateSession(
     ctx context.Context,
     principal, serviceID, accessToken, refreshToken string,
-    accessExpiry, refreshExpiry time.Time,
+    accessExpiry time.Time,
 ) (*UserSession, error) {
     // ... encryption logic ...
 
@@ -222,7 +222,7 @@ event := SessionEncryptionFailed{
 func (s *OAuth2SessionService) CreateSession(
     ctx context.Context,
     principal, serviceID, accessToken, refreshToken string,
-    accessExpiry, refreshExpiry time.Time,
+    accessExpiry time.Time,
 ) (*UserSession, error) {
     // Encrypt access token
     encryptedAccess, err := s.encryptionPort.Encrypt(ctx, []byte(accessToken), context)
@@ -592,7 +592,6 @@ func TestSessionEncryptedEventPublished(t *testing.T) {
         "access-token",
         "refresh-token",
         time.Now().Add(time.Hour),
-        time.Now().Add(24*time.Hour),
     )
 
     require.NoError(t, err)
@@ -623,7 +622,6 @@ func TestSessionEncryptionFailedEventPublished(t *testing.T) {
         "access-token",
         "refresh-token",
         time.Now().Add(time.Hour),
-        time.Now().Add(24*time.Hour),
     )
 
     require.Error(t, err)

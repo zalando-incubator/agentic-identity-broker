@@ -70,8 +70,8 @@ An operator wants to know, for every third-party service, how many stored user s
 1. **Given** telemetry metrics are enabled and sessions exist for two services, **When** one export cycle has elapsed, **Then** the session-health gauge reports one value per `(service_id, expiry, refreshable)` combination, and the sum over all series of a service equals the number of stored sessions for that service.
 2. **Given** a service has no sessions in a given series, **When** the gauge is read, **Then** that `(service_id, expiry, refreshable)` combination is reported as `0` rather than omitted.
 3. **Given** a session whose access token expires later than the configured refresh lookahead, **When** the gauge is read, **Then** the session is counted under `expiry="valid"`.
-4. **Given** a session whose access token expires within the lookahead and one whose access token has already expired, both with a refresh token that is present and not expired, **When** the gauge is read, **Then** the first is counted under `expiry="expiring",refreshable="true"` and the second under `expiry="expired",refreshable="true"`, so an operator can see expired sessions the sweep has not yet renewed.
-5. **Given** a session whose access token has already expired and whose refresh token is missing or expired, **When** the gauge is read, **Then** the session is counted under `expiry="expired",refreshable="false"`.
+4. **Given** a session whose access token expires within the lookahead and one whose access token has already expired, both with a refresh token that is present and not rejected, **When** the gauge is read, **Then** the first is counted under `expiry="expiring",refreshable="true"` and the second under `expiry="expired",refreshable="true"`, so an operator can see expired sessions the sweep has not yet renewed.
+5. **Given** a session whose access token has already expired and whose refresh token is missing or rejected, **When** the gauge is read, **Then** the session is counted under `expiry="expired",refreshable="false"`.
 6. **Given** a session with no recorded access-token expiry, **When** the gauge is read, **Then** the session is counted under `expiry="unknown"`.
 7. **Given** the count query fails or exceeds its timeout, **When** that export cycle runs, **Then** the gauge reports no data points for that cycle, the broker logs the failure, and the next cycle queries again.
 8. **Given** telemetry metrics are disabled or the health metrics option is disabled, **When** the broker runs, **Then** the broker issues no session-health query.
@@ -482,7 +482,7 @@ sum by (service_id, failure_detail) (
 - **FR-017**: The broker MUST publish an `oauth2_sessions` gauge through the existing telemetry pipeline. The gauge counts stored third-party sessions by `service_id`, `expiry`, and `refreshable`, where `expiry` is exactly one of `valid`, `expiring`, `expired`, or `unknown` and `refreshable` is `true` or `false`.
 - **FR-018**: Both attributes MUST be derived only from stored fields, the current time, and the configured refresh lookahead:
   - `expiry` is `unknown` when no access-token expiry is recorded; otherwise `valid` when the access token expires after now plus `token_refresh.lookahead_duration`; otherwise `expiring` when it expires after now; otherwise `expired`.
-  - `refreshable` is `true` when a refresh token is present and not expired at now.
+  - `refreshable` is `true` when a refresh-token ciphertext is present and not rejected.
 - **FR-019**: Every `(service_id, expiry, refreshable)` combination MUST be reported for every service that has at least one session. A combination with no sessions reports `0`.
 - **FR-020**: The counts MUST be computed by one grouped query per export cycle, bounded by `token_refresh.health_metrics.query_timeout`. A failed or timed-out query MUST report no points for that cycle and MUST be logged without session or principal data.
 - **FR-021**: The query MUST run only when telemetry metrics and `token_refresh.health_metrics.enabled` are both enabled.
@@ -525,7 +525,7 @@ flowchart TD
     C -- no --> D{Expires after now?}
     D -- yes --> R["expiry=expiring"]
     D -- no --> X["expiry=expired"]
-    A --> E{Refresh token present and not expired?}
+    A --> E{Refresh token present and not rejected?}
     E -- yes --> T["refreshable=true"]
     E -- no --> F["refreshable=false"]
 ```

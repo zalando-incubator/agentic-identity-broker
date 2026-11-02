@@ -112,9 +112,9 @@ SELECT service_id,
             WHEN access_token_expires_at > $2 THEN 'due'
             ELSE 'expired' END AS access_expiry,
        (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
-        AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
+        AND NOT refresh_token_rejected) AS refresh_usable,
        COUNT(*) AS session_count
-FROM user_sessions
+FROM user_session_state
 GROUP BY 1, 2, 3
 ```
 

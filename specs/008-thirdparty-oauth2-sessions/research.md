@@ -328,20 +328,32 @@ encryptedAccessToken, err := encryption.Encrypt(
 | Field | Type | Purpose |
 |-------|------|---------|
 | `encrypted_access_token` | bytea | AES-GCM encrypted access token |
-| `encrypted_refresh_token` | bytea (nullable) | AES-GCM encrypted refresh token |
+| `encrypted_refresh_token` | bytea (nullable) | Stored refresh credential, including rejected credentials |
 | `token_type` | string | Token type (usually "Bearer") |
-| `access_token_expires_at` | timestamp (nullable) | Access token expiration |
-| `refresh_token_expires_at` | timestamp (nullable) | Refresh token expiration |
+| `access_token_expires_at` | timestamp (nullable) | Recorded access expiry. NULL means unknown, not permanent validity. |
+| `refresh_token_rejected` | boolean, NOT NULL DEFAULT FALSE | Observed terminal provider rejection. False does not prove validity. |
 | `encryption_context` | jsonb | AAD context for decryption validation |
+
+### Third-Party Credential Validity
+
+The provider token-set expiry describes the access token only. The broker does not predict expiry for opaque third-party refresh credentials.
+HTTP 4xx `invalid_grant`, excluding 429, records refresh rejection. The broker retains ciphertext, access expiry, and other metadata.
+Recorded rejection immediately stops future token issuance, even with an unexpired access token. Transient refresh errors do not record rejection.
+`requires_reauthentication` is true after recorded rejection or access expiry without refresh credentials. `has_refresh_token` reports ciphertext presence, including rejected credentials.
+The card shows "Reauthentication required", "Access Token Expired", or "Active", in that order. No refresh-expiry date or permanent-validity claim appears.
+Login starts the real authorize/callback flow. Successful authorization upsert clears rejection. Termination remains optional, and normal refresh cannot recover rejected credentials.
+Locked callback errors do not persist changes. The service commits rejection through `(true, nil)` before it returns the captured provider error.
 
 ---
 
 ## Database Schema Design
 
 ### Decision
-Create `user_sessions` table with unique constraint on (principal, service_id).
+Keep the unique constraint on (principal, service_id). Preserve migrations 004 and 037 unchanged. Use online phases 046 prepare, 047 expand, and 048 contract. Preparation/new brokers use a stable SQL view and invoker write functions at each phase. Drain every unprepared replica before 47 activates durable rejection. The temporary legacy column serves storage compatibility only. Historical dates never indicate provider validity or rejection. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-046048) for prerequisites, fail-fast lock handling, and guarded rollback.
 
-### Schema
+The release sequence separates these phases into deployable PRs. This PR ships only migration 046 and prepared application code. Migrations 047 and 048 are not present. PostgreSQL at 46 supports ordinary traffic but rejects true writes as `persistence_failed`. The memory adapter already supports recorded rejection. PR1 defaults and limits Helm targets to 46. Fresh installs use direct UP-all through 46, while upgrades use the guarded wrapper. Before merging or deploying activation, complete preparation and drain every old replica and in-flight operation. Before merging or deploying cleanup, upgrade the SPA and all external session-API consumers. API compatibility defaults true in preparation and activation, with explicit false supported. Cleanup defaults false after its consumer gate passes. The alias supplies only `is_expired=requires_reauthentication`, never refresh dates.
+
+### Planned Final Schema (PR3, After Migration 048)
 
 ```sql
 CREATE TABLE user_sessions (
@@ -352,12 +364,14 @@ CREATE TABLE user_sessions (
     encrypted_refresh_token BYTEA,
     token_type VARCHAR(50) NOT NULL DEFAULT 'Bearer',
     access_token_expires_at TIMESTAMPTZ,
-    refresh_token_expires_at TIMESTAMPTZ,
+    refresh_token_rejected BOOLEAN NOT NULL DEFAULT FALSE,
     scope TEXT[] NOT NULL DEFAULT '{}',
     encryption_context JSONB NOT NULL DEFAULT '{}',
     initiated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    callback_id TEXT NOT NULL DEFAULT '',
+    upstream_client_id TEXT CHECK (upstream_client_id IS NULL OR upstream_client_id <> ''),
     
     CONSTRAINT user_sessions_principal_service_unique UNIQUE (principal, service_id)
 );
@@ -368,11 +382,11 @@ CREATE INDEX idx_user_sessions_service_id ON user_sessions(service_id);
 
 ### Rationale for Unique Constraint
 - **One session per user per service**: Prevents token duplication and race conditions
-- **Reconnect semantics**: Authorization state captures the existing session ID and callback generation. A callback replaces tokens only if that baseline still matches under the refresh lock; successful replacement advances the generation.
+- **Reconnect semantics**: Authorization state captures the existing session ID and callback generation. A callback replaces tokens only if that baseline still matches under the refresh lock. Successful replacement advances the generation and clears recorded rejection while preserving row identity and initiation time.
 - **Race condition handling**: Initial callbacks insert without overwriting the unique (principal, service_id) row. Competing initial or reconnect callbacks return the winning session unchanged. Refresh preserves the callback generation.
 
 ### ON DELETE RESTRICT Rationale
-- **Prevents orphaned sessions**: Cannot delete service with active sessions
+- **Prevents orphaned sessions**: A service cannot be deleted while retained session rows reference it, including rejected sessions.
 - **Admin workflow**: Admin must terminate all sessions before deleting service
 - **Error handling**: Repository catches constraint violation, returns user-friendly error
 
@@ -436,6 +450,9 @@ func (e *OAuth2Error) Error() string {
 | ErrOAuth2AuthError | Redirect | Error params passed to UI |
 | ErrServiceNotFound | 404 Not Found | Standard error response |
 | ErrSessionNotFound | 404 Not Found | Standard error response |
+| ErrRefreshRejected (manual refresh) | 409 Conflict | `refresh_rejected`: `refresh token rejected by provider; reauthentication required` |
+| ErrRefreshNotAvailable (missing refresh credentials) | 409 Conflict | `refresh_unavailable` |
+| ErrRefreshFailed (transient upstream error) | 502 Bad Gateway | `refresh_failed` |
 
 ---
 

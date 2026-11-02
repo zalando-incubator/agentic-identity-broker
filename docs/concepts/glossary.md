@@ -36,8 +36,9 @@ has at most one active grant for each agent. A grant can expire through `valid_u
 can revoke it at any time.
 
 **User session** — An authenticated OAuth2 session for one principal and one third-party
-service. It contains encrypted access and refresh tokens, expiry, and scopes. A user has one
-session for each service.
+service. It contains encrypted tokens, scope, recorded access expiry, and observed provider refresh rejection.
+A user has one session for each service. The broker records refresh presence, not a predicted refresh expiry.
+Rejection or access expiry without refresh credentials requires reauthentication. Unknown expiry does not imply permanent validity.
 
 **Consent flow** — The process where a user reviews, grants, adjusts, or revokes an agent
 request in the consent interface.

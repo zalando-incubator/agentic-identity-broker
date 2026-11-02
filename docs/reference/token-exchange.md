@@ -140,13 +140,13 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
+Token exchange returns a still-valid stored access token immediately unless recorded rejection requires reauthentication. If access expires within `token_refresh.lookahead_duration` (default `5m`) and refresh credentials remain available, the broker submits background refresh work. The exchange does not wait for that work. A transient failure or dropped background refresh does not change the response. Committed rejection blocks subsequent issuance. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
 
 After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
 
 Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
 
-Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable while its access token is valid or its stored refresh token is usable. An access-only connection requires login after access-token expiry. Unknown refresh-token expiry does not guarantee indefinite validity.
+Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing applies to subsequent exchange authorization and responses. Session lists and consent checks exclude recorded rejection from usable connections. Otherwise valid access or stored refresh credentials permit use. Access-only connections require reauthentication after access expiry. The broker does not predict third-party refresh-token expiry.
 
 During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
@@ -220,11 +220,15 @@ No service has the requested URI in its `protected_resources`.
 ```
 
 Rejected subject credentials do not require provider-session recovery and have no recovery URI.
-A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
+A missing, exhausted access-only, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
 The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
 The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`.
 Opening the link starts third-party OAuth with PKCE. The provider callback returns to `/sessions`.
 The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
+Refresh uses stored, not-known-rejected credentials. Recorded rejection offers Login for reauthentication and optional explicit Terminate.
+HTTP 4xx `invalid_grant`, except 429, persists the rejection flag while retaining ciphertext and access expiry.
+Subsequent broker token issuance stops even while access remains unexpired. A successful authorization callback clears rejection.
+Absent refresh credentials and observed provider rejection are distinct causes. The broker does not predict third-party refresh expiry.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
@@ -297,9 +301,10 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
-Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
-Provider refresh rejection and recorded local expiry are distinct causes.
+Missing, exhausted access-only, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
+Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`. The encoded return URI targets `/sessions`.
+Access-token expiry, absent refresh credentials, and recorded provider rejection have distinct diagnostics.
+Later attempts on recorded rejection contain no new provider status or code. Unknown access expiry does not imply permanent validity.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
 Credential-file availability failures use `credential_source_unavailable` with outcome `infrastructure_error` at the affected session stage.

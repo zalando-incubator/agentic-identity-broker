@@ -11,7 +11,7 @@ type UserSessionHealthRepository interface {
 	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
 	// relative to now and threshold (after threshold; due when after now and at or before
 	// threshold; expired when at or before now; unknown when not recorded), and by whether the
-	// refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// refresh-token ciphertext is present and not rejected. Groups with no sessions are omitted.
 	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
 	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }
@@ -32,8 +32,8 @@ Compile-time assertions `var _ ports.UserSessionHealthRepository = (*...)(nil)` 
 | H2 | one session, access expiry after threshold, refresh usable | `{svc, AfterThreshold, true, 1}` |
 | H3 | access expiry exactly at threshold | `AccessExpiry = Due` |
 | H4 | access expiry nil | `AccessExpiry = Unknown` |
-| H5 | due, refresh token present, refresh expiry nil | `RefreshUsable = true` |
-| H6 | due, refresh token present, refresh expiry at `now` | `RefreshUsable = false` |
+| H5 | due, refresh token present, not rejected | `RefreshUsable = true` |
+| H6 | due, refresh token present, recorded rejection | `RefreshUsable = false` |
 | H7 | due, refresh token absent (`NULL` / empty) | `RefreshUsable = false` |
 | H8 | two services, mixed classes, two sessions in one group | one group per distinct key, counts summed |
 | H9 | canceled context | timeout-kind storage error |

@@ -69,10 +69,13 @@ The record of a principal delegating permission sets to an agent. Key properties
 ### User session
 
 A user session is an authenticated OAuth2 session for one principal and one third-party
-service. It contains encrypted access and refresh tokens, their expiry, and granted scopes.
-There is one session for each user and service. Every agent with a delegation uses the same
-session. Ending the session deletes its tokens and removes access from all dependent agents.
-The broker shows the affected agents before it ends the session.
+service. It contains encrypted tokens, recorded access-token expiry, granted scopes, and observed refresh rejection.
+There is one session for each user and service. Every agent with a delegation uses the same session.
+Refresh-token presence permits an attempt unless the provider has rejected it. The broker does not predict a refresh-token expiry.
+Recorded rejection requires reauthentication even while access remains unexpired. Access expiry without refresh credentials also requires reauthentication.
+Unknown access expiry does not mean permanent validity. Successful Login replaces rejected state through the OAuth2 callback.
+Ending a session deletes its tokens and stops future broker issuance for dependent agents. Previously issued tokens are not revoked.
+The broker shows affected agents before termination.
 
 ## Mandatory vs optional requirements
 
@@ -80,7 +83,7 @@ An agent can require some services or permission sets. Each declared requirement
 these types:
 
 - **Mandatory** — the agent cannot work without it. The authorization flow stops until the
-  user creates an active, unexpired session with the required scopes.
+  user creates a session with the required scopes that does not require reauthentication.
 - **Optional** — the agent uses it when available. The authorization flow continues without
   it. The consent interface identifies these requirements.
 

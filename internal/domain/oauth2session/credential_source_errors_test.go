@@ -81,7 +81,7 @@ func assertCredentialSourceNotProviderFailure(t *testing.T, err error, reason mo
 	assert.Zero(t, failure.Metadata().StatusCode())
 	assert.Empty(t, failure.Metadata().OAuthCode())
 	assertCredentialSourceReason(t, err, reason)
-	for _, category := range []error{oauth2session.ErrRefreshFailed, oauth2session.ErrRefreshTokenExpired, oauth2session.ErrRefreshRejected, oauth2session.ErrSessionExpired, oauth2session.ErrTokenExchange, oauth2session.ErrInvalidPKCE} {
+	for _, category := range []error{oauth2session.ErrRefreshFailed, oauth2session.ErrRefreshRejected, oauth2session.ErrReauthenticationRequired, oauth2session.ErrTokenExchange, oauth2session.ErrInvalidPKCE} {
 		assert.NotErrorIs(t, err, category)
 	}
 	var rejected *oauth2session.RefreshRejectedError
@@ -269,7 +269,6 @@ func TestCredentialSourceErrors_UsablePairPreservesProviderRejectionClassificati
 					} else {
 						assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
 					}
-					assert.NotErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
 				}
 				requests := h.endpoint.captured(t)
 				require.NotEmpty(t, requests, "provider rejection requires actual authentication with a usable acquired pair")
@@ -294,8 +293,9 @@ func TestCredentialSourceErrors_UsablePairPreservesProviderRejectionClassificati
 				after, findErr := h.sessions.Get(context.Background(), before.ID)
 				require.NoError(t, findErr)
 				if oauthError == "invalid_grant" && operation != "callback" {
-					require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
-					after.RefreshTokenExpiresAt = nil
+					require.True(t, after.RefreshTokenRejected)
+					after.RefreshTokenRejected = before.RefreshTokenRejected
+					after.UpdatedAt = before.UpdatedAt
 				}
 				assert.Equal(t, before, after)
 				assertCredentialSourceAudits(t, logs.String(), provider.ID, eventOperation,
@@ -338,7 +338,6 @@ func TestCredentialSourceErrors_TransportAndDecodingDoNotEmitProviderRejection(t
 				logs.Reset()
 				err = assertCredentialOperationFails(t, h, principal, provider.ID, flow.StateToken, operation, "nonrejection-authorization-code-value")
 				assert.NotErrorIs(t, err, model.ErrCredentialSourceUnavailable)
-				assert.NotErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
 				var rejected *oauth2session.RefreshRejectedError
 				if failure == "transport" || failure == "response decoding" {
 					assert.False(t, errors.As(err, &rejected))

@@ -2250,18 +2250,18 @@ paths:
         `sessionSweep.enabled` is true; the broker runs no internal scheduler.
 
         **Selection**: A session is a candidate when its access token has a recorded expiry at or
-        before `now + lookahead_duration`. Sessions with no access-token expiry are never
-        candidates. Healthy sessions outside the window are not evaluated and do not appear in any
-        count.
+        before `now + lookahead_duration` and no recorded provider refresh rejection. Sessions
+        with unknown access expiry or recorded rejection are excluded. Healthy sessions outside
+        the window are not evaluated and do not appear in any count.
 
         **Processing**: Candidates are read in pages of `page_size` and refreshed one at a time
         using each session's stored refresh token. Newly issued tokens are encrypted before they
-        are stored. A candidate that another refresh already renewed, or that was deleted during
-        the sweep, is counted as `skipped`. A candidate that cannot be refreshed (no usable refresh
-        token, upstream error) is counted as `failed`. The sweep then continues and the stored
-        tokens are left unchanged. When the provider rejects the refresh token with
-        `invalid_grant`, the refresh token is recorded as expired, so later sweeps count the
-        session as `failed` without contacting the provider until the user reconnects.
+        are stored. A candidate renewed, deleted, or rejected after listing is counted as `skipped`.
+        Missing refresh credentials and upstream errors count as `failed`. HTTP 4xx OAuth
+        `invalid_grant`, excluding 429, records rejection while retaining ciphertext and access expiry.
+        Newly observed rejection fails once; later sweeps exclude it. Preparation schema 46 refuses
+        true rejection writes as persistence failures. Following activation 47 enables durable rejection.
+        Other failures leave stored tokens unchanged. Successful reauthentication clears rejection.
 
         **Dry run**: With `dry_run: true`, candidates are classified without calling any upstream
         provider and without writing. Candidates that would be refreshed are counted in
@@ -4446,7 +4446,7 @@ components:
           type: integer
           format: int32
           minimum: 0
-          description: Candidates that needed a refresh but could not be refreshed (refresh token missing or expired, upstream error, provider misconfiguration). Their stored sessions are unchanged.
+          description: Candidates that needed refresh but failed because credentials were missing, the provider rejected refresh, or an upstream/configuration error occurred. Newly observed terminal rejection persists the flag without replacing tokens; later sweeps exclude that row.
         total_evaluated:
           type: integer
           format: int32

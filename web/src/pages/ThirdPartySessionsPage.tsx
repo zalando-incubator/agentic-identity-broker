@@ -24,10 +24,7 @@ import { Alert } from '@design-system/components/feedback/Alert';
 import { Button } from '@design-system/components/primitives/Button';
 import { PageTransition } from '@components/ui/PageTransition';
 import { useSessions } from '@hooks/useSessions';
-import {
-  SessionCard,
-  sessionNeedsLogin,
-} from '@components/sessions/SessionCard';
+import { SessionCard } from '@components/sessions/SessionCard';
 import { TerminationDialog } from '@components/sessions/TerminationDialog';
 import { sessionsApi } from '@services/api/sessions';
 import { extractApiError } from '@utils/api';
@@ -48,7 +45,7 @@ interface AlertState {
  * - View all their active sessions with status information
  * - See which agents depend on each session
  * - Terminate sessions (with confirmation warning)
- * - Re-authenticate if a session has expired
+ * - Re-authenticate when required
  * - View OAuth2 callback success/error messages
  *
  * @example
@@ -192,8 +189,8 @@ export const ThirdPartySessionsPage: React.FC = () => {
     setTerminationError(null);
   };
 
-  const handleLogin = (serviceId: string) => {
-    const redirectURI = `${window.location.origin}/sessions`;
+  const handleLogin = (serviceId: string): void => {
+    const redirectURI = new URL('/sessions', window.location.origin).toString();
     window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
   };
 
@@ -209,17 +206,12 @@ export const ThirdPartySessionsPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to refresh session token', err);
-      const session = (await refetch()).find((s) => s.service_id === serviceId);
-      setAlert({
-        type: 'error',
-        message:
-          session && sessionNeedsLogin(session)
-            ? `Your ${session.service_display_name} session can no longer be renewed. Log in to reconnect.`
-            : extractApiError(
-                err,
-                'Failed to refresh session token. Please try again.',
-              ),
-      });
+      const message = extractApiError(
+        err,
+        'Failed to refresh session token. Please try again.',
+      );
+      await refetch();
+      setAlert({ type: 'error', message });
     } finally {
       setRefreshingServiceIds((prev) => {
         const next = new Set(prev);

@@ -167,7 +167,7 @@ Emit source failure for missing bindings, unusable required files, `generation_c
 
 Emit provider rejection once per operation, only for a 4xx client-authentication rejection after a usable filesystem pair reaches the provider. Qualifying responses are HTTP 401 or OAuth `invalid_client`/`unauthorized_client`. Initiation, other 4xx responses, 429, 5xx, transport errors, and response-decoding failures do not emit this event.
 
-RFC 8693 file-availability failures use `credential_source_unavailable` with `infrastructure_error` and no recovery URI. Missing or mismatched established identities use `credential_identity_changed` with `reauth_required`, `reauthenticate`, and target `provider_session`. They return `invalid_grant` with the sessions landing page as `error_uri` before provider authentication. Provider `invalid_grant` retains `refresh_rejected`, distinct from local `refresh_token_expired`.
+RFC 8693 file-availability failures use `credential_source_unavailable` with `infrastructure_error` and no recovery URI. Missing or mismatched established identities use `credential_identity_changed` with `reauth_required`, `reauthenticate`, and target `provider_session`. They return `invalid_grant` with the service-specific OAuth2 recovery URL and encoded `/sessions` return URI before provider authentication. Provider `invalid_grant` retains `refresh_rejected`, distinct from expired access without refresh credentials (`access_token_expired`) and unavailable refresh credentials (`refresh_unavailable`).
 
 Never include credential values, raw file contents, file paths, token forms, Authorization headers, assertions, or provider-controlled descriptions in these events. Printable source errors contain only bounded non-secret reasons.
 

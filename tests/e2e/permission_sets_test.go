@@ -1360,8 +1360,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			It("redirects to consent when the provider rejected an included service's refresh token", func() {
 				now := time.Now()
 				rejected := fixtures.ExpiredRefreshableSession(userPrincipal, id.MustParseServiceID(googleServiceID), now)
-				rejectedAt := now.Add(-time.Minute)
-				rejected.RefreshTokenExpiresAt = &rejectedAt
+				rejected.RefreshTokenRejected = true
 				Expect(testStorage.UserSessions().Create(context.Background(), rejected)).To(Succeed())
 
 				expectConsent(authorize())

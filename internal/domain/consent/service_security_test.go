@@ -115,20 +115,20 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 			}}
 			sessionRepo := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
 				sessionID: {
-					ID:                    sessionID,
-					Principal:             principal,
-					ServiceID:             additionalServiceID,
-					RefreshTokenExpiresAt: &future,
-					Scope:                 []string{"read", "write", "admin"},
+					ID:                   sessionID,
+					Principal:            principal,
+					ServiceID:            additionalServiceID,
+					AccessTokenExpiresAt: &future,
+					Scope:                []string{"read", "write", "admin"},
 				},
 			}}
 			declaredSessionID := id.NewSessionID()
 			sessionRepo.sessions[declaredSessionID] = &storage.UserSession{
-				ID:                    declaredSessionID,
-				Principal:             principal,
-				ServiceID:             declaredServiceID,
-				RefreshTokenExpiresAt: &future,
-				Scope:                 []string{"read", "write", "admin"},
+				ID:                   declaredSessionID,
+				Principal:            principal,
+				ServiceID:            declaredServiceID,
+				AccessTokenExpiresAt: &future,
+				Scope:                []string{"read", "write", "admin"},
 			}
 			grantRepo := &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}
 			if tt.seedExistingGrant {

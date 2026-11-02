@@ -85,14 +85,14 @@ import { Badge } from '@design-system/components/primitives/Badge';
   Active
 </Badge>
 
-// Expiring soon
+// Expired access with refresh authority available
 <Badge variant="warning" size="sm" shape="pill" showDot>
-  Expiring Soon
+  Access Token Expired
 </Badge>
 
-// Expired session
+// Recorded rejection or exhausted access-only session
 <Badge variant="error" size="sm" shape="pill">
-  Expired
+  Reauthentication required
 </Badge>
 
 // No session
@@ -105,12 +105,12 @@ import { Badge } from '@design-system/components/primitives/Badge';
 
 - `variant` - Semantic variant based on session status
   - `success` - Active, valid session
-  - `warning` - Expiring within 7 days
-  - `error` - Expired session
+  - `warning` - Access expired but stored refresh authority is not known rejected
+  - `error` - Reauthentication required after rejection or exhausted access-only credentials
   - `neutral` - No session established
 - `size="sm"` - Compact size for inline status
 - `shape="pill"` - Rounded pill shape (consistent with design system)
-- `showDot` - Optional dot indicator for visual emphasis (expiring state)
+- `showDot` - Optional dot indicator for visual emphasis
 
 ---
 
@@ -454,8 +454,8 @@ Refer to `web/src/design-system/oauth2-semantic-tokens.md` for detailed semantic
 **Quick Reference**:
 
 - **Active session**: `success-primary` (#059669)
-- **Expiring session**: `warning-primary` (#D97706)
-- **Expired session**: `error-primary` (#DC2626)
+- **Access Token Expired**: `warning-primary` (#D97706)
+- **Reauthentication required**: `error-primary` (#DC2626)
 - **No session**: `neutral-300` (#ddd8d1)
 
 ---

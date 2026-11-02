@@ -9,37 +9,34 @@
 
 ### Session 2025-12-22
 
-- Q: What happens when user initiates multiple OAuth2 flows for the same service simultaneously (race condition)? → A: Flows capture the current session ID and callback generation in sealed state. The first successful callback from that baseline wins; competing callbacks return success without replacing its credentials. A reconnect begun after that success captures the new generation and may replace credentials.
+- Q: What happens when user initiates multiple OAuth2 flows for the same service simultaneously? → A: Flows capture the current session ID and callback generation in sealed state. The first successful callback from that baseline wins and clears recorded refresh rejection. Competing callbacks preserve its credentials. A later deliberate reconnect captures the new generation and can replace credentials.
 - Q: How does system handle third-party authorization endpoint returning an error instead of authorization code? → A: Parse OAuth2 error response (error, error_description); redirect to sessions page with user-friendly error message displayed; allow immediate retry
 - Q: How does system handle network failures during token exchange? → A: Retry token exchange up to 3 times with exponential backoff (1s, 2s, 4s); if all retries fail, display error message allowing user to retry OAuth2 flow
-- Q: When is a session expired? → A: When neither its access token nor a stored refresh token is usable. An access-only session expires with its access token. Unknown refresh-token expiry does not guarantee indefinite validity.
-- Q: What happens if a third-party service is deleted while user sessions exist? → A: Block service deletion with error message listing active session count; admin must manually terminate all user sessions before deleting service
+- Q: What happens when the access token expires but a refresh token is stored? → A: Refresh remains available unless the provider rejected it. Access expiry alone does not require reauthentication in this case. The broker does not predict third-party refresh-token expiry.
+- Q: What happens if a service has session rows when an administrator deletes it? → A: All retained rows block deletion, including rejected sessions. The administrator must explicitly terminate these rows first.
 
 ### Session 2026-10-28
 
-- Q: How does the service card show a session whose stored refresh token has expired or was rejected while its access token is still valid? → A: The session is not expired (FR-002), so the card keeps the "Expiring Soon" status and the Terminate button and adds a Login button with the hint "Log in to keep access". When the access token expires, the session is expired and the card shows only Login.
-- Q: Does the card offer Login for a usable session without a refresh token? → A: No. It shows Terminate only and offers Login once the access token has expired.
+- Q: How does the service card show recorded refresh rejection while access remains unexpired? → A: The card shows "Reauthentication required", Login, and Terminate. Refresh is unavailable. Future broker token issuance stops immediately.
+- Q: Does the card offer Login for a usable session without a refresh token? → A: No. It shows Terminate and offers Login after access expiry. Terminate remains available after expiry.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - View Available Third-Party Sessions (Priority: P1)
 
-A user needs to see which third-party services have active sessions with the identity broker and understand their current session status for each service (whether they're logged in, when the session was initiated, and how many agents depend on it).
+A user needs to see retained third-party sessions and their current status. This includes initiation time, dependent agents, access-token expiry, and required reauthentication.
 
 **Why this priority**: This is the foundational capability that provides users visibility into available services and their authentication status. Without this view, users cannot discover which third-party services have been delegated to agents.
 
-**Independent Test**: User navigates to the "Third-party Sessions" page and sees a list of all registered third-party OAuth2 services that have sessions with status indicators showing when the session was initiated, how many agents use it, and that tokens are stored encrypted and if the session has expired.
+**Independent Test**: The sessions page lists retained sessions, initiation time, dependent agents, and encryption status. It distinguishes access-token expiry from required reauthentication.
 
 **Acceptance Scenarios**:
 
-1. **Given** user is authenticated and third-party services are configured, **When** user navigates to the third-party sessions page, **Then** system displays a list of all configured third-party OAuth2 services with their display names and descriptions if they have an active session
-2. **Given** user has established a session with a service, **When** viewing the service card, **Then** system displays session initiation timestamp, number of agents using this session, expiry date of a usable refresh token and an encryption status indicator
+1. **Given** an authenticated user with configured services, **When** user opens the sessions page, **Then** it lists retained sessions. Each entry includes the service name and description. Rejected sessions remain visible.
+2. **Given** user has a session, **When** user views its card, **Then** the card shows session metadata. This includes initiation time, dependent-agent count, encryption status, and current status. It shows no refresh-expiry date or permanent-validity claim.
 4. **Given** user views an established session, **When** reviewing the service card, **Then** system shows a "Terminate Session" button
 5. **Given** multiple agents depend on a session, **When** user views the session card, **Then** system displays the count of dependent agents
-6. **Given** user has an established session where neither the access token nor a stored refresh token is usable, **When** viewing the service card, **Then** system displays session with "Expired" status indicator and the hint "Log in to reconnect", and user must re-authenticate to establish new session. To re-authenticate show a login button instead of the Terminate button. (see Journeys 1 and 2)
-7. **Given** user has an established session whose stored refresh token has expired or was rejected by the provider while its access token is still valid, **When** viewing the service card, **Then** system displays the "Expiring Soon" status indicator with the hint "Log in to keep access", shows a Login button next to the Terminate button, and shows neither a Refresh button nor a refresh-token expiry date (see Journey 1)
-8. **Given** user has an established session without a stored refresh token whose access token is still valid, **When** viewing the service card, **Then** system shows the Terminate button and neither a Refresh button nor a Login button (see Journey 2)
-9. **Given** the provider rejects the stored refresh token, **When** user clicks Refresh on the service card, **Then** system shows the error "Your <service display name> session can no longer be renewed. Log in to reconnect." and the card offers Login without a page reload (see Journey 1)
+6. **Given** a session has an unexpired access token, **When** user clicks Refresh, **Then** provider HTTP 400 `invalid_grant` makes the broker record rejection. The broker retains the row and token metadata. The card immediately shows "Reauthentication required" without a reload. Login is available, Refresh is hidden, and Terminate remains an optional action. Later token acquisition returns no token. **When** user clicks Login and completes the real authorize/callback flow, **Then** the winning callback clears rejection. The card returns to "Active", and Refresh is available again.
 
 ---
 
@@ -62,7 +59,7 @@ A user needs to authenticate with a third-party service by initiating an OAuth2 
 7. **Given** state token validation fails at callback, **When** system detects mismatch, **Then** system rejects the callback with error and does not store any tokens
 8. **Given** third-party returns OAuth2 error in callback (e.g., access_denied, invalid_scope), **When** system processes callback, **Then** system parses error and error_description parameters, redirects user to sessions page with user-friendly error message, and Login button remains available for retry
 9. **Given** token exchange request fails due to network error, **When** system attempts token exchange, **Then** system retries up to 3 times with exponential backoff (1s, 2s, 4s), and if all retries fail, displays error message allowing user to restart OAuth2 flow
-10. **Given** a session with a usable stored refresh token exists, **When** the user re-connects the same service and the provider's token response omits `refresh_token`, **Then** system accepts the reconnect, replaces the access token, and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The new access token remains usable until its expiry, after which token exchange requires re-authentication rather than refreshing with the old account's token. A subsequent reconnect with a new refresh token restores automatic refresh.
+10. **Given** a session with stored refresh credentials exists, **When** a winning reconnect response omits `refresh_token`, **Then** the broker replaces the access token, clears stored refresh credentials, and clears rejection. It never combines credentials from different upstream accounts. After access expiry, exchange requires reauthentication rather than refreshing with the old token.
 11. **Given** multiple flows begin for the same user and service before any completes, with or without an existing session, **When** their callbacks succeed, **Then** only the first callback to persist credentials replaces or creates the connection; competing callbacks return success without changing its tokens. A deliberate reconnect begun after that success may replace credentials. Refresh does not change callback precedence, and a reconnect cannot recreate a deleted session.
 
 ---
@@ -81,7 +78,7 @@ A user needs to revoke their session with a third-party service, which removes s
 2. **Given** warning dialog shows affected agents, **When** user confirms termination, **Then** system deletes stored tokens (access token, refresh token) from token vault and removes session record
 3. **Given** session is terminated, **When** user returns to sessions page, **Then** service card shows "Login" button again with no session status indicators
 4. **Given** agents previously used a terminated session, **When** those agents attempt to use the session, **Then** agents detect missing session and must request user to re-authenticate
-5. **Given** user cancels termination in warning dialog, **When** dialog is dismissed, **Then** session remains active and no changes are made
+5. **Given** user cancels termination in the warning dialog, **When** the dialog closes, **Then** the session retains its previous status and stored state.
 
 ---
 
@@ -142,11 +139,14 @@ The consent page stores its selections and original return URL in current-tab `s
 
 ### Edge Cases
 
-- **Multiple simultaneous OAuth2 flows for same service**: Initial flows use an atomic insert-if-absent on (principal, service_id). Reconnects replace credentials under the refresh lock only if the session ID and callback generation still match their sealed authorize-time baseline. Every successful credential replacement advances the callback generation; refresh leaves it unchanged. Competing callbacks preserve the current session and return success. A reconnect whose session was deleted fails without recreating it.
+- **Multiple simultaneous OAuth2 flows for same service**: Initial flows use an atomic insert-if-absent on (principal, service_id). Reconnects replace credentials under the refresh lock only if the session ID and callback generation still match their sealed authorize-time baseline. Successful replacement clears rejection and advances the callback generation. Refresh preserves the generation. Competing callbacks preserve the current session and return success. A reconnect whose session was deleted fails without recreating it.
 - **Third-party authorization errors**: When third-party returns OAuth2 error (e.g., access_denied, invalid_scope, server_error), system parses error and error_description parameters from callback URL, redirects user to sessions page with user-friendly error message, and allows immediate retry via Login button.
 - **Network failures during token exchange**: System retries token exchange request up to 3 times with exponential backoff (1s, 2s, 4s delays). If all retries fail, displays error message to user allowing them to retry the entire OAuth2 flow from the beginning.
-- **Session usability**: A session remains active while its access token is valid or a stored refresh token is usable. An expired access token can refresh transparently. An access-only reconnect becomes expired after its access token expires. Unknown refresh-token expiry permits refresh attempts but must not display as non-expiring.
-- **Third-party service deletion with active sessions**: System blocks service deletion and returns error message showing count of active user sessions. Admin must manually terminate all user sessions before service can be deleted (enforced by ON DELETE RESTRICT foreign key constraint).
+- **Expired access token with stored refresh credentials**: The card shows "Access Token Expired" unless the provider rejected refresh. The broker can attempt refresh. Credential presence does not prove provider validity.
+- **Provider refresh rejection**: HTTP 4xx `invalid_grant`, excluding 429, records rejection and immediately stops future broker token issuance. The broker retains ciphertext, access expiry, and other metadata. The card shows "Reauthentication required" even for unexpired access tokens.
+- **Transient refresh failure**: Other provider errors, transport errors, and malformed responses do not record rejection. An otherwise valid access token remains usable.
+- **Access-only sessions and unknown expiry**: Access expiry requires reauthentication when no refresh credential exists. Missing access expiry means unknown expiry, not permanent validity.
+- **Service deletion with retained sessions**: The foreign key blocks deletion while session rows reference a service, including rejected rows. The administrator must explicitly terminate those sessions first.
 - **Malformed or missing callback parameters**: When third-party returns malformed callback (missing code or state), system redirects to sessions page with error message "Invalid callback parameters" and allows retry via Login button. Missing code treated same as access_denied error.
 - **Redirect URI domain mismatch**: When redirect_uri parameter in authorize request does not match the Host header of the incoming request, system returns 400 Bad Request with error "invalid_redirect_uri" and message "redirect_uri must match the host of the request". Flow does not proceed.
 - **PKCE validation failures**: When PKCE code_verifier from state token fails validation at third-party token endpoint (invalid_grant error), system logs security event, redirects to sessions page with error "Authorization failed - please try again", and allows retry via Login button.
@@ -163,7 +163,7 @@ uses the `en-US` locale in UTC. All IDs, codes, and tokens are synthetic. Sessio
 `UserSessionSummary` objects from the session list; `...` marks fields unchanged from the
 previous step.
 
-### Journey 1 — GitHub rejects Alice's refresh token and she reconnects (User Story 1, Scenarios 6, 7 and 9)
+### Journey 1 — GitHub rejects Alice's refresh token and she reconnects (User Story 1, Scenario 6)
 
 **Step 1 — 09:30:00: initial state**
 
@@ -178,10 +178,9 @@ Alice's GitHub session holds access token `gho_old`, valid until 10:00:00, and r
   "token_type": "Bearer",
   "scope": ["repo", "user:email"],
   "initiated_at": "2026-10-01T08:00:00Z",
-  "is_expired": false,
+  "requires_reauthentication": false,
   "access_token_expired": false,
   "has_refresh_token": true,
-  "refresh_token_expires_at": "2026-11-30T08:00:00Z",
   "dependent_agent_count": 1,
   "is_encrypted": true
 }
@@ -189,7 +188,7 @@ Alice's GitHub session holds access token `gho_old`, valid until 10:00:00, and r
 
 State A — active session:
 
-![State A: active GitHub session with Refresh and Terminate](wireframes/journey-1-a-active.svg)
+The Wireloom source that follows shows the active GitHub card.
 
 <details><summary>Wireloom source</summary>
 
@@ -207,7 +206,6 @@ window "Third-Party Sessions":
       text "Encrypted" muted size=small
       text "1 agent" muted size=small
       text "Established: Oct 1, 2026, 08:00 AM" muted size=small
-      text "Session might expire after Nov 30, 2026, 08:00 AM" muted size=small
       row:
         text "Scopes:" size=small
         chip "repo"
@@ -242,14 +240,15 @@ Content-Type: application/json
 {"error": "invalid_grant", "error_description": "The refresh token has been revoked."}
 ```
 
-The broker records the refresh token as expired at 09:30:05
-(`specs/013-token-exchange/spec.md`, User Story 5, Scenario 4) and answers the page:
+The broker records `refresh_token_rejected=true` at 09:30:05 without changing ciphertext or access expiry.
+Durable PostgreSQL rejection requires phase 47 activation; schema 46 refuses the write as `persistence_failed`.
+The memory adapter already supports this lifecycle. With rejection persistence active, the broker answers:
 
 ```http
-HTTP/1.1 502 Bad Gateway
+HTTP/1.1 409 Conflict
 Content-Type: application/json
 
-{"error": "refresh_failed", "message": "failed to refresh token with the third-party provider"}
+{"error": "refresh_rejected", "message": "refresh token rejected by provider; reauthentication required"}
 ```
 
 The page reloads the session list. The GitHub entry now reads:
@@ -258,20 +257,19 @@ The page reloads the session list. The GitHub entry now reads:
 {
   "id": "660e8400-e29b-41d4-a716-446655440001",
   "...": "...",
-  "is_expired": false,
+  "requires_reauthentication": true,
   "access_token_expired": false,
   "has_refresh_token": true,
-  "refresh_token_expires_at": "2026-10-28T09:30:05Z",
   "dependent_agent_count": 1,
   "is_encrypted": true
 }
 ```
 
-The session is not expired: its access token stays usable until 10:00:00 (FR-002).
+Recorded rejection stops future broker token issuance even though the access token expires at 10:00:00.
 
 State B — refresh token rejected, access token still valid:
 
-![State B: rejected refresh with error banner, Expiring Soon, Login and Terminate](wireframes/journey-1-b-rejected-refresh.svg)
+State B shows "Reauthentication required", Login, and Terminate. Refresh is unavailable.
 
 <details><summary>Wireloom source</summary>
 
@@ -288,9 +286,9 @@ window "Third-Party Sessions":
         button "Login" id="login"
         button "Terminate" accent=danger
       row:
-        status "Expiring Soon" kind=warning
+        status "Reauthentication required" kind=error
         spacer
-        text "Log in to keep access" size=small
+        text "Log in to reconnect" size=small
       text "Encrypted" muted size=small
       text "1 agent" muted size=small
       text "Established: Oct 1, 2026, 08:00 AM" muted size=small
@@ -312,18 +310,17 @@ The GitHub entry now reads:
 {
   "id": "660e8400-e29b-41d4-a716-446655440001",
   "...": "...",
-  "is_expired": true,
+  "requires_reauthentication": true,
   "access_token_expired": true,
   "has_refresh_token": true,
-  "refresh_token_expires_at": "2026-10-28T09:30:05Z",
   "dependent_agent_count": 1,
   "is_encrypted": true
 }
 ```
 
-State C — expired session:
+State C — access expired, reauthentication still required:
 
-![State C: expired GitHub session with Login only](wireframes/journey-1-c-expired.svg)
+The card still offers Login and Terminate.
 
 <details><summary>Wireloom source</summary>
 
@@ -335,8 +332,9 @@ window "Third-Party Sessions":
         text "GitHub" bold size=large
         spacer
         button "Login" id="login"
+        button "Terminate" accent=danger
       row:
-        status "Expired" kind=error
+        status "Reauthentication required" kind=error
         spacer
         text "Log in to reconnect" size=small
       text "Encrypted" muted size=small
@@ -374,12 +372,12 @@ HTTP/1.1 302 Found
 Location: https://broker.example.com/sessions?service_id=880e8400-e29b-41d4-a716-446655440010&success=true
 ```
 
-**Observable result**: From 09:30:05, the card tells Alice to log in instead of offering Refresh,
-while it keeps Terminate until 10:00:00. After she reconnects, the page shows "Successfully
-connected to service. You can now delegate access to agents." and the GitHub card is active with
-Refresh and Terminate.
+**Observable result**: From 09:30:05, the card requires reauthentication and stops offering Refresh.
+Terminate remains available throughout recovery. The winning reconnect callback stores new credentials and clears rejection.
+The page then shows "Successfully connected to service. You can now delegate access to agents."
+The GitHub card returns to "Active" with Refresh and Terminate.
 
-### Journey 2 — Alice's Docs Wiki session has no refresh token (User Story 1, Scenarios 6 and 8)
+### Journey 2 — Alice's Docs Wiki session has no refresh token (User Story 1, Scenarios 1 and 2)
 
 **Step 1 — 16:00:00: an access-only session**
 
@@ -394,7 +392,7 @@ and no refresh token. The sessions page lists:
   "token_type": "Bearer",
   "scope": ["wiki:read"],
   "initiated_at": "2026-10-28T09:00:00Z",
-  "is_expired": false,
+  "requires_reauthentication": false,
   "access_token_expired": false,
   "has_refresh_token": false,
   "dependent_agent_count": 0,
@@ -438,7 +436,7 @@ Nothing can renew the access token, so the Docs Wiki entry now reads:
 {
   "id": "660e8400-e29b-41d4-a716-446655440002",
   "...": "...",
-  "is_expired": true,
+  "requires_reauthentication": true,
   "access_token_expired": true,
   "has_refresh_token": false,
   "dependent_agent_count": 0,
@@ -446,9 +444,9 @@ Nothing can renew the access token, so the Docs Wiki entry now reads:
 }
 ```
 
-State B — expired session:
+State B — access expired, reauthentication required:
 
-![State B: expired Docs Wiki session with Login only](wireframes/journey-2-b-expired.svg)
+The card offers Login and Terminate.
 
 <details><summary>Wireloom source</summary>
 
@@ -460,8 +458,9 @@ window "Third-Party Sessions":
         text "Docs Wiki" bold size=large
         spacer
         button "Login" id="login"
+        button "Terminate" accent=danger
       row:
-        status "Expired" kind=error
+        status "Reauthentication required" kind=error
         spacer
         text "Log in to reconnect" size=small
       text "Encrypted" muted size=small
@@ -477,16 +476,16 @@ annotation "Next: Journey 1, Step 4\nwith this service ID" target="login" positi
 </details>
 
 **Observable result**: The Docs Wiki card offers only Terminate while its access token is usable.
-At 17:00:00 it becomes expired and offers Login, which starts the same flow as Journey 1, Step 4.
+At 17:00:00 it requires reauthentication and offers Login alongside Terminate. Login starts Journey 1, Step 4.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide a user interface listing all configured third-party OAuth2 services with active sessions
-- **FR-002**: System MUST display session existence, initiation timestamp, dependent agent count, encryption status, and domain-owned usability status. A session is expired only when neither its access token nor a stored refresh token is usable. Unknown refresh-token expiry MUST NOT display as non-expiring.
-- **FR-003**: System MUST provide a "Login" button for services with expired sessions (replaces Terminate button - user must re-authenticate; cannot terminate expired session) and, next to the Terminate button, for sessions whose stored refresh token has expired while the access token is still valid. System MUST NOT offer Login for other sessions. The Login button MUST use the same style as the Login button on the consent screen.
-- **FR-004**: System MUST provide a "Terminate Session" button for services with established sessions
+- **FR-001**: System MUST list retained third-party sessions, including sessions that require reauthentication.
+- **FR-002**: System MUST show initiation time, dependent-agent count, encryption status, and status without predicted refresh-expiry dates. Status precedence is "Reauthentication required", "Access Token Expired", then "Active".
+- **FR-003**: System MUST show Login for sessions with `requires_reauthentication=true`. Refresh MUST appear only with stored refresh credentials and no required reauthentication.
+- **FR-004**: System MUST keep Terminate available for every retained session. Reauthentication does not require prior termination.
 - **FR-005**: System MUST expose `GET /api/third-party/{serviceId}/oauth2/authorize` accepting a `redirect_uri` query parameter and a same-origin `POST /api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` and `consent_state_id` form fields to initiate OAuth2 authorization code flow with PKCE
 - **FR-006**: System MUST validate that `redirect_uri` parameter in authorize endpoint matches the host of the incoming request (same-origin validation)
 - **FR-007**: System MUST generate PKCE code verifier (32-128 bytes per RFC 7636, using crypto/rand.Reader for entropy) and code challenge (SHA256 hash of verifier, base64url encoded) for each OAuth2 flow
@@ -517,7 +516,7 @@ At 17:00:00 it becomes expired and offers Login, which starts the same flow as J
 
 **Entities**:
 
-- **UserSession**: Represents an authenticated session between a user (principal) and a third-party OAuth2 service. Contains encrypted access token, refresh token, service ID, principal identifier, initiation timestamp, and token expiration metadata.
+- **UserSession**: Stores encrypted third-party tokens, scope, principal, service ID, initiation time, access-token expiry, and observed refresh rejection. A false rejection flag means no observed rejection, not proven validity.
 
 - **OAuth2StateToken**: JWE token containing the OAuth2 flow state parameters. Short-lived, contains principal, PKCE verifier, service_id, and redirect_uri. Used only during OAuth2 authorization flow to bind callback to the initiating request.
 
@@ -563,15 +562,20 @@ third_party_oauth2:
 - **API-007**: All endpoints MUST require authenticated principal (X-Remote-User header)
 - **API-008**: APIs MUST follow Zalando RESTful API and Event Guidelines
 - **API-009**: Error responses MUST follow standard format: `{"error": "code", "message": "description"}`
+- **API-010**: The session contract MUST use version `2.0.0` without endpoint changes. It MUST expose `requires_reauthentication` instead of an invented session-expiry predicate. No refresh-expiry field exists.
+- **API-011**: Manual refresh MUST return 409 `refresh_rejected` for recorded or newly observed rejection. Its message is `refresh token rejected by provider; reauthentication required`. Absent refresh credentials return 409 `refresh_unavailable`. Transient upstream errors return 502 `refresh_failed`.
+- **API-012**: `has_refresh_token` MUST report ciphertext presence, including rejected credentials. `access_token_expired` MUST remain an independent access-token fact.
 
 ### Database Requirements
 
-- **DB-001**: Create migration `004_create_user_sessions.up.sql` and `004_create_user_sessions.down.sql` for user_sessions table
-- **DB-002**: user_sessions table schema MUST include: id (UUID primary key), principal (string, indexed), service_id (UUID, foreign key to thirdparty_oauth2_services), encrypted_access_token (bytea), encrypted_refresh_token (bytea, nullable), token_type (string), access_token_expires_at (timestamp, nullable), refresh_token_expires_at (timestamp, nullable), initiated_at (timestamp), scope (string array), encryption_context (jsonb), callback_id (text, private callback generation; empty for pre-existing sessions)
-- **DB-003**: The unique constraint on (principal, service_id) enforces one session per user and service. Initial callbacks MUST insert without overwriting an existing row. Reconnects MUST compare and advance callback_id atomically under the refresh lock. The unique constraint alone does not establish callback precedence.
+**Release scope**: PR1 ships only migration 046 and prepared application code. Migrations 047 and 048 belong to following PRs and are not present. The memory adapter already supports rejection. PostgreSQL at 46 supports ordinary traffic but rejects true writes as `persistence_failed`. Durable PostgreSQL rejection requirements apply from PR2 activation. PR1 defaults and limits Helm targets to 46. Fresh installs run direct UP-all through 46, while normal upgrades use the guarded wrapper. PostgreSQL upgrades with migrations enabled refuse targets below 46. Compatibility defaults true in preparation and activation, with explicit false supported for modern consumers. Cleanup defaults false after its consumer gate passes. The alias supplies only `is_expired=requires_reauthentication`, without refresh dates.
+
+- **DB-001**: Preserve original migration `004_create_user_sessions` and migration 037 unchanged. Migration 046 MUST prepare a stable view and write functions without changing the legacy table shape. Before merging or deploying PR2, complete the PR1 rollout and drain every unprepared replica and in-flight operation. PR2 adds migration 047 and activates durable rejection without restart. Before merging or deploying PR3, upgrade the embedded SPA and every external session-API consumer. PR3 adds migration 048 and removes only the unused legacy column after schema dependencies end. The separate runner MUST support explicit phase targets. Temporary storage compatibility MUST NOT imply provider validity.
+- **DB-002**: From phase 47, the schema MUST include id, principal, service_id, encrypted tokens, token_type, access_token_expires_at, refresh_token_rejected, initiated_at, scope, and encryption_context. `refresh_token_rejected` is BOOLEAN NOT NULL DEFAULT FALSE. Historical expiry values MUST NOT imply rejection. Preparation/new brokers MUST use `user_session_state` and stable invoker write functions at phases 46, 47, and 48. The preparation view reports false and rejects requested rejection writes rather than claiming persistence.
+- **DB-003**: Keep the unique constraint on (principal, service_id). Initial callbacks MUST insert without overwriting an existing row. Reconnects MUST compare and advance the private callback generation under the refresh lock. A winning callback replaces credentials and clears rejection. Competing callbacks preserve the current row. Normal refresh MUST NOT clear rejection or change callback precedence.
 - **DB-004**: Add index on principal for fast session lookups by user
-- **DB-005**: Add foreign key constraint from service_id to third_party_services.id with ON DELETE RESTRICT (prevent deleting services with active sessions). Admin interface must catch constraint violation and display error message with active session count, requiring admin to terminate all user sessions before service deletion.
-- **DB-006**: Migration MUST be tested for both up and down operations without data loss
+- **DB-005**: Keep the service_id foreign key with ON DELETE RESTRICT. Retained sessions MUST block service deletion, including rejected rows. The administrator MUST explicitly terminate these rows before deletion.
+- **DB-006**: PR1 migration tests MUST cover legacy reads/writes at 46, data preservation, true-write refusal, and preparation rollback/reapply. PR2 adds phase-47 rejection, guarded rollback, and contention coverage. PR3 adds the final phase-48 lifecycle and nullable-column restoration coverage. Tests MUST NOT call an absent migration. Rendered Helm tests MUST cover default fresh-install UP-all, default guarded upgrade 46, upgrade refusal for targets below 46, both grants modes, compatibility true with explicit false, and rolling availability. Real image execution MUST abort on dirty metadata and leave equal/newer clean schemas unchanged. Serialize migration runners. Rollback MUST use compatible binaries and an explicit separate-runner DOWN, never forward Helm stage controls. Operators MUST inspect actual schema and dirty metadata before deliberate repair, never automatic `Force` or row deletion. See the [online rollout runbook](../../docs/operations/session-sweep.md#online-session-validity-rollout-migrations-046048) for availability and SPA-asset prerequisites.
 - **DB-007**: Repository implementation MUST follow `specs/004-persistence-layer/quickstart.md` patterns
 
 ### Security Requirements
@@ -619,11 +623,11 @@ third_party_oauth2:
 - Third-party OAuth2 services support authorization code flow with PKCE (RFC 7636)
 - Third-party services accept redirect_uri pointing to the broker's callback endpoint
 - Agent-to-session dependency tracking will be implemented separately (counts displayed but relationship management is future work)
-- Token refresh logic (using refresh tokens to obtain new access tokens) is deferred to future enhancement
+- On-demand and manual refresh use stored credentials unless rejection is recorded. Feature 029 specifies proactive refresh and sweep operations.
 
 ## Out of Scope *(optional - explicitly state what's NOT included)*
 
-- Automatic token refresh using refresh tokens when access tokens expire (future enhancement - will be implemented transparently to users)
+- Automatic refresh scheduling and sweep operations belong to feature 029. They exclude recorded provider rejection.
 - Token revocation at third-party services when session is terminated
 - Multi-tab synchronization of session status (users must refresh to see updates)
 - Session timeout or automatic expiration based on inactivity

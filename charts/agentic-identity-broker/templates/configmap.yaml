@@ -84,6 +84,7 @@ data:
       credential_files:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      session_api_compatibility: {{ .Values.broker.thirdPartyOauth2.sessionAPICompatibility }}
 
     # Proactive third-party token refresh configuration
     token_refresh:

@@ -31,8 +31,8 @@ export interface SessionSummary {
   /** ISO 8601 timestamp when session was initiated */
   initiated_at: string;
 
-  /** Neither access nor stored refresh credentials are usable */
-  is_expired: boolean;
+  /** Whether provider rejection or exhausted access-only credentials require login */
+  requires_reauthentication: boolean;
 
   /** Whether the access token specifically is expired */
   access_token_expired: boolean;
@@ -40,23 +40,11 @@ export interface SessionSummary {
   /** Whether a refresh token is stored for this session */
   has_refresh_token: boolean;
 
-  /** Recorded refresh-token expiry; absent means unknown, not indefinite */
-  refresh_token_expires_at?: string;
-
   /** Number of agents depending on this session */
   dependent_agent_count: number;
 
   /** Whether session data is encrypted at rest */
   is_encrypted: boolean;
-}
-
-/**
- * Response from GET /api/third-party/sessions
- */
-export interface ListSessionsResponse {
-  data: {
-    sessions: SessionSummary[];
-  };
 }
 
 /**
@@ -79,11 +67,22 @@ export interface SessionDetail {
   dependent_agents: AgentInfo[];
 }
 
-/**
- * Response from GET /api/third-party/:service-id/session
- */
-export interface GetSessionDetailResponse {
-  data: SessionDetail;
+type SessionResponse = Omit<SessionSummary, 'requires_reauthentication'> & {
+  requires_reauthentication?: boolean;
+  is_expired?: boolean;
+  refresh_token_expires_at?: string;
+};
+
+function normalizeSession(session: SessionResponse): SessionSummary {
+  return {
+    ...session,
+    requires_reauthentication:
+      session.requires_reauthentication ??
+      (session.is_expired === true ||
+        (session.has_refresh_token &&
+          !!session.refresh_token_expires_at &&
+          new Date(session.refresh_token_expires_at).getTime() <= Date.now())),
+  };
 }
 
 /**
@@ -107,10 +106,10 @@ export class SessionsApiService {
     }
 
     // Fetch from API
-    const response = await apiClient.get<ListSessionsResponse>(
-      '/third-party/sessions',
-    );
-    const sessions = response.data.data.sessions || [];
+    const response = await apiClient.get<{
+      data: { sessions: SessionResponse[] };
+    }>('/third-party/sessions');
+    const sessions = (response.data.data.sessions || []).map(normalizeSession);
 
     // Cache the result (2 minutes TTL)
     apiCache.set(cacheKey, sessions, 2 * 60 * 1000);
@@ -136,10 +135,13 @@ export class SessionsApiService {
     }
 
     // Fetch from API
-    const response = await apiClient.get<GetSessionDetailResponse>(
-      `/third-party/${serviceId}/session`,
-    );
-    const data = response.data.data;
+    const response = await apiClient.get<{
+      data: { session: SessionResponse; dependent_agents: AgentInfo[] };
+    }>(`/third-party/${serviceId}/session`);
+    const data = {
+      ...response.data.data,
+      session: normalizeSession(response.data.data.session),
+    };
 
     // Cache the result (2 minutes TTL)
     apiCache.set(cacheKey, data, 2 * 60 * 1000);
@@ -163,7 +165,7 @@ export class SessionsApiService {
 
   /**
    * Refresh an OAuth2 session (renew access token using refresh token).
-   * Invalidates relevant caches after successful refresh.
+   * Invalidates relevant caches even when provider rejection changes session state.
    *
    * @param serviceId - Third-party service identifier
    * @returns Updated session information
@@ -171,12 +173,11 @@ export class SessionsApiService {
    */
   async refreshSession(serviceId: string): Promise<SessionSummary> {
     try {
-      const response = await apiClient.post<{ data: SessionSummary }>(
+      const response = await apiClient.post<{ data: SessionResponse }>(
         `/third-party/${serviceId}/session/refresh`,
       );
-      return response.data.data;
+      return normalizeSession(response.data.data);
     } finally {
-      // A rejected refresh also changes the session: its refresh token is recorded as expired
       apiCache.invalidatePattern('/third-party/*');
     }
   }

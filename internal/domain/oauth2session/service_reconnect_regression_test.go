@@ -67,7 +67,7 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		require.NoError(t, <-reconnected)
 		assert.Equal(t, "other-account-access", string(stored.EncryptedAccessToken))
 		assert.Empty(t, stored.EncryptedRefreshToken)
-		assert.Nil(t, stored.RefreshTokenExpiresAt)
+		assert.False(t, stored.RefreshTokenRejected)
 		require.NotNil(t, stored.AccessTokenExpiresAt)
 		assert.Equal(t, time.Now().Add(time.Hour), *stored.AccessTokenExpiresAt)
 		assert.Equal(t, []string{"other-scope"}, stored.Scope)

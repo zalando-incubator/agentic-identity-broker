@@ -54,7 +54,7 @@ description: "Task list for feature 053: automatic third-party session refresh"
   - `data-model.md`: the classification flowchart and the `AccessExpiryClass` table, where "at or before `threshold`" is inclusive
   - `contracts/ports.md` §1 and §2
 
-  They must agree on the classes `unknown` → `after_threshold` → `due` → `expired` (an expiry equal to `now` is expired), on `threshold = now + token_refresh.lookahead_duration`, and on "refresh usable = present and expiry nil or after now". Record any correction in `spec.md` (Principle II).
+  They must agree on the classes `unknown` → `after_threshold` → `due` → `expired` (an expiry equal to `now` is expired), on `threshold = now + token_refresh.lookahead_duration`, and on "refresh usable = present and not rejected". Record any correction in `spec.md` (Principle II).
 
 ### Phase 2b: Configuration Design
 
@@ -79,7 +79,7 @@ description: "Task list for feature 053: automatic third-party session refresh"
 
 ### Phase 2d: Database Design
 
-- [X] T012 Confirm in `plan.md` that there is no schema change or migration (DB-001), and that the health query reads only `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_expires_at` (DB-002, DB-003) (Principle IX).
+- [X] T012 Confirm in `plan.md` that there is no schema change or migration (DB-001), and that the health query reads only `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_rejected` through `user_session_state` (DB-002, DB-003) (Principle IX).
 
 ### Phase 2e: Frontend/Design System Review
 
@@ -102,7 +102,7 @@ description: "Task list for feature 053: automatic third-party session refresh"
   - **Setup**: Install `sdkmetric.NewManualReader()` as the global MeterProvider in `BeforeEach` with `DeferCleanup` before `BuildApp`, as in `tests/e2e/approval_api_test.go:136-143`. Set `config.TokenRefresh.LookaheadDuration = 5*time.Minute`, `config.TokenRefresh.HealthMetrics = {Enabled: true, QueryTimeout: 2*time.Second}`. Seed sessions with `fixtures.HealthJourneySessions(now)` and the per-state builders from T013a. Collect and filter `oauth2_sessions`.
   - **US2-S1**: one point per `(service_id, expiry, refreshable)`, and the per-service sum equals the seeded count.
   - **US2-S2**: zero-valued points are present.
-  - **US2-S3 to US2-S6**: the expected `(expiry, refreshable)` series per seeded session shape. S4 seeds one session due within the lookahead and one already expired, both with a usable refresh token, and expects `expiring/true` and `expired/true`. S5 covers both a missing refresh token and an expired refresh expiry.
+  - **US2-S3 to US2-S6**: the expected `(expiry, refreshable)` series per seeded session shape. S4 seeds one session due within the lookahead and one already expired, both with a usable refresh token, and expects `expiring/true` and `expired/true`. S5 covers both a missing refresh token and recorded provider rejection.
   - **US2-S7**: Use `bootstrap.NewPostgresFixture` storage. Hold `LOCK TABLE user_sessions IN ACCESS EXCLUSIVE MODE` in a separate open transaction. Collect: no `oauth2_sessions` points, and one WARN `session health query failed` with `error_kind` through `bootstrap.NewBufferedJSONLogger`. Release the lock and collect again: points return.
   - **US2-S8**: Postgres fixture, `HealthMetrics.Enabled = false`, the lock held. Collect: completes within 1s, no `oauth2_sessions`, no WARN. This proves no query was issued.
   - **US2-S9**: every point's attribute set has exactly the keys `service_id`, `expiry`, and `refreshable`.
@@ -142,7 +142,7 @@ description: "Task list for feature 053: automatic third-party session refresh"
   Makes T019 green.
 - [X] T021 Add `AccessExpiryClass` and `SessionExpiryGroup{ServiceID id.ServiceID; AccessExpiry AccessExpiryClass; RefreshUsable bool; Count int}` in `internal/domain/storage/user_session.go`.
   - `AccessExpiryClass` has three values: `AccessExpiryUnknown`, `AccessExpiryAfterThreshold`, and `AccessExpiryDue`.
-  - Doc comments state the data-model constraints verbatim: "expiry is at or before `threshold` (inclusive, same as `AccessTokenExpiresBy`)", "Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`)", "Number of sessions in this group, `> 0`", and "Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result."
+  - Doc comments state the data-model constraints verbatim: "expiry is at or before `threshold` (inclusive, same as `AccessTokenExpiresBy`)", "Refresh-token ciphertext present and not rejected (same as `CanRefresh`)", "Number of sessions in this group, `> 0`", and "Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result."
 
   (DB-002)
 - [X] T022 Add `UserSessionHealthRepository` with `CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)` to `internal/ports/storage.go`. Use the doc comment from `contracts/ports.md` §1 (DB-002, DB-003, Principle IX ISP).

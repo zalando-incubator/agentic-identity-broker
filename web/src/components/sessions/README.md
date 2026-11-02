@@ -4,7 +4,7 @@ This directory contains the React frontend implementation for **User Story 1: Vi
 
 ## Overview
 
-Users can view all their active OAuth2 sessions with third-party services, see detailed status information, and manage session lifecycles.
+Users can view retained OAuth2 sessions with third-party services, see status information, and manage session lifecycles.
 
 ## Components
 
@@ -14,18 +14,27 @@ A card component that displays a single OAuth2 session with comprehensive metada
 
 **Features:**
 
-- Status badge with 4 states:
-  - **Active**: Session is valid and operational
-  - **Expiring Soon**: Refresh token expires within 7 days
-  - **Access Token Expired**: Access token expired but refresh token valid
-  - **Expired**: Entire session expired
+- Status badge with 3 states, in this order of precedence:
+  - **Reauthentication required** (error): `requires_reauthentication` is true
+  - **Access Token Expired** (warning): `access_token_expired` is true without required reauthentication
+  - **Active** (success): Neither condition applies
 - Encryption indicator (lock icon)
 - Dependent agent count (shows how many agents use this session)
 - Session initiation timestamp
 - OAuth2 scopes display (as pills/badges)
 - Action buttons:
   - View Details (optional, triggers modal/navigation)
-  - Terminate (with confirmation dialog)
+  - Login (only when `requires_reauthentication` is true and `onLogin` exists)
+  - Refresh (only when `has_refresh_token` is true, `requires_reauthentication` is false, and `onRefresh` exists)
+  - Terminate (available for every retained session, with a confirmation dialog)
+
+Access-token expiry is a recorded fact. Refresh ciphertext shows credential presence, not provider validity.
+A terminal provider refresh rejection requires reauthentication even when the access token is unexpired.
+An expired access token also requires reauthentication when no refresh credential exists.
+
+Successful reauthentication updates the retained session. Explicit termination deletes it.
+
+An unknown access-token expiry does not mean permanent validity. The card shows no expiry-date or lifetime estimate.
 
 **Props:**
 
@@ -34,6 +43,9 @@ interface SessionCardProps {
   session: SessionSummary; // Session data to display
   onTerminate: (serviceId: string) => void; // Termination callback
   onViewDetails?: (serviceId: string) => void; // Optional details callback
+  onRefresh?: (serviceId: string) => void; // Optional refresh callback
+  onLogin?: (serviceId: string) => void; // Optional reauthentication callback
+  refreshing?: boolean; // Loading state for refresh
   loading?: boolean; // Loading state for actions
 }
 ```
@@ -45,6 +57,9 @@ interface SessionCardProps {
   session={session}
   onTerminate={handleTerminate}
   onViewDetails={handleViewDetails}
+  onRefresh={handleRefresh}
+  onLogin={handleLogin}
+  refreshing={isRefreshing}
   loading={isTerminating}
 />
 ```
@@ -63,6 +78,8 @@ Main page component that displays all OAuth2 sessions in a responsive grid layou
 - Empty state when no sessions exist
 - Confirmation dialog before session termination
 - Real-time error handling with user feedback
+- Login through the existing OAuth2 authorize/callback flow, with a return to `/sessions`
+- Refetch after a refresh error so a rejected session immediately shows its recovery actions
 
 **Route:**
 
@@ -93,7 +110,7 @@ Located in `/web/src/services/api/sessions.ts`
 **Caching:**
 
 - Cache TTL: 2 minutes
-- Cache invalidation on mutations (terminate, refresh)
+- Cache invalidation after mutations (terminate, refresh), including refresh rejection
 
 ### useSessions Hook
 
@@ -125,8 +142,8 @@ All components follow the **Refined Trust Architecture** design system:
 ### Colors
 
 - Success (Active): `success-primary` (green)
-- Warning (Expiring Soon, Access Token Expired): `warning-primary` (amber)
-- Error (Expired): `error-primary` (red)
+- Warning (Access Token Expired): `warning-primary` (amber)
+- Error (Reauthentication required): `error-primary` (red)
 - Neutral: `neutral-300` to `neutral-900`
 
 ### Components Used
@@ -270,9 +287,9 @@ The frontend expects the following API response format:
         "token_type": "Bearer",
         "scope": ["read:email", "write:files"],
         "initiated_at": "2024-01-01T12:00:00Z",
-        "is_expired": false,
+        "requires_reauthentication": false,
         "access_token_expired": false,
-        "refresh_token_expires_at": "2024-12-31T23:59:59Z",
+        "has_refresh_token": true,
         "dependent_agent_count": 2,
         "is_encrypted": true
       }
@@ -291,13 +308,12 @@ The frontend expects the following API response format:
 2. **User Story 3**: View Session Details
    - Create SessionDetailPage component
    - Show dependent agents list with names/logos
-   - Display token expiration timeline
+   - Explain access-token expiry and refresh credential presence
    - Show audit log of session events
 
 3. **Phase 4**: OAuth2 Authorization Flow
    - Implement OAuth2 redirect handler
    - Create service selection UI
-   - Add re-authentication flow for expired sessions
 
 ## Performance Optimizations
 

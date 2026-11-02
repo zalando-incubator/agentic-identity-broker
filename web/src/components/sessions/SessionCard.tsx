@@ -5,12 +5,12 @@
  * Follows the "Refined Trust Architecture" design system.
  *
  * Features:
- * - Session status badge (Active, Expiring Soon, Access Token Expired, Expired)
+ * - Session status badge (Active, Access Token Expired, Reauthentication required)
  * - Encryption indicator
  * - Dependent agent count
  * - Session initiation timestamp
  * - OAuth2 scopes display
- * - Refresh and Terminate actions, or Login once the session can no longer be renewed
+ * - Login, Refresh, and Terminate actions
  * - WCAG 2.1 AA compliant
  */
 
@@ -31,23 +31,13 @@ interface SessionCardProps {
   onViewDetails?: (serviceId: string) => void;
   /** Callback when user clicks the refresh button (force token refresh) */
   onRefresh?: (serviceId: string) => void;
-  /** Callback when user clicks the login button of a session that can no longer be renewed */
+  /** Callback when user needs to authenticate with the service again */
   onLogin?: (serviceId: string) => void;
   /** Whether the refresh action is currently loading for this card */
   refreshing?: boolean;
   /** Whether card actions are currently loading */
   loading?: boolean;
 }
-
-/**
- * Whether the session can no longer be renewed without the user logging in again: it is
- * expired, or its stored refresh token is recorded as expired.
- */
-export const sessionNeedsLogin = (session: SessionSummary): boolean =>
-  session.is_expired ||
-  (session.has_refresh_token &&
-    !!session.refresh_token_expires_at &&
-    new Date(session.refresh_token_expires_at).getTime() <= Date.now());
 
 /**
  * SessionCard displays a single OAuth2 session with status information.
@@ -73,21 +63,11 @@ export const SessionCard: React.FC<SessionCardProps> = ({
 }) => {
   // Determine status and color variant
   const { status, variant } = useMemo(() => {
-    if (session.is_expired) {
-      return { status: 'Expired', variant: 'error' as const };
+    if (session.requires_reauthentication) {
+      return { status: 'Reauthentication required', variant: 'error' as const };
     }
     if (session.access_token_expired) {
       return { status: 'Access Token Expired', variant: 'warning' as const };
-    }
-
-    // Check if expiring soon (within 7 days)
-    if (session.refresh_token_expires_at) {
-      const expiresAt = new Date(session.refresh_token_expires_at);
-      const daysUntilExpiry =
-        (expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-      if (daysUntilExpiry < 7) {
-        return { status: 'Expiring Soon', variant: 'warning' as const };
-      }
     }
 
     return { status: 'Active', variant: 'success' as const };
@@ -103,20 +83,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
       minute: '2-digit',
     }).format(new Date(session.initiated_at));
   }, [session.initiated_at]);
-
-  // Format refresh token expiry date using the user's browser locale (if present)
-  const refreshTokenExpiryDate = useMemo(() => {
-    if (!session.refresh_token_expires_at) return null;
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(session.refresh_token_expires_at));
-  }, [session.refresh_token_expires_at]);
-
-  const needsLogin = sessionNeedsLogin(session);
 
   return (
     <Card padding="default" border="subtle" hover="lift">
@@ -139,41 +105,41 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               View Details
             </Button>
           )}
-          {onRefresh && session.has_refresh_token && !needsLogin && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => onRefresh(session.service_id)}
-              isLoading={refreshing}
-              disabled={loading || refreshing}
-              className="flex-shrink-0"
-            >
-              Refresh
-            </Button>
-          )}
-          {onLogin && needsLogin && (
+          {onLogin && session.requires_reauthentication && (
             <Button
               variant="secondary"
               size="sm"
               onClick={() => onLogin(session.service_id)}
-              disabled={loading}
+              disabled={loading || refreshing}
               className="flex-shrink-0"
             >
               Login
             </Button>
           )}
-          {!session.is_expired && (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => onTerminate(session.service_id)}
-              isLoading={loading}
-              disabled={loading || refreshing}
-              className="flex-shrink-0"
-            >
-              Terminate
-            </Button>
-          )}
+          {onRefresh &&
+            session.has_refresh_token &&
+            !session.requires_reauthentication && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onRefresh(session.service_id)}
+                isLoading={refreshing}
+                disabled={loading || refreshing}
+                className="flex-shrink-0"
+              >
+                Refresh
+              </Button>
+            )}
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => onTerminate(session.service_id)}
+            isLoading={loading}
+            disabled={loading || refreshing}
+            className="flex-shrink-0"
+          >
+            Terminate
+          </Button>
         </div>
       </div>
 
@@ -182,13 +148,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         <Badge variant={variant} showDot>
           {status}
         </Badge>
-        {needsLogin && (
-          <p className="m-0 text-xs font-medium text-error-primary">
-            {session.is_expired
-              ? 'Log in to reconnect'
-              : 'Log in to keep access'}
-          </p>
-        )}
       </div>
 
       {/* Body: Session metadata */}
@@ -246,31 +205,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           }
           label={`Established: ${initiatedDate}`}
         />
-
-        {/* Refresh token expiry */}
-        {session.has_refresh_token && !needsLogin && (
-          <StatusIndicator
-            icon={
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="w-4 h-4"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            }
-            label={
-              refreshTokenExpiryDate
-                ? `Session might expire after ${refreshTokenExpiryDate}`
-                : 'Refresh token expiry unknown'
-            }
-          />
-        )}
 
         {/* OAuth2 Scopes */}
         {session.scope && session.scope.length > 0 && (

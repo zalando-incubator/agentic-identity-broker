@@ -36,7 +36,7 @@ var sessionHealthExpiries = []SessionHealthExpiry{
 }
 
 // SessionHealthKey identifies one oauth2_sessions series of a service: the access-token expiry
-// class and whether the refresh token is present and not expired.
+// class and whether the refresh token is present and not rejected.
 type SessionHealthKey struct {
 	Expiry      SessionHealthExpiry
 	Refreshable bool

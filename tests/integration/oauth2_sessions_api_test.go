@@ -88,7 +88,7 @@ func TestListSessions_Success(t *testing.T) {
 	)
 
 	// Create handler
-	handler := oauth2_sessions.NewHandler(service2, slog.Default())
+	handler := oauth2_sessions.NewHandler(service2, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make request
@@ -135,7 +135,7 @@ func TestListSessions_MissingPrincipal(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 
 	// Make request without X-Remote-User header
 	req := httptest.NewRequest("GET", "/api/third-party/sessions", nil)
@@ -168,7 +168,7 @@ func TestListSessions_EmptySessions(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make request for user with no sessions
@@ -242,7 +242,7 @@ func TestAuthorizeEndpoint_Success(t *testing.T) {
 		config,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 
 	// Create router and register routes
 	router := setupTestRouter(handler)
@@ -300,7 +300,7 @@ func TestAuthorizeEndpoint_MissingPrincipal(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make request without X-Remote-User header
@@ -339,7 +339,7 @@ func TestAuthorizeEndpoint_ServiceNotFound(t *testing.T) {
 		config,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make request for non-existent service
@@ -406,7 +406,7 @@ func TestAuthorizeEndpoint_InvalidRedirectURI(t *testing.T) {
 		config,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	tests := []struct {
@@ -489,7 +489,7 @@ func TestAuthorizeEndpoint_VerifyAuthorizationURL(t *testing.T) {
 		config,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
@@ -587,7 +587,7 @@ func TestCallbackEndpoint_Success(t *testing.T) {
 		config,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// For TDD, we'll simulate having a state token
@@ -626,7 +626,7 @@ func TestCallbackEndpoint_MissingPrincipal(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	serviceID := uuid.New().String()
@@ -661,7 +661,7 @@ func TestCallbackEndpoint_InvalidStateToken(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
@@ -729,7 +729,7 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 				oauth2session.DefaultConfig(),
 			)
 
-			handler := oauth2_sessions.NewHandler(service, slog.Default())
+			handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 			router := setupTestRouter(handler)
 
 			principal := "user@example.com"
@@ -782,7 +782,7 @@ func TestCallbackEndpoint_MissingCode(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
@@ -817,7 +817,7 @@ func TestCallbackEndpoint_MissingState(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
@@ -916,7 +916,7 @@ func TestDeleteSession_SuccessfullyTerminatesSessionWithStatusOK(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make DELETE request
@@ -949,7 +949,7 @@ func TestDeleteSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
@@ -982,7 +982,7 @@ func TestDeleteSession_ReturnsUnauthorizedWhenXRemoteUserMissing(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	serviceID := uuid.New().String()
@@ -1052,7 +1052,7 @@ func TestDeleteSession_ReturnsForbiddenWhenPrincipalDoesntMatch(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Try to delete as different user
@@ -1124,7 +1124,7 @@ func TestDeleteSession_VerifiesSessionDeletedFromDatabase(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make DELETE request
@@ -1194,7 +1194,7 @@ func TestDeleteSession_VerifiesTokensDeleted(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 
 	// Make DELETE request
@@ -1270,25 +1270,36 @@ func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
-	router := setupTestRouter(handler)
-	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
-	req.Header.Set("X-Remote-User", principal)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp struct {
-		Data map[string]interface{} `json:"data"`
+	for i, compatibility := range []bool{true, false} {
+		handler := oauth2_sessions.NewHandler(service, slog.Default(), compatibility)
+		router := setupTestRouter(handler)
+		req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
+		req.Header.Set("X-Remote-User", principal)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, serviceUUID.String(), resp.Data["service_id"])
+		assert.Equal(t, float64(1), resp.Data["dependent_agent_count"])
+		assert.Equal(t, true, resp.Data["has_refresh_token"])
+		assert.Equal(t, false, resp.Data["requires_reauthentication"])
+		if compatibility {
+			assert.Equal(t, resp.Data["requires_reauthentication"], resp.Data["is_expired"])
+		} else {
+			assert.NotContains(t, resp.Data, "is_expired")
+		}
+		assert.NotContains(t, resp.Data, "refresh_token_expires_at")
+		require.Len(t, requests, i+1)
+		assert.Equal(t, "refresh_token", requests[i].Get("grant_type"))
+		refreshToken := "old-refresh-token"
+		if i > 0 {
+			refreshToken = "rotated-refresh-token"
+		}
+		assert.Equal(t, refreshToken, requests[i].Get("refresh_token"))
 	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, serviceUUID.String(), resp.Data["service_id"])
-	assert.Equal(t, float64(1), resp.Data["dependent_agent_count"])
-	assert.Equal(t, true, resp.Data["has_refresh_token"])
-	require.Len(t, requests, 1)
-	assert.Equal(t, "refresh_token", requests[0].Get("grant_type"))
-	assert.Equal(t, "old-refresh-token", requests[0].Get("refresh_token"))
 }
 
 func TestRefreshSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
@@ -1304,7 +1315,7 @@ func TestRefreshSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	serviceID := id.NewServiceID()
 	router := setupTestRouter(handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceID.String()+"/session/refresh", nil)
@@ -1348,7 +1359,7 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
 	req.Header.Set("X-Remote-User", principal)
@@ -1388,7 +1399,7 @@ func TestRefreshSession_ReturnsNotFoundForCrossPrincipalRequest(t *testing.T) {
 		oauth2session.DefaultConfig(),
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
 	req.Header.Set("X-Remote-User", "attacker@example.com")
@@ -1458,7 +1469,7 @@ func TestRefreshSession_ReturnsBadGatewayWhenProviderRefreshFails(t *testing.T) 
 		cfg,
 	)
 
-	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	handler := oauth2_sessions.NewHandler(service, slog.Default(), false)
 	router := setupTestRouter(handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
 	req.Header.Set("X-Remote-User", principal)
@@ -1577,7 +1588,7 @@ func newSessionTestRouter(t *testing.T) (*chi.Mux, ports.UserSessionRepository) 
 		nil,
 		oauth2session.DefaultConfig(),
 	)
-	return setupTestRouter(oauth2_sessions.NewHandler(service, slog.Default())), sessionRepo
+	return setupTestRouter(oauth2_sessions.NewHandler(service, slog.Default(), false)), sessionRepo
 }
 
 type sessionDetailIsolationFixture struct {
@@ -1595,6 +1606,14 @@ func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixtur
 	grantRepo := memory.NewUserGrantRepository()
 	agentRepo := memory.NewAgentRepository()
 	serviceID := id.NewServiceID()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	require.NoError(t, serviceRepo.Create(ctx, &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "Provider", ClientID: id.ClientID("isolation-client"),
+		Secret:    model.NewEncryptedSecret(encryptSecretForTest(t, serviceID.String(), "test-secret")),
+		IssuerURI: "https://provider.example",
+		Endpoints: model.OAuth2Endpoints{AuthorizeEndpoint: "https://provider.example/authorize", TokenEndpoint: "https://provider.example/token"},
+		Scopes:    []model.OAuthScope{{ScopeValue: "repo", Description: "Repository access"}},
+	}))
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
 	now := time.Now()
@@ -1634,7 +1653,7 @@ func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixtur
 	}
 	service := createOAuth2SessionServiceWithAgentRepository(
 		t,
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		serviceRepo,
 		sessionRepo,
 		grantRepo,
 		agentRepo,
@@ -1643,7 +1662,7 @@ func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixtur
 		oauth2session.DefaultConfig(),
 	)
 	return sessionDetailIsolationFixture{
-		router:     setupTestRouter(oauth2_sessions.NewHandler(service, slog.Default())),
+		router:     setupTestRouter(oauth2_sessions.NewHandler(service, slog.Default(), false)),
 		serviceID:  serviceID,
 		principalA: principalA,
 		agentA:     agentA,

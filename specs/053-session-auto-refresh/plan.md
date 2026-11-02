@@ -227,7 +227,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 **Test Data Strategy**:
 - Existing fixtures: `fixtures.AdminPrincipal()`, the third-party service and session fixtures used by `tests/e2e/proactive_token_refresh_test.go`.
-- New fixtures: `tests/e2e/fixtures/session_health.go` session builders with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshTokenExpiresAt` for each `(expiry, refreshable)` series.
+- New fixtures: `tests/e2e/fixtures/session_health.go` session builders with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshTokenRejected` for each `(expiry, refreshable)` series.
 
 **Bootstrap Strategy**:
 - Admin server via `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer` (production builder).
@@ -255,7 +255,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 ## Implementation Records
 
 - **API (T011)**: No endpoint, field, status, or schema change (API-001). Only the description text at `api/admin/openapi.yaml:1701` and the example at `:1752` change (API-002, T046). No stakeholder API sign-off is required.
-- **Database (T012)**: No schema change and no migration (DB-001). The health query reads `service_id`, `access_token_expires_at`, `octet_length(encrypted_refresh_token)`, and `refresh_token_expires_at` only (DB-002, DB-003).
+- **Database (T012)**: The health feature adds no schema or migration. Its query reads `service_id`, `access_token_expires_at`, refresh-ciphertext presence, and `refresh_token_rejected` through `user_session_state`. Preparation migration 046 reports rejection=false; following activation 047 supplies durable rejection. No query interprets the legacy refresh-expiry column as validity evidence (ADR 045).
 - **Frontend (T013)**: N/A, no UI change.
 
 ### Red phase results (T017, 2026-10-19)

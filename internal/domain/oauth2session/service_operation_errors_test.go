@@ -114,7 +114,10 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 		})},
 		refreshRepo: operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 			current := *session
-			_, err := refresh(ctx, &current)
+			changed, err := refresh(ctx, &current)
+			if err == nil && changed {
+				*session = current
+			}
 			return &current, err
 		}),
 	}
@@ -214,6 +217,7 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			metadata := requireOperationError(t, err, tc.operation, tc.detail)
 			assert.Equal(t, tc.dependency, metadata.Dependency())
 			assert.ErrorIs(t, err, cause)
+			assert.False(t, session.RefreshTokenRejected, "dependency failures must not invalidate refresh authority")
 			assert.NotContains(t, err.Error(), cause.Error())
 			assert.NotContains(t, logs.String(), cause.Error())
 		})
@@ -225,7 +229,7 @@ func TestRefreshRejectionMarkerPersistence(t *testing.T) {
 		for _, commitFails := range []bool{false, true} {
 			t.Run(fmt.Sprintf("force=%t/commitFails=%t", force, commitFails), func(t *testing.T) {
 				service, provider, session := newOperationTestService(t, io.Discard)
-				cause := errors.New("expiry marker commit failed")
+				cause := errors.New("rejection marker commit failed")
 				service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 					return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
 				})
@@ -234,7 +238,7 @@ func TestRefreshRejectionMarkerPersistence(t *testing.T) {
 					changed, err := refresh(ctx, &current)
 					require.NoError(t, err)
 					require.True(t, changed)
-					require.NotNil(t, current.RefreshTokenExpiresAt)
+					require.True(t, current.RefreshTokenRejected)
 					assert.False(t, current.CanRefresh())
 					if commitFails {
 						return nil, cause
@@ -253,7 +257,7 @@ func TestRefreshRejectionMarkerPersistence(t *testing.T) {
 					assert.Equal(t, DependencySessionRepository, metadata.Dependency())
 					assert.ErrorIs(t, err, cause)
 					assert.NotErrorIs(t, err, ErrRefreshRejected)
-					assert.Nil(t, session.RefreshTokenExpiresAt)
+					assert.False(t, session.RefreshTokenRejected)
 				} else {
 					requireOperationError(t, err, OperationRefresh, DetailRefreshRejected)
 					assert.ErrorIs(t, err, ErrRefreshRejected)
@@ -411,8 +415,7 @@ func TestForceRefreshValidAccessWithoutRefreshIsUnavailableNotExpired(t *testing
 	_, err := service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
 	requireOperationError(t, err, OperationRefresh, DetailRefreshUnavailable)
 	assert.ErrorIs(t, err, ErrRefreshNotAvailable)
-	assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
-	assert.NotErrorIs(t, err, ErrSessionExpired)
+	assert.NotErrorIs(t, err, ErrReauthenticationRequired)
 }
 
 type operationFailingReader struct{ cause error }

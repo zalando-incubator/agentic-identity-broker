@@ -6,14 +6,14 @@ No entity, table, column, or migration is added. The feature reads the existing 
 
 ## Existing aggregate (read only)
 
-`storage.UserSession` (`internal/domain/storage/user_session.go`), stored in `user_sessions`:
+`storage.UserSession` (`internal/domain/storage/user_session.go`) uses the stable `user_session_state` boundary over `user_sessions`:
 
 | Field | Column | Used for |
 |---|---|---|
 | `ServiceID id.ServiceID` | `service_id UUID NOT NULL` | Metric attribute `service_id` |
 | `AccessTokenExpiresAt *time.Time` | `access_token_expires_at TIMESTAMPTZ NULL` | Access-expiry class |
 | `EncryptedRefreshToken []byte` | `encrypted_refresh_token BYTEA NULL` | Presence only (`len > 0` / `octet_length > 0`); never decrypted |
-| `RefreshTokenExpiresAt *time.Time` | `refresh_token_expires_at TIMESTAMPTZ NULL` | Refresh usability |
+| `RefreshTokenRejected bool` | `refresh_token_rejected` from the stable view | Refresh usability: false permits an attempt with stored ciphertext; true prevents refresh |
 
 ## New value objects
 
@@ -36,7 +36,7 @@ One row of the health query result.
 |---|---|---|
 | `ServiceID` | `id.ServiceID` | Service the sessions belong to |
 | `AccessExpiry` | `AccessExpiryClass` | Class of the access-token expiry |
-| `RefreshUsable` | `bool` | Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`) |
+| `RefreshUsable` | `bool` | Refresh-token ciphertext present and not rejected (same as `CanRefresh`) |
 | `Count` | `int` | Number of sessions in this group, `> 0` |
 
 Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result. At most eight groups exist per service.
@@ -107,6 +107,6 @@ stateDiagram-v2
 
 ## Glossary additions (`ARCHITECTURE.md`, Third-Party OAuth2 Session Management)
 
-- **Session Health State**: The classification of a stored session by access-token expiry (`valid`, `expiring`, `expired`, or `unknown`) and refresh-token usability (`refreshable`). It is derived from the stored expiries, the current time, and the refresh lookahead, and is never stored.
+- **Session Health State**: Classification by recorded access expiry (`valid`, `expiring`, `expired`, or `unknown`) and refresh availability (`refreshable`). The domain derives it from access expiry, refresh-ciphertext presence, recorded rejection, current time, and lookahead. It never stores the classification.
 - **Session Health Snapshot**: Per-service counts of sessions in each Session Health State, computed once per metric export cycle and published as the `oauth2_sessions` gauge.
 - **Session Sweep Schedule**: The optional chart-managed CronJob that calls `POST /api/sessions/sweep` on a schedule with operator-supplied request credentials.

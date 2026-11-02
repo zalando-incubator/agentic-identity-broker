@@ -25,32 +25,67 @@ func refreshTestSession(principal id.Principal, serviceID id.ServiceID) *storage
 	}
 }
 
-func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
+func TestUserSessionRepository_ListingAndActiveSelectionReflectReauthentication(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()
 	principal := id.Principal("user@example.com")
-	active := refreshTestSession(principal, id.NewServiceID())
-	expired := refreshTestSession(principal, id.NewServiceID())
-	past := time.Now().Add(-time.Minute)
-	expired.RefreshTokenExpiresAt = &past
-	expired.AccessTokenExpiresAt = &past
-	require.NoError(t, repo.Create(ctx, active))
-	require.NoError(t, repo.Create(ctx, expired))
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+	tests := []struct {
+		name                     string
+		expiry                   *time.Time
+		hasRefreshToken          bool
+		rejected                 bool
+		requiresReauthentication bool
+	}{
+		{name: "expired access with refresh", expiry: &past, hasRefreshToken: true},
+		{name: "rejected refresh with valid access", expiry: &future, hasRefreshToken: true, rejected: true, requiresReauthentication: true},
+		{name: "valid access only", expiry: &future},
+		{name: "expired access only", expiry: &past, requiresReauthentication: true},
+		{name: "unknown access expiry without refresh"},
+		{name: "rejected refresh without recorded access expiry", hasRefreshToken: true, rejected: true, requiresReauthentication: true},
+	}
+	expected := make(map[id.ServiceID]int, len(tests))
+	var expectedActiveIDs []id.ServiceID
+	for i, tc := range tests {
+		session := refreshTestSession(principal, id.NewServiceID())
+		session.AccessTokenExpiresAt = tc.expiry
+		session.RefreshTokenRejected = tc.rejected
+		if !tc.hasRefreshToken {
+			session.EncryptedRefreshToken = nil
+		}
+		require.NoError(t, repo.Create(ctx, session))
+		expected[session.ServiceID] = i
+		if !tc.requiresReauthentication {
+			expectedActiveIDs = append(expectedActiveIDs, session.ServiceID)
+		}
+	}
 	require.NoError(t, repo.Create(ctx, refreshTestSession(id.Principal("other@example.com"), id.NewServiceID())))
 
 	activeIDs, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
 	require.NoError(t, err)
-	assert.Equal(t, []id.ServiceID{active.ServiceID}, activeIDs)
+	assert.ElementsMatch(t, expectedActiveIDs, activeIDs)
+	activeSessions, err := repo.ListActiveByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	var activeSessionIDs []id.ServiceID
+	for _, session := range activeSessions {
+		activeSessionIDs = append(activeSessionIDs, session.ServiceID)
+	}
+	assert.ElementsMatch(t, expectedActiveIDs, activeSessionIDs)
+	sessions, err := repo.ListByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.Len(t, sessions, len(tests), "rejected and exhausted sessions remain visible")
 	summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
 	require.NoError(t, err)
-	require.Len(t, summaries, 2)
-	byService := map[id.ServiceID]*storage.UserSessionSummary{}
+	require.Len(t, summaries, len(tests))
 	for _, summary := range summaries {
-		byService[summary.ServiceID] = summary
+		i, ok := expected[summary.ServiceID]
+		require.True(t, ok)
+		tc := tests[i]
+		assert.Equal(t, tc.hasRefreshToken, summary.HasRefreshToken, tc.name)
+		assert.Equal(t, tc.requiresReauthentication, summary.RequiresReauthentication, tc.name)
+		assert.Equal(t, tc.expiry == &past, summary.AccessTokenExpired, tc.name)
 	}
-	assert.True(t, byService[active.ServiceID].HasRefreshToken)
-	assert.False(t, byService[active.ServiceID].IsExpired)
-	assert.True(t, byService[expired.ServiceID].IsExpired)
 }
 
 func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
@@ -178,17 +213,17 @@ func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	before, after := threshold.Add(-time.Hour), threshold.Add(time.Second)
-	refreshExpiry := threshold.Add(24 * time.Hour)
 	earlier := refreshTestSession(id.Principal("ciphertext@example.com"), id.NewServiceID())
 	earlier.ID = expiryTestID(0x80)
 	earlier.AccessTokenExpiresAt = &before
-	earlier.RefreshTokenExpiresAt = &refreshExpiry
 	earlier.EncryptedAccessToken = []byte{0, 0xff, 0x01, 0x80}
 	earlier.EncryptedRefreshToken = []byte{0xfe, 0, 0xfd}
 	upstreamClientID := id.ClientID("expiry-client")
 	earlier.UpstreamClientID = &upstreamClientID
 	require.NoError(t, repo.Create(ctx, earlier))
 	atBoundary := createExpiringTestSession(t, repo, 0x02, &threshold)
+	atBoundary.EncryptedRefreshToken = nil
+	require.NoError(t, repo.Create(ctx, atBoundary))
 	createExpiringTestSession(t, repo, 0x10, &after)
 	createExpiringTestSession(t, repo, 0xf0, nil)
 
@@ -200,6 +235,7 @@ func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 	assert.NotSame(t, earlier, got[0], "the candidate must be a snapshot")
 	assert.Equal(t, atBoundary, got[1])
 	assert.Nil(t, got[1].UpstreamClientID)
+	assert.Empty(t, got[1].EncryptedRefreshToken, "missing refresh credentials must remain actionable sweep candidates")
 
 	empty, err := repo.ListExpiringSessions(ctx, before.Add(-time.Second), storage.SessionExpiryCursor{}, 1000)
 	require.NoError(t, err)
@@ -210,13 +246,10 @@ func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 	earlier.EncryptedRefreshToken[0] = 0x42
 	earlier.Scope[0] = "changed"
 	*earlier.AccessTokenExpiresAt = after
-	*earlier.RefreshTokenExpiresAt = after
 	assert.Equal(t, []byte{0, 0xff, 0x01, 0x80}, got[0].EncryptedAccessToken)
 	assert.Equal(t, []byte{0xfe, 0, 0xfd}, got[0].EncryptedRefreshToken)
 	assert.Equal(t, []string{"repo"}, got[0].Scope)
 	assert.Equal(t, threshold.Add(-time.Hour), *got[0].AccessTokenExpiresAt)
-	assert.Equal(t, threshold.Add(24*time.Hour), *got[0].RefreshTokenExpiresAt)
-
 	require.NotNil(t, got[0].UpstreamClientID)
 	*got[0].UpstreamClientID = "changed-page-client"
 	persisted, err := repo.Get(ctx, earlier.ID)
@@ -232,13 +265,19 @@ func TestListExpiringSessionsKeysetPages(t *testing.T) {
 	sharedExpiry := threshold.Add(-2 * time.Hour)
 	laterExpiry := threshold.Add(-time.Hour)
 	for _, item := range []struct {
-		prefix byte
-		expiry *time.Time
+		prefix   byte
+		expiry   *time.Time
+		rejected bool
 	}{
-		{0x80, &sharedExpiry}, {0x10, &threshold}, {0xf0, &firstExpiry},
-		{0x40, &laterExpiry}, {0x02, &sharedExpiry},
+		{0x80, &sharedExpiry, false}, {0x10, &threshold, false}, {0xf0, &firstExpiry, false},
+		{0x40, &laterExpiry, false}, {0x02, &sharedExpiry, false},
+		{0x01, &firstExpiry, true}, {0x60, &sharedExpiry, true}, {0xff, &threshold, true},
 	} {
-		createExpiringTestSession(t, repo, item.prefix, item.expiry)
+		session := createExpiringTestSession(t, repo, item.prefix, item.expiry)
+		if item.rejected {
+			session.RefreshTokenRejected = true
+			require.NoError(t, repo.Create(ctx, session))
+		}
 	}
 	expected := []id.SessionID{
 		expiryTestID(0xf0), expiryTestID(0x02), expiryTestID(0x80),
@@ -278,6 +317,37 @@ func TestListExpiringSessionsKeysetPages(t *testing.T) {
 		allIDs = append(allIDs, session.ID)
 	}
 	assert.Equal(t, expected, allIDs)
+}
+
+func TestListExpiringSessionsExcludesRejectionBetweenPages(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	first := createExpiringTestSession(t, repo, 0x10, &threshold)
+	rejected := createExpiringTestSession(t, repo, 0x20, &threshold)
+	last := createExpiringTestSession(t, repo, 0x30, &threshold)
+	last.EncryptedRefreshToken = nil
+	require.NoError(t, repo.Create(ctx, last))
+
+	page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.Equal(t, first.ID, page[0].ID)
+	cursor := expiryTestCursor(page[0])
+	_, err = repo.WithLockedSession(ctx, rejected.Principal, rejected.ServiceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+		session.RefreshTokenRejected = true
+		return true, nil
+	})
+	require.NoError(t, err)
+
+	page, err = repo.ListExpiringSessions(ctx, threshold, cursor, 2)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, last.ID, page[0].ID)
+	assert.Empty(t, page[0].EncryptedRefreshToken)
+	page, err = repo.ListExpiringSessions(ctx, threshold, expiryTestCursor(page[0]), 2)
+	require.NoError(t, err)
+	assert.Empty(t, page)
 }
 
 func TestListExpiringSessionsAdvancesAcrossMutations(t *testing.T) {
@@ -502,6 +572,7 @@ func TestWithLockedSessionDoesNotWriteWhenDeclinedOrFailed(t *testing.T) {
 				current.EncryptedRefreshToken = []byte("uncommitted-refresh")
 				current.AccessTokenExpiresAt = &newExpiry
 				current.UpdatedAt = newExpiry
+				current.RefreshTokenRejected = true
 				return tc.updated, tc.err
 			})
 			if tc.err != nil {
@@ -515,6 +586,7 @@ func TestWithLockedSessionDoesNotWriteWhenDeclinedOrFailed(t *testing.T) {
 			assert.Equal(t, session.EncryptedAccessToken, stored.EncryptedAccessToken)
 			assert.Equal(t, session.EncryptedRefreshToken, stored.EncryptedRefreshToken)
 			assert.Nil(t, stored.AccessTokenExpiresAt)
+			assert.False(t, stored.RefreshTokenRejected)
 			assert.Equal(t, session.UpdatedAt, stored.UpdatedAt)
 		})
 	}
@@ -644,11 +716,10 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 	now := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
 	threshold := now.Add(5 * time.Minute)
 	after, due, past := threshold.Add(time.Second), threshold.Add(-time.Minute), now.Add(-time.Hour)
-	later := now.Add(24 * time.Hour)
 	refresh := []byte("refresh")
-	session := func(serviceID id.ServiceID, access *time.Time, refreshToken []byte, refreshExpiry *time.Time) *storage.UserSession {
+	session := func(serviceID id.ServiceID, access *time.Time, refreshToken []byte, rejected bool) *storage.UserSession {
 		s := refreshTestSession(id.Principal(id.NewSessionID().String()+"@example.com"), serviceID)
-		s.AccessTokenExpiresAt, s.EncryptedRefreshToken, s.RefreshTokenExpiresAt = access, refreshToken, refreshExpiry
+		s.AccessTokenExpiresAt, s.EncryptedRefreshToken, s.RefreshTokenRejected = access, refreshToken, rejected
 		return s
 	}
 	count := func(t *testing.T, ctx context.Context, sessions ...*storage.UserSession) ([]storage.SessionExpiryGroup, error) {
@@ -667,30 +738,28 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		want     []storage.SessionExpiryGroup
 	}{
 		{name: "H1 no sessions", want: []storage.SessionExpiryGroup{}},
-		{name: "H2 valid with usable refresh", sessions: []*storage.UserSession{session(svc, &after, refresh, &later)},
+		{name: "H2 valid with usable refresh", sessions: []*storage.UserSession{session(svc, &after, refresh, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1}}},
-		{name: "H3 expiry at threshold is due", sessions: []*storage.UserSession{session(svc, &threshold, refresh, &later)},
+		{name: "H3 expiry at threshold is due", sessions: []*storage.UserSession{session(svc, &threshold, refresh, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 1}}},
-		{name: "H4 no access expiry", sessions: []*storage.UserSession{session(svc, nil, refresh, &later)},
+		{name: "H4 no access expiry", sessions: []*storage.UserSession{session(svc, nil, refresh, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1}}},
-		{name: "H5 refresh token without expiry is usable", sessions: []*storage.UserSession{session(svc, &due, refresh, nil)},
-			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 1}}},
-		{name: "H6 refresh expiring at now is unusable", sessions: []*storage.UserSession{session(svc, &due, refresh, &now)},
+		{name: "H6 rejected refresh is unusable", sessions: []*storage.UserSession{session(svc, &due, refresh, true)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: false, Count: 1}}},
-		{name: "H7 absent refresh token is unusable", sessions: []*storage.UserSession{session(svc, &past, nil, nil)},
+		{name: "H7 absent refresh token is unusable", sessions: []*storage.UserSession{session(svc, &past, nil, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: false, Count: 1}}},
 		{name: "H8 groups per service and class", sessions: []*storage.UserSession{
-			session(svc, &due, refresh, &later), session(svc, &past, refresh, nil), session(svc, &after, refresh, &later),
-			session(svc, &due, refresh, &later), session(other, nil, refresh, &later),
+			session(svc, &due, refresh, false), session(svc, &past, refresh, false), session(svc, &after, refresh, false),
+			session(svc, &due, refresh, false), session(other, nil, refresh, false),
 		}, want: []storage.SessionExpiryGroup{
 			{ServiceID: svc, AccessExpiry: storage.AccessExpiryDue, RefreshUsable: true, Count: 2},
 			{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1},
 			{ServiceID: svc, AccessExpiry: storage.AccessExpiryAfterThreshold, RefreshUsable: true, Count: 1},
 			{ServiceID: other, AccessExpiry: storage.AccessExpiryUnknown, RefreshUsable: true, Count: 1},
 		}},
-		{name: "H10 expiry at now is expired", sessions: []*storage.UserSession{session(svc, &now, refresh, &later)},
+		{name: "H10 expiry at now is expired", sessions: []*storage.UserSession{session(svc, &now, refresh, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1}}},
-		{name: "H11 expired access with usable refresh is expired and refreshable", sessions: []*storage.UserSession{session(svc, &past, refresh, &later)},
+		{name: "H11 expired access with usable refresh is expired and refreshable", sessions: []*storage.UserSession{session(svc, &past, refresh, false)},
 			want: []storage.SessionExpiryGroup{{ServiceID: svc, AccessExpiry: storage.AccessExpiryExpired, RefreshUsable: true, Count: 1}}},
 	}
 	for _, tt := range tests {
@@ -705,9 +774,71 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 	t.Run("H9 expired context", func(t *testing.T) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
-		_, err := count(t, ctx, session(svc, &after, refresh, &later))
+		_, err := count(t, ctx, session(svc, &after, refresh, false))
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		assert.Equal(t, storage.ErrorKindTimeout, storageErr.Kind)
 	})
+}
+
+func TestWithLockedSessionPersistsRejectionWithoutReplacingTokens(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	session := refreshTestSession(id.Principal("rejected@example.com"), id.NewServiceID())
+	expiry := time.Now().Add(time.Hour)
+	session.AccessTokenExpiresAt = &expiry
+	require.NoError(t, repo.Create(ctx, session))
+	expected := *session
+	expected.RefreshTokenRejected = true
+	expected.UpdatedAt = session.UpdatedAt.Add(time.Minute)
+
+	returned, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		assert.False(t, current.RefreshTokenRejected)
+		current.RefreshTokenRejected = true
+		current.UpdatedAt = expected.UpdatedAt
+		return true, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &expected, returned)
+	stored, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &expected, stored)
+	found, err := repo.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, &expected, found)
+	listed, err := repo.ListByPrincipal(ctx, session.Principal)
+	require.NoError(t, err)
+	assert.Equal(t, []*storage.UserSession{&expected}, listed)
+	_, err = repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		assert.True(t, current.RefreshTokenRejected, "subsequent locked reads observe rejection")
+		return false, nil
+	})
+	require.NoError(t, err)
+}
+
+func TestUserSessionRepository_UpsertResetsRecordedRejection(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	session := refreshTestSession(id.Principal("reauthorized@example.com"), id.NewServiceID())
+	session.RefreshTokenRejected = true
+	require.NoError(t, repo.Create(ctx, session))
+	stored, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	assert.True(t, stored.RefreshTokenRejected)
+
+	recovered := refreshTestSession(session.Principal, session.ServiceID)
+	recovered.EncryptedAccessToken = []byte("reauthorized-access")
+	recovered.EncryptedRefreshToken = []byte("reauthorized-refresh")
+	require.NoError(t, repo.Create(ctx, recovered))
+	assert.Equal(t, session.ID, recovered.ID, "upsert keeps the existing session identity")
+	stored, err = repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	assert.False(t, stored.RefreshTokenRejected)
+	assert.True(t, stored.CanRefresh())
+	assert.False(t, stored.RequiresReauthentication())
+	assert.Equal(t, recovered.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, recovered.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+	listed, err := repo.ListByPrincipal(ctx, session.Principal)
+	require.NoError(t, err)
+	assert.Len(t, listed, 1)
 }

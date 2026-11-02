@@ -339,8 +339,9 @@ type ThirdPartyOAuth2Config struct {
 	// PKCEVerifierLength is the length of PKCE code verifier in bytes.
 	// Must be 32-128 bytes per RFC 7636.
 	// Default: 32 bytes (256 bits of entropy)
-	PKCEVerifierLength int                              `mapstructure:"pkce_verifier_length"`
-	CredentialFiles    map[string]CredentialFileBinding `mapstructure:"-"`
+	PKCEVerifierLength      int                              `mapstructure:"pkce_verifier_length"`
+	SessionAPICompatibility bool                             `mapstructure:"session_api_compatibility"`
+	CredentialFiles         map[string]CredentialFileBinding `mapstructure:"-"`
 }
 
 type CredentialFileBinding struct {

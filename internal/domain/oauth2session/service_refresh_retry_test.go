@@ -162,8 +162,8 @@ func TestGetValidAccessToken_ServesUnexpiredTokenWithoutRefreshToken(t *testing.
 	assert.Equal(t, "stored-access", token)
 }
 
-// 008 US2-S10: a re-connect whose refresh token has already expired must not keep it.
-func TestHandleCallback_ReconnectDropsExpiredStoredRefreshToken(t *testing.T) {
+// 008 US2-S10: a re-connect must clear rejected stored refresh credentials.
+func TestHandleCallback_ReconnectDropsRejectedStoredRefreshToken(t *testing.T) {
 	ctx := context.Background()
 	service, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
 	serviceID := id.NewServiceID()
@@ -178,8 +178,7 @@ func TestHandleCallback_ReconnectDropsExpiredStoredRefreshToken(t *testing.T) {
 	seedExpiringSession(t, sessions, principal, serviceID, time.Now().Add(-time.Hour), "dead-refresh", []string{"repo"})
 	stored, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
-	expired := time.Now().Add(-time.Minute)
-	stored.RefreshTokenExpiresAt = &expired
+	stored.RefreshTokenRejected = true
 	require.NoError(t, sessions.Create(ctx, stored))
 
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/sessions")
@@ -187,6 +186,6 @@ func TestHandleCallback_ReconnectDropsExpiredStoredRefreshToken(t *testing.T) {
 	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{ServiceID: serviceID, Code: "code", State: flow.StateToken})
 	require.NoError(t, err)
 	assert.Empty(t, result.Session.EncryptedRefreshToken)
-	assert.Nil(t, result.Session.RefreshTokenExpiresAt)
+	assert.False(t, result.Session.RefreshTokenRejected)
 	assert.Equal(t, stored.ID, result.Session.ID, "re-connect keeps the session identity")
 }

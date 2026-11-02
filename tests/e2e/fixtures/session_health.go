@@ -10,41 +10,38 @@ import (
 // ValidSession has an access token that expires well after the default refresh lookahead.
 func ValidSession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
 	access := now.Add(2 * time.Hour)
-	refresh := now.Add(30 * 24 * time.Hour)
-	return healthSession(principal, serviceID, now, &access, &refresh, true)
+	return healthSession(principal, serviceID, now, &access, true)
 }
 
 // ExpiringRefreshableSession is due within a five-minute lookahead and has a usable refresh token.
 func ExpiringRefreshableSession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
 	access := now.Add(2 * time.Minute)
-	refresh := now.Add(30 * 24 * time.Hour)
-	return healthSession(principal, serviceID, now, &access, &refresh, true)
+	return healthSession(principal, serviceID, now, &access, true)
 }
 
 // ExpiredRefreshableSession has an expired access token and a usable refresh token.
 func ExpiredRefreshableSession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
 	access := now.Add(-time.Hour)
-	refresh := now.Add(30 * 24 * time.Hour)
-	return healthSession(principal, serviceID, now, &access, &refresh, true)
+	return healthSession(principal, serviceID, now, &access, true)
 }
 
-// ExpiredUnrefreshableSession has an expired access token and an expired refresh token.
+// ExpiredUnrefreshableSession has expired access and a provider-rejected refresh token.
 func ExpiredUnrefreshableSession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
 	access := now.Add(-7 * time.Hour)
-	refresh := now.Add(-10 * time.Minute)
-	return healthSession(principal, serviceID, now, &access, &refresh, true)
+	session := healthSession(principal, serviceID, now, &access, true)
+	session.RefreshTokenRejected = true
+	return session
 }
 
 // ExpiredWithoutRefreshSession has an expired access token and no refresh token.
 func ExpiredWithoutRefreshSession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
 	access := now.Add(-4 * time.Hour)
-	return healthSession(principal, serviceID, now, &access, nil, false)
+	return healthSession(principal, serviceID, now, &access, false)
 }
 
 // UnknownExpirySession has no recorded access-token expiry.
 func UnknownExpirySession(principal string, serviceID id.ServiceID, now time.Time) *storage.UserSession {
-	refresh := now.Add(30 * 24 * time.Hour)
-	return healthSession(principal, serviceID, now, nil, &refresh, true)
+	return healthSession(principal, serviceID, now, nil, true)
 }
 
 // HealthJourneySessions reproduces the eight sessions of Journey 2 in
@@ -62,20 +59,19 @@ func HealthJourneySessions(now time.Time, calendar, tickets id.ServiceID) []*sto
 	}
 }
 
-func healthSession(principal string, serviceID id.ServiceID, now time.Time, accessExpiry, refreshExpiry *time.Time, withRefresh bool) *storage.UserSession {
+func healthSession(principal string, serviceID id.ServiceID, now time.Time, accessExpiry *time.Time, withRefresh bool) *storage.UserSession {
 	session := &storage.UserSession{
-		ID:                    id.NewSessionID(),
-		Principal:             id.Principal(principal),
-		ServiceID:             serviceID,
-		EncryptedAccessToken:  EncryptedToken(serviceID.String(), "health-access-"+principal),
-		TokenType:             "Bearer",
-		AccessTokenExpiresAt:  accessExpiry,
-		RefreshTokenExpiresAt: refreshExpiry,
-		Scope:                 []string{"read"},
-		EncryptionContext:     storage.EncryptionContext{ServiceID: serviceID},
-		InitiatedAt:           now.Add(-8 * time.Hour),
-		CreatedAt:             now.Add(-8 * time.Hour),
-		UpdatedAt:             now.Add(-8 * time.Hour),
+		ID:                   id.NewSessionID(),
+		Principal:            id.Principal(principal),
+		ServiceID:            serviceID,
+		EncryptedAccessToken: EncryptedToken(serviceID.String(), "health-access-"+principal),
+		TokenType:            "Bearer",
+		AccessTokenExpiresAt: accessExpiry,
+		Scope:                []string{"read"},
+		EncryptionContext:    storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:          now.Add(-8 * time.Hour),
+		CreatedAt:            now.Add(-8 * time.Hour),
+		UpdatedAt:            now.Add(-8 * time.Hour),
 	}
 	if withRefresh {
 		session.EncryptedRefreshToken = EncryptedToken(serviceID.String(), "health-refresh-"+principal)
