@@ -121,7 +121,18 @@ if err != nil {
 ### 4.1 Keys
 
 - Use the OpenTelemetry semantic-convention key when one exists.
-- Otherwise, use `<scope>.<name>`, with lowercase `snake_case` segments separated by dots, for example `token_exchange.failure_stage`, `approval.status`, `oauth2.refresh.outcome`.
+- Otherwise, use `<namespace>.<name>`, with lowercase `snake_case` segments separated by dots, for example `token_exchange.failure_stage`, `approval.status`, `oauth2.refresh.outcome`.
+- An attribute namespace names the domain concept the attribute describes. It is independent of the instrumentation scope (section 2): one scope can set attributes from several namespaces. Use a namespace from this table. Add a namespace to the table before you use it.
+
+| Namespace | Describes | Reference |
+|---|---|---|
+| `token_exchange` | RFC 8693 token exchange in the broker and ExtProc | `docs/reference/token-exchange.md#diagnostic-attributes` |
+| `approval` | Tool approvals | `specs/024-approval-api-ui/` |
+| `authorization` | ExtProc OPA authorization | ADR 028 |
+| `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |
+| `encryption` | Encryption operations | ADR 012 |
+| `impersonation` | OAuth2 impersonation | ADR 032 |
+
 - Use the canonical keys in this table. Do not make synonyms.
 
 | Concept | Key | Value |
@@ -130,13 +141,13 @@ if err != nil {
 | HTTP status | `http.response.status_code` | Integer |
 | Error classification | `error.type` | Enumerated value. Do not use `error.kind` or `error_kind` on spans. |
 | Database | `db.system`, `db.operation` | `postgresql`, repository method name |
-| Entity ID | `<scope>.<entity>.id` | Typed ID string, for example `approval.id`, `token_exchange.agent.id` |
-| Outcome | `<scope>.outcome` | Enumerated value |
-| Failure stage and detail | `<scope>.failure_stage`, `<scope>.failure_detail` | Enumerated values |
-| Dependency | `<scope>.dependency` | Enumerated value |
-| Principal | `<scope>.principal` | `id.Principal` through `SpanAttribute`. Refer to section 4.3. |
-| Point in time | `<scope>.<name>_at` | UTC RFC 3339 with nanoseconds |
-| Duration | `<scope>.duration_ms` | Integer milliseconds. Prefer the span duration. |
+| Entity ID | `<namespace>.<entity>.id` | Typed ID string, for example `approval.id`, `token_exchange.agent.id` |
+| Outcome | `<namespace>.outcome` | Enumerated value |
+| Failure stage and detail | `<namespace>.failure_stage`, `<namespace>.failure_detail` | Enumerated values |
+| Dependency | `<namespace>.dependency` | Enumerated value |
+| Principal | `<namespace>.principal` | `id.Principal` through `SpanAttribute`. Refer to section 4.3. |
+| Point in time | `<namespace>.<name>_at` | UTC RFC 3339 with nanoseconds |
+| Duration | `<namespace>.duration_ms` | Integer milliseconds. Prefer the span duration. |
 
 ### 4.2 Values
 
@@ -147,6 +158,8 @@ if err != nil {
 ### 4.3 Principals
 
 A principal is personal data (`coding-standards/LOGGING.md` section 5). Spec 017 SR-001, as amended, permits it on spans only under these rules. Span attributes go through the same central principal policy as log records, so a change to redaction or pseudonymisation reaches both signals in one change.
+
+> **Until #356 lands:** `id.Principal.SpanAttribute` and the span principal policy do not exist yet. Do not add a new principal span attribute until they do. The existing `approval.principal` attributes change in #349.
 
 1. Set a principal on a span only with `id.Principal.SpanAttribute(key)`. Do not use `attribute.String` with `p.String()` or `string(p)`.
 2. Use a key that ends in `.principal`, for example `approval.principal`. Keys that end in `.principal` are reserved for principals.
@@ -254,7 +267,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Span names are constant and follow `<scope>.<operation>[.<entity>]`. The span kind is set.
 - [ ] Failed operations set `codes.Error` with a constant description and `error.type`. `RecordError` is not called.
 - [ ] Background work starts a new root span linked to its trigger.
-- [ ] Span attribute keys are canonical (section 4.1). Values are bounded.
+- [ ] Span attribute keys are canonical and use a listed namespace (section 4.1). Values are bounded.
 - [ ] Instruments are created one time, with a description and a unit, and the constructor error is handled.
 - [ ] Metric names follow section 5.2. Metric attributes have closed value sets and no IDs other than those permitted by section 5.3.
 - [ ] No section 6.1 data is in a span or a metric.

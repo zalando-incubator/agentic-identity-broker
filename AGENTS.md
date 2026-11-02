@@ -225,7 +225,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
 - **Structured logging** — Follow `coding-standards/LOGGING.md`. Log principals only as `id.Principal`. Never log credentials.
-- **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Set principals on spans only through `id.Principal.SpanAttribute`. Never put a principal in a metric or a credential in any signal.
+- **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Set principals on spans only through `id.Principal.SpanAttribute`, and add none until #356 provides it. Never put a principal in a metric or a credential in any signal.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
 ## Database Migrations

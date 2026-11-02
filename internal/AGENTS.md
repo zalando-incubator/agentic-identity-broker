@@ -121,7 +121,7 @@ Read `coding-standards/LOGGING.md` before you add or change a log call. Use a `*
 
 ## Tracing and Metrics
 
-Read `coding-standards/OPENTELEMETRY.md` before you add or change a span or metric. Get tracers and meters from the OTel globals, set span kind and error status, set principals on spans only through `id.Principal.SpanAttribute`, and never put a principal in a metric attribute or a credential in any attribute.
+Read `coding-standards/OPENTELEMETRY.md` before you add or change a span or metric. Get tracers and meters from the OTel globals, set span kind and error status, set principals on spans only through `id.Principal.SpanAttribute` (add none until #356 provides it), and never put a principal in a metric attribute or a credential in any attribute.
 
 ## Testing Conventions
 
