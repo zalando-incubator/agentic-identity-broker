@@ -2,7 +2,7 @@
 
 This standard applies to all Go code in `cmd/` and `internal/`. Read it before you add or change a log call.
 
-Scope: log records only. OpenTelemetry traces and metrics are out of scope.
+Scope: log records only. OpenTelemetry traces and metrics follow `coding-standards/OPENTELEMETRY.md`.
 
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.

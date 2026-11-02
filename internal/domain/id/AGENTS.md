@@ -40,6 +40,7 @@ go generate ./internal/domain/id/
 4. Use typed IDs for entity values. Convert to string only when an external API requires it.
 5. Use `ServiceID.String()` for a service context. Signing key contexts use `KeyID` and `kid`. Do not use both.
 6. Log a `Principal` as the typed value, not `String()`. The principal policy in `coding-standards/LOGGING.md` section 5 depends on the type.
+7. Set a `Principal` on a span only with `Principal.SpanAttribute(key)` under a `.principal` key (`coding-standards/OPENTELEMETRY.md` section 4.3). Until #356 adds `SpanAttribute`, do not add principal span attributes.
 
 ## Adding a New Entity ID
 
