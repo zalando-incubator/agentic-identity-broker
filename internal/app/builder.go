@@ -1393,7 +1393,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	var healthMetrics *oauth2session.SessionHealthMetrics
 	if b.config.TokenRefresh.HealthMetrics.Enabled {
-		healthMetrics, err = oauth2session.NewSessionHealthMetrics(b.storage.SessionHealth(),
+		healthMetrics, err = oauth2session.NewSessionHealthMetrics(b.storage.SessionHealth(), app.ProviderService,
 			b.config.TokenRefresh.LookaheadDuration, b.config.TokenRefresh.HealthMetrics.QueryTimeout, b.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create session health metrics: %w", err)

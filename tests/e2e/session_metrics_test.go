@@ -398,6 +398,28 @@ var _ = Describe("Session Metrics", func() {
 				Expect(refreshCounts(reader, "session_sweep_failed_total")).To(Equal(map[string]int64{tickets.String() + "/access_token_expired": 1}))
 			})
 
+			// US4-S3 from specs/053-session-auto-refresh/spec.md
+			It("uses the canonical ID as service_id where a service has one", func() {
+				service, err := store.Services().Get(ctx, calendar)
+				Expect(err).NotTo(HaveOccurred())
+				canonicalID := "calendar"
+				service.CanonicalID = &canonicalID
+				Expect(store.Services().Update(ctx, service, nil)).To(Succeed())
+				now := time.Now()
+				due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
+				soon := now.Add(2 * time.Minute)
+				due.AccessTokenExpiresAt = &soon
+				seed(due, fixtures.ExpiredWithoutRefreshSession("norefresh@example.com", tickets, now))
+				boot()
+				Expect(sweepStatus(admin, fixtures.AdminPrincipal().String(), `{"lookahead_duration":"PT10M"}`)).To(Equal(http.StatusOK))
+				Expect(refreshCounts(reader, "session_sweep_refreshed_total")).To(Equal(map[string]int64{canonicalID + "/": 1}))
+				Expect(refreshCounts(reader, "session_sweep_failed_total")).To(Equal(map[string]int64{tickets.String() + "/access_token_expired": 1}))
+				counts, _ := sessionHealthCounts(reader)
+				Expect(counts).To(HaveLen(2))
+				Expect(counts).To(HaveKey(canonicalID))
+				Expect(counts).To(HaveKey(tickets.String()))
+			})
+
 			Context("when a token exchange starts a background refresh that the provider rejects", func() {
 				var (
 					principal string

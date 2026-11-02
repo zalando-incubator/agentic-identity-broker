@@ -694,6 +694,36 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 		"failures without a provider lookup still name their service")
 }
 
+func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
+	f := newSweepFixture(t)
+	refreshedServiceID := f.serviceID
+	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
+	accessExpiry, refreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
+	f.seed(1, &accessExpiry, nil, true)
+	f.serviceID = id.NewServiceID()
+	tickets := createTestService(f.serviceID)
+	tickets.ClientID = "tickets-client-id"
+	canonicalID := "tickets"
+	tickets.CanonicalID = &canonicalID
+	require.NoError(t, f.providers.Create(context.Background(), tickets))
+	f.seed(2, &accessExpiry, &refreshExpiry, true)
+
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 1, 0, 1, false)
+	refreshed := sweepCounterPoints(t, reader)["session_sweep_refreshed_total"]
+	require.Len(t, refreshed, 1)
+	service, _ := refreshed[0].Attributes.Value("service_id")
+	assert.Equal(t, refreshedServiceID.String(), service.AsString(), "a service without a canonical ID keeps its UUID")
+	assert.Equal(t, map[string]int64{"tickets/" + string(oauth2session.DetailRefreshTokenExpired): 1}, sweepFailures(t, reader),
+		"a failure without a provider lookup still uses the canonical ID")
+}
+
 func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
 	f := newSweepFixture(t)
 	var calls atomic.Int32
