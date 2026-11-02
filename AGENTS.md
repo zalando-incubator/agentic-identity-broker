@@ -16,6 +16,10 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
 `.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
 
+### Coding Standards
+
+`coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
+
 ### Section-Specific Agent Context
 
 `internal/AGENTS.md` | Backend hexagonal architecture, builder pattern, testing conventions
@@ -219,6 +223,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
 - **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
+- **Structured logging** — Follow `coding-standards/LOGGING.md`. Log principals only as `id.Principal`. Never log credentials.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
 ## Database Migrations

@@ -115,6 +115,10 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig)
 func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteConfig)
 ```
 
+## Logging
+
+Read `coding-standards/LOGGING.md` before you add or change a log call. Use a `*Context` method, log principals as `id.Principal`, and never log credentials.
+
 ## Testing Conventions
 
 - **TDD**: Write tests first. Make them compile and fail for the expected behavior before you implement it.
