@@ -86,6 +86,11 @@ func TestSessionAPICompatibilityKeepsLegacyClientsAwareOfReauthentication(t *tes
 					require.NotContains(t, status, "is_expired")
 				}
 				require.NotContains(t, status, "refresh_token_expires_at")
+				require.NotContains(t, status, "encrypted_access_token")
+				require.NotContains(t, status, "encrypted_refresh_token")
+				require.NotContains(t, status, "callback_id")
+				require.NotContains(t, status, "upstream_client_id")
+				require.NotContains(t, status, "refresh_token_rejected")
 			}
 		}
 	}
