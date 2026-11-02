@@ -174,6 +174,15 @@ function fixture(eventName, payload, options = {}) {
           data: (options.reactions || []).filter((entry) => entry.comment_id === comment_id),
         }),
       },
+      actions: {
+        getWorkflowRun: async ({ run_id }) => ({
+          data: options.runs?.[run_id] ?? { id: run_id, triggering_actor: { login: "maintainer" } },
+        }),
+        listJobsForWorkflowRun: async ({ run_id, filter }) => {
+          assert.equal(filter, "latest");
+          return { data: options.jobs?.[run_id] || [] };
+        },
+      },
     },
     graphql: async (query, { id }) => {
       assert.match(query, /minimizeComment\(input: \{subjectId: \$id, classifier: OUTDATED\}\)/);
@@ -1645,4 +1654,196 @@ test("remediation waits for a completed code phase; earlier reviews publish no p
   assert.ok(body.includes("Its findings are remediated after `/speckit-implement`, when the review runs again."));
   assert.ok(!body.includes("remediation proposal"));
   assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+});
+
+const head = "a".repeat(40);
+const ciEvent = { action: "completed", workflow_run: { id: 500, pull_requests: [{ number: 42 }] } };
+const ciJobs = {
+  500: [
+    {
+      name: "Integration tests", html_url: "https://github.com/example/broker/actions/runs/500/job/1", conclusion: "failure",
+      steps: [{ name: "Checkout", conclusion: "success" }, { name: "Integration suites with JUnit", conclusion: "failure" }],
+    },
+    { name: "Unit tests", html_url: "https://github.com/example/broker/actions/runs/500/job/2", conclusion: "success", steps: [] },
+  ],
+};
+
+function ciRun(overrides = {}) {
+  return {
+    id: 500, path: ".github/workflows/ci.yml", event: "pull_request", conclusion: "failure", head_sha: head,
+    head_repository: { full_name: "example/broker" }, html_url: "https://github.com/example/broker/actions/runs/500",
+    ...overrides,
+  };
+}
+
+function implemented(id, run = 100, overrides = {}, sha = head) {
+  return [pushed(id, sha, { run }), posted(result("implement", { run: `${run}/1`, ...overrides }), id + 1, run)];
+}
+
+function repairFixture(options = {}) {
+  const f = fixture("workflow_run", options.payload || ciEvent, {
+    permissions: { "ci-bot": "read" }, jobs: ciJobs, ...options,
+    reactions: options.reactions ?? [thumbs()],
+    runs: { 500: ciRun(), ...options.runs },
+    comments: [posted(result("clarify"), 10), posted(result("reanalyze"), 13), approvalComment(),
+      ...(options.comments ?? implemented(60))],
+  });
+  f.context.actor = "ci-bot";
+  return f;
+}
+
+test("a failed CI run on the implementation's commit starts a repair for the maintainer who started it", async () => {
+  assert.deepEqual(await route(repairFixture()),
+    { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 1 });
+  for (const options of [
+    { runs: { 500: ciRun({ conclusion: "success" }) } },
+    { runs: { 500: ciRun({ path: ".github/workflows/security.yml" }) } },
+    { runs: { 500: ciRun({ event: "push" }) } },
+    { runs: { 500: ciRun({ head_sha: "b".repeat(40) }) } },
+    { runs: { 500: ciRun({ head_repository: { full_name: "outsider/broker" } }) } },
+    { payload: { action: "completed", workflow_run: { id: 500, pull_requests: [] } } },
+    { payload: { action: "requested", workflow_run: { id: 500, pull_requests: [{ number: 42 }] } } },
+    { comments: [posted(result("implement"), 61)] },
+    { comments: implemented(60, 100, {}, "c".repeat(40)) },
+    { comments: implemented(60, 100, { status: "blocked", next_step: "1. Decide X" }) },
+    { comments: [...implemented(60), posted(result("plan", { run: "110/1" }), 70, 110)] },
+    { runs: { 100: { id: 100, triggering_actor: { login: "ci-bot" } } } },
+    { pr: { user: { login: "contributor", type: "User" } } },
+  ]) assert.deepEqual(await route(repairFixture(options)), { action: "noop" });
+  await assert.rejects(route(repairFixture({ reactions: [] })),
+    (error) => error.pr === 42 && /Approval pending/.test(error.message));
+});
+
+test("a failed CI run on a review fix or an applied proposal starts a repair too", async () => {
+  const implementation = implemented(60, 100, {}, "c".repeat(40));
+  for (const phase of ["remediate-review", "apply-review"]) {
+    const fixed = [pushed(62, head), posted(result(phase), 63)];
+    assert.deepEqual(await route(repairFixture({ comments: [...implementation, ...fixed] })),
+      { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 1 });
+    const failed = [pushed(62, head), posted(result(phase, { status: "blocked", next_step: "1. Decide X" }), 63)];
+    assert.deepEqual(await route(repairFixture({ comments: [...implementation, ...failed] })), { action: "noop" });
+  }
+  assert.deepEqual(await route(repairFixture({ comments: [pushed(62, head), posted(result("remediate-review"), 63)] })),
+    { action: "noop" });
+});
+
+test("repairs are bounded per maintainer implementation and a new one allows more", async () => {
+  const two = [...implemented(60), ...implemented(62, 101, { repair: 1 }), ...implemented(64, 102, { repair: 2 })];
+  assert.deepEqual(await route(repairFixture({ comments: two })),
+    { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 3 });
+  const three = [...two, ...implemented(66, 103, { repair: 3 })];
+  assert.deepEqual(await route(repairFixture({ comments: three })),
+    { action: "exhausted", issue: 7, pr: 42, comment: 0, validation: 500, round: 4 });
+  assert.equal((await route(repairFixture({ comments: [...three, ...implemented(68, 104)] }))).round, 1);
+});
+
+test("a repair worker is authorized by the routed CI failure, not by the CI run's actor", async (t) => {
+  const saved = preparationIO(t);
+  const data = await prepare({ ...repairFixture(), inputs: { phase: "implement", pr: 42, validation: 500 } });
+  assert.deepEqual(data.validation, {
+    round: 1, max: 3, run: 500, url: "https://github.com/example/broker/actions/runs/500", head,
+    jobs: [{
+      name: "Integration tests", url: "https://github.com/example/broker/actions/runs/500/job/1",
+      steps: ["Integration suites with JUnit"],
+    }],
+    reports: "/tmp/gh-aw/speckit/validation",
+  });
+  assert.deepEqual(JSON.parse(saved.at(-1).body).validation, data.validation);
+  await assert.rejects(prepare({ ...repairFixture(), inputs: { phase: "implement", pr: 42 } }), /Maintainer permission/);
+  await assert.rejects(prepare({ ...repairFixture(), inputs: { phase: "plan", pr: 42, validation: 500 } }), /Only implementation/);
+  for (const options of [
+    { runs: { 500: ciRun({ conclusion: "success" }) } },
+    { comments: [...implemented(60), ...implemented(62, 101, { repair: 1 }), ...implemented(64, 102, { repair: 2 }),
+      ...implemented(66, 103, { repair: 3 })] },
+  ]) {
+    await assert.rejects(prepare({ ...repairFixture(options), inputs: { phase: "implement", pr: 42, validation: 500 } }),
+      /not eligible for a repair/);
+  }
+});
+
+test("the status comment names the repair round and stops after the last repair", async () => {
+  const running = repairFixture();
+  await announce({ ...running, needs: { route: { result: "success",
+    outputs: { action: "implement", pr: "42", validation: "500", round: "2" } } } });
+  assert.ok(running.created[0].body.startsWith("## Spec Kit · ⏳ Repairing CI failures (round 2 of 3)\n"));
+  assert.ok(running.created[0].body.includes(
+    "Started by the failed [CI run](https://github.com/example/broker/actions/runs/500)."));
+
+  const comments = [...implemented(60), ...implemented(62, 101, { repair: 1 })];
+  const exhausted = repairFixture({ comments });
+  await report({ ...exhausted, needs: { route: { result: "success",
+    outputs: { action: "exhausted", pr: "42", validation: "500", round: "4" } } } });
+  const { body } = exhausted.created[0];
+  assert.ok(body.startsWith("## Spec Kit · ⛔ CI is still red after 3 repairs\n"));
+  assert.ok(body.includes("- [Integration tests](https://github.com/example/broker/actions/runs/500/job/1)\n"));
+  assert.ok(!body.includes("Unit tests"));
+  assert.ok(body.includes("comment `/speckit-implement` to allow up to 3 more repair runs."));
+  assert.match(body, /\[Repair 1 ✅\]/);
+
+  const gated = repairFixture();
+  await report({ ...gated, needs: { route: { result: "failure", outputs: { error: "Approval pending: react", pr: "42" } } } });
+  assert.ok(gated.created[0].body.startsWith("## Spec Kit · ⛔ Stopped in `route`\n"));
+  for (const route of [
+    { result: "failure", outputs: { error: "Lookup failed" } },
+    { result: "success", outputs: { action: "noop" } },
+  ]) {
+    const quiet = repairFixture();
+    assert.equal(await report({ ...quiet, needs: { route } }), null);
+    assert.equal(await announce({ ...quiet, needs: { route } }), null);
+    assert.equal(quiet.created.length + quiet.deleted.length, 0);
+  }
+});
+
+test("a repair result records its round and must commit a fix or hand the failure over", () => {
+  const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
+  const ticked = { ...files, [`${spec}/tasks.md`]: "- [X] T001 Implement feature" };
+  const context = { phase: "implement", run: "101/1", feature: spec, head, validation: { round: 2 } };
+  const draft = {
+    status: "complete", summary: "Fixed the migration test", report: "Repair report", findings: [], questions: [],
+    checks: ["just check", "just test"],
+  };
+  const local = {
+    "/tmp/gh-aw/speckit/context.json": context, "/tmp/gh-aw/speckit/result.json": draft,
+    ".specify/feature.json": { feature_directory: spec },
+  };
+  const saved = [];
+  const git = [];
+  let commits = "0";
+  const io = {
+    readFileSync: (name) => {
+      name = name.replace(/^\/workspace\//, "");
+      return Object.hasOwn(local, name) ? JSON.stringify(local[name]) : ticked[name];
+    },
+    existsSync: (name) => Object.hasOwn(ticked, name),
+    lstatSync: () => ({ isSymbolicLink: () => false }),
+    writeFileSync: (name, body) => saved.push({ name, body }),
+  };
+  const childProcess = { execFileSync: (file, args) => { git.push([file, ...args]); return `${commits}\n`; } };
+  const run = () => {
+    const module = { exports: {} };
+    const load = (name) => name === "node:fs" ? io : name === "node:child_process" ? childProcess : require(name);
+    load.main = module;
+    vm.runInNewContext(source, {
+      module, require: load, process: { argv: ["node", "automation.cjs", "result"], cwd: () => "/workspace" },
+    });
+  };
+  assert.throws(run, /repair that commits nothing must report blocked/);
+  assert.deepEqual(git, [["git", "rev-list", "--count", `${head}..HEAD`]]);
+  commits = "2";
+  run();
+  const parse = (body) => parseResult({ ...comment(result("implement")), body: `${body}\n<!-- gh-aw-workflow-call-id: example/broker/speckit-implement -->` });
+  assert.equal(parse(saved[0].body).repair, 2);
+  commits = "0";
+  Object.assign(draft, { status: "blocked", next_step: "1. Restore the CI runner's Docker daemon", checks: [] });
+  run();
+  assert.equal(parse(saved[1].body).repair, 2);
+  context.head = "HEAD~1";
+  Object.assign(draft, { status: "complete", checks: ["just check", "just test"] });
+  assert.throws(run, /Invalid repair head/);
+
+  for (const repair of [0, 4, 1.5, "1"]) {
+    assert.equal(parseResult(comment(result("implement", { repair }))), null);
+  }
+  assert.equal(parseResult(comment(result("plan", { repair: 1 }))), null);
+  assert.equal(parseResult(comment(result("implement", { repair: 3 }))).repair, 3);
 });

@@ -75,7 +75,8 @@ of the feature to be built, not a summary of the automation. Include:
     analyzes, and remediates on its own, and posts one approval comment listing
     the API changes, ADRs, and consequential decisions with links to them.
   - React with 👍 to the approval comment to approve it, then comment
-    `/speckit-implement [guidance]`.
+    `/speckit-implement [guidance]`. If CI then fails on the implementation's
+    commit, a repair run starts automatically, up to three times per command.
   - `/speckit-plan <change>` revises the specification and design and replaces
     the approval comment.
   - `/speckit-clarify [focus]` revisits the specification. Once a plan

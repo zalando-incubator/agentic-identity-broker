@@ -14,6 +14,9 @@ on:
       comment:
         type: number
         default: 0
+      validation:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
@@ -26,9 +29,20 @@ network:
     - api.osv.dev
     - openid.net
 permissions:
+  actions: read
   contents: read
   issues: read
   pull-requests: read
+steps:
+  # CI ran the pushed code without privileges; its test reports reach the sandbox only as data.
+  - name: Download the failed CI run's test reports
+    if: inputs.validation != 0
+    uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    with:
+      run-id: ${{ inputs.validation }}
+      github-token: ${{ github.token }}
+      pattern: "*-test-results"
+      path: /tmp/gh-aw/speckit/validation
 safe-outputs:
   report-failure-as-issue:
     - "!report_incomplete"
