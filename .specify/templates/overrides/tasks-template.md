@@ -58,8 +58,9 @@ isolated from feature work for clean, reviewable PRs.
 existing code — rename, restructure, extract interfaces, split files, consolidate duplicates.
 Skip entirely if the feature only adds new code without touching existing structures.
 
-**📝 REVIEW DISCIPLINE**: Refactoring commits MUST be submitted as a SEPARATE PR from feature implementation.
-This keeps reviewers focused: first approve structural changes with no behavior change, then
+**📝 REVIEW DISCIPLINE**: Refactoring MUST be committed SEPARATELY from feature implementation:
+its own commit(s), ahead of the feature commits in the same PR. A separate PR is not required.
+This keeps reviewers focused: they review the structural commit for unchanged behavior, then
 review new business logic separately.
 
 <!--
@@ -519,7 +520,7 @@ Task: "Create [Entity2] model in src/models/[entity2].py"
 
 ### MVP First (User Story 1 Only)
 
-1. **(If needed) Complete Phase 0**: Pre-implementation refactoring — separate PR, all tests green
+1. **(If needed) Complete Phase 0**: Pre-implementation refactoring — separate commit, all tests green
 2. Complete Phase 1: Setup
 3. Complete Phase 2: Design Preconditions (CRITICAL - blocks all stories)
    - 2a: Domain model & glossary

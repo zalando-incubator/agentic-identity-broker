@@ -840,6 +840,11 @@ function writeResult() {
   if (draft.status === "blocked" && (typeof draft.next_step !== "string" || !draft.next_step.trim())) {
     throw new Error("A blocked result must state the maintainer's next step");
   }
+  // The status comment shows the next step verbatim, so it must stay a short list a maintainer can act on.
+  const steps = draft.status === "blocked" ? draft.next_step.trim().split("\n") : [];
+  if (steps.length > 5 || steps.some((step) => !/^\d+\. \S/.test(step) || step.length > 300)) {
+    throw new Error("The next step must be a numbered list of at most 5 actions, one line of at most 300 characters each");
+  }
   const analysis = ["analyze", "reanalyze"].includes(context.phase);
   if (analysis && !Array.isArray(draft.approvals)) {
     throw new Error("An analysis must list its approval items, even when there are none");

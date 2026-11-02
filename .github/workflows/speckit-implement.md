@@ -24,6 +24,7 @@ network:
     - containers
     - linux-distros
     - api.osv.dev
+    - openid.net
 permissions:
   contents: read
   issues: read
@@ -48,6 +49,7 @@ safe-outputs:
       - "migrations/**"
       - "mocks/**"
       - "examples/**"
+      - "configs/**"
       - "docs/**"
       - "adrs/**"
       - "specs/**"

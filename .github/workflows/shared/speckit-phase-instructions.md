@@ -151,6 +151,11 @@ acceptance journeys. Use `just verify` when the feature requires the full
 verification gate. Resolve failures caused by the change, and mark only
 completed tasks `[X]`.
 
+Commit refactoring of existing code that the feature requires on its own,
+before the feature commits, with no behavior change and the existing tests
+passing unchanged. Never wait for or create a separate PR for it. A task that
+asks for a separately arranged refactoring PR is met by that separate commit.
+
 This run is unattended. It never stops at the first problem. Where the skill
 says to halt, stop, or ask, apply these rules instead:
 
@@ -168,16 +173,19 @@ says to halt, stop, or ask, apply these rules instead:
   Never check it yourself.
 
 At the end, validate everything that you implemented as described above and
-push the progress. If any work remains, report `blocked`. In `next_step`, list
-each deferred task, why it remains, and what the maintainer must decide or do,
-with `path:line` references. Never claim completion when tasks, checklist
-items, or validation remain unfinished.
+push the progress. If any work remains, report `blocked`. List each deferred
+task and why it remains in the report. Never claim completion when tasks,
+checklist items, or validation remain unfinished.
 
 ## Publish this session's result
 
 For an editing phase, request `push_to_pull_request_branch` on `context.pr`
 when changes exist. Do not create a new PR. Analyze and reanalyze must never
-request a push. Keep the PR draft.
+request a push. Keep the PR draft. The push checks every commit since
+`context.head` against the allowed files, so a path that a later commit
+reverts is still rejected. If a push is rejected for a path, recreate your
+commits on `context.head` without that path, keeping a refactoring commit
+separate, and request the push again.
 
 Write `/tmp/gh-aw/speckit/result.json` with this shape:
 
@@ -213,7 +221,11 @@ summary, and the PR timeline already shows each pushed commit.
 and `approvals` contains every sign-off item as
 `{"kind":"api","title":"Adds the agent_subject_expression setting","location":"specs/054-example/contracts/config.yaml:12-30"}`,
 where `kind` is `api`, `adr`, or `decision`. Other phases omit `approvals`.
-`next_step` is required when `status` is `blocked`. For a successful
+When `status` is `blocked`, `next_step` is a numbered list of at most five
+actions only the maintainer can take, one line of at most 300 characters each,
+such as `1. Decide whether X, recorded at specs/054-example/plan.md:40`. Name
+where to act: a `path:line`, a setting, or a command. Leave task IDs, remaining
+work, and evidence to the report. For a successful
 implementation, `checks` must contain `just check` and the matching `just` test
 commands, but only after those commands pass.
 
