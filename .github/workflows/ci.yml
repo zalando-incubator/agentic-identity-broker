@@ -236,8 +236,8 @@ jobs:
           tool: just
       - name: Install development tools
         run: just install-tools
-      - name: Integration suites with JUnit
-        run: just verify-integration-junit
+      - name: Self-contained integration suites with JUnit
+        run: just verify-integration-self-contained-junit
       - name: Upload integration test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -286,15 +286,8 @@ jobs:
         run: just install-tools
       - name: Install web dependencies
         run: just web-ci
-      - name: Pre-pull PostgreSQL E2E image
-        run: timeout 3m docker pull postgres:15-alpine@sha256:09e4f20b14ddb3dfe3a0c825b206032aaf8f28300ba2070c0b60fc1c10c6abc7
-      - name: Pre-pull agentgateway E2E images
-        run: |
-          docker pull cr.agentgateway.dev/agentgateway:v1.5.0
-          docker pull testcontainers/sshd:1.4.0
-          docker pull testcontainers/ryuk:0.14.0
       - name: Backend E2E suite with JUnit
-        run: just verify-e2e-backend-junit
+        run: just verify-e2e-backend-default-junit
       - name: Upload backend E2E test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -302,6 +295,15 @@ jobs:
           name: e2e-backend-test-results
           path: test-results/
           if-no-files-found: warn
+
+  # The Docker-backed suites live in their own workflow so the Spec Kit pipeline can dispatch them alone.
+  containers:
+    name: Container tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/container-tests.yml
 
   e2e-extproc:
     name: ExtProc E2E tests
@@ -524,7 +526,7 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [changes, unit, docker-build-flags, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
+    needs: [changes, unit, docker-build-flags, integration, e2e-backend, containers, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
