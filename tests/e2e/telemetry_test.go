@@ -18,6 +18,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/matchers"
 )
 
+// /health is not traced, so the specs observe a public route that is.
+const metadataPath = "/.well-known/oauth-authorization-server"
+
 var _ = Describe("OpenTelemetry Instrumentation", func() {
 	var (
 		server         *bootstrap.TestServer
@@ -74,19 +77,19 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 	Context("when tracing is enabled", func() {
 		// Scenario US1-S1 from specs/017-opentelemetry-support/spec.md
 		It("should emit a trace span for end-user server requests", func() {
-			resp, err := server.PublicGET("/health")
+			resp, err := server.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
 			// otelchi ends spans synchronously before returning the response,
 			// so recorder.Ended() is populated immediately after the HTTP call.
-			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
+			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", metadataPath, 200))
 		})
 
 		// Scenario US1-S2 from specs/017-opentelemetry-support/spec.md
 		It("should emit a trace span for admin server requests with distinct server identification", func() {
-			resp, err := adminServer.PublicGET("/health")
+			resp, err := adminServer.AuthenticatedGET("/api/agents", fixtures.AdminPrincipal().String())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
@@ -94,8 +97,8 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			// Admin server uses otelchi.Middleware("admin", ...) which sets the
 			// net.host.name attribute to "admin", distinguishing it from the end-user
 			// server (otelchi.Middleware("enduser", ...)) in traces.
-			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
-			Expect(recorder.Ended()).To(matchers.ContainSpanWithAttribute("GET /health", "net.host.name", "admin"))
+			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/api/agents", 200))
+			Expect(recorder.Ended()).To(matchers.ContainSpanWithAttribute("GET /api/agents", "net.host.name", "admin"))
 		})
 
 	})
@@ -141,16 +144,16 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			// snapshot could be caused by the disabled server.
 			snapshotBefore := len(recorder.Ended())
 
-			resp, err := disabledServer.PublicGET("/health")
+			resp, err := disabledServer.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
-			// Verify no otelchi server-side spans were emitted (span name: "GET /health").
+			// Verify no otelchi server-side spans were emitted (span name: "GET /.well-known/oauth-authorization-server").
 			// Background client-side spans (e.g. JWKS refresh → "HTTP GET") are filtered out
 			// by checking the span name rather than asserting the recorder is empty.
 			for _, span := range recorder.Ended()[snapshotBefore:] {
-				Expect(span.Name()).NotTo(Equal("GET /health"),
+				Expect(span.Name()).NotTo(Equal("GET "+metadataPath),
 					"otelchi must not be registered when Telemetry.Enabled=false")
 			}
 		})
@@ -164,13 +167,13 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			// TelemetryEnabledConfig() has Metrics.Enabled=false while Traces.Enabled=true.
 			// This verifies that the app operates normally when only tracing is active:
 			// requests succeed and trace spans are emitted as expected.
-			resp, err := server.PublicGET("/health")
+			resp, err := server.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
 			// Tracing continues to work even when metrics are disabled.
-			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
+			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", metadataPath, 200))
 		})
 	})
 
@@ -200,7 +203,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			// Snapshot recorder before the request so we can isolate new spans.
 			snapshotBefore := len(recorder.Ended())
 
-			resp, err := srv.PublicGET("/health")
+			resp, err := srv.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
@@ -208,7 +211,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			// No otelchi server-side spans should appear for the disabled server's request.
 			// Background client spans (JWKS refresh → "HTTP GET") are filtered by name.
 			for _, span := range recorder.Ended()[snapshotBefore:] {
-				Expect(span.Name()).NotTo(Equal("GET /health"),
+				Expect(span.Name()).NotTo(Equal("GET "+metadataPath),
 					"no otelchi HTTP spans should be emitted when telemetry is disabled")
 			}
 		})
@@ -235,13 +238,13 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			defer grpcServer.Close()
 			defer func() { _ = localTP.Shutdown(context.Background()) }()
 
-			resp, err := grpcServer.PublicGET("/health")
+			resp, err := grpcServer.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
 			// otelchi is registered because TelemetryGRPCConfig has Enabled=true.
-			Expect(localRecorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
+			Expect(localRecorder.Ended()).To(matchers.HaveHTTPSpan("GET", metadataPath, 200))
 		})
 	})
 
@@ -266,13 +269,13 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			defer httpServer.Close()
 			defer func() { _ = localTP.Shutdown(context.Background()) }()
 
-			resp, err := httpServer.PublicGET("/health")
+			resp, err := httpServer.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
 			// otelchi is registered because TelemetryHTTPConfig has Enabled=true.
-			Expect(localRecorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
+			Expect(localRecorder.Ended()).To(matchers.HaveHTTPSpan("GET", metadataPath, 200))
 		})
 	})
 
@@ -286,12 +289,12 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 			//
 			// This E2E test verifies that the app functions correctly with a custom service name
 			// configured: requests succeed and trace spans are emitted as expected.
-			resp, err := server.PublicGET("/health")
+			resp, err := server.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(200))
 
-			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", "/health", 200))
+			Expect(recorder.Ended()).To(matchers.HaveHTTPSpan("GET", metadataPath, 200))
 		})
 	})
 
