@@ -264,6 +264,30 @@ steps:
       EOF
       fi
 
+  - name: Install Repo Assist memory validator
+    env:
+      LOCK_FILE: ${{ github.workspace }}/.github/workflows/repo-assist.lock.yml
+      VALIDATOR: /tmp/gh-aw/repo-assist/validate-memory.cjs
+    run: |
+      set -euo pipefail
+      # Reuse the compiled repo-memory validation script so the agent runs the exact check that gates the memory push.
+      script_b64="$(grep -m1 -oP '^\s*VALIDATION_SCRIPT_B64: \K\S+' "$LOCK_FILE" || true)"
+      if [[ -z "$script_b64" ]]; then
+        echo "::error::VALIDATION_SCRIPT_B64 not found in $LOCK_FILE; recompile the workflow with gh aw compile"
+        exit 1
+      fi
+      mkdir -p "$(dirname "$VALIDATOR")"
+      {
+        echo '"use strict";'
+        echo 'const memoryRoot = require("node:path").resolve(process.argv[2] || "/tmp/gh-aw/repo-memory/default");'
+        echo '(async () => {'
+        base64 -d <<<"$script_b64"
+        echo '})().then(result => {'
+        echo '  if (result === false) { console.error("notes.json: validation returned false"); process.exit(1); }'
+        echo '}).catch(error => { console.error(error.message); process.exit(1); });'
+      } > "$VALIDATOR"
+      node "$VALIDATOR"
+
   - name: Fetch repo data for task weighting
     env:
       GH_TOKEN: ${{ github.token }}
@@ -373,6 +397,9 @@ steps:
 
 engine: pi
 
+models:
+  allowed: ["gpt-6.1-sol"]
+
 source: githubnext/agentics/workflows/repo-assist.md@139fa09ef17cde4135e696ff8e7af09bc5ddfa6e
 ---
 
@@ -419,7 +446,7 @@ The schema stores only:
 
 Keep notes terse and current. Replace superseded entries, remove resolved issue records and closed fix records once they are no longer needed for duplicate prevention, and never store run-by-run narration, exhaustive label histories, stale PR inventories, copied GitHub content, or facts that can be cheaply queried again. Stay within the schema's array and text limits; do not create another memory file.
 
-After every change to `notes.json`, run `jq empty /tmp/gh-aw/repo-memory/default/notes.json`, then call `push_repo_memory`. A successful tool result is required before finishing the run. If either check reports an error, repair `notes.json` and retry both checks. Prefer `jq` with a temporary file and atomic rename over manual partial JSON edits.
+After every change to `notes.json`, run `node /tmp/gh-aw/repo-assist/validate-memory.cjs`, then call `push_repo_memory`. The validator is the same schema check that gates the memory upload after this run; it prints `repo-assist notes.json conforms to schema` on success and the first violation otherwise. Both a successful validator run and a successful `push_repo_memory` tool result are required before finishing the run. If either reports an error, repair `notes.json` and retry both. Prefer `jq` with a temporary file and atomic rename over manual partial JSON edits.
 
 **Important**: Memory may not be 100% accurate. Issues may have been created, closed, or commented on; PRs may have been created, merged, commented on, or closed since the last run. Always verify memory against current repository state — reviewing recent activity since your last run is wise before acting on stale assumptions.
 
