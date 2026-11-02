@@ -424,6 +424,7 @@ jobs:
       pull-requests: read
     outputs:
       auto: ${{ steps.status.outputs.auto }}
+      remediable: ${{ steps.status.outputs.remediable }}
       error: ${{ steps.status.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -441,8 +442,10 @@ jobs:
           script: |
             const { verify } = require('./.github/scripts/architecture-review-automation.cjs');
             try {
+              const { remediable } = require('./.github/scripts/speckit-automation.cjs');
               const review = await verify({ github, context, comment: process.env.REVIEW_COMMENT });
               core.setOutput('auto', String(review.items.some((item) => item.bucket === 'auto')));
+              core.setOutput('remediable', String(await remediable({ github, context, pr: review.pr })));
             } catch (error) {
               core.setOutput('error', error.message);
               throw error;
@@ -451,7 +454,9 @@ jobs:
   # Automatic fixes stay out of contracts, ADRs, schema, and the approved design; the worker's push scope enforces it.
   fix:
     needs: [route, reviewed]
-    if: always() && needs.reviewed.result == 'success' && needs.reviewed.outputs.auto == 'true'
+    if: >-
+      always() && needs.reviewed.result == 'success' &&
+      needs.reviewed.outputs.auto == 'true' && needs.reviewed.outputs.remediable == 'true'
     permissions:
       actions: read
       contents: write
@@ -563,6 +568,7 @@ jobs:
       comment_id: ${{ steps.publish.outputs.comment_id }}
       recommendation: ${{ steps.publish.outputs.recommendation }}
       questions: ${{ steps.publish.outputs.questions }}
+      remediable: ${{ steps.publish.outputs.remediable }}
       error: ${{ steps.publish.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -576,11 +582,14 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           REVIEW_COMMENT: ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id || needs.review.outputs.comment_id }}
+          REVIEW_REMEDIABLE: ${{ needs.rereview.result == 'success' || needs.reviewed.outputs.remediable == 'true' }}
         with:
           script: |
             const { publishProposals } = require('./.github/scripts/speckit-automation.cjs');
             try {
-              const result = await publishProposals({ github, context, review: process.env.REVIEW_COMMENT });
+              const result = await publishProposals({
+                github, context, review: process.env.REVIEW_COMMENT, remediable: process.env.REVIEW_REMEDIABLE === 'true',
+              });
               for (const [key, value] of Object.entries(result)) core.setOutput(key, String(value));
             } catch (error) {
               core.setOutput('error', error.message);

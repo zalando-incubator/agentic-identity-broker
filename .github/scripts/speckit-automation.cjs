@@ -750,8 +750,15 @@ async function reviewContext(github, context, pr, inputs) {
   return { url: entry.comment.html_url, items };
 }
 
+// Remediation changes code, so it needs a completed implementation, remediation, or apply phase on the PR.
+async function remediable({ github, context, pr }) {
+  const entries = await reports(github, context.repo, Number(pr));
+  return latest(entries, codePhases)?.result.status === "complete";
+}
+
 // The proposal lists what the latest review leaves to the maintainer; a later review replaces it.
-async function publishProposals({ github, context, review }) {
+// Before implementation there is nothing to apply yet, so the review's findings wait for the next review.
+async function publishProposals({ github, context, review, remediable = true }) {
   const { repo } = context;
   if (!Number.isSafeInteger(Number(review)) || Number(review) <= 0) throw new Error("Worker did not publish a review comment");
   const { data: posted } = await github.rest.issues.getComment({ ...repo, comment_id: Number(review) });
@@ -765,8 +772,8 @@ async function publishProposals({ github, context, review }) {
   }
   const actionable = state.items.filter((item) => ["auto", "proposed"].includes(item.bucket));
   const questions = state.items.filter((item) => item.bucket === "question");
-  const result = { comment_id: "", recommendation: state.recommendation, questions: questions.length };
-  if (!actionable.length && !questions.length) return result;
+  const result = { comment_id: "", recommendation: state.recommendation, questions: questions.length, remediable: Boolean(remediable) };
+  if (!remediable || (!actionable.length && !questions.length)) return result;
   const items = {};
   const lines = actionable.map((item, index) => {
     const id = `P${index + 1}`;
@@ -863,7 +870,9 @@ function reviewLines(needs, repo, number) {
   const recommendation = Object.hasOwn(reviewRecommendations, proposals.recommendation) ? proposals.recommendation : null;
   const lines = ["", `Architecture review${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
   const proposal = Number(proposals.comment_id);
-  if (proposal) {
+  if (proposals.remediable === "false") {
+    lines.push("", "Its findings are remediated after `/speckit-implement`, when the review runs again.");
+  } else if (proposal) {
     lines.push("", `Decide the remaining items in the [remediation proposal](${url(proposal)}): tick each item to apply, ` +
       `then tick ${applyBox}. The pipeline applies them, pushes, and reviews the result.`);
   }
@@ -1160,7 +1169,7 @@ function selectFeature() {
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
-  reviewDimensions,
+  remediable, reviewDimensions,
 };
 
 if (require.main === module) {

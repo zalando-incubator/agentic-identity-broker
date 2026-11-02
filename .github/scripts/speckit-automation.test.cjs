@@ -20,6 +20,7 @@ const {
   parseReview,
   parseProposal,
   publishProposals,
+  remediable,
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
@@ -1520,7 +1521,7 @@ test("the proposal comment lists automatic fixes pre-ticked, decisions unticked,
   const stale = proposalComment({}, { id: 30 });
   const f = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [architectureReview(items), stale] });
   const published = await publishProposals({ ...f, review: "22" });
-  assert.deepEqual(published, { comment_id: "901", recommendation: "DISCUSS", questions: 1 });
+  assert.deepEqual(published, { comment_id: "901", recommendation: "DISCUSS", questions: 1, remediable: true });
   assert.deepEqual(f.deleted, [30]);
   assert.equal(f.created[0].body, [
     "## Spec Kit remediation proposal", "",
@@ -1539,13 +1540,13 @@ test("the proposal comment lists automatic fixes pre-ticked, decisions unticked,
 
   const questions = fixture("issue_comment", commandEvent(command("/speckit-implement")),
     { comments: [architectureReview([item("F3", { bucket: "question", question: "Why?" })])] });
-  assert.deepEqual(await publishProposals({ ...questions, review: "22" }), { comment_id: "901", recommendation: "DISCUSS", questions: 1 });
+  assert.deepEqual(await publishProposals({ ...questions, review: "22" }), { comment_id: "901", recommendation: "DISCUSS", questions: 1, remediable: true });
   assert.ok(questions.created[0].body.includes("left only open questions."));
   assert.ok(!questions.created[0].body.includes("Apply the selected items"));
 
   const clean = fixture("issue_comment", commandEvent(command("/speckit-implement")),
     { comments: [architectureReview([], { recommendation: "APPROVE" })] });
-  assert.deepEqual(await publishProposals({ ...clean, review: "22" }), { comment_id: "", recommendation: "APPROVE", questions: 0 });
+  assert.deepEqual(await publishProposals({ ...clean, review: "22" }), { comment_id: "", recommendation: "APPROVE", questions: 0, remediable: true });
   assert.equal(clean.created.length, 0);
 
   const foreign = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [architectureReview(items, { run: "99/1" })] });
@@ -1607,4 +1608,41 @@ test("review results are parsed only from the review worker's footer and a consi
   assert.equal(parseReview(mismatch), null);
   assert.throws(() => validateReviewState({ ...JSON.parse(valid.body.match(/```json\n(\{.*\})\n```/)[1]), items: [item("F1", { bucket: "auto", change: undefined })] }),
     /needs a one-line recommended change/);
+});
+
+test("remediation waits for a completed code phase; earlier reviews publish no proposal", async () => {
+  const items = [item("F1", { bucket: "auto" }), item("F2"), item("F3", { bucket: "question", question: "Why?" })];
+  const implemented = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), architectureReview(items)] });
+  assert.equal(await remediable({ ...implemented, pr: 42 }), true);
+  const applied = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), posted(result("apply-review"), 23)] });
+  assert.equal(await remediable({ ...applied, pr: "42" }), true);
+  const blocked = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), posted(result("remediate-review", { status: "blocked", next_step: "1. Decide" }), 23)] });
+  assert.equal(await remediable({ ...blocked, pr: 42 }), false);
+  const planned = fixture("issue_comment", {}, { comments: [posted(result("reanalyze", { approvals: [] }), 18), architectureReview(items)] });
+  assert.equal(await remediable({ ...planned, pr: 42 }), false);
+
+  const stale = proposalComment({}, { id: 30 });
+  const early = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments: [architectureReview(items), stale] });
+  assert.deepEqual(await publishProposals({ ...early, review: "22", remediable: false }),
+    { comment_id: "", recommendation: "DISCUSS", questions: 1, remediable: false });
+  assert.deepEqual(early.deleted, [30]);
+  assert.equal(early.created.length, 0);
+  const later = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments: [architectureReview(items)] });
+  assert.equal((await publishProposals({ ...later, review: "22" })).remediable, true);
+  assert.equal(later.created.length, 1);
+
+  const status = fixture("issue_comment", commandEvent(command("/architecture-review")),
+    { comments: [posted(result("reanalyze", { approvals: [] }), 18), architectureReview(items)] });
+  await report({ ...status, needs: {
+    route: { result: "success", outputs: { action: "review", pr: "42" } },
+    review: { result: "success", outputs: { comment_id: "22" } },
+    reviewed: { result: "success", outputs: { auto: "true", remediable: "false" } },
+    fix: { result: "skipped", outputs: {} },
+    proposals: { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } },
+  } });
+  const { body } = status.created[0];
+  assert.ok(body.includes(`Architecture review: **DISCUSS**. [Read the review](${link(22)}).`));
+  assert.ok(body.includes("Its findings are remediated after `/speckit-implement`, when the review runs again."));
+  assert.ok(!body.includes("remediation proposal"));
+  assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
 });
