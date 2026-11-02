@@ -19,7 +19,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      APP_CONFIGURED: ${{ vars.PR_CONFLICT_APP_CLIENT_ID != '' && secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY != '' }}
+      APP_CONFIGURED: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID != '' && secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY != '' }}
     outputs:
       candidates: ${{ steps.route.outputs.candidates }}
       count: ${{ steps.route.outputs.count }}

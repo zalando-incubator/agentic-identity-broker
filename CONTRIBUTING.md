@@ -208,8 +208,8 @@ Remove the label to stop later runs. A blocked resolution leaves the remote bran
 
 Before enabling the label, make sure the App with the private key in the existing Actions secret
 `AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
-Grant it Contents, Workflows, Pull requests, and Issues read/write permissions.
-Set Actions variable `PR_CONFLICT_APP_CLIENT_ID` to the client ID of that same App.
+Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
 The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines

@@ -70,10 +70,10 @@ steps:
       GH_CONFIG_DIR: /tmp/gh-aw/pr-conflicts/gh
     run: |
       mkdir -p "$GH_CONFIG_DIR"
-      gh extension install github/gh-aw --pin v0.92.0
+      gh extension install github/gh-aw --pin v1.0.1
 safe-outputs:
   github-app:
-    client-id: ${{ vars.PR_CONFLICT_APP_CLIENT_ID }}
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
     owner: zalando-incubator
     repositories: [agentic-identity-broker]
