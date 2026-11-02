@@ -20,6 +20,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func mapAgentExternalIDError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	if pgErr.Code == "23505" && pgErr.ConstraintName == "uq_agents_external_id" {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id is already held by another agent")
+	}
+	if pgErr.Code == "23514" && pgErr.ConstraintName == "chk_agents_external_id_not_empty" {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "external_id cannot be empty when provided")
+	}
+	return nil
+}
+
 // emptyIfNil converts a nil string slice to an empty slice.
 // pq.Array returns SQL NULL for a nil slice, which violates NOT NULL constraints.
 func emptyIfNil(s []string) []string {
@@ -202,6 +216,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.AllowedScopes)), agent.CreatedAt, agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("CreateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("CreateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
@@ -448,6 +465,9 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.RedirectURIs)), pq.Array(emptyIfNil(agent.AllowedScopes)), agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("UpdateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("UpdateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}

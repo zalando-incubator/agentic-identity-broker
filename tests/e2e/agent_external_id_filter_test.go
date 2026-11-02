@@ -32,7 +32,6 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 		permissionID   id.PermissionSetID
 		analyst        *storage.Agent
 		research       *storage.Agent
-		researchEU     *storage.Agent
 		withoutID      *storage.Agent
 	)
 
@@ -114,7 +113,6 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 
 		analyst = createAgent("Data Analyst", "data-analyst", analystExternalID)
 		research = createAgent("Research Assistant", "research-assistant", researchExternalID)
-		researchEU = createAgent("Research Assistant (EU)", "research-assistant-eu", researchExternalID)
 		withoutID = createAgent("No Governance ID", "no-governance-id", "")
 	})
 
@@ -180,17 +178,6 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 		})
 	})
 
-	// US1-S3 from specs/054-agent-external-id-filter/spec.md
-	It("should return every agent sharing an external ID and no others", func() {
-		resp, err := server.AuthenticatedGET(filterPath(researchExternalID), principal)
-		Expect(err).NotTo(HaveOccurred())
-		agents := readAgents(resp)
-		Expect(agentIDs(agents)).To(ConsistOf(research.ID.String(), researchEU.ID.String()))
-		for _, agent := range agents {
-			Expect(agent["external_id"]).To(Equal(researchExternalID))
-		}
-	})
-
 	Describe("when the external ID filter is unusable", func() {
 		// US2-S1 from specs/054-agent-external-id-filter/spec.md
 		It("should reject a present but empty external ID", func() {
@@ -234,7 +221,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 			resp, err := server.AuthenticatedGET(path, principal)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(agentIDs(readAgents(resp))).To(ConsistOf(
-				analyst.ID.String(), research.ID.String(), researchEU.ID.String(), withoutID.ID.String(),
+				analyst.ID.String(), research.ID.String(), withoutID.ID.String(),
 			))
 		}
 	})

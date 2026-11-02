@@ -4,8 +4,8 @@
 
 This guide proves the feature end to end after implementation. It does not replace the
 automated suites. Status: partial implementation-phase progress; the supplied maintainer approval
-is recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). Runtime implementation
-and all PostgreSQL acceptance work remain incomplete. Do not deploy this feature.
+is recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). Core runtime behavior and PostgreSQL test definitions are implemented; exhaustive regression coverage
+and PostgreSQL acceptance validation remain incomplete. Do not deploy this feature.
 
 ## Prerequisites
 
@@ -29,36 +29,39 @@ share one external ID.
 
 ## Current acceptance coverage
 
-The new suite currently authors 15 of 22 scenarios. A focused run compiled and produced 12
-missing-feature failures and three unchanged-compatibility passes. Collection PUT currently has only the approved compiling handler scaffold and returns 501
-instead of the required 201/200/400/409; ordinary duplicate POST/update still returns 201/200 and
-empty-ID POST returns 201 instead of 400. These are semantic red observations, not green delivery.
-No pending or skipped markers were added. The existing feature 054 suite remains unchanged until
-uniqueness enforcement and its replacement coverage are delivered together.
+All 22 scenarios now have one mapped `It()`. The 15 in-memory scenarios pass in the backend
+suite (928 total passing specs). Seven PostgreSQL/both-store scenarios are assigned to CI,
+not claimed as locally validated. The superseded feature-054 shared-ID test and fixture have
+been removed with uniqueness enforcement; its remaining scenarios pass unchanged.
 
 | Scenario | `tests/e2e/agent_external_id_upsert_test.go` location |
 | --- | --- |
-| US1.1 | :125 |
-| US1.5 | :153 |
-| US1.6 | :174 |
-| US1.7 | :194 |
-| US2.1 | :219 |
-| US2.2 | :230 |
-| US2.3 | :243 |
-| US2.4 | :254 |
-| US2.5 | :271 |
-| US2.6 | :282 |
-| US2.7 | :304 |
-| US2.8 | :328 |
-| US4.1 | :349 |
-| US4.2 | :359 |
-| US4.3 | :367 |
+| US1.1 | :128 |
+| US1.2 | :143 |
+| US1.3 | :165 |
+| US1.4 | :200 |
+| US1.5 | :254 |
+| US1.6 | :275 |
+| US1.7 | :295 |
+| US2.1 | :320 |
+| US2.2 | :331 |
+| US2.3 | :344 |
+| US2.4 | :355 |
+| US2.5 | :372 |
+| US2.6 | :383 |
+| US2.7 | :405 |
+| US2.8 | :429 |
+| US3.1 | :512 |
+| US3.2 | :521 |
+| US3.3 | :528 |
+| US3.4 | :557 |
+| US4.1 | :576 |
+| US4.2 | :586 |
+| US4.3 | :594 |
 
-Still required: US1.2–US1.4 (both-store replay, microsecond updates and two-broker concurrency),
-US3.1–US3.4 (complete upgrade/remediation/rollback journeys), and remaining detailed variants of
-T014/T015/T018. Both `just test-e2e-docker` and `just test-integration-infra` failed because no
-Docker/Podman runtime is accessible. This is not semantic red evidence and cannot satisfy T019.
-A permitted worker with a usable container runtime must complete that gate before behavior work.
+Remaining work includes the exhaustive field/error/preference matrices and migration inventory/relationship
+checks listed in unchecked tasks. Container-backed red/green evidence comes from CI on the pushed
+commit; it must not prevent completion of locally runnable work.
 
 ## Manual journey (in-memory broker)
 

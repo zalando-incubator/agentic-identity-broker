@@ -551,7 +551,7 @@ func TestAgentRepository_List(t *testing.T) {
 func TestAgentRepository_ListByExternalID(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("exact matches only, including shared and literal identifiers", func(t *testing.T) {
+	t.Run("exact matches only, including literal identifiers", func(t *testing.T) {
 		repo := NewAgentRepository()
 		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
 		other := id.ExternalID("urn:example:ai-registry:agent:other")
@@ -559,7 +559,6 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		clientID := id.ClientID("client-only")
 		agents := []*storage.Agent{
 			{ExternalID: &shared, DisplayName: "Research Assistant", Description: "First deployment", PermissionSets: testPermissionSets()},
-			{ExternalID: &shared, DisplayName: "Research Assistant EU", Description: "Second deployment", PermissionSets: testPermissionSets()},
 			{ExternalID: &other, DisplayName: "Other", Description: "Different external ID", PermissionSets: testPermissionSets()},
 			{CanonicalID: &canonical, ClientID: &clientID, DisplayName: "No external ID", Description: "Other identifiers", PermissionSets: testPermissionSets()},
 		}
@@ -581,8 +580,8 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 			}
 			assert.ElementsMatch(t, expected, ids)
 		}
-		check(shared, agents[0].ID, agents[1].ID)
-		check(other, agents[2].ID)
+		check(shared, agents[0].ID)
+		check(other, agents[1].ID)
 		check(id.ExternalID("urn:example:ai-registry:agent:missing"))
 		check(id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))
 		check(id.ExternalID(" " + string(shared)))

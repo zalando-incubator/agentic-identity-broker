@@ -3,11 +3,14 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -134,6 +137,104 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(body["created_at"]).To(Equal(body["updated_at"]))
 			Expect(readList(filterPath(selector))).To(ConsistOf(body))
 			Expect(stored(agentID).PermissionSets).To(HaveLen(1))
+		})
+
+		// Scenario US1.2 from specs/055-agent-external-id-upsert/spec.md
+		It("should return 200 with an unchanged representation and timestamps on replay", Label("docker"), func() {
+			for _, backend := range []string{"memory", "postgres"} {
+				withExternalIDBackend(backend, func(s *bootstrap.TestServer, st *storageadapter.Adapter) {
+					definition["client_uris"] = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
+					resp, err := helpers.ReconcileAgent(s, principal, selector, definition, "")
+					Expect(err).To(Succeed())
+					created := readObject(resp, http.StatusCreated)
+					Expect(created["client_uris"]).To(Equal([]any{"https://agent.example/a.json", "https://agent.example/z.json"}))
+					for range 10 {
+						resp, err := helpers.ReconcileAgent(s, principal, selector, definition, "")
+						Expect(err).To(Succeed())
+						Expect(readObject(resp, http.StatusOK)).To(Equal(created))
+					}
+					found, err := st.Agents().ListByExternalID(ctx, selector)
+					Expect(err).To(Succeed())
+					Expect(found).To(HaveLen(1))
+					Expect(found[0].ID.String()).To(Equal(created["id"]))
+				})
+			}
+		})
+
+		// Scenario US1.3 from specs/055-agent-external-id-upsert/spec.md
+		It("should update the same agent and advance only updated_at when the definition changes", Label("docker"), func() {
+			for _, backend := range []string{"memory", "postgres"} {
+				withExternalIDBackend(backend, func(s *bootstrap.TestServer, st *storageadapter.Adapter) {
+					definition["display_name"] = "Research Assistant"
+					delete(definition, "client_uris")
+					resp, err := helpers.ReconcileAgent(s, principal, selector, definition, "")
+					Expect(err).To(Succeed())
+					created := readObject(resp, http.StatusCreated)
+					agentID, err := id.ParseAgentID(created["id"].(string))
+					Expect(err).To(Succeed())
+					a, err := st.Agents().Get(ctx, agentID)
+					Expect(err).To(Succeed())
+					a.UpdatedAt = time.Now().UTC().Add(time.Hour).Truncate(time.Second).Add(123456 * time.Microsecond)
+					Expect(st.Agents().Update(ctx, a)).To(Succeed())
+					definition["display_name"] = "Changed Research Assistant"
+					definition["client_uris"] = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
+					resp, err = helpers.ReconcileAgent(s, principal, selector, definition, "")
+					Expect(err).To(Succeed())
+					changed := readObject(resp, http.StatusOK)
+					Expect(changed["id"]).To(Equal(created["id"]))
+					Expect(changed["created_at"]).To(Equal(created["created_at"]))
+					Expect(changed["updated_at"]).To(Equal(a.UpdatedAt.Add(time.Microsecond).Format(time.RFC3339Nano)))
+					Expect(changed["client_uris"]).To(Equal([]any{"https://agent.example/a.json", "https://agent.example/z.json"}))
+					definition["client_uris"] = []string{"https://agent.example/a.json", "https://agent.example/z.json"}
+					resp, err = helpers.ReconcileAgent(s, principal, selector, definition, "")
+					Expect(err).To(Succeed())
+					Expect(readObject(resp, http.StatusOK)).To(Equal(changed))
+					resp, err = s.AuthenticatedGET("/api/agents/"+agentID.String(), principal)
+					Expect(err).To(Succeed())
+					Expect(readObject(resp, http.StatusOK)).To(Equal(changed))
+				})
+			}
+		})
+
+		// Scenario US1.4 from specs/055-agent-external-id-upsert/spec.md
+		It("should create exactly one agent when two PostgreSQL brokers race on the first call", Label("docker"), func() {
+			withExternalIDPostgresBrokers(func(first, second *bootstrap.TestServer, st *storageadapter.Adapter) {
+				var wg sync.WaitGroup
+				results := make(chan *http.Response, 10)
+				for i := range 10 {
+					wg.Go(func() {
+						defer GinkgoRecover()
+						target := first
+						if i%2 == 1 {
+							target = second
+						}
+						resp, err := helpers.ReconcileAgent(target, principal, selector, definition, "")
+						Expect(err).To(Succeed())
+						results <- resp
+					})
+				}
+				wg.Wait()
+				close(results)
+				created := 0
+				var identity any
+				for resp := range results {
+					if resp.StatusCode == http.StatusCreated {
+						created++
+					} else {
+						Expect(resp.StatusCode).To(Equal(http.StatusOK))
+					}
+					body := readObject(resp, resp.StatusCode)
+					if identity == nil {
+						identity = body["id"]
+					}
+					Expect(body["id"]).To(Equal(identity))
+				}
+				Expect(created).To(Equal(1))
+				found, err := st.Agents().ListByExternalID(ctx, selector)
+				Expect(err).To(Succeed())
+				Expect(found).To(HaveLen(1))
+				Expect(found[0].ID.String()).To(Equal(identity))
+			})
 		})
 
 		Context("when the selected agent has identities, metadata, collections and a grant", func() {
@@ -339,6 +440,132 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			}
 			Expect(readList("/api/agents")).To(HaveLen(8))
 			expectUnchanged(before)
+		})
+	})
+
+	Context("US3: upgrade safely without losing governed agents", Label("docker"), func() {
+		var (
+			postgres     *bootstrap.PostgresFixture
+			db           *sql.DB
+			legacyStore  *storageadapter.Adapter
+			legacyServer *bootstrap.TestServer
+			legacy       []*storage.Agent
+		)
+		BeforeEach(func() {
+			var err error
+			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 45)
+			Expect(err).To(Succeed())
+			legacyStore = externalIDPostgresStorage(postgres)
+			legacyServer = externalIDAdminServer(legacyStore)
+			db, err = sql.Open("pgx", postgres.ConnectionURL)
+			Expect(err).To(Succeed())
+			legacy = nil
+			for range 3 {
+				a := fixtures.AgentWithExternalID(id.ExternalID(id.NewAgentID().String()), fixtures.PlaceholderPermissionSetID)
+				Expect(legacyStore.Agents().Create(ctx, a)).To(Succeed())
+				g := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), a.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"})
+				Expect(legacyStore.UserGrants().Create(ctx, g)).To(Succeed())
+				legacy = append(legacy, a)
+			}
+		})
+		AfterEach(func() {
+			if legacyServer != nil {
+				legacyServer.Close()
+			}
+			if db != nil {
+				Expect(db.Close()).To(Succeed())
+			}
+			if legacyStore != nil {
+				Expect(legacyStore.Close(ctx)).To(Succeed())
+			}
+			if postgres != nil {
+				Expect(postgres.Close(ctx)).To(Succeed())
+			}
+		})
+		setID := func(agent *storage.Agent, value any) {
+			_, err := db.ExecContext(ctx, "UPDATE agents SET external_id=$1 WHERE id=$2", value, agent.ID)
+			Expect(err).To(Succeed())
+		}
+		snapshot := func() string {
+			var result string
+			err := db.QueryRowContext(ctx, `SELECT jsonb_build_object(
+				'agents',(SELECT jsonb_agg(jsonb_build_object('id',id,'external_id',external_id,'permission_sets',permission_sets,'service_requirements',service_requirements,'created_at',created_at,'updated_at',updated_at) ORDER BY id) FROM agents),
+				'grants',(SELECT jsonb_agg(jsonb_build_object('id',id,'agent_id',agent_id,'permission_sets',granted_permission_sets,'created_at',created_at,'updated_at',updated_at) ORDER BY id) FROM user_grants))::text`).Scan(&result)
+			Expect(err).To(Succeed())
+			return result
+		}
+		expectBlocked := func(affected ...*storage.Agent) {
+			before := snapshot()
+			err := postgres.MigrateTo(0)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("agent external_id uniqueness migration blocked"))
+			for _, a := range affected {
+				Expect(err.Error()).To(ContainSubstring(a.ID.String()))
+			}
+			Expect(snapshot()).To(Equal(before))
+			var newIndex, oldIndex bool
+			Expect(db.QueryRowContext(ctx, `SELECT to_regclass('uq_agents_external_id') IS NOT NULL, to_regclass('idx_agents_external_id') IS NOT NULL`).Scan(&newIndex, &oldIndex)).To(Succeed())
+			Expect(newIndex).To(BeFalse())
+			Expect(oldIndex).To(BeTrue())
+		}
+		// Scenario US3.1 from specs/055-agent-external-id-upsert/spec.md
+		It("should block the migration on duplicates and report the value and agent IDs", func() {
+			setID(legacy[0], string(selector))
+			setID(legacy[1], string(selector))
+			expectBlocked(legacy[0], legacy[1])
+			resp, err := legacyServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
+			Expect(err).To(Succeed())
+			Expect(readObject(resp, http.StatusOK)["external_id"]).To(Equal(string(selector)))
+		})
+		// Scenario US3.2 from specs/055-agent-external-id-upsert/spec.md
+		It("should block the migration on empty values and report both categories", func() {
+			setID(legacy[0], string(selector))
+			setID(legacy[1], string(selector))
+			setID(legacy[2], "")
+			expectBlocked(legacy...)
+		})
+		// Scenario US3.3 from specs/055-agent-external-id-upsert/spec.md
+		It("should succeed after deliberate remediation and then enforce uniqueness", func() {
+			setID(legacy[0], string(selector))
+			setID(legacy[1], string(selector))
+			setID(legacy[2], "")
+			expectBlocked(legacy...)
+			for i, a := range legacy[1:] {
+				desired := map[string]any{"display_name": a.DisplayName, "description": a.Description, "permission_sets": definition["permission_sets"]}
+				if i == 0 {
+					desired["external_id"] = string(selector) + "-eu"
+				}
+				encoded, err := json.Marshal(desired)
+				Expect(err).To(Succeed())
+				resp, err := legacyServer.DirectRequest(http.MethodPut, "/api/agents/"+a.ID.String(), principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+				Expect(err).To(Succeed())
+				Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(a.ID.String()))
+			}
+			before := snapshot()
+			Expect(postgres.ForceVersion(45)).To(Succeed())
+			Expect(postgres.MigrateTo(0)).To(Succeed())
+			Expect(snapshot()).To(Equal(before))
+			definition["external_id"] = string(selector)
+			encoded, err := json.Marshal(definition)
+			Expect(err).To(Succeed())
+			resp, err := legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			Expect(err).To(Succeed())
+			Expect(readObject(resp, http.StatusConflict)["error"]).To(Equal("conflict"))
+			Expect(snapshot()).To(Equal(before))
+		})
+		// Scenario US3.4 from specs/055-agent-external-id-upsert/spec.md
+		It("should preserve agents and relationships across rollback and reapply", func() {
+			setID(legacy[2], nil)
+			before := snapshot()
+			Expect(postgres.MigrateTo(0)).To(Succeed())
+			Expect(snapshot()).To(Equal(before))
+			Expect(postgres.MigrateTo(45)).To(Succeed())
+			Expect(snapshot()).To(Equal(before))
+			Expect(postgres.MigrateTo(0)).To(Succeed())
+			Expect(snapshot()).To(Equal(before))
+			resp, err := legacyServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
+			Expect(err).To(Succeed())
+			Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(legacy[0].ID.String()))
 		})
 	})
 

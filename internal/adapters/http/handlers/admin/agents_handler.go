@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -144,8 +145,82 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Prefer")
+	selector, present, message := externalIDFromQuery(r.URL.RawQuery)
+	if !present && message == "" {
+		message = "external_id selector is required"
+	}
+	if message != "" {
+		h.writeError(w, http.StatusBadRequest, "invalid external_id", message)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body exceeds limit or cannot be read")
+		return
+	}
+	var req AgentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body must be an AgentCreateRequest")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", "request body must be an object")
+		return
+	}
+	if raw, ok := fields["client_id"]; ok && (bytes.Equal(raw, []byte("null")) || req.ClientID == nil || strings.TrimSpace(*req.ClientID) == "") {
+		h.writeError(w, http.StatusBadRequest, "validation failed", "client_id must be a nonempty string when supplied")
+		return
+	}
+	ctx := r.Context()
+	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	_, canonicalPresent := fields["canonical_id"]
+	rawExternal, externalPresent := fields["external_id"]
+	input := agents.ReconcileInput{CanonicalIDPresent: canonicalPresent, ExternalIDPresent: externalPresent, ExternalIDNull: externalPresent && bytes.Equal(rawExternal, []byte("null"))}
+	httpmiddleware.FinalizeRequestSecurityContext(ctx)
+	agent, outcome, err := h.agentService.ReconcileByExternalID(ctx, selector, req.toAgent(serviceReqs, permissionSets), input)
+	if err != nil {
+		h.handleDomainError(w, r, "ReconcileAgent", err)
+		return
+	}
+	resp, err := h.toResponseWithServiceMap(agent, h.batchLoadServices(ctx, []*storage.Agent{agent}))
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		return
+	}
+	if requestsCanonicalReferences(r.Header.Get("Prefer")) {
+		if err := h.applyCanonicalReferences(ctx, []*storage.Agent{agent}, []*AgentResponse{&resp}); err != nil {
+			h.handleDomainError(w, r, "ReconcileAgent", err)
+			return
+		}
+		w.Header().Set("Preference-Applied", "reference-id=canonical")
+	}
+	status := http.StatusOK
+	if outcome == agents.Created {
+		status = http.StatusCreated
+		w.Header().Set("Location", "/api/agents/"+agent.ID.String())
+	}
+	h.writeJSON(w, status, resp)
 }
 
 // CreateAgent handles POST /api/agents
@@ -411,8 +486,8 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 				ClientID:    clientIDToString(agent.ClientID),
 				DisplayName: agent.DisplayName,
 				Description: agent.Description,
-				CreatedAt:   agent.CreatedAt.Format(time.RFC3339),
-				UpdatedAt:   agent.UpdatedAt.Format(time.RFC3339),
+				CreatedAt:   agent.CreatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
+				UpdatedAt:   agent.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
 			}
 		}
 		responses[i] = resp
@@ -492,9 +567,9 @@ func (h *AgentsHandler) toResponseWithServiceMap(agent *storage.Agent, serviceMa
 		AgentInterfaceURL:    agent.AgentInterfaceURL,
 		RedirectURIs:         agent.RedirectURIs,
 		AllowedScopes:        agent.AllowedScopes,
-		ClientURIs:           agent.ClientURIs,
-		CreatedAt:            agent.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:            agent.UpdatedAt.Format(time.RFC3339),
+		ClientURIs:           slices.Sorted(slices.Values(agent.ClientURIs)),
+		CreatedAt:            agent.CreatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
+		UpdatedAt:            agent.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
 	}
 
 	if len(agent.ServiceRequirements) > 0 {
@@ -653,7 +728,11 @@ func (h *AgentsHandler) handleDomainError(w http.ResponseWriter, r *http.Request
 		case storage.ErrorKindConflict:
 			h.writeError(w, http.StatusConflict, "conflict", storageErr.Message)
 		case storage.ErrorKindValidation:
-			h.writeError(w, http.StatusBadRequest, "validation failed", storageErr.Message)
+			code := "validation failed"
+			if errors.Is(err, agents.ErrInvalidExternalID) {
+				code = "invalid external_id"
+			}
+			h.writeError(w, http.StatusBadRequest, code, storageErr.Message)
 		case storage.ErrorKindTimeout:
 			h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 		default:

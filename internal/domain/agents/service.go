@@ -208,26 +208,33 @@ func (s *Service) List(ctx context.Context) ([]*storage.Agent, error) {
 
 // ListByExternalID rejects unusable filters before querying storage.
 func (s *Service) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	if err := validateExternalID(externalID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListByExternalID(ctx, externalID)
+}
+
+func validateExternalID(externalID id.ExternalID) error {
 	value := string(externalID)
 	count := 0
 	for len(value) > 0 {
 		r, size := utf8.DecodeRuneInString(value)
 		if r == utf8.RuneError && size == 1 {
-			return nil, invalidExternalID("external_id must be valid UTF-8 text")
+			return invalidExternalID("external_id must be valid UTF-8 text")
 		}
 		if r == 0 {
-			return nil, invalidExternalID("external_id must not contain a NUL character")
+			return invalidExternalID("external_id must not contain a NUL character")
 		}
 		count++
 		if count > 255 {
-			return nil, invalidExternalID("external_id must be 1 to 255 characters")
+			return invalidExternalID("external_id must be 1 to 255 characters")
 		}
 		value = value[size:]
 	}
 	if count == 0 {
-		return nil, invalidExternalID("external_id must be 1 to 255 characters")
+		return invalidExternalID("external_id must be 1 to 255 characters")
 	}
-	return s.repo.ListByExternalID(ctx, externalID)
+	return nil
 }
 
 func invalidExternalID(message string) error {

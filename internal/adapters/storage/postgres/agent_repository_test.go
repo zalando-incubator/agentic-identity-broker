@@ -836,13 +836,12 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		return found
 	}
 
-	t.Run("zero, one and every shared exact match with full representation", func(t *testing.T) {
+	t.Run("zero or one exact match with full representation", func(t *testing.T) {
 		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
 		other := id.ExternalID("urn:example:ai-registry:agent:other")
 		first := newAgent(t, "Research Assistant", &shared)
 		first.ClientURIs = []string{"https://example.com/research/client.json"}
 		require.NoError(t, repo.Update(ctx, first))
-		second := newAgent(t, "Research Assistant EU", &shared)
 		different := newAgent(t, "Other", &other)
 		canonical := "canonical-only"
 		clientID := id.ClientID("client-only")
@@ -853,15 +852,12 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		attachTestPermissionSet(t, adapter, withoutExternalID)
 		require.NoError(t, repo.Create(ctx, withoutExternalID))
 
-		found := check(t, shared, first.ID, second.ID)
+		found := check(t, shared, first.ID)
 		for _, agent := range found {
 			switch agent.ID {
 			case first.ID:
 				assert.Equal(t, first.ClientURIs, agent.ClientURIs)
 				assert.Equal(t, first.PermissionSets, agent.PermissionSets)
-			case second.ID:
-				assert.Empty(t, agent.ClientURIs)
-				assert.Equal(t, second.PermissionSets, agent.PermissionSets)
 			}
 		}
 		check(t, other, different.ID)

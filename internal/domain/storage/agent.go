@@ -66,6 +66,10 @@ func (a *Agent) validateFields() error {
 		return err
 	}
 
+	if a.ExternalID != nil && *a.ExternalID == "" {
+		return errors.New("external_id cannot be empty when provided")
+	}
+
 	if a.ClientID != nil && strings.TrimSpace(string(*a.ClientID)) == "" {
 		return errors.New("client_id cannot be empty when provided")
 	}

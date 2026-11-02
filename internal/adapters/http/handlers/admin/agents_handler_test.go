@@ -71,6 +71,11 @@ func (m *MockAgentRepository) List(ctx context.Context) ([]*storage.Agent, error
 	return args.Get(0).([]*storage.Agent), args.Error(1)
 }
 
+func (m *MockAgentRepository) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+	args := m.Called(ctx, externalID)
+	return args.Get(0).([]*storage.Agent), args.Error(1)
+}
+
 func (m *MockAgentRepository) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
 	args := m.Called(ctx, clientID)
 	if args.Get(0) == nil {

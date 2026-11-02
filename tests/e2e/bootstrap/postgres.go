@@ -91,18 +91,54 @@ func (f *PostgresFixture) initialize(ctx context.Context) error {
 	}
 	f.ConnectionURL = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 
+	return f.MigrateTo(0)
+}
+
+// NewPostgresFixtureAtVersion provides an isolated historical schema for upgrade journeys.
+func NewPostgresFixtureAtVersion(ctx context.Context, version uint) (*PostgresFixture, error) {
+	fixture, err := NewPostgresFixture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fixture.MigrateTo(version); err != nil {
+		_ = fixture.Close(ctx)
+		return nil, err
+	}
+	return fixture, nil
+}
+
+func (f *PostgresFixture) migrationRunner() (*migrate.Migrate, error) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return fmt.Errorf("locate E2E bootstrap source")
+		return nil, fmt.Errorf("locate E2E bootstrap source")
 	}
 	migrationsDir := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "migrations")
-	migrationRunner, err := migrate.New("file://"+migrationsDir, f.ConnectionURL)
+	return migrate.New("file://"+migrationsDir, f.ConnectionURL)
+}
+
+// MigrateTo uses zero to apply all migrations.
+func (f *PostgresFixture) MigrateTo(version uint) error {
+	runner, err := f.migrationRunner()
 	if err != nil {
 		return err
 	}
-	defer func() { _, _ = migrationRunner.Close() }()
-	if err := migrationRunner.Up(); err != nil && err != migrate.ErrNoChange {
+	defer func() { _, _ = runner.Close() }()
+	if version == 0 {
+		err = runner.Up()
+	} else {
+		err = runner.Migrate(version)
+	}
+	if err == migrate.ErrNoChange {
+		return nil
+	}
+	return err
+}
+
+func (f *PostgresFixture) ForceVersion(version int) error {
+	runner, err := f.migrationRunner()
+	if err != nil {
 		return err
 	}
-	return nil
+	defer func() { _, _ = runner.Close() }()
+	return runner.Force(version)
 }
