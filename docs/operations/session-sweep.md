@@ -331,4 +331,4 @@ DOWN 048 restores a nullable legacy column only and retains rejection state. It 
 
 Rollback locks also fail fast. On failure, keep the compatible replicas serving and use the same inspection procedure. Helm image rollback alone does not establish database compatibility. Do not deploy an unprepared binary at schema 47 or 48.
 
-See [ADR 045](../../adrs/045-third-party-session-validity.md) for the approved contract and lifecycle decision.
+See [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-third-party-session-validity.md) for the approved contract and lifecycle decision.

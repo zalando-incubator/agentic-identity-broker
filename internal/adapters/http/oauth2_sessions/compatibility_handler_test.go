@@ -38,7 +38,7 @@ func TestSessionAPICompatibilityKeepsLegacyClientsAwareOfReauthentication(t *tes
 	sessions := memory.NewInMemoryUserSessionRepository()
 	principal := id.Principal("user@example.com")
 	expiry := time.Now().Add(time.Hour)
-	row := &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), EncryptedRefreshToken: []byte("opaque-refresh"), TokenType: "Bearer", AccessTokenExpiresAt: &expiry, Scope: []string{"read"}, InitiatedAt: time.Now(), CreatedAt: time.Now()}
+	row := &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), EncryptedRefreshToken: []byte("opaque-refresh"), TokenType: "Bearer", AccessTokenExpiresAt: &expiry, Scope: []string{"read"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now().Add(-time.Hour), UpdatedAt: time.Now()}
 	require.NoError(t, sessions.Create(ctx, row))
 	service := oauth2session.NewOAuth2SessionService(providers, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(), enc, &http.Client{}, nil, oauth2session.DefaultConfig(), logger)
 	t.Cleanup(func() { require.NoError(t, service.Close(ctx)) })
@@ -70,6 +70,12 @@ func TestSessionAPICompatibilityKeepsLegacyClientsAwareOfReauthentication(t *tes
 				if body.Data.Sessions != nil {
 					require.Len(t, body.Data.Sessions, 1)
 					status = body.Data.Sessions[0]
+				} else {
+					require.Equal(t, principal.String(), status["principal"])
+					require.Equal(t, expiry.Format(time.RFC3339Nano), status["access_token_expires_at"])
+					require.Equal(t, map[string]any{"service_id": serviceID.String()}, status["encryption_context"])
+					require.Equal(t, row.CreatedAt.Format(time.RFC3339Nano), status["created_at"])
+					require.Equal(t, row.UpdatedAt.Format(time.RFC3339Nano), status["updated_at"])
 				}
 				require.Equal(t, rejected, status["requires_reauthentication"])
 				require.Equal(t, false, status["access_token_expired"])

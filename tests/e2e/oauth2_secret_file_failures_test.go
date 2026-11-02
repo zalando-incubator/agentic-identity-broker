@@ -172,7 +172,7 @@ func expectCredentialFailureSafe(subject *credentialFailureSubject, text string)
 	}
 }
 
-func expectCredentialFailureEvent(subject *credentialFailureSubject, event, operation, outcome, reason string) {
+func expectCredentialFailureEvent(subject *credentialFailureSubject, event, operation, outcome, reason string) string {
 	GinkgoHelper()
 	var matching []map[string]any
 	Eventually(func() ([]map[string]any, error) {
@@ -197,6 +197,10 @@ func expectCredentialFailureEvent(subject *credentialFailureSubject, event, oper
 		Expect(err).NotTo(HaveOccurred())
 		expectCredentialFailureSafe(subject, string(encoded))
 	}
+	traceID, ok := matching[0]["trace_id"].(string)
+	Expect(ok).To(BeTrue())
+	Expect(traceID).NotTo(BeEmpty())
+	return traceID
 }
 
 func expectCredentialSourceFailure(subject *credentialFailureSubject, operation, reason string, run func() (*http.Response, error)) {
@@ -248,11 +252,11 @@ func expectCredentialSourceFailure(subject *credentialFailureSubject, operation,
 			HaveKeyWithValue("token_exchange.outcome", "infrastructure_error"),
 		)))
 	}
-	expectCredentialFailureEvent(subject, "session.oauth2.credential_source_failed", operation, "failed", reason)
+	traceID := expectCredentialFailureEvent(subject, "session.oauth2.credential_source_failed", operation, "failed", reason)
 	records, err := subject.logs.Records()
 	Expect(err).NotTo(HaveOccurred())
 	for _, record := range records {
-		if record["service_id"] == subject.serviceID.String() && record["operation"] == operation {
+		if record["trace_id"] == traceID && record["service_id"] == subject.serviceID.String() && record["operation"] == operation {
 			Expect(record).NotTo(SatisfyAny(
 				HaveKeyWithValue("event", "session.oauth2.credential_files_used"),
 				HaveKeyWithValue("event", "session.oauth2.credential_provider_rejected"),
@@ -387,8 +391,8 @@ func expectCredentialProviderRejection(subject *credentialFailureSubject, operat
 				HaveKeyWithValue("token_exchange.outcome", "reauth_required"),
 			)))
 		} else {
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
-			Expect(body["error"]).To(Equal("refresh_failed"))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
+			Expect(body["error"]).To(Equal("refresh_rejected"))
 		}
 		encoded, err := json.Marshal(body)
 		Expect(err).NotTo(HaveOccurred())

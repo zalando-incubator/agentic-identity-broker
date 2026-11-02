@@ -493,10 +493,18 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 		"service_id", serviceIDStr,
 		"dependent_agents", len(sessionWithAgents.DependentAgents))
 
+	var sessionResponse any = sessionWithAgents.Session
+	if h.sessionAPICompatibility {
+		sessionResponse = struct {
+			*storage.UserSessionDetails
+			IsExpired bool `json:"is_expired"`
+		}{sessionWithAgents.Session, sessionWithAgents.Session.RequiresReauthentication}
+	}
+
 	// Return response
 	resp := map[string]interface{}{
 		"data": map[string]interface{}{
-			"session":               h.sessionResponse(sessionWithAgents.Session),
+			"session":               sessionResponse,
 			"dependent_agents":      sessionWithAgents.DependentAgents,
 			"dependent_agent_count": len(sessionWithAgents.DependentAgents),
 		},

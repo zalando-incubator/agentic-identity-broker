@@ -177,6 +177,16 @@ type UserSessionSummary struct {
 	IsEncrypted              bool         `json:"is_encrypted"` // Always true
 }
 
+// UserSessionDetails preserves ownership and lifecycle metadata alongside validity.
+type UserSessionDetails struct {
+	*UserSessionSummary
+	Principal            id.Principal      `json:"principal"`
+	AccessTokenExpiresAt *time.Time        `json:"access_token_expires_at,omitempty"`
+	EncryptionContext    EncryptionContext `json:"encryption_context"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
+}
+
 // NewUserSessionSummary creates a summary from a UserSession.
 func NewUserSessionSummary(session *UserSession, serviceDisplayName string, agentCount int) *UserSessionSummary {
 	return &UserSessionSummary{

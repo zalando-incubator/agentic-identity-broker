@@ -384,7 +384,7 @@ type AgentInfo struct {
 
 // SessionWithAgents represents a session with information about dependent agents.
 type SessionWithAgents struct {
-	Session         *storage.UserSessionSummary
+	Session         *storage.UserSessionDetails
 	DependentAgents []AgentInfo // Agents that use this session with display names
 }
 
@@ -1623,7 +1623,14 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 	}
 
 	return &SessionWithAgents{
-		Session:         storage.NewUserSessionSummary(session, provider.DisplayName, len(dependentAgents)),
+		Session: &storage.UserSessionDetails{
+			UserSessionSummary:   storage.NewUserSessionSummary(session, provider.DisplayName, len(dependentAgents)),
+			Principal:            session.Principal,
+			AccessTokenExpiresAt: session.AccessTokenExpiresAt,
+			EncryptionContext:    session.EncryptionContext,
+			CreatedAt:            session.CreatedAt,
+			UpdatedAt:            session.UpdatedAt,
+		},
 		DependentAgents: dependentAgents,
 	}, nil
 }
