@@ -113,7 +113,8 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 2. Initialize logger.
-	logger := initLogger(cfg)
+	stdoutHandler := newStdoutLogHandler(cfg)
+	logger := slog.New(telemetry.NewPrincipalPolicyHandler(stdoutHandler))
 	logger.Info("ExtProc Token Exchange Service starting",
 		"grpc_bind", cfg.GRPC.Bind,
 		"grpc_port", cfg.GRPC.Port)
@@ -161,7 +162,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		if cfg.Telemetry.Logs.Enabled {
 			otelHandler := otelslog.NewHandler(cfg.Telemetry.ServiceName,
 				otelslog.WithLoggerProvider(global.GetLoggerProvider()))
-			logger = slog.New(telemetry.NewMultiHandler(logger.Handler(), otelHandler))
+			logger = slog.New(telemetry.NewPrincipalPolicyHandler(telemetry.NewMultiHandler(stdoutHandler, otelHandler)))
 			slog.SetDefault(logger)
 		}
 	}
@@ -258,7 +259,6 @@ func run(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// initLogger creates a structured slog.Logger from the service configuration.
 const (
 	// grpcDefaultMaxRecvMsgSize is grpc-go's default server receive limit.
 	grpcDefaultMaxRecvMsgSize = 4 << 20
@@ -277,7 +277,8 @@ func grpcServerOptions(cfg *extprocconfig.Config) []grpc.ServerOption {
 	}
 }
 
-func initLogger(cfg *extprocconfig.Config) *slog.Logger {
+// newStdoutLogHandler creates the structured stdout slog.Handler from the service configuration.
+func newStdoutLogHandler(cfg *extprocconfig.Config) slog.Handler {
 	level := slog.LevelInfo
 	switch cfg.Log.Level {
 	case "debug":
@@ -288,13 +289,10 @@ func initLogger(cfg *extprocconfig.Config) *slog.Logger {
 		level = slog.LevelError
 	}
 
-	var handler slog.Handler
 	if cfg.Log.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
-	return slog.New(handler)
+	return slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 }
 
 // isSignalCancellation returns true when err is context.Canceled and the signal

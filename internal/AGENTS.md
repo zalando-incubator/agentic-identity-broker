@@ -81,7 +81,7 @@ adapters/
     factory.go     Backend selection from configuration
     memory/        In-memory storage
     postgres/      PostgreSQL storage with sqlx and pgx v5
-  telemetry/       OpenTelemetry provider and slog handler
+  telemetry/       OpenTelemetry provider and slog handlers (context, principal policy, fan-out)
 
 app/
   builder.go       Builder pattern — all DI wiring

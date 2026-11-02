@@ -420,7 +420,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			otelslog.WithLoggerProvider(global.GetLoggerProvider()))
 		baseHandler = telemetry.NewMultiHandler(baseHandler, otelHandler)
 	}
-	b.logger = slog.New(telemetry.NewContextHandler(baseHandler))
+	b.logger = slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler)))
 	app.Logger = b.logger
 
 	// Phase 1: Initialize encryption adapter (must happen before domain services).

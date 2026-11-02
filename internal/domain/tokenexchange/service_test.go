@@ -2371,7 +2371,7 @@ func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "validated delegated exchanges must finalize the captured transport context")
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", sc.TraceID)
-	assert.Equal(t, "user@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "203.0.113.44", sc.ClientIP)
 	assert.Equal(t, "delegated-client/1.0", sc.UserAgent)
@@ -2419,7 +2419,7 @@ func TestExchange_FinalizesSecurityContextWithoutDuplicatingCallingPeer(t *testi
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "validated delegated exchanges must always finalize the security context")
-	assert.Equal(t, "same-identity@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("same-identity@example.com"), sc.Actor)
 	assert.Empty(t, sc.CallingPeer, "calling_peer must collapse to empty when it resolves to the actor")
 	assert.Equal(t, "fedcba9876543210fedcba9876543210", sc.TraceID)
 }
@@ -2483,7 +2483,7 @@ func TestExchange_FinalizesSecurityContextWhenAuthorizationDenied(t *testing.T) 
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "a denied delegated exchange whose tokens validated MUST still finalize the security context for the audit trail")
-	assert.Equal(t, "user@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", sc.TraceID)
 }
