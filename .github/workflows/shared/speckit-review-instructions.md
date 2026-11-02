@@ -79,7 +79,16 @@ Write `/tmp/gh-aw/speckit/result.json` with this shape:
 unresolved item ids. `report` lists each item with what changed and why, or
 why it stays unresolved, with `path:line` references. `checks` must contain
 `just check` and the matching `just` test commands, but only after those
-commands pass. `next_step` is required when `status` is `blocked`.
+commands pass. When `status` is `blocked`, `next_step` is a numbered list of
+at most five actions only the maintainer can take, one line of at most 300
+characters each, such as `1. Decide whether X, recorded at specs/054-example/plan.md:40`.
+Name where to act: a `path:line`, a setting, or a command. Leave item ids,
+remaining work, and evidence to the report.
+
+The push checks every commit since `context.head` against the allowed files,
+so a path that a later commit reverts is still rejected. If a push is rejected
+for a path, recreate your commits on `context.head` without that path and
+request the push again.
 
 Run `node /tmp/gh-aw/speckit/automation.cjs result`, then publish
 `/tmp/gh-aw/speckit/comment.md` unchanged with `add_comment` on
