@@ -187,11 +187,43 @@ func backgroundMetrics(t *testing.T) *sdkmetric.ManualReader {
 	return reader
 }
 
+// backgroundMetricKeys lists the only attributes each background counter may carry (spec 053 FR-027 to FR-029).
+var backgroundMetricKeys = map[string][]string{
+	"proactive_refresh_triggered_total": {"triggered_by", "service_id"},
+	"proactive_refresh_dropped_total":   {"triggered_by"},
+	"proactive_refresh_failed_total":    {"triggered_by", "service_id", "failure_detail"},
+}
+
 func assertBackgroundMetrics(t *testing.T, reader *sdkmetric.ManualReader, expected map[string]int64) {
+	t.Helper()
+	got := make(map[string]int64)
+	for name, points := range backgroundCounterPoints(t, reader) {
+		for _, point := range points {
+			got[name] += point.Value
+		}
+	}
+	for name, value := range expected {
+		assert.Equal(t, value, got[name], "counter %s", name)
+	}
+}
+
+// backgroundFailures returns proactive_refresh_failed_total keyed by "service_id/failure_detail".
+func backgroundFailures(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	failures := make(map[string]int64)
+	for _, point := range backgroundCounterPoints(t, reader)["proactive_refresh_failed_total"] {
+		service, _ := point.Attributes.Value("service_id")
+		detail, _ := point.Attributes.Value("failure_detail")
+		failures[service.AsString()+"/"+detail.AsString()] += point.Value
+	}
+	return failures
+}
+
+func backgroundCounterPoints(t *testing.T, reader *sdkmetric.ManualReader) map[string][]metricdata.DataPoint[int64] {
 	t.Helper()
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
-	got := make(map[string]int64)
+	points := make(map[string][]metricdata.DataPoint[int64])
 	for _, scope := range collected.ScopeMetrics {
 		for _, instrument := range scope.Metrics {
 			if !strings.HasPrefix(instrument.Name, "proactive_refresh_") {
@@ -200,17 +232,18 @@ func assertBackgroundMetrics(t *testing.T, reader *sdkmetric.ManualReader, expec
 			sum, ok := instrument.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "%s must be an Int64Counter", instrument.Name)
 			for _, point := range sum.DataPoints {
-				attributes := point.Attributes.ToSlice()
-				require.Len(t, attributes, 1, "session ID, service ID, and principal must not be metric labels")
-				assert.Equal(t, "triggered_by", string(attributes[0].Key))
-				assert.Equal(t, "background", attributes[0].Value.AsString())
-				got[instrument.Name] += point.Value
+				var keys []string
+				for _, attr := range point.Attributes.ToSlice() {
+					keys = append(keys, string(attr.Key))
+				}
+				assert.ElementsMatch(t, backgroundMetricKeys[instrument.Name], keys, "session ID and principal must not be metric labels")
+				trigger, _ := point.Attributes.Value("triggered_by")
+				assert.Equal(t, "background", trigger.AsString())
+				points[instrument.Name] = append(points[instrument.Name], point)
 			}
 		}
 	}
-	for name, value := range expected {
-		assert.Equal(t, value, got[name], "counter %s", name)
-	}
+	return points
 }
 
 func receiveBackground[T any](t *testing.T, result <-chan T) T {
@@ -875,14 +908,15 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 	for _, tc := range []struct {
 		name      string
 		level     string
+		detail    ErrorDetail
 		configure func(*OAuth2SessionService)
 	}{
-		{"provider rejection", "WARN", func(service *OAuth2SessionService) {
+		{"provider rejection", "WARN", DetailRefreshRejected, func(service *OAuth2SessionService) {
 			service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 				return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"private-provider-body"}`), nil
 			})
 		}},
-		{"encryption outage", "ERROR", func(service *OAuth2SessionService) {
+		{"encryption outage", "ERROR", DetailEncryptionFailed, func(service *OAuth2SessionService) {
 			service.encryption = operationEncryption{
 				decrypt: func(_ context.Context, data []byte, _ map[string]string) ([]byte, error) {
 					return bytes.Clone(bytes.TrimPrefix(data, []byte("sealed:"))), nil
@@ -915,6 +949,7 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 			assert.NotContains(t, logs.text(), "private-provider-body")
 			assert.NotContains(t, logs.text(), "private-encryption-cause")
 			assertBackgroundMetrics(t, reader, map[string]int64{"proactive_refresh_triggered_total": 1, "proactive_refresh_dropped_total": 0, "proactive_refresh_failed_total": 1})
+			assert.Equal(t, map[string]int64{session.ServiceID.String() + "/" + string(tc.detail): 1}, backgroundFailures(t, reader))
 		})
 	}
 }

@@ -20,6 +20,11 @@
 - Q: Should the chart define how the scheduled job authenticates? → A: No. The chart only transports the request: target URL, `Host`, body, literal headers, headers read from mounted files, optional TLS client files, and the volumes that provide them. Deployments differ in how they authenticate admin callers, and the chart adds no identity model of its own. Rendering fails when the sweep is enabled without any configured identity. The default target is the release's in-cluster admin Service, and the documented path stays the authenticating proxy that [ADR 038](../../adrs/038-proactive-token-refresh.md) describes. Broker-side authentication of service callers is a separate future feature.
 - Q: Is a separate sweep run counter needed next to the duration histogram? → A: No. A duration histogram attributed by `outcome` and `dry_run` counts runs through its count series. Keep the histogram and the skipped counter. Drop the run counter.
 - Q: What must the health metrics cover? → A: Session health across all services and users, broken down by service and state, without per-user attributes. The gauge is computed by one grouped count query in each metric export cycle. A failed query reports no data for that cycle. This removes the separate snapshot interval, cache, failure counter, and age gauge.
+
+### Session 2026-10-28
+
+- Q: Should refresh outcomes be broken down by service? → A: Yes. A single failure count cannot tell an expected provider limit from a newly broken service. The sweep's refreshed and failed counters and the background refresh's triggered and failed counters carry `service_id`. Both failed counters also carry `failure_detail`. The skipped and dropped counters keep `triggered_by` only, because they measure the sweep and the worker pool rather than a service. This supersedes the single-attribute rule in the observability contract of [029-proactive-token-refresh](../029-proactive-token-refresh/contracts/observability.md).
+
 ### Session 2026-10-29
 
 - Q: Should a failed sweep job retry? → A: Not by default. A rolling update of the broker can stop the replica that serves a sweep, and that run is then lost. `sessionSweep.backoffLimit`, default `0`, lets operators allow retries. A retry evaluates only the sessions that are still due, and the active deadline covers all attempts.
@@ -86,6 +91,21 @@ An operator wants to confirm from the metrics backend that the scheduled sweep r
 1. **Given** a sweep completes, **When** metrics are read, **Then** the sweep duration histogram records one measurement attributed with `outcome=completed` and the request's `dry_run` value.
 2. **Given** a sweep is rejected for an invalid request, aborted by an infrastructure failure, or canceled by the caller, **When** metrics are read, **Then** the histogram records the run under the matching `outcome`. It records no `completed` run.
 3. **Given** a real sweep evaluates candidates that were already renewed by another refresh or deleted meanwhile, **When** metrics are read, **Then** the skipped counter increases by the number of skipped candidates.
+
+---
+
+### User Story 4 - Refresh Outcomes Per Service in Metrics (Priority: P2)
+
+An operator sees refresh failures rise and wants to know which third-party service fails and why, without reading broker logs.
+
+**Why this priority**: Providers limit refresh-token lifetimes differently, so some failures are expected. Only a per-service breakdown separates them from a service that stopped working. The priority is P2 because refreshes themselves do not depend on it.
+
+**Independent Test**: Store due sessions for two services, one refreshable and one without a refresh token. Run one real sweep and one token exchange whose background refresh the provider rejects. Read the counters and confirm their `service_id` and `failure_detail` values.
+
+**Acceptance Scenarios**:
+
+1. **Given** a real sweep refreshes a session of one service and cannot refresh a session of another service, **When** metrics are read, **Then** `session_sweep_refreshed_total` counts the first under its `service_id`, and `session_sweep_failed_total` counts the second under its `service_id` with the failure's `failure_detail`.
+2. **Given** a token exchange starts a background refresh that the provider rejects, **When** metrics are read, **Then** `proactive_refresh_triggered_total` and `proactive_refresh_failed_total` count it under the session's `service_id`, and the failed counter carries `failure_detail="refresh_rejected"`.
 
 ---
 
@@ -399,6 +419,38 @@ curl: (52) Empty reply from server
 
 **Observable result**: The job completes with one failed and one succeeded pod. The 18:00Z run is not lost: all 50 sessions are refreshed before they expire. The broker records one completed sweep duration, from the retry, and none for the interrupted attempt.
 
+### Journey 6 — Operator finds which service fails refreshes (User Story 4, Scenarios 1 and 2)
+
+**Cast**: Same release and services as Journey 2. At 2026-10-16T18:00:00Z the hourly sweep finds two due sessions: `u-0b19` for `svc-calendar` (`3f9c…`) with a usable refresh token, and `u-4a60` for `svc-tickets` (`a1d2…`) whose access token expired and who has no refresh token. At 18:10Z the agent of `u-7f3a` exchanges a `svc-calendar` token that expires within the lookahead, and the provider answers the background refresh with `400 {"error":"invalid_grant"}`.
+
+**Step 1 — the sweep responds**
+
+```json
+{"refreshed": 1, "skipped": 0, "failed": 1, "total_evaluated": 2, "dry_run": false}
+```
+
+**Step 2 — the counters after both events**
+
+```text
+session_sweep_refreshed_total{triggered_by="sweep",service_id="3f9c…"}                                          1
+session_sweep_failed_total{triggered_by="sweep",service_id="a1d2…",failure_detail="access_token_expired"}       1
+proactive_refresh_triggered_total{triggered_by="background",service_id="3f9c…"}                                 1
+proactive_refresh_failed_total{triggered_by="background",service_id="3f9c…",failure_detail="refresh_rejected"}  1
+```
+
+No attribute names a user or session.
+
+**Step 3 — the operator's query**
+
+```promql
+# Refresh failures per service and reason over the last hour
+sum by (service_id, failure_detail) (
+  increase(session_sweep_failed_total[1h]) or increase(proactive_refresh_failed_total[1h])
+)
+```
+
+**Observable result**: The operator sees that `svc-tickets` fails only because a user has to reconnect, and that the provider of `svc-calendar` rejects refresh tokens. Neither conclusion needs broker logs.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -431,12 +483,18 @@ curl: (52) Empty reply from server
 - **FR-019**: Every `(service_id, expiry, refreshable)` combination MUST be reported for every service that has at least one session. A combination with no sessions reports `0`.
 - **FR-020**: The counts MUST be computed by one grouped query per export cycle, bounded by `token_refresh.health_metrics.query_timeout`. A failed or timed-out query MUST report no points for that cycle and MUST be logged without session or principal data.
 - **FR-021**: The query MUST run only when telemetry metrics and `token_refresh.health_metrics.enabled` are both enabled.
-- **FR-022**: Health and sweep metrics MUST NOT carry a user principal, session identifier, or token material as an attribute or value. `service_id` is the only identifying attribute permitted.
+- **FR-022**: Health, sweep, and refresh metrics MUST NOT carry a user principal, session identifier, or token material as an attribute or value. `service_id` is the only identifying attribute permitted.
 
 **Sweep run metrics (broker)**
 
 - **FR-023**: Each sweep request that passes operator authentication MUST record its duration in a `session_sweep_duration_seconds` histogram attributed by `outcome` (`completed`, `rejected`, `aborted`, `canceled`) and `dry_run`. These are the outcome values of the existing sweep audit event.
 - **FR-024**: Each candidate counted as skipped in a real sweep MUST increase `session_sweep_skipped_total`, attributed by `triggered_by` like the existing refreshed and failed counters.
+
+**Refresh outcomes per service (broker)**
+
+- **FR-027**: `session_sweep_refreshed_total`, `session_sweep_failed_total`, `proactive_refresh_triggered_total`, and `proactive_refresh_failed_total` MUST carry the session's `service_id` next to `triggered_by`.
+- **FR-028**: `session_sweep_failed_total` and `proactive_refresh_failed_total` MUST also carry `failure_detail`, the detail code that `session.oauth2.refresh_failed` logs for the same failure.
+- **FR-029**: `session_sweep_skipped_total` and `proactive_refresh_dropped_total` MUST keep `triggered_by` as their only attribute.
 
 **Documentation**
 
@@ -590,7 +648,7 @@ No ADR is added or superseded. The chart-managed job is an external operator sch
 - **SC-004**: Rendering the chart with the feature disabled produces no additional resources. Rendering it enabled without an identity, or with a request timeout not below the active deadline, fails with a clear message.
 - **SC-005**: An operator who applies plain manifests can obtain the CronJob from `helm template` and apply it without editing it.
 - **SC-006**: No rendered manifest, container argument, environment variable, or job log line contains the contents of a file header or TLS file.
-- **SC-007**: Health and sweep metrics have at most one attribute value per third-party service. They never grow with the number of users or sessions.
+- **SC-007**: Health, sweep, and refresh metrics grow only with the number of third-party services and the fixed values of their other attributes. They never grow with the number of users or sessions.
 
 ## Assumptions
 
