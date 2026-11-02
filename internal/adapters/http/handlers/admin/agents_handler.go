@@ -85,6 +85,24 @@ type AgentRequest struct {
 	ClientURIs           []string                    `json:"client_uris,omitempty"`
 }
 
+func (req AgentRequest) toAgent(serviceReqs []storage.ServiceRequirement, permissionSets []storage.AgentPermissionSetEntry) *storage.Agent {
+	return &storage.Agent{
+		CanonicalID:          req.CanonicalID,
+		ClientID:             clientIDFromRequest(req.ClientID),
+		ExternalID:           convertExternalID(req.ExternalID),
+		DisplayName:          req.DisplayName,
+		Description:          req.Description,
+		GovernanceURL:        req.GovernanceURL,
+		UserDocumentationURL: req.UserDocumentationURL,
+		AgentInterfaceURL:    req.AgentInterfaceURL,
+		ServiceRequirements:  serviceReqs,
+		PermissionSets:       permissionSets,
+		RedirectURIs:         req.RedirectURIs,
+		AllowedScopes:        req.AllowedScopes,
+		ClientURIs:           req.ClientURIs,
+	}
+}
+
 // ServiceRequirementResponse represents a service requirement in the response.
 type ServiceRequirementResponse struct {
 	ServiceID        string   `json:"service_id"`
@@ -170,23 +188,9 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	agent := &storage.Agent{
-		CanonicalID:          req.CanonicalID,
-		ClientID:             clientIDFromRequest(req.ClientID),
-		ExternalID:           convertExternalID(req.ExternalID),
-		DisplayName:          req.DisplayName,
-		Description:          req.Description,
-		GovernanceURL:        req.GovernanceURL,
-		UserDocumentationURL: req.UserDocumentationURL,
-		AgentInterfaceURL:    req.AgentInterfaceURL,
-		ServiceRequirements:  serviceReqs,
-		PermissionSets:       permissionSets,
-		RedirectURIs:         req.RedirectURIs,
-		AllowedScopes:        req.AllowedScopes,
-		ClientURIs:           req.ClientURIs,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-	}
+	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.CreatedAt = now
+	agent.UpdatedAt = now
 
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.agentService.Create(ctx, agent); err != nil {
@@ -312,23 +316,9 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := &storage.Agent{
-		CanonicalID:          req.CanonicalID,
-		ClearCanonicalID:     canonicalIDPresent && bytes.Equal(rawFields["canonical_id"], []byte("null")),
-		ClientID:             clientIDFromRequest(req.ClientID),
-		ExternalID:           convertExternalID(req.ExternalID),
-		DisplayName:          req.DisplayName,
-		Description:          req.Description,
-		GovernanceURL:        req.GovernanceURL,
-		UserDocumentationURL: req.UserDocumentationURL,
-		AgentInterfaceURL:    req.AgentInterfaceURL,
-		ServiceRequirements:  serviceReqs,
-		PermissionSets:       permissionSets,
-		RedirectURIs:         req.RedirectURIs,
-		AllowedScopes:        req.AllowedScopes,
-		ClientURIs:           req.ClientURIs,
-		UpdatedAt:            time.Now().UTC(),
-	}
+	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.ClearCanonicalID = canonicalIDPresent && bytes.Equal(rawFields["canonical_id"], []byte("null"))
+	agent.UpdatedAt = time.Now().UTC()
 
 	if !canonicalIDPresent {
 		existing, err := h.agentService.Get(ctx, parsedAgentID)
