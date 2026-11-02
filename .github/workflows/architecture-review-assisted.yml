@@ -78,6 +78,7 @@ jobs:
     if: needs.route.outputs.action == 'review'
     permissions:
       actions: read
+      checks: read
       contents: read
       issues: write
       pull-requests: write
