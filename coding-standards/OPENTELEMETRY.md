@@ -15,7 +15,7 @@ spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-excha
 | Get tracers and meters from the globals: `otel.Tracer(scope)` and `otel.Meter(scope)`. Do not inject a `TracerProvider` or `MeterProvider` through a constructor. | Constructors stay unchanged. Disabled telemetry is a no-op (ADR 011, Decision 3). |
 | Domain packages may import only the OpenTelemetry API: `go.opentelemetry.io/otel`, `.../trace`, `.../metric`, `.../attribute`, `.../codes`, `.../propagation`. Do not import the SDK, an exporter, or `internal/adapters/telemetry`. | The API is a no-op interface. The SDK is infrastructure. |
 | `internal/extproc/*` must not import `internal/ports` or `internal/adapters/telemetry`. | ADR 027. Only `cmd/extproc-token-exchange/` bridges the two. |
-| Configure telemetry only through `telemetry.*` (`ports.TelemetryConfig`). | Constitution Principle VII. |
+| Configure telemetry only through the binary's `telemetry.*` configuration: `ports.TelemetryConfig` in the broker, `internal/extproc/config.TelemetryConfig` in ExtProc. Only `cmd/extproc-token-exchange/` maps the ExtProc type to `ports.TelemetryConfig`. | Constitution Principle VII. ADR 027 keeps `internal/extproc/*` free of `internal/ports`. |
 | Telemetry fails open. A failure to create an instrument or to export data must not fail a request or startup. | Observability must not change authentication or authorization results (ADR 033, SR-003). |
 | Instrument outbound HTTP only with `telemetryhttp.NewTransport`. Do not use `otelhttp` on a client. | `telemetryhttp` records no URL, header, or body, and it skips URLs that have a query string. |
 | Apply the principal policy to spans only in the span pipeline that `telemetry.NewProvider` builds. | Each binary that calls `NewProvider` gets the same policy without its own setup (section 4.3). |
@@ -207,7 +207,8 @@ approval.pending
 
 ### 5.3 Attributes
 
-- Use lowercase `snake_case` keys without a scope prefix, for example `outcome`, `triggered_by`, `dry_run`.
+- Use lowercase `snake_case` keys without a namespace, for example `outcome`, `triggered_by`, `dry_run`.
+- Exception: when a reference document defines an attribute family for spans and metrics together, the metric uses the same namespaced key, for example `token_exchange.outcome` (`docs/reference/token-exchange.md#diagnostic-attributes`).
 - Each attribute has a closed, documented value set.
 - Do not use these as metric attributes: principal, `session_id`, `grant_id`, `approval_id`, tool name, URL, `client_id`, or any value supplied by a caller.
 - `service_id` and `agent_id` are permitted only when the observability contract states that operators bound the set. Precedent: the `oauth2_sessions` gauge.
