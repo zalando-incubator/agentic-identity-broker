@@ -71,8 +71,8 @@ func FromContext(ctx context.Context) (SecurityContext, bool) {
 // truncated. It is the single construction seam for both the immediate
 // (ordinary HTTP) and deferred (token-exchange) finalization paths, so the two
 // cannot drift.
-func NewSecurityContext(capture TransportCapture, actor, callingPeer string) SecurityContext {
-	normalizedActor := NormalizeActor(actor)
+func NewSecurityContext(capture TransportCapture, actor id.Principal, callingPeer string) SecurityContext {
+	normalizedActor := NormalizeActor(actor.String())
 	return SecurityContext{
 		TraceID:       capture.TraceID,
 		Actor:         id.NewPrincipal(normalizedActor),
@@ -102,7 +102,7 @@ func CaptureHolderFromContext(ctx context.Context) (*CaptureHolder, bool) {
 	return holder, true
 }
 
-func FinalizeCaptureHolder(ctx context.Context, actor, callingPeer string) (SecurityContext, bool) {
+func FinalizeCaptureHolder(ctx context.Context, actor id.Principal, callingPeer string) (SecurityContext, bool) {
 	holder, ok := CaptureHolderFromContext(ctx)
 	if !ok {
 		return SecurityContext{}, false
@@ -111,7 +111,7 @@ func FinalizeCaptureHolder(ctx context.Context, actor, callingPeer string) (Secu
 	return holder.Finalize(actor, callingPeer)
 }
 
-func (h *CaptureHolder) Finalize(actor, callingPeer string) (SecurityContext, bool) {
+func (h *CaptureHolder) Finalize(actor id.Principal, callingPeer string) (SecurityContext, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

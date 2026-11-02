@@ -297,7 +297,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
-	grant, err = s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	grant, err = s.consentService.VerifyAgentAccess(ctx, principal, agent.ID)
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
@@ -342,7 +342,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// Per T075: invalid_grant if session doesn't exist
 	// Per T076: invalid_grant if both tokens are expired
 	stage = StageSessionLookup
-	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, id.Principal(principal), service.ID)
+	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, principal, service.ID)
 	if err != nil {
 		diagnostic := sessionDiagnostic(err)
 		if diagnostic.Outcome() == OutcomeReauthRequired {
