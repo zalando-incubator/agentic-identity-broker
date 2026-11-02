@@ -1,3 +1,4 @@
+const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -36,6 +37,8 @@ const reviewSeverities = { RED: "🔴", YELLOW: "🟡", GREEN: "🟢" };
 const reviewRecommendations = { APPROVE: "✅", DISCUSS: "🟡", "REQUEST CHANGES": "🔴" };
 const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
+const maxRepairs = 3;
+const ciWorkflow = ".github/workflows/ci.yml";
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -91,6 +94,10 @@ function validateResult(result) {
       }
       approvalLocation(item.location);
     }
+  }
+  if (result.repair !== undefined && (result.phase !== "implement" || !Number.isSafeInteger(result.repair) ||
+      result.repair < 1 || result.repair > maxRepairs)) {
+    throw new Error("Invalid repair round");
   }
   if (result.next_step !== undefined &&
       (typeof result.next_step !== "string" || !result.next_step.trim() || result.next_step.length > 1500)) {
@@ -308,6 +315,71 @@ function latest(entries, allowed) {
   return entries.filter(({ result }) => allowed.includes(result.phase)).sort((a, b) => b.comment.id - a.comment.id)[0];
 }
 
+async function failedJobs(github, repo, id) {
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+    { ...repo, run_id: id, filter: "latest", per_page: 100 });
+  return jobs.filter((job) => job.conclusion === "failure").map((job) => ({
+    name: job.name, url: job.html_url,
+    steps: (job.steps || []).filter((step) => step.conclusion === "failure").map((step) => step.name),
+  }));
+}
+
+// CI runs the pushed code without privileges; this pipeline only reads its outcome and test reports as data.
+async function ciFailure(github, repo, pr, id) {
+  const { data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: id });
+  if (run.path?.split("@")[0] !== ciWorkflow || run.event !== "pull_request" || run.conclusion !== "failure" ||
+      run.head_sha !== pr.head.sha || run.head_repository?.full_name !== `${repo.owner}/${repo.repo}`) return null;
+  return { run: run.id, url: run.html_url, head: run.head_sha, jobs: await failedJobs(github, repo, run.id) };
+}
+
+// A repair answers CI only on the commit that the latest code phase (implementation, review fix, or
+// applied proposal) pushed, and only after that phase completed. The latest implementation without a
+// repair round is the one a maintainer started, so every /speckit-implement allows maxRepairs more repairs.
+async function repairs(github, repo, pr, entries, comments) {
+  const runs = entries.filter(({ result }) => result.phase === "implement").sort((a, b) => b.comment.id - a.comment.id);
+  const last = latest(entries, phases);
+  const base = runs.find(({ result }) => !result.repair);
+  if (!base || !codePhases.includes(last.result.phase) || last.result.status !== "complete") return null;
+  const pushed = agentComments(comments, repo, runOf(last.result))
+    .filter((entry) => entry.id < last.comment.id).sort((a, b) => b.id - a.id)
+    .map((entry) => (entry.body || "").match(commitNotice)).find(Boolean);
+  if (!pushed || pushed[2] !== `https://github.com/${repo.owner}/${repo.repo}/commit/${pr.head.sha}`) return null;
+  const { data: started } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: Number(runOf(base.result)) });
+  if (!started.triggering_actor?.login || !await maintainer(github, repo, started.triggering_actor.login)) return null;
+  return { round: runs.filter(({ result, comment }) => result.repair && comment.id > base.comment.id).length + 1 };
+}
+
+async function implementationGate(github, repo, pr, entries) {
+  const current = await artifacts(github, repo, pr);
+  requireSpecification(entries, current.hashes);
+  const analysis = latest(entries, ["analyze", "reanalyze"]);
+  if (analysis?.result.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
+  requireResult(analysis.result, reviewedDocuments(entries, analysis), current.hashes, { clean: true });
+  await approval(github, repo, pr, current.feature, analysis.comment, entries);
+}
+
+async function routeRepair(github, repo, payload) {
+  const run = payload.workflow_run;
+  const number = run?.pull_requests?.[0]?.number;
+  if (payload.action !== "completed" || !number) return { action: "noop" };
+  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
+  const issue = managedPR(pr, repo);
+  if (!issue || !await ciFailure(github, repo, pr, run.id)) return { action: "noop" };
+  const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
+  const entries = comments.map((comment) => ({ comment, result: parseResult(comment) })).filter((entry) => entry.result);
+  const repair = await repairs(github, repo, pr, entries, comments);
+  if (!repair) return { action: "noop" };
+  const routed = { issue, pr: number, comment: 0, validation: run.id, round: repair.round };
+  if (repair.round > maxRepairs) return { action: "exhausted", ...routed };
+  try {
+    await implementationGate(github, repo, pr, entries);
+  } catch (error) {
+    error.pr = number;
+    throw error;
+  }
+  return { action: "implement", ...routed };
+}
+
 async function routeIssue(github, repo, issue, comment) {
   if (issue.state !== "open") return { action: "noop" };
   const branch = `speckit/issue-${issue.number}`;
@@ -334,6 +406,8 @@ async function routeIssue(github, repo, issue, comment) {
 
 async function route({ github, context }) {
   const { payload, repo, eventName } = context;
+  // The CI run's actor is whoever pushed; a repair acts for the maintainer who started the implementation.
+  if (eventName === "workflow_run") return routeRepair(github, repo, payload);
   const label = payload.label?.name;
   const isIssue = eventName === "issues" && payload.action === "labeled" &&
     label === "speckit:specify" && !payload.issue?.pull_request;
@@ -381,19 +455,19 @@ async function route({ github, context }) {
     return routed("clarify");
   }
   const action = command?.phase ?? (label === "speckit:implement" ? "implement" : "plan");
-  const current = await artifacts(github, repo, pr);
-  requireSpecification(entries, current.hashes);
   if (action === "implement") {
-    const analysis = latest(entries, ["analyze", "reanalyze"]);
-    if (analysis?.result.phase !== "reanalyze") throw new Error("Independent reanalysis is required before implementation");
-    requireResult(analysis.result, reviewedDocuments(entries, analysis), current.hashes, { clean: true });
-    await approval(github, repo, pr, current.feature, analysis.comment, entries);
+    await implementationGate(github, repo, pr, entries);
+  } else {
+    requireSpecification(entries, (await artifacts(github, repo, pr)).hashes);
   }
   return routed(action);
 }
 
 async function prepare({ github, context, inputs }) {
-  if (!await maintainer(github, context.repo, context.actor)) throw new Error("Maintainer permission is required");
+  const repairing = Number(inputs.validation) > 0;
+  if (repairing && inputs.phase !== "implement") throw new Error("Only implementation repairs CI failures");
+  // A repair is re-authorized below from the maintainer's implementation run, not from the CI run's actor.
+  if (!repairing && !await maintainer(github, context.repo, context.actor)) throw new Error("Maintainer permission is required");
   const run = `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`;
   const data = { phase: inputs.phase, run, repository: `${context.repo.owner}/${context.repo.repo}` };
   if (inputs.phase === "specify") {
@@ -439,6 +513,14 @@ async function prepare({ github, context, inputs }) {
       }
       if (reviewPhases.includes(inputs.phase)) {
         data.review = await reviewContext(github, context, pr, inputs);
+      }
+      if (repairing) {
+        const comments = await github.paginate(github.rest.issues.listComments,
+          { ...context.repo, issue_number: pr.number, per_page: 100 });
+        const repair = await repairs(github, context.repo, pr, entries, comments);
+        const failure = await ciFailure(github, context.repo, pr, Number(inputs.validation));
+        if (!repair || repair.round > maxRepairs || !failure) throw new Error("This CI failure is not eligible for a repair");
+        data.validation = { round: repair.round, max: maxRepairs, ...failure, reports: `${directory}/validation` };
       }
     }
     Object.assign(data, { pr: pr.number, head: pr.head.sha, branch: pr.head.ref, feature: current.feature });
@@ -800,6 +882,16 @@ function runOf(result) {
   return result.run.split("/")[0];
 }
 
+function phaseLabel(result) {
+  return result.repair ? `Repair ${result.repair}` : labels[result.phase];
+}
+
+// A CI repair has no maintainer actor; the route job authorized it and names the PR only when it did.
+async function authorized(github, context, route) {
+  if (context.eventName === "workflow_run") return Number(route?.outputs?.pr) > 0;
+  return maintainer(github, context.repo, context.actor);
+}
+
 function cell(text) {
   return quoted(text).replace(/[\\|]/g, "\\$&");
 }
@@ -897,7 +989,7 @@ function runTable(entries, comments, repo, run) {
     previous = comment.id;
     const state = ["analyze", "reanalyze"].includes(result.phase) ?
       `${outcome(result)} ${severities(result.findings)}` : `${outcome(result)} ${result.status}`;
-    return `| ${labels[result.phase]} | ${state} | ${result.summary ? cell(result.summary) : "—"} | ` +
+    return `| ${phaseLabel(result)} | ${state} | ${result.summary ? cell(result.summary) : "—"} | ` +
       `${pushed ? `[\`${pushed.sha.slice(0, 7)}\`](${pushed.url})` : "—"} | [report](${comment.html_url}) |`;
   });
   return ["### This run", "", "| Phase | Result | Summary | Commit | Details |", "| --- | --- | --- | --- | --- |", ...rows];
@@ -909,7 +1001,7 @@ function earlierRuns(entries, repo, run) {
     if (runOf(entry.result) !== run) runs.set(runOf(entry.result), [...(runs.get(runOf(entry.result)) || []), entry]);
   }
   const lines = [...runs].reverse().slice(0, 10).map(([id, list]) => `- [Run ${id}](${runURL(repo, id)}): ` +
-    list.map(({ comment, result }) => `[${labels[result.phase]} ${outcome(result)}](${comment.html_url})`).join(" · "));
+    list.map(({ comment, result }) => `[${phaseLabel(result)} ${outcome(result)}](${comment.html_url})`).join(" · "));
   return lines.length ? ["<details><summary>Earlier runs</summary>", "", ...lines, "", "</details>"] : [];
 }
 
@@ -949,10 +1041,19 @@ async function announce({ github, context, needs }) {
   const created = Number(needs.specify?.outputs?.created_pr_number);
   const number = created || Number(needs.route?.outputs?.pr);
   const action = created ? "clarify" : needs.route?.outputs?.action;
-  if (!running[action] || !number || !await maintainer(github, repo, context.actor)) return null;
+  if (!running[action] || !number || !await authorized(github, context, needs.route)) return null;
   const state = await pullRequestState(github, repo, number);
   const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
   const active = action === "apply" ? "apply-review" : action === "review" ? undefined : action;
+  const repair = Number(needs.route?.outputs?.validation);
+  if (repair) {
+    return publishStatus(github, repo, number,
+      `⏳ Repairing CI failures (round ${needs.route.outputs.round} of ${maxRepairs})`, [
+        state ? [progress(state.stages, { active, approve, review: reviewIcon(state) })] : [], [
+        `Started by the failed [CI run](${runURL(repo, repair)}). ` +
+          `Follow the [workflow run](${runURL(repo, context.runId)}).`,
+      ]]);
+  }
   // Runs queue per triggering issue or PR number, so only a run started on this PR holds back its later commands.
   const queued = [context.payload.pull_request?.number, context.payload.issue?.number].includes(number);
   return publishStatus(github, repo, number, `⏳ ${running[action]}`, [
@@ -984,7 +1085,7 @@ async function report({ github, context, needs }) {
   const { repo } = context;
   const route = needs.route || {};
   if (route.result === "success" && route.outputs?.action === "noop") return null;
-  if (!await maintainer(github, repo, context.actor)) return null;
+  if (!await authorized(github, context, route)) return null;
   const number = Number(needs.specify?.outputs?.created_pr_number) || Number(route.outputs?.pr) ||
     context.payload.pull_request?.number || context.payload.issue?.number;
   if (!number) return null;
@@ -1007,8 +1108,16 @@ async function report({ github, context, needs }) {
   if (error) {
     title = `⛔ Stopped in \`${error[0]}\``;
     lines = [quoted(error[1].outputs.error)];
+  } else if (route.outputs?.action === "exhausted") {
+    const ci = Number(route.outputs.validation);
+    title = `⛔ CI is still red after ${maxRepairs} repairs`;
+    lines = [
+      `The [CI run](${runURL(repo, ci)}) on the last repair's commit failed in:`, "",
+      ...(await failedJobs(github, repo, ci)).map((job) => `- [${cell(job.name)}](${job.url})`), "",
+      `Fix the failures, or comment \`/speckit-implement\` to allow up to ${maxRepairs} more repair runs.`,
+    ];
   } else if (stopped) {
-    title = `⛔ ${labels[stopped.result.phase]} is blocked`;
+    title = `⛔ ${phaseLabel(stopped.result)} is blocked`;
     lines = [
       quoted(stopped.result.next_step || "Read the phase report."), "",
       stopped.result.phase === "implement" ? "Then comment `/speckit-implement` to resume." :
@@ -1033,7 +1142,11 @@ async function report({ github, context, needs }) {
   } else if (stages.implement?.result.status === "complete") {
     title = "✅ Implementation complete";
     approve = "✅";
-    lines = ["Review the changes, then mark the pull request ready for review.", "", details(stages.implement)];
+    lines = [
+      "CI validates the pushed commit. If it fails, a repair run starts automatically, " +
+        `up to ${maxRepairs} times after each \`/speckit-implement\`.`,
+      "When CI is green, review the changes, then mark the pull request ready for review.", "", details(stages.implement),
+    ];
   } else if (reanalysis) {
     ({ title, lines, icon: approve } = await readiness(github, repo, state, reanalysis));
   } else if (stages.clarify?.result.status === "waiting") {
@@ -1094,6 +1207,11 @@ function writeResult() {
   }
   if (!files[`${feature}/spec.md`]) throw new Error("Feature specification is missing");
   if (codePhases.includes(context.phase) && draft.status === "complete") {
+    if (context.validation && !/^[0-9a-f]{40}$/.test(context.head)) throw new Error("Invalid repair head");
+    // CI only reruns on a new commit, so a repair that changes nothing must hand the failure to the maintainer.
+    if (context.validation && execFileSync("git", ["rev-list", "--count", `${context.head}..HEAD`], { encoding: "utf8" }).trim() === "0") {
+      throw new Error("A repair that commits nothing must report blocked with the failure it could not fix");
+    }
     if (/^\s*-\s+\[ \]\s+T\d+/m.test(files[`${feature}/tasks.md`] || "") ||
         !draft.checks?.includes("just check") ||
         !draft.checks.some((command) => /^just (test[\w-]*|web-test|cdk-test|verify)(\s|$)/.test(command))) {
@@ -1127,6 +1245,7 @@ function writeResult() {
     status: draft.status, findings: draft.findings, questions: draft.questions,
     answer_id: context.answer?.id || context.previous?.answer_id || 0,
     summary: draft.summary.trim(),
+    ...(context.validation ? { repair: context.validation.round } : {}),
     ...(analysis ? { approvals } : {}),
     ...(draft.status === "blocked" ? { next_step: draft.next_step } : {}),
   });

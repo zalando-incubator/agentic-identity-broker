@@ -9,11 +9,16 @@ on:
     types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
   pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
     types: [submitted]
+  # A failed CI run on an implementation's commit starts a bounded repair. CI runs the PR code without privileges;
+  # this workflow only reads its outcome and test reports as data, and the repair runs in the worker sandbox.
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the CI run.
+    workflows: [CI]
+    types: [completed]
 
 permissions: {}
 
 concurrency:
-  group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
   queue: max
 
@@ -28,10 +33,14 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.sender.type == 'User' &&
         github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
-        startsWith(github.event.review.body, '/speckit-'))
+        startsWith(github.event.review.body, '/speckit-')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        startsWith(github.event.workflow_run.head_branch, 'speckit/issue-'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       issues: read
       pull-requests: read
@@ -42,6 +51,8 @@ jobs:
       comment: ${{ steps.route.outputs.comment }}
       review: ${{ steps.route.outputs.review }}
       proposal: ${{ steps.route.outputs.proposal }}
+      validation: ${{ steps.route.outputs.validation }}
+      round: ${{ steps.route.outputs.round }}
       error: ${{ steps.route.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -64,6 +75,7 @@ jobs:
               core.info(`Spec Kit route: ${result.action}`);
             } catch (error) {
               core.setOutput('error', error.message);
+              if (error.pr) core.setOutput('pr', error.pr);
               throw error;
             }
 
@@ -322,6 +334,7 @@ jobs:
       phase: implement
       pr: ${{ fromJSON(needs.route.outputs.pr) }}
       comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
+      validation: ${{ fromJSON(needs.route.outputs.validation || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
@@ -399,11 +412,13 @@ jobs:
             }
 
   # A completed implementation, or a maintainer's /architecture-review, gets the architectural review in this run.
+  # A CI repair does not: the implementation it repairs was already reviewed.
   review:
     needs: [route, implement, verify]
     if: >-
       always() && needs.route.result == 'success' &&
-      (needs.route.outputs.action == 'review' || (needs.implement.result == 'success' && needs.verify.result == 'success'))
+      (needs.route.outputs.action == 'review' ||
+        (needs.implement.result == 'success' && needs.verify.result == 'success' && needs.route.outputs.validation == ''))
     permissions:
       actions: read
       checks: read
@@ -615,6 +630,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       issues: write
       pull-requests: write
