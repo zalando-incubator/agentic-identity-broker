@@ -167,6 +167,8 @@ func NewHandler(config ServerConfig, routeSetup func(chi.Router), logger *slog.L
 			otelchi.WithChiRoutes(router),
 			otelchi.WithRequestMethodInSpanName(true),
 			otelchi.WithPropagators(otel.GetTextMapPropagator()),
+			// Probes hit /health every few seconds; tracing them only adds noise.
+			otelchi.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" }),
 		)))
 	}
 	router.Use(middleware.OptionalPrincipalMiddleware(config.Authentication, config.JWTAuthenticator, logger))
