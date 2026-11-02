@@ -1,5 +1,7 @@
 package id
 
+import "log/slog"
+
 // ClientID is an OAuth2 client identifier (VARCHAR(255), not a UUID).
 type ClientID string
 
@@ -20,6 +22,10 @@ type Principal string
 func NewPrincipal(s string) Principal { return Principal(s) }
 func (id Principal) String() string   { return string(id) }
 func (id Principal) IsZero() bool     { return id == "" }
+
+// LogValue renders the raw principal. Log output passes through the telemetry
+// principal policy handler, which recognizes this type and applies the policy.
+func (id Principal) LogValue() slog.Value { return slog.StringValue(string(id)) }
 
 // KeyID is a JWT Key ID (kid claim) identifying a signing key within JWKS.
 type KeyID string

@@ -703,6 +703,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **Session-service identity (NFR-001)**: The context handler adds request `actor` and optional `calling_peer` when present. On a sweep, `actor` is the operator, not the session owner. Per-session refresh logs include the owner `principal`; the aggregate audit records `operator_principal` without an owner.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
+- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → stdout/OTel fan-out; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. `SecurityContext.Actor` is an `id.Principal`.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
@@ -1523,7 +1524,9 @@ Define any project-specific terms or acronyms.)
 
 **SecurityContext**: Immutable request-scoped value object carrying the request Trace ID, Actor, optional CallingPeer, client IP, user agent, request method, request target, and receipt timestamp. Built exactly once at the perimeter, propagated through `context.Context`, never persisted, and never mutated after construction.
 
-**Actor**: Authenticated identity on whose behalf the request is acting. Always populated on `SecurityContext`; when no authenticated identity is available, the broker uses the sentinel `anonymous`.
+**Actor**: Authenticated identity on whose behalf the request is acting. Typed as `id.Principal`. Always populated on `SecurityContext`; when no authenticated identity is available, the broker uses the sentinel `anonymous`.
+
+**Principal Policy Handler**: The single `slog.Handler` that renders principals in log records. It applies the principal policy to every attribute whose value is an `id.Principal` (including inside groups and `WithAttrs`), and to plain string values under the reserved keys `principal`, `operator_principal`, and `actor`. The current policy is identity. OpenTelemetry span attributes and metrics are not covered.
 
 **CallingPeer**: Authenticated peer that directly wielded the request when it is distinct from `Actor` (for example, a validated token-exchange `client_assertion.sub`). Omitted when unavailable or equal to `Actor`.
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,7 +87,7 @@ func TestContextHandler_UsesSecurityContextFieldsWhenPresent(t *testing.T) {
 	require.Len(t, records, 1)
 	assert.Equal(t, "request handled", records[0].message)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", records[0].attrs["trace_id"], "security context must be the trace_id authority when present")
-	assert.Equal(t, "alice@example.com", records[0].attrs["actor"])
+	assert.Equal(t, id.NewPrincipal("alice@example.com"), records[0].attrs["actor"])
 	assert.Equal(t, "gateway-client-1", records[0].attrs["calling_peer"])
 }
 
@@ -106,7 +107,7 @@ func TestContextHandler_OmitsEmptyCallingPeer(t *testing.T) {
 	records := *base.records
 	require.Len(t, records, 1)
 	assert.Equal(t, "11111111111111111111111111111111", records[0].attrs["trace_id"])
-	assert.Equal(t, "anonymous", records[0].attrs["actor"])
+	assert.Equal(t, id.NewPrincipal("anonymous"), records[0].attrs["actor"])
 	_, hasCallingPeer := records[0].attrs["calling_peer"]
 	assert.False(t, hasCallingPeer, "calling_peer must be omitted when the security context does not carry a distinct peer")
 }
@@ -124,7 +125,7 @@ func TestContextHandler_UsesCapturedTraceBeforeDeferredFinalization(t *testing.T
 	records := *base.records
 	require.Len(t, records, 1)
 	assert.Equal(t, "33333333333333333333333333333333", records[0].attrs["trace_id"])
-	assert.Equal(t, security.AnonymousActor, records[0].attrs["actor"])
+	assert.Equal(t, id.NewPrincipal(security.AnonymousActor), records[0].attrs["actor"])
 	_, finalized := holder.Finalized()
 	assert.False(t, finalized, "logging must not finalize the deferred capture holder")
 }
@@ -184,7 +185,7 @@ func TestContextHandler_EnrichesEveryMultiHandlerDestination(t *testing.T) {
 		records := *destination.records
 		require.Len(t, records, 1)
 		assert.Equal(t, "0123456789abcdef0123456789abcdef", records[0].attrs["trace_id"])
-		assert.Equal(t, "alice@example.com", records[0].attrs["actor"])
+		assert.Equal(t, id.NewPrincipal("alice@example.com"), records[0].attrs["actor"])
 		assert.Equal(t, "gateway-client-1", records[0].attrs["calling_peer"])
 	}
 }

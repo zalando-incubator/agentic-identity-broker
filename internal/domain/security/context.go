@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 
 type SecurityContext struct {
 	TraceID       string
-	Actor         string
+	Actor         id.Principal
 	CallingPeer   string
 	ClientIP      string
 	UserAgent     string
@@ -73,7 +75,7 @@ func NewSecurityContext(capture TransportCapture, actor, callingPeer string) Sec
 	normalizedActor := NormalizeActor(actor)
 	return SecurityContext{
 		TraceID:       capture.TraceID,
-		Actor:         normalizedActor,
+		Actor:         id.NewPrincipal(normalizedActor),
 		CallingPeer:   NormalizeCallingPeer(callingPeer, normalizedActor),
 		ClientIP:      capture.ClientIP,
 		UserAgent:     TruncateUserAgent(capture.UserAgent),

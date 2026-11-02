@@ -420,7 +420,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			otelslog.WithLoggerProvider(global.GetLoggerProvider()))
 		baseHandler = telemetry.NewMultiHandler(baseHandler, otelHandler)
 	}
-	b.logger = slog.New(telemetry.NewContextHandler(baseHandler))
+	b.logger = slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler)))
 	app.Logger = b.logger
 
 	// Phase 1: Initialize encryption adapter (must happen before domain services).
@@ -1362,7 +1362,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		Agents:         consent.NewAgentsHandler(app.ConsentService, b.logger),
 		AgentDetail:    agentDetailHandler,
 		Grants:         consent.NewGrantsHandler(app.ConsentService, b.logger, app.SessionTokenService),
-		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService),
+		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService, b.logger),
 		OAuth2Authorize: &enduser.OAuth2AuthorizeHandler{
 			Service:        app.OAuth2Service,
 			Logger:         b.logger,
