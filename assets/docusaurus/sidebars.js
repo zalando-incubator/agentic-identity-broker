@@ -44,6 +44,7 @@ const sidebars = {
         'guides/configure-authentication',
         'guides/operate-oauth2-server-modes',
         'guides/token-exchange-gateway',
+        'guides/agentgateway-token-exchange',
         'guides/configure-encryption',
         'guides/deploy-on-kubernetes',
         'deployment/kubernetes-irsa',
