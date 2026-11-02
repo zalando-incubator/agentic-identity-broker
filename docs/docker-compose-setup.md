@@ -8,7 +8,10 @@ Compose. It includes hot reload for the backend and frontend.
 ### Prerequisites
 
 - Docker installed and running, with Docker Compose v2 (`docker compose`)
-- `justfile` (included in repo)
+- [just](https://github.com/casey/just), installed with `brew install just` or `cargo install just`
+
+For plain Docker Compose commands and a complete consent-to-tool journey,
+see [Get started](get-started/index.md).
 
 ### Step 1: Start All Services
 

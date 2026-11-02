@@ -27,6 +27,7 @@ services:
     ports:
       - "8000:8000"
       - "14000:14000"
+      - "9002:9002"
     volumes:
       # Mount source code for Air hot reload
       - ./cmd:/app/cmd
@@ -143,15 +144,15 @@ services:
       dockerfile: build/docker/Dockerfile.dev
     container_name: aib-sample-agent
     command: ["air", "-c", "build/air/.air.sample-agent.toml"]
-    ports:
-      - "9002:9002"
+    # Bootstrap must use the admin API's configured localhost authority.
+    network_mode: service:identity-broker
+    environment:
+      - ADMIN_API=http://localhost:14000/api
     volumes:
       - ./mocks/sample-agent:/app/mocks/sample-agent
       - ./scripts:/app/scripts:ro
       - ./build/air/.air.sample-agent.toml:/app/build/air/.air.sample-agent.toml:ro
       - sample-agent-tmp:/app/tmp
-    networks:
-      - aib-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
       interval: 5s
