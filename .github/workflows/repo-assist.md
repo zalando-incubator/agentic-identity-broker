@@ -396,6 +396,7 @@ steps:
       EOF
 
 engine: pi
+model: copilot/gpt-6.1-sol
 
 models:
   allowed: ["gpt-6.1-sol"]
@@ -440,7 +441,7 @@ The schema stores only:
 - `cursors`: the last issue reached by Tasks 1 and 2, or `null` when a fresh search is required
 - `issues`: the latest still-actionable Repo Assist interaction or investigation state for an issue
 - `fixes`: one record per attempted issue fix, including its PR or branch when known
-- `checks`: only the latest result for each engineering, documentation, QA, testing, release, or maintenance area
+- `checks`: only the latest result for each area, at most one entry per area; `area` must be one of `dependencies`, `ci`, `tooling`, `build`, `code`, `docs`, `qa`, `hygiene`, `performance`, `tests`, `release`, or `repo_assist_prs`. Replace an area's existing entry instead of appending another, for example `jq --argjson entry "$entry" '.checks |= (map(select(.area != $entry.area)) + [$entry])'`
 - `completed_actions`: Monthly Activity actions checked off by a maintainer, so they are not proposed again
 - `priorities`: a short queue of concrete follow-up work
 
