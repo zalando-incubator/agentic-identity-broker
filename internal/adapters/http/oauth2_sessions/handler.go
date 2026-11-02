@@ -23,10 +23,10 @@ type Handler struct {
 }
 
 // NewHandler creates a new handler.
-func NewHandler(service *oauth2session.OAuth2SessionService) *Handler {
+func NewHandler(service *oauth2session.OAuth2SessionService, logger *slog.Logger) *Handler {
 	return &Handler{
 		service: service,
-		logger:  slog.Default(),
+		logger:  logger,
 	}
 }
 

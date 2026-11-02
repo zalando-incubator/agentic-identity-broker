@@ -43,12 +43,30 @@ func (h *principalPolicyHandler) Enabled(ctx context.Context, level slog.Level) 
 }
 
 func (h *principalPolicyHandler) Handle(ctx context.Context, record slog.Record) error {
+	if !needsRender(record) {
+		return h.next.Handle(ctx, record)
+	}
 	rendered := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
 	record.Attrs(func(attr slog.Attr) bool {
 		rendered.AddAttrs(h.render(attr))
 		return true
 	})
 	return h.next.Handle(ctx, rendered)
+}
+
+// needsRender reports whether any attribute can hold a principal.
+func needsRender(record slog.Record) bool {
+	needs := false
+	record.Attrs(func(attr slog.Attr) bool {
+		switch attr.Value.Kind() {
+		case slog.KindLogValuer, slog.KindGroup:
+			needs = true
+		case slog.KindString:
+			_, needs = reservedPrincipalKeys[attr.Key]
+		}
+		return !needs
+	})
+	return needs
 }
 
 func (h *principalPolicyHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -68,8 +86,10 @@ func (h *principalPolicyHandler) renderAll(attrs []slog.Attr) []slog.Attr {
 }
 
 func (h *principalPolicyHandler) render(attr slog.Attr) slog.Attr {
-	if principal, ok := attr.Value.Any().(id.Principal); ok {
-		return slog.String(attr.Key, h.policy(principal.String()))
+	if attr.Value.Kind() == slog.KindLogValuer {
+		if principal, ok := attr.Value.Any().(id.Principal); ok {
+			return slog.String(attr.Key, h.policy(principal.String()))
+		}
 	}
 
 	value := attr.Value.Resolve()

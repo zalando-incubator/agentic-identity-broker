@@ -218,3 +218,35 @@ func flattenAttrs(prefix string, attrs []slog.Attr) map[string]any {
 	}
 	return out
 }
+
+func TestPrincipalPolicyHandler_AddsNoAllocationsWithoutPrincipals(t *testing.T) {
+	logAllocs := func(handler slog.Handler) float64 {
+		logger := slog.New(handler)
+		ctx := context.Background()
+		return testing.AllocsPerRun(100, func() {
+			logger.LogAttrs(ctx, slog.LevelInfo, "session refreshed",
+				slog.String("event", "session.refreshed"),
+				slog.String("service_id", "svc-1"),
+				slog.String("session_id", "sess-1"),
+				slog.String("agent_id", "agent-1"),
+				slog.String("trigger", "background"),
+				slog.Int("row_count", 3),
+				slog.Bool("forced", false),
+			)
+		})
+	}
+
+	plain := logAllocs(enabledNoopHandler{})
+	withPolicy := logAllocs(NewPrincipalPolicyHandler(enabledNoopHandler{}))
+
+	assert.Equal(t, plain, withPolicy, "a record without principals must pass through without extra allocations")
+}
+
+// enabledNoopHandler accepts every record without allocating, so allocation
+// counts measure only the handlers in front of it.
+type enabledNoopHandler struct{}
+
+func (enabledNoopHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (enabledNoopHandler) Handle(context.Context, slog.Record) error { return nil }
+func (h enabledNoopHandler) WithAttrs([]slog.Attr) slog.Handler      { return h }
+func (h enabledNoopHandler) WithGroup(string) slog.Handler           { return h }
