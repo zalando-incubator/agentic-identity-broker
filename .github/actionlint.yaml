@@ -1,5 +1,5 @@
-# actionlint v1.7.12 predates gh-aw's concurrency queue and job.workflow_ref fields.
-# Only these field errors are ignored; all other checks remain enabled.
+# actionlint v1.7.12 predates gh-aw's concurrency queue, job.workflow_ref, and newer permissions.
+# Only these generated syntax errors are ignored; all other checks remain enabled.
 paths:
   .github/workflows/speckit-assisted.yml:
     ignore:
@@ -11,3 +11,6 @@ paths:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
       - '^property "workflow_(repository|sha|ref|file_path)" is not defined in object type'
+  .github/workflows/repo-assist.lock.yml:
+    ignore:
+      - '^unknown permission scope "(code-quality|copilot-requests|vulnerability-alerts)"\.'

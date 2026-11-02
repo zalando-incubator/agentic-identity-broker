@@ -70,6 +70,10 @@ untrusted input.
 
 Both commands must pass before you open a pull request.
 
+For agentic-workflow changes, run `gh aw compile <workflow>` and commit the generated `.lock.yml`.
+The CI workflow-lint job validates all agentic workflows with `gh aw` and runs `actionlint` and `zizmor`.
+The exceptions in `.github/actionlint.yaml` and `.github/zizmor.yml` apply only to specific workflow paths.
+
 ## Making Changes
 
 ### Repository Root
