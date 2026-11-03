@@ -22,5 +22,10 @@ func logPrincipals(ctx context.Context, logger *slog.Logger, p id.Principal, raw
 	actor := raw
 	logger.With("actor", actor).InfoContext(ctx, "actor")
 	logger.InfoContext(ctx, "any string", slog.Any("principal", raw))
+	logger.LogAttrs(ctx, slog.LevelInfo, "typed attr literal", slog.Attr{Key: "principal", Value: slog.AnyValue(p)})
+	logger.LogAttrs(ctx, slog.LevelInfo, "string attr literal", slog.Attr{Key: "principal", Value: slog.StringValue(raw)})
+	logger.LogAttrs(ctx, slog.LevelInfo, "any attr literal", slog.Attr{Key: "actor", Value: slog.AnyValue(raw)})
+	logger.LogAttrs(ctx, slog.LevelInfo, "unkeyed attr literal", slog.Attr{"operator_principal", p.LogValue()})
+	logger.LogAttrs(ctx, slog.LevelInfo, "other attr literal", slog.Attr{Key: "agent_id", Value: slog.StringValue(raw)})
 	logger.InfoContext(ctx, "other key", "agent_id", raw)
 }

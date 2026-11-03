@@ -206,7 +206,7 @@ Audit records are structured operational logs. They are not a durable ledger.
 - Inject a `slog.NewJSONHandler(&buf, ...)` logger through the production constructor. Do not add test-only APIs.
 - For each path that handles a credential, assert that the buffer does not contain the credential under test. Examples: `internal/extproc/server/exchange_safety_test.go`, `internal/extproc/authorization/authorizer_safety_test.go`.
 - For each path that logs a principal, assert that the attribute value is the policy output.
-- `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal` (section 5.1, rules 2 and 5).
+- `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal`, both for key-value arguments and for `slog.Attr` literals, where the value must be `slog.AnyValue` of an `id.Principal` (section 5.1, rules 2 and 5).
 - Assert `event` and the key attributes. Do not assert message text.
 
 ## 10. Review Checklist

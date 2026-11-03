@@ -23,8 +23,9 @@ var principalGuardExemptPackages = []string{
 }
 
 // TestLoggedPrincipalsAreTyped enforces LOGGING.md §5.1 rules 2 and 5: every
-// value logged under a reserved principal key through log/slog must be an
-// id.Principal, never slog.String, .String(), string(...) or a plain string.
+// value logged under a reserved principal key through log/slog, as a key-value
+// argument or a slog.Attr literal, must be an id.Principal, never slog.String,
+// .String(), string(...) or a plain string.
 func TestLoggedPrincipalsAreTyped(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks the module")
@@ -49,6 +50,9 @@ func TestPrincipalGuardDetectsUntypedPrincipals(t *testing.T) {
 		"operator",
 		"actor",
 		"slog.Any(\"principal\", ...)",
+		"slog.Attr{Key: \"principal\"} with slog.StringValue(raw)",
+		"slog.Attr{Key: \"actor\"} with slog.AnyValue(raw)",
+		"slog.Attr{Key: \"operator_principal\"} with p.LogValue()",
 	}
 	if len(offenders) != len(want) {
 		t.Fatalf("expected %d offenders, got %d:\n%s", len(want), len(offenders), strings.Join(offenders, "\n"))
@@ -82,6 +86,13 @@ func findUntypedLoggedPrincipals(t *testing.T, patterns ...string) []string {
 		}
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.CompositeLit); ok {
+					if offender, found := untypedAttrLiteral(pkg.TypesInfo, lit); found {
+						pos := pkg.Fset.Position(lit.Pos())
+						offenders = append(offenders, pos.String()+": "+offender)
+					}
+					return true
+				}
 				call, ok := n.(*ast.CallExpr)
 				if !ok || !callsSlog(pkg.TypesInfo, call) || call.Ellipsis.IsValid() {
 					return true
@@ -135,6 +146,58 @@ func callsSlog(info *types.Info, call *ast.CallExpr) bool {
 	}
 	fn, ok := info.Uses[ident].(*types.Func)
 	return ok && fn.Pkg() != nil && fn.Pkg().Path() == "log/slog"
+}
+
+// untypedAttrLiteral reports a slog.Attr literal whose reserved key holds a
+// value other than slog.AnyValue(id.Principal).
+func untypedAttrLiteral(info *types.Info, lit *ast.CompositeLit) (string, bool) {
+	typ := info.TypeOf(lit)
+	if typ == nil || typ.String() != "log/slog.Attr" {
+		return "", false
+	}
+	var keyExpr, valueExpr ast.Expr
+	for i, elt := range lit.Elts {
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			field, _ := kv.Key.(*ast.Ident)
+			if field != nil && field.Name == "Key" {
+				keyExpr = kv.Value
+			}
+			if field != nil && field.Name == "Value" {
+				valueExpr = kv.Value
+			}
+			continue
+		}
+		switch i {
+		case 0:
+			keyExpr = elt
+		case 1:
+			valueExpr = elt
+		}
+	}
+	if keyExpr == nil {
+		return "", false
+	}
+	key, ok := reservedKeyArg(info, keyExpr)
+	if !ok {
+		return "", false
+	}
+	if valueExpr != nil && isPrincipalAnyValue(info, valueExpr) {
+		return "", false
+	}
+	value := "no value"
+	if valueExpr != nil {
+		value = types.ExprString(valueExpr)
+	}
+	return "slog.Attr{Key: \"" + key + "\"} with " + value, true
+}
+
+func isPrincipalAnyValue(info *types.Info, expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || !callsSlog(info, call) {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "AnyValue" && isPrincipalType(info.TypeOf(call.Args[0]))
 }
 
 func reservedKeyArg(info *types.Info, arg ast.Expr) (string, bool) {
