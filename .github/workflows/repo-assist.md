@@ -273,7 +273,7 @@ steps:
       # Reuse the compiled repo-memory validation script so the agent runs the exact check that gates the memory push.
       script_b64="$(grep -m1 -oP '^\s*VALIDATION_SCRIPT_B64: \K\S+' "$LOCK_FILE" || true)"
       if [[ -z "$script_b64" ]]; then
-        echo "::error::VALIDATION_SCRIPT_B64 not found in $LOCK_FILE; recompile the workflow with gh aw compile"
+        echo "::error::VALIDATION_SCRIPT_B64 not found in $LOCK_FILE; recompile the repo-assist lock file"
         exit 1
       fi
       mkdir -p "$(dirname "$VALIDATOR")"
