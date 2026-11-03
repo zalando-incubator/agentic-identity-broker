@@ -807,10 +807,40 @@ test("phase preparation retries transient GitHub read failures before the agent 
   assert.equal((await settle(t, wrapper(outage.request, { method: "GET" }))).error.status, 503);
   assert.equal(outage.attempts.length, 4);
 
-  for (const [status, method] of [[404, "GET"], [403, "GET"], [503, "POST"]]) {
+  const query = responder([502]);
+  const lookup = { method: "POST", url: "/graphql", query: "query Lookup { viewer { login } }" };
+  assert.deepEqual(await settle(t, wrapper(query.request, lookup)), { value: { status: 200, data: "ok" } });
+  assert.equal(query.attempts.length, 2);
+
+  const mutation = { method: "POST", url: "/graphql", query: "\n  mutation($id: ID!) { minimizeComment(input: {subjectId: $id}) { clientMutationId } }" };
+  for (const [status, options] of [[404, { method: "GET" }], [403, { method: "GET" }], [503, { method: "POST", url: "/repos/example/broker/issues/42/comments" }], [503, mutation]]) {
     const once = responder([status]);
-    assert.equal((await settle(t, wrapper(once.request, { method }))).error.status, status);
+    assert.equal((await settle(t, wrapper(once.request, options))).error.status, status);
     assert.equal(once.attempts.length, 1);
+  }
+
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.equal(f.hooks.length, 1);
+});
+
+test("every workflow entry point retries transient reads once per client", async (t) => {
+  preparationIO(t);
+  const entries = {
+    route: (f) => route(f),
+    announce: (f) => announce({ ...f, needs: {} }),
+    verify: (f) => verify({ ...f, comment: 11, phase: "clarify" }),
+    publishApprovals: (f) => publishApprovals({ ...f, comment: 11 }),
+    remediable: (f) => remediable({ ...f, pr: 42 }),
+    publishProposals: (f) => publishProposals({ ...f, review: 40 }),
+    testTarget: (f) => testTarget({ ...f, pr: 42 }),
+    dispatchTests: (f) => dispatchTests({ ...f, target: {} }),
+    report: (f) => report({ ...f, needs: {} }),
+  };
+  for (const [name, entry] of Object.entries(entries)) {
+    const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+    await entry(f).catch(() => {});
+    await entry(f).catch(() => {});
+    assert.deepEqual(f.hooks.map(({ name: hook }) => hook), ["request"], name);
   }
 });
 
