@@ -48,7 +48,8 @@ token_exchange:
     # CLI: --token_exchange.claim_extraction.agent_subject_expression
     # Explicit CLI > environment > YAML > evaluator default; an explicit empty
     # highest-precedence value selects the default. Both inputs work without YAML.
-    # A configured non-empty expression REPLACES the default (no second built-in check).
+    # A configured non-empty expression REPLACES the default (no second built-in check)
+    # and must reference subject_token.sub, otherwise startup fails.
     # Preserve broker agent-token matching, for example:
     # agent_subject_expression: >-
     #   (has(subject_token.sub) && has(subject_token.agent_id) &&

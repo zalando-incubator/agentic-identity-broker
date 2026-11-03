@@ -1594,8 +1594,9 @@ paths:
         returns `500 server_error` without consent recovery or human-state access, never false.
 
         A configured expression replaces the default entirely, with no additional built-in check.
-        Operators must retain broker agent-token matching, for example by preserving the default
-        as a disjunct. A non-matching result, including under `false`, continues existing checks,
+        It must reference `subject_token.sub`; otherwise the broker refuses to start, so `false`
+        cannot be configured. Operators must retain broker agent-token matching, for example by
+        preserving the default as a disjunct. A non-matching result continues existing checks,
         which may read matching human grants/sessions and return consent errors. Such overrides
         remove categorical rejection and same-text human-credential isolation; they are not a
         compatibility fix. End-User API 2.0.0 replaces the prior contract on existing routes for

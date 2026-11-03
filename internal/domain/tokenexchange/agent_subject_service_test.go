@@ -23,7 +23,7 @@ func TestExchangeAgentSubjectRejection(t *testing.T) {
 		{"unsigned-subject broker human output collision", "https://broker.example.com", "", DetailSubjectCategoryUnsupported, "access_denied"},
 		{"compliant replacement", "https://issuer.example.com", "(has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id) || subject_token.kind == 'machine'", DetailSubjectCategoryUnsupported, "access_denied"},
 		{"dynamic detector failure", "https://broker.example.com", "subject_token.sub", DetailCELConfiguration, "server_error"},
-		{"evaluation failure", "https://broker.example.com", "subject_token.missing == 'agent'", DetailCELEvaluationFailed, "server_error"},
+		{"evaluation failure", "https://broker.example.com", "subject_token.sub == subject_token.missing", DetailCELEvaluationFailed, "server_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, req, grants, sessions := observationFixture(t)

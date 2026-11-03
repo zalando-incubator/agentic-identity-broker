@@ -1212,7 +1212,7 @@
               "properties": {
                 "agentSubjectExpression": {
                   "type": "string",
-                  "description": "Optional replacing CEL detector. Empty uses guarded sub == agent_id. Preserve broker-token matching; a non-matching override removes categorical rejection and same-text human credential isolation. Evaluation failures fail closed."
+                  "description": "Optional replacing CEL detector. Empty uses guarded sub == agent_id. Must reference subject_token.sub or startup fails. Preserve broker-token matching; a non-matching override removes categorical rejection and same-text human credential isolation. Evaluation failures fail closed."
                 },
                 "principalExpression": {
                   "type": "string",
