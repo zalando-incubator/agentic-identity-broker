@@ -37,7 +37,7 @@ and declared domain libraries.
 ### Zero Infrastructure Imports
 
 Do not import `database/sql`, `pgx`, `sqlx`, `chi`, AWS SDKs, `internal/adapters/`, or `internal/app/`. Only `oauth2session`, `storage`, and `oauth2server` import `net/http`.
-Use the Go standard library, `internal/ports/`, other `internal/domain/` packages, and declared domain libraries such as `jwx`, `oauth2`, and `cel-go`.
+Use the Go standard library, `internal/ports/`, other `internal/domain/` packages, and declared domain libraries such as `jwx`, `oauth2`, `cel-go`, and `golang.org/x/net` (`idna`, `publicsuffix`).
 
 ### Domain Services Pattern
 
