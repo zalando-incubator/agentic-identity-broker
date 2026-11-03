@@ -1,16 +1,20 @@
 package middleware
 
-import (
-	"strconv"
-	"strings"
+import "strings"
+
+var logValueEscaper = strings.NewReplacer(
+	"\\", `\\`,
+	"\r", `\r`,
+	"\n", `\n`,
+	"\v", `\v`,
+	"\f", `\f`,
+	"\u0085", `\u0085`,
+	"\u2028", `\u2028`,
+	"\u2029", `\u2029`,
 )
 
 // SanitizeLogValue escapes backslashes and line breaks, including the Unicode line and
 // paragraph separators, so an untrusted value cannot forge or split a log line.
 func SanitizeLogValue(value string) string {
-	if !strings.ContainsAny(value, "\\\r\n\v\f\u0085  ") {
-		return value
-	}
-	quoted := strconv.Quote(value)
-	return quoted[1 : len(quoted)-1]
+	return logValueEscaper.Replace(value)
 }
