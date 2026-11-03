@@ -123,54 +123,13 @@ The response does not contain provider credentials.
 
 ## Step 6: Call a tool through the gateway
 
-On the sample client page, expand **Raw access token** and copy the Local Client token.
-This is the broker token, not the provider token. Use it only against the local demo.
+On the sample client page, select **Call MCP Tool: whoami (allowed)**.
+The sample client sends your logged-in Local Client token through the configured gateway.
+It handles MCP initialization and session headers automatically. You do not need to copy the token into a shell.
 
-In a Bash shell, read the token without putting its literal value in shell history:
-
-```bash
-read -r -s -p 'Paste the Local Client broker token: ' BROKER_TOKEN; printf '\n'
-```
-
-Initialize an MCP session through the gateway. The response headers can include `Mcp-Session-Id`:
-
-```bash
-curl --fail-with-body -i http://localhost:4000/mcp \
-  -H "Authorization: Bearer $BROKER_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"quickstart","version":"1.0"}}}'
-```
-
-If the response includes a session ID, copy its value into `MCP_SESSION_ID`.
-Otherwise, leave it empty. Use the protocol version returned by initialization if it differs from this example.
-
-```bash
-MCP_SESSION_ID=''
-curl --fail-with-body http://localhost:4000/mcp \
-  -H "Authorization: Bearer $BROKER_TOKEN" \
-  -H "${MCP_SESSION_ID:+Mcp-Session-Id: $MCP_SESSION_ID}" \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-```
-
-Call the mock's read-only `whoami` tool through the gateway:
-
-```bash
-curl --fail-with-body http://localhost:4000/mcp \
-  -H "Authorization: Bearer $BROKER_TOKEN" \
-  -H "${MCP_SESSION_ID:+Mcp-Session-Id: $MCP_SESSION_ID}" \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"whoami","arguments":{}}}'
-unset BROKER_TOKEN MCP_SESSION_ID
-```
-
-The result's text contains `auth_scheme=Bearer` and `jwt_claims=...` from the token visible to the MCP server.
-Compare those provider claims with the broker claims on the sample client page.
+The result shows **Token Exchange Successful!**, the tool response, the gateway URL, and **JWT Claims**.
+The tool response contains `auth_scheme=Bearer` and `jwt_claims=...` from the token visible to the MCP server.
+Compare those provider claims with the **Access Token Claims** table on the same page.
 
 | Claim | Broker token sent by the agent | Provider token received by the MCP server |
 |---|---|---|
