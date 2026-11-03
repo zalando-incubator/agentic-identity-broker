@@ -61,7 +61,7 @@ Use port interfaces for infrastructure dependencies.
 Existing `net/http` use is limited to `internal/domain/oauth2session/`, `internal/domain/storage/`, and `internal/domain/oauth2server/`.
 Read those call sites before changes. They include upstream calls, metadata discovery, and protocol error classification.
 SQL serialization uses `database/sql/driver` in domain values. This does not permit database access.
-Use declared domain libraries such as `jwx`, `oauth2`, and `cel-go`.
+Use declared domain libraries such as `jwx`, `oauth2`, `cel-go`, and `golang.org/x/net` (`idna`, `publicsuffix`).
 Keep fosite types inside `internal/domain/oauth2server/`, as required by ADR 014.
 
 ### Domain Services Pattern
