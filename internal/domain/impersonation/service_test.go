@@ -175,6 +175,7 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 	}{
 		{name: "missing delegation", status: ports.UserDelegationMissing, detail: tokenexchange.DetailGrantMissing},
 		{name: "expired delegation", status: ports.UserDelegationExpired, detail: tokenexchange.DetailGrantExpired},
+		{name: "browser consent required", status: ports.UserDelegationConsentRequired, detail: tokenexchange.DetailConsentRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: tc.status}

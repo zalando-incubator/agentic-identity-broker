@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -368,7 +369,7 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 	}
 }
 
-// handleTokenExchangeError keeps recovery links in the direct OAuth response only.
+// handleTokenExchangeError exposes recovery links only in the HTTP response.
 func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err error) error {
 	status := http.StatusInternalServerError
 	errBody := map[string]string{
@@ -382,6 +383,17 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 		errBody["error_description"] = tokenExchangeErrorDescription(exchangeErr)
 		if exchangeErr.ErrorURI() != "" {
 			errBody["error_uri"] = exchangeErr.ErrorURI()
+			diagnostic := exchangeErr.Diagnostic()
+			if status == http.StatusForbidden && diagnostic.ExchangeKind() == tokenexchange.ExchangeImpersonation && diagnostic.RecoveryAction() == tokenexchange.RecoveryReconsent {
+				challenge := `Bearer error="insufficient_scope"`
+				// RFC 6750 excludes quotes, backslashes, whitespace, and non-ASCII URI bytes.
+				if !strings.ContainsFunc(exchangeErr.ErrorURI(), func(r rune) bool {
+					return r < 0x21 || r == 0x22 || r == 0x5c || r > 0x7e
+				}) {
+					challenge += `, error_uri="` + exchangeErr.ErrorURI() + `"`
+				}
+				w.Header().Set("WWW-Authenticate", challenge)
+			}
 		}
 	}
 	return writeTokenExchangeErrorJSON(w, status, errBody)

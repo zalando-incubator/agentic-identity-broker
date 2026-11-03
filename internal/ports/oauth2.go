@@ -279,12 +279,14 @@ type ImpersonationTokenIssuer interface {
 type UserDelegationStatus string
 
 const (
-	UserDelegationActive  UserDelegationStatus = "active"
-	UserDelegationMissing UserDelegationStatus = "missing"
-	UserDelegationExpired UserDelegationStatus = "expired"
+	UserDelegationActive          UserDelegationStatus = "active"
+	UserDelegationMissing         UserDelegationStatus = "missing"
+	UserDelegationExpired         UserDelegationStatus = "expired"
+	UserDelegationConsentRequired UserDelegationStatus = "consent_required"
 )
 
-// UserDelegationVerifier reports whether a principal has an active delegation to an agent.
+// UserDelegationVerifier reports whether a principal is ready to authorize an agent.
+// ConsentRequired means an active grant no longer meets browser consent prerequisites.
 // A non-nil error means the status could not be determined and callers must fail closed.
 type UserDelegationVerifier interface {
 	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegationStatus, error)

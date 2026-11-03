@@ -1551,12 +1551,16 @@ paths:
         whose target is unknown returns `invalid_target`.
         No-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 
-        After a rule authorizes the request, the broker requires an active user delegation for the
-        extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
-        with the existing RFC 6749 `error_uri` response member set to the authenticated user's
-        target-agent consent page. The response intentionally does not distinguish a missing delegation
-        from an expired one. An unverified subject has no exemption; a delegation lookup failure returns
-        `500 server_error` without `error_uri`.
+        After a rule authorizes the request, the broker applies the same consent readiness checks as
+        `/oauth2/authorize`: an active delegation, permission sets still declared by the target agent,
+        usable sessions for every included service, and mandatory service sessions covering required
+        scopes. Refreshable sessions remain usable; unselected optional services do not block.
+        Any consent prerequisite failure returns `403 access_denied` with the existing RFC 6749
+        `error_uri` pointing to the target-agent consent page and a `WWW-Authenticate` Bearer
+        `insufficient_scope` challenge. The challenge includes `error_uri` only when its characters
+        comply with RFC 6750. The response does not reveal which prerequisite failed. Signed and
+        unverified subjects have identical requirements. Repository failures return `500 server_error`
+        without `error_uri` or a challenge. Third-party exchanges retain their existing behavior.
       operationId: tokenExchange
       tags:
         - OAuth2 Token
@@ -1742,6 +1746,12 @@ paths:
                     error_description: "client assertion is not trusted for impersonation"
         "403":
           description: Forbidden - User has not granted access or CEL authorization failed
+          headers:
+            WWW-Authenticate:
+              description: Present only for impersonation consent-readiness denials; recovery URL is also returned in JSON.
+              schema:
+                type: string
+              example: 'Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"'
           content:
             application/json:
               schema:
@@ -1764,10 +1774,10 @@ paths:
                     error: "access_denied"
                     error_description: "impersonation not permitted"
                 impersonation_consent_required:
-                  summary: Impersonation - user delegation required
+                  summary: Impersonation - browser consent readiness required
                   value:
                     error: "access_denied"
-                    error_description: "user delegation is required before impersonation"
+                    error_description: "User authorization is insufficient. Please re-consent."
                     error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "500":
           description: Internal Server Error

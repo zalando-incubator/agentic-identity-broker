@@ -183,6 +183,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 			"user-1", targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
 		))).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, "user-1")).To(Succeed())
 	})
 
 	AfterEach(func() {
@@ -283,6 +284,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 			subject, targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
 		))).To(Succeed())
+		Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService(subject, fixtures.PlaceholderServiceID.String()))).To(Succeed())
 	}
 
 	Context("local mode with a matching signed rule", func() {
@@ -679,6 +681,46 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			resp := postImpersonation(baseRequest())
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			Expect(decodeJWTClaims(decodeBody(resp)["access_token"].(string))["sub"]).To(Equal("user-1"))
+		})
+	})
+
+	Context("browser and inbound authorization readiness", func() {
+		BeforeEach(func() {
+			targetAgent.ClientID = nil
+			targetAgent.RedirectURIs = []string{"https://client.example.com/callback"}
+			Expect(testStorage.Agents().Update(context.Background(), targetAgent)).To(Succeed())
+			Expect(testStorage.UserSessions().DeleteByPrincipalAndService(context.Background(), "user-1", fixtures.PlaceholderServiceID)).To(Succeed())
+			Expect(boot(validConfig())).To(Succeed())
+		})
+
+		// Scenario US5.6 from specs/037-oauth2-user-impersonation/spec.md
+		It("requires consent in both paths and resumes after the delegated service is reconnected", func() {
+			authorize := "/oauth2/authorize?" + url.Values{
+				"client_id": {targetAgent.ID.String()}, "redirect_uri": {targetAgent.RedirectURIs[0]},
+				"response_type": {"code"}, "code_challenge_method": {"S256"},
+				"code_challenge": {strings.Repeat("a", 43)},
+			}.Encode()
+			browser, err := enduserServer.AuthenticatedGET(authorize, "user-1")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(browser.StatusCode).To(Equal(http.StatusFound))
+			Expect(browser.Header.Get("Location")).To(ContainSubstring("session_token="))
+			_ = browser.Body.Close()
+			denied := postImpersonation(baseRequest())
+			Expect(denied.StatusCode).To(Equal(http.StatusForbidden))
+			Expect(denied.Header.Get("WWW-Authenticate")).To(ContainSubstring(`Bearer error="insufficient_scope"`))
+			Expect(decodeBody(denied)).To(And(HaveKeyWithValue("error", "access_denied"), HaveKey("error_uri"), Not(HaveKey("access_token"))))
+
+			Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService("user-1", fixtures.PlaceholderServiceID.String()))).To(Succeed())
+			browser, err = enduserServer.AuthenticatedGET(authorize, "user-1")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(browser.StatusCode).To(Equal(http.StatusFound))
+			Expect(browser.Header.Get("Location")).To(HavePrefix(targetAgent.RedirectURIs[0] + "?"))
+			Expect(browser.Header.Get("Location")).To(ContainSubstring("code="))
+			_ = browser.Body.Close()
+			issued := postImpersonation(baseRequest())
+			Expect(issued.StatusCode).To(Equal(http.StatusOK))
+			Expect(issued.Header.Get("WWW-Authenticate")).To(BeEmpty())
+			Expect(decodeJWTClaims(decodeBody(issued)["access_token"].(string))["sub"]).To(Equal("user-1"))
 		})
 	})
 

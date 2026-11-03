@@ -55,6 +55,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 			"user-1", target.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
 		))).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, "user-1")).To(Succeed())
 	})
 
 	AfterEach(func() {

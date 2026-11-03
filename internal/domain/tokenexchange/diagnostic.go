@@ -62,6 +62,7 @@ const (
 	DetailResourceRepositoryUnavailable   FailureDetail = "resource_repository_unavailable"
 	DetailGrantMissing                    FailureDetail = "grant_missing"
 	DetailGrantExpired                    FailureDetail = "grant_expired"
+	DetailConsentRequired                 FailureDetail = "consent_required"
 	DetailGrantEmpty                      FailureDetail = "grant_empty"
 	DetailGrantPermissionSetUndeclared    FailureDetail = "grant_permission_set_undeclared"
 	DetailGrantPermissionSetMissing       FailureDetail = "grant_permission_set_missing"
@@ -132,7 +133,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage, d.outcome, d.action, d.target = StageResourceResolution, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration
 	case DetailResourceRepositoryUnavailable:
 		d.stage = StageResourceResolution
-	case DetailGrantMissing, DetailGrantExpired, DetailGrantEmpty, DetailGrantPermissionSetUndeclared,
+	case DetailConsentRequired, DetailGrantMissing, DetailGrantExpired, DetailGrantEmpty, DetailGrantPermissionSetUndeclared,
 		DetailGrantPermissionSetMissing, DetailGrantServiceOmitted, DetailGrantServiceDefinitionMissing,
 		DetailGrantServiceRequirementExcluded, DetailGrantScopeIntersectionEmpty:
 		d.stage, d.outcome, d.action, d.target = StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
