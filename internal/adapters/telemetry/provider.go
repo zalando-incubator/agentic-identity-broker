@@ -20,7 +20,6 @@ import (
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptracegrpc "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	otlptracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -136,7 +135,7 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 
 	// Register log provider only when successfully initialised (log pipeline is beta).
 	if lp != nil {
-		global.SetLoggerProvider(lp)
+		otel.SetLoggerProvider(lp)
 	}
 
 	return buildShutdown(tp, mp, lp), nil
