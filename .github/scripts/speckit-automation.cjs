@@ -39,6 +39,21 @@ const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
 const maxRepairs = 3;
 const testsWorkflow = ".github/workflows/container-tests.yml";
+const readRetryDelays = [1000, 4000, 9000];
+
+// Phase preparation fails before the agent starts; one transient GitHub outage otherwise fails the whole run.
+function retryReads(github) {
+  github.hook.wrap("request", async (request, options) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await request(options);
+      } catch (error) {
+        if (options.method !== "GET" || !(error.status >= 500) || attempt >= readRetryDelays.length) throw error;
+        await new Promise((resolve) => setTimeout(resolve, readRetryDelays[attempt]));
+      }
+    }
+  });
+}
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -499,6 +514,7 @@ async function route({ github, context }) {
 }
 
 async function prepare({ github, context, inputs }) {
+  retryReads(github);
   const repairing = Number(inputs.validation) > 0;
   if (repairing && inputs.phase !== "implement") throw new Error("Only implementation repairs container test failures");
   // A repair is re-authorized below from the maintainer's implementation run, not from the test run's actor.

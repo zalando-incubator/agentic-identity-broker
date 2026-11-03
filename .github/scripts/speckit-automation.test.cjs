@@ -117,7 +117,9 @@ function fixture(eventName, payload, options = {}) {
   const minimized = [];
   const dispatched = [];
   const sources = { ...files, ...options.extra };
+  const hooks = [];
   const github = {
+    hook: { wrap: (name, wrapper) => hooks.push({ name, wrapper }) },
     rest: {
       repos: {
         getCollaboratorPermissionLevel: async (args) => {
@@ -201,7 +203,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads, created, deleted, minimized, dispatched,
+    github, calls, contentReads, created, deleted, minimized, dispatched, hooks,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -767,6 +769,50 @@ function preparationIO(t) {
   t.mock.method(fs, "writeFileSync", (name, body) => saved.push({ name, body }));
   return saved;
 }
+
+async function settle(t, promise) {
+  let done = false;
+  const result = promise.then((value) => ({ value }), (error) => ({ error })).finally(() => { done = true; });
+  while (!done) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(10_000);
+  }
+  return result;
+}
+
+test("phase preparation retries transient GitHub read failures before the agent starts", async (t) => {
+  preparationIO(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.deepEqual(f.hooks.map(({ name }) => name), ["request"]);
+  const [{ wrapper }] = f.hooks;
+  const failure = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
+  const responder = (statuses) => {
+    const attempts = [];
+    const request = async (options) => {
+      attempts.push(options.method);
+      const status = statuses[attempts.length - 1];
+      if (status) throw failure(status);
+      return { status: 200, data: "ok" };
+    };
+    return { attempts, request };
+  };
+
+  const recovered = responder([503, 502]);
+  assert.deepEqual(await settle(t, wrapper(recovered.request, { method: "GET" })), { value: { status: 200, data: "ok" } });
+  assert.equal(recovered.attempts.length, 3);
+
+  const outage = responder([503, 503, 503, 503, 503]);
+  assert.equal((await settle(t, wrapper(outage.request, { method: "GET" }))).error.status, 503);
+  assert.equal(outage.attempts.length, 4);
+
+  for (const [status, method] of [[404, "GET"], [403, "GET"], [503, "POST"]]) {
+    const once = responder([status]);
+    assert.equal((await settle(t, wrapper(once.request, { method }))).error.status, status);
+    assert.equal(once.attempts.length, 1);
+  }
+});
 
 test("specification context preserves only the issue title and body, not comments", async (t) => {
   const saved = preparationIO(t);
