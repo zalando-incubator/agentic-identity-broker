@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +16,7 @@ func strPtr(s string) *string {
 func TestPrincipalProfile_Construction(t *testing.T) {
 	tests := []struct {
 		name            string
-		principal       string
+		principal       id.Principal
 		displayName     string
 		email           *string
 		pictureURL      *string
@@ -101,7 +102,7 @@ func TestPrincipalProfile_ContextStorageRetrieval(t *testing.T) {
 
 		retrieved, ok := ProfileFromContext(ctx)
 		require.True(t, ok, "ProfileFromContext should return true when profile is set")
-		assert.Equal(t, "alice", retrieved.Principal())
+		assert.Equal(t, id.Principal("alice"), retrieved.Principal())
 		assert.Equal(t, "Alice Smith", retrieved.DisplayName())
 		assert.Equal(t, &email, retrieved.Email())
 		assert.Equal(t, &picture, retrieved.PictureURL())
@@ -120,13 +121,13 @@ func TestPrincipalProfile_ContextStorageRetrieval(t *testing.T) {
 		profile := NewProfile("new-user").WithDisplayName("New User")
 		ctx = WithProfile(ctx, profile)
 
-		principalStr, ok := FromContext(ctx)
+		principalValue, ok := FromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "legacy-user", principalStr)
+		assert.Equal(t, id.Principal("legacy-user"), principalValue)
 
 		profileVal, ok := ProfileFromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "new-user", profileVal.Principal())
+		assert.Equal(t, id.Principal("new-user"), profileVal.Principal())
 		assert.Equal(t, "New User", profileVal.DisplayName())
 	})
 }

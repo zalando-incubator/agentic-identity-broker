@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -169,7 +170,7 @@ func TestJWXAuthenticator_ValidSignedJWT(t *testing.T) {
 	result, err := auth.Authenticate(context.Background(), "Bearer "+tokenStr)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 	assert.NotNil(t, result.Claims)
 }
 
@@ -331,7 +332,7 @@ func TestJWXAuthenticator_BearerPrefixStripping(t *testing.T) {
 
 		result, err := auth.Authenticate(context.Background(), "Bearer "+tokenStr)
 		require.NoError(t, err)
-		assert.Equal(t, "alice@example.com", result.Principal)
+		assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 	})
 
 	t.Run("does not strip Bearer prefix for custom header", func(t *testing.T) {
@@ -351,7 +352,7 @@ func TestJWXAuthenticator_BearerPrefixStripping(t *testing.T) {
 
 		result, err := auth.Authenticate(context.Background(), tokenStr)
 		require.NoError(t, err)
-		assert.Equal(t, "alice@example.com", result.Principal)
+		assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 	})
 }
 
@@ -382,7 +383,7 @@ func TestJWXAuthenticator_ProfileExtraction(t *testing.T) {
 	result, err := auth.Authenticate(context.Background(), "Bearer "+tokenStr)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 	assert.NotNil(t, result.DisplayName)
 	assert.Equal(t, "Alice Smith", *result.DisplayName)
 	assert.NotNil(t, result.Email)
@@ -413,7 +414,7 @@ func TestJWXAuthenticator_ValidAudience(t *testing.T) {
 
 	result, err := auth.Authenticate(context.Background(), fmt.Sprintf("Bearer %s", tokenStr))
 	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 }
 
 // --- Unsigned JWT Tests (Phase 5: US2) ---
@@ -490,7 +491,7 @@ func TestJWXAuthenticator_UnsignedJWTAcceptedWhenVerificationNone(t *testing.T) 
 
 	result, err := auth.Authenticate(context.Background(), tokenStr)
 	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 }
 
 func TestJWXAuthenticator_UnsignedJWTRejectedWhenVerificationJWKS(t *testing.T) {
@@ -545,7 +546,7 @@ func TestJWXAuthenticator_SignedJWTAcceptedWhenVerificationNone(t *testing.T) {
 
 	result, err := auth.Authenticate(context.Background(), tokenStr)
 	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 }
 
 func TestJWXAuthenticator_ExpiredJWTRejectedEvenWhenVerificationNone(t *testing.T) {
@@ -605,7 +606,7 @@ func TestJWXAuthenticator_NoExpAcceptedWhenVerificationNone(t *testing.T) {
 
 	result, err := auth.Authenticate(context.Background(), tokenStr)
 	require.NoError(t, err, "JWT without exp should be accepted when verification is none")
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 }
 
 func TestJWXAuthenticator_NoExpRejectedWhenVerificationJWKS(t *testing.T) {

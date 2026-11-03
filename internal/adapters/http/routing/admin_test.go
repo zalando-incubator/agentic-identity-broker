@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -124,7 +125,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/cimd-client-keys", strings.NewReader(`{"algorithm":"ES256"}`))
 		req.Host = "admin.example.com:14000"
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -156,7 +157,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 			if tc.contentType != "" {
 				req.Header.Set("Content-Type", tc.contentType)
 			}
-			req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+			req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusUnsupportedMediaType, rec.Code, rec.Body.String())
@@ -166,7 +167,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/cimd-client-keys/"+keys[0].KID+"/current", nil)
 	req.Host = "admin.example.com:14000"
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

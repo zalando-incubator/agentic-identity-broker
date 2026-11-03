@@ -50,7 +50,7 @@ func TestGetAgentDelegations_Success(t *testing.T) {
 
 	// Create request with principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	// Execute request
@@ -100,7 +100,7 @@ func TestGetAgentDelegations_EmptyList(t *testing.T) {
 	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestGetAgentDelegations_ServiceError(t *testing.T) {
 	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestGetAgentDelegations_ContentType(t *testing.T) {
 	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()

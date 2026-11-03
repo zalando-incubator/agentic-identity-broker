@@ -53,7 +53,7 @@ func TestGetGrant_Success(t *testing.T) {
 	handler := NewGrantsHandler(mockService, nil, newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String()+"/grants", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
@@ -100,7 +100,7 @@ func TestGetGrant_EmptyGrants(t *testing.T) {
 	handler := NewGrantsHandler(mockService, nil, newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String()+"/grants", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
@@ -185,7 +185,7 @@ func TestGetGrant_AgentNotFound(t *testing.T) {
 	handler := NewGrantsHandler(mockService, nil, newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String()+"/grants", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
@@ -220,7 +220,7 @@ func TestGetGrant_ServiceError(t *testing.T) {
 	handler := NewGrantsHandler(mockService, nil, newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String()+"/grants", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))

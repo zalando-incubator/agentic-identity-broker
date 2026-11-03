@@ -84,7 +84,7 @@ func newRequestWithPrincipal(method, path, principalValue string, body any) *htt
 	}
 
 	req := httptest.NewRequest(method, path, reqBody)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	return req.WithContext(ctx)
 }
 

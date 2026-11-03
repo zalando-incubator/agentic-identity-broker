@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,7 @@ type testContextKey string
 
 func TestWithPrincipal(t *testing.T) {
 	ctx := context.Background()
-	principals := []string{
+	principals := []id.Principal{
 		"alice@example.com",
 		"user123",
 		"alice.smith",
@@ -24,7 +25,7 @@ func TestWithPrincipal(t *testing.T) {
 	}
 
 	for _, p := range principals {
-		t.Run(p, func(t *testing.T) {
+		t.Run(p.String(), func(t *testing.T) {
 			newCtx := principal.WithPrincipal(ctx, p)
 
 			// Verify new context contains the principal
@@ -46,7 +47,7 @@ func TestFromContext_Present(t *testing.T) {
 	value, ok := principal.FromContext(ctx)
 
 	assert.True(t, ok)
-	assert.Equal(t, "alice@example.com", value)
+	assert.Equal(t, id.Principal("alice@example.com"), value)
 }
 
 func TestFromContext_Missing(t *testing.T) {
@@ -70,7 +71,7 @@ func TestFromContext_WithOtherContextValues(t *testing.T) {
 	// Verify principal is present
 	p, ok := principal.FromContext(ctx)
 	assert.True(t, ok)
-	assert.Equal(t, "alice@example.com", p)
+	assert.Equal(t, id.Principal("alice@example.com"), p)
 
 	// Verify other values still accessible
 	assert.Equal(t, "value1", ctx.Value(testContextKey("other-key-1")))
@@ -83,7 +84,7 @@ func TestMustFromContext_Success(t *testing.T) {
 
 	value := principal.MustFromContext(ctx)
 
-	assert.Equal(t, "alice@example.com", value)
+	assert.Equal(t, id.Principal("alice@example.com"), value)
 }
 
 func TestMustFromContext_Panics(t *testing.T) {
@@ -108,8 +109,8 @@ func TestContextImmutability(t *testing.T) {
 
 	require.True(t, ok1)
 	require.True(t, ok2)
-	assert.Equal(t, "alice", p1)
-	assert.Equal(t, "bob", p2)
+	assert.Equal(t, id.Principal("alice"), p1)
+	assert.Equal(t, id.Principal("bob"), p2)
 	assert.NotEqual(t, p1, p2)
 }
 
@@ -130,7 +131,7 @@ func TestContextCancellation(t *testing.T) {
 	// But principal should still be retrievable
 	p, ok := principal.FromContext(ctx)
 	assert.True(t, ok)
-	assert.Equal(t, "alice@example.com", p)
+	assert.Equal(t, id.Principal("alice@example.com"), p)
 }
 
 // Benchmark context operations for performance validation

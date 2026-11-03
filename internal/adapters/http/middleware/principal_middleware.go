@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -134,8 +135,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 			}
 
 			// Plain header extraction path (original behavior)
-			principalValue := r.Header.Get(headerName)
-			principalValue = strings.TrimSpace(principalValue)
+			principalValue := id.NewPrincipal(strings.TrimSpace(r.Header.Get(headerName)))
 
 			if principalValue == "" {
 				err := principal.NewMissingPrincipalError(headerName)
@@ -255,8 +255,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 			}
 
 			// Plain header extraction path
-			principalValue := r.Header.Get(headerName)
-			principalValue = strings.TrimSpace(principalValue)
+			principalValue := id.NewPrincipal(strings.TrimSpace(r.Header.Get(headerName)))
 
 			if principalValue != "" && len(principalValue) <= maxPrincipalLength {
 				ctx := principal.WithPrincipal(r.Context(), principalValue)

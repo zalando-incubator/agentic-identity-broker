@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/go-chi/chi/v5"
@@ -30,7 +31,7 @@ func TestGetHandler_RequiresAuthenticatedOwner(t *testing.T) {
 			routeContext.URLParams.Add("id", approval.ID.String())
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 			if test.principal != "" {
-				req = req.WithContext(principal.WithPrincipal(req.Context(), test.principal))
+				req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(test.principal)))
 			}
 			rec := httptest.NewRecorder()
 
@@ -58,7 +59,7 @@ func TestGetHandler_ReturnsOwnerApprovalDetail(t *testing.T) {
 	routeContext := chi.NewRouteContext()
 	routeContext.URLParams.Add("id", approval.ID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), string(approval.Principal)))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(string(approval.Principal))))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

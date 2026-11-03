@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 )
@@ -75,7 +76,7 @@ func (w *responseWriterWrapper) Write(b []byte) (int, error) {
 // auditEvent contains audit information about a request
 type auditEvent struct {
 	RequestID  string
-	Principal  string
+	Principal  id.Principal
 	Method     string
 	Path       string
 	StatusCode int
@@ -105,7 +106,7 @@ func logAuditEvent(ctx context.Context, logger *slog.Logger, event *auditEvent) 
 		level,
 		"OAuth2 Authorization Request",
 		slog.String("request_id", event.RequestID),
-		slog.String("principal", event.Principal),
+		slog.Any("principal", event.Principal),
 		slog.String("method", event.Method),
 		slog.String("path", event.Path),
 		slog.Int("status", event.StatusCode),

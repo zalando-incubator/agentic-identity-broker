@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 )
 
@@ -46,7 +45,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	// Try enriched profile first (set by JWT pre-auth middleware)
 	if profile, ok := principal.ProfileFromContext(ctx); ok && profile.Principal() != "" {
 		userInfo := consent.UserInfo{
-			Principal:   id.Principal(profile.Principal()),
+			Principal:   profile.Principal(),
 			DisplayName: profile.DisplayName(),
 			Email:       profile.Email(),
 			PictureURL:  profile.PictureURL(),
@@ -74,8 +73,8 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userInfo := consent.UserInfo{
-		Principal:   id.Principal(principalValue),
-		DisplayName: principalValue,
+		Principal:   principalValue,
+		DisplayName: principalValue.String(),
 		PictureURL:  nil,
 	}
 
