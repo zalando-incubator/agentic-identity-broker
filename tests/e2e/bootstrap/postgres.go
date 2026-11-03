@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -132,6 +133,42 @@ func (f *PostgresFixture) MigrateTo(version uint) error {
 		return nil
 	}
 	return err
+}
+
+func (f *PostgresFixture) MigrationVersion() (uint, bool, error) {
+	runner, err := f.migrationRunner()
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _, _ = runner.Close() }()
+	return runner.Version()
+}
+
+// RecoverExternalIDMigration mirrors the runbook's schema guard before clearing dirty metadata.
+func (f *PostgresFixture) RecoverExternalIDMigration(ctx context.Context) error {
+	version, dirty, err := f.MigrationVersion()
+	if err != nil {
+		return err
+	}
+	if version != 46 || !dirty {
+		return fmt.Errorf("expected dirty migration 46, got version %d dirty %t", version, dirty)
+	}
+	db, err := sql.Open("pgx", f.ConnectionURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	var oldIndex, newIndex, check bool
+	err = db.QueryRowContext(ctx, `SELECT to_regclass('idx_agents_external_id') IS NOT NULL,
+		to_regclass('uq_agents_external_id') IS NOT NULL,
+		EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'agents'::regclass AND conname = 'chk_agents_external_id_not_empty')`).Scan(&oldIndex, &newIndex, &check)
+	if err != nil {
+		return err
+	}
+	if !oldIndex || newIndex || check {
+		return fmt.Errorf("migration 46 schema is not unchanged; refusing recovery")
+	}
+	return f.ForceVersion(45)
 }
 
 func (f *PostgresFixture) ForceVersion(version int) error {

@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -93,4 +94,37 @@ func TestAgentReconcileConcurrentAndReplayJourney(t *testing.T) {
 	replay := call()
 	require.NoError(t, replay.err)
 	assert.Equal(t, changed, replay)
+
+	mixed := make(chan result, 10)
+	for i := range 10 {
+		wg.Go(func() {
+			body := map[string]any{"display_name": fmt.Sprintf("Definition %d", i), "description": fmt.Sprintf("Description %d", i), "permission_sets": desired["permission_sets"]}
+			response, err := helpers.ReconcileAgent(server, principal, key, body, "")
+			if err != nil {
+				mixed <- result{err: err}
+				return
+			}
+			defer func() { _ = response.Body.Close() }()
+			var received map[string]any
+			err = json.NewDecoder(response.Body).Decode(&received)
+			mixed <- result{response.StatusCode, received, err}
+		})
+	}
+	wg.Wait()
+	close(mixed)
+	for got := range mixed {
+		require.NoError(t, got.err)
+		require.Equal(t, http.StatusOK, got.status)
+		assert.Equal(t, identity, got.body["id"])
+	}
+	actual, err = st.Agents().Get(ctx, before.ID)
+	require.NoError(t, err)
+	coherent := false
+	for i := range 10 {
+		if actual.DisplayName == fmt.Sprintf("Definition %d", i) && actual.Description == fmt.Sprintf("Description %d", i) {
+			coherent = true
+		}
+	}
+	assert.True(t, coherent, "concurrent writes must preserve one complete desired definition")
+	assert.Equal(t, before.CreatedAt, actual.CreatedAt)
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -199,41 +200,65 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 		// Scenario US1.4 from specs/055-agent-external-id-upsert/spec.md
 		It("should create exactly one agent when two PostgreSQL brokers race on the first call", Label("docker"), func() {
 			withExternalIDPostgresBrokers(func(first, second *bootstrap.TestServer, st *storageadapter.Adapter) {
+				for _, calls := range []int{2, 10} {
+					key := id.ExternalID(id.NewAgentID().String())
+					var wg sync.WaitGroup
+					results := make(chan *http.Response, calls)
+					for i := range calls {
+						wg.Go(func() {
+							defer GinkgoRecover()
+							target := first
+							if i%2 == 1 {
+								target = second
+							}
+							resp, err := helpers.ReconcileAgent(target, principal, key, definition, "")
+							Expect(err).To(Succeed())
+							results <- resp
+						})
+					}
+					wg.Wait()
+					close(results)
+					created := 0
+					var identity any
+					for resp := range results {
+						if resp.StatusCode == http.StatusCreated {
+							created++
+						} else {
+							Expect(resp.StatusCode).To(Equal(http.StatusOK))
+						}
+						body := readObject(resp, resp.StatusCode)
+						if identity == nil {
+							identity = body["id"]
+						}
+						Expect(body["id"]).To(Equal(identity))
+					}
+					Expect(created).To(Equal(1))
+					found, err := st.Agents().ListByExternalID(ctx, key)
+					Expect(err).To(Succeed())
+					Expect(found).To(HaveLen(1))
+					Expect(found[0].ID.String()).To(Equal(identity))
+				}
+				key := id.ExternalID("mixed-definitions")
 				var wg sync.WaitGroup
-				results := make(chan *http.Response, 10)
 				for i := range 10 {
 					wg.Go(func() {
 						defer GinkgoRecover()
+						body := map[string]any{"display_name": fmt.Sprintf("Definition %d", i), "description": fmt.Sprintf("Description %d", i), "permission_sets": definition["permission_sets"]}
 						target := first
 						if i%2 == 1 {
 							target = second
 						}
-						resp, err := helpers.ReconcileAgent(target, principal, selector, definition, "")
+						resp, err := helpers.ReconcileAgent(target, principal, key, body, "")
 						Expect(err).To(Succeed())
-						results <- resp
+						Expect(resp.StatusCode).To(BeElementOf(http.StatusOK, http.StatusCreated))
+						readObject(resp, resp.StatusCode)
 					})
 				}
 				wg.Wait()
-				close(results)
-				created := 0
-				var identity any
-				for resp := range results {
-					if resp.StatusCode == http.StatusCreated {
-						created++
-					} else {
-						Expect(resp.StatusCode).To(Equal(http.StatusOK))
-					}
-					body := readObject(resp, resp.StatusCode)
-					if identity == nil {
-						identity = body["id"]
-					}
-					Expect(body["id"]).To(Equal(identity))
-				}
-				Expect(created).To(Equal(1))
-				found, err := st.Agents().ListByExternalID(ctx, selector)
+				found, err := st.Agents().ListByExternalID(ctx, key)
 				Expect(err).To(Succeed())
 				Expect(found).To(HaveLen(1))
-				Expect(found[0].ID.String()).To(Equal(identity))
+				Expect(found[0].Description).To(Equal(strings.Replace(found[0].DisplayName, "Definition", "Description", 1)))
 			})
 		})
 
@@ -309,6 +334,14 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 	Context("US2: keep external identities unambiguous across all writes", func() {
 		BeforeEach(func() {
 			seedSelected()
+			governance := "https://research.example/governance"
+			selected.GovernanceURL = &governance
+			selected.RedirectURIs = []string{"https://research.example/callback"}
+			selected.AllowedScopes = []string{"read"}
+			selected.ClientURIs = []string{"https://research.example/client.json"}
+			selected.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: storage.RequirementTypeOptional}}
+			Expect(store.Agents().Update(ctx, selected)).To(Succeed())
+			selected = stored(selected.ID)
 			other = fixtures.AgentWithExternalID(id.ExternalID("urn:example:ai-registry:agent:1b44e0"), fixtures.PlaceholderPermissionSetID)
 			canonical := "data-analyst"
 			other.CanonicalID = &canonical
@@ -423,6 +456,48 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 				}
 			}
 			Expect(readList("/api/agents")).To(HaveLen(2))
+
+			other.ClientID = nil
+			other.ClientURIs = []string{"https://analyst.example/client.json"}
+			Expect(store.Agents().Update(ctx, other)).To(Succeed())
+			beforeOther = stored(other.ID)
+			definition["client_uris"] = other.ClientURIs
+			for _, value := range []id.ExternalID{selector, "urn:example:missing"} {
+				resp, err := helpers.ReconcileAgent(server, principal, value, definition, "")
+				Expect(err).To(Succeed())
+				Expect(readObject(resp, http.StatusConflict)).To(HaveKeyWithValue("error", "conflict"))
+				expectUnchanged(beforeSelected)
+				Expect(stored(other.ID)).To(Equal(beforeOther))
+			}
+			delete(definition, "client_uris")
+			other.ClientURIs = nil
+			other.ClientID = &clientID
+			Expect(store.Agents().Update(ctx, other)).To(Succeed())
+			beforeOther = stored(other.ID)
+			cfg := fixtures.DefaultOAuth2Config()
+			cfg.OAuth2AuthServer.MultiAgentClient = fixtures.MultiAgentEnabledConfig("http://upstream.example").OAuth2AuthServer.MultiAgentClient
+			logger := bootstrap.TestLogger(slog.LevelWarn)
+			application, err := bootstrap.NewServerFactory(cfg, logger).BuildApp(store)
+			Expect(err).To(Succeed())
+			sharingServer, err := bootstrap.NewAdminTestServer(application, logger)
+			Expect(err).To(Succeed())
+			defer sharingServer.Close()
+			definition["client_id"] = clientID
+			for i, value := range []id.ExternalID{selector, "urn:example:sharing"} {
+				resp, err := helpers.ReconcileAgent(sharingServer, principal, value, definition, "")
+				Expect(err).To(Succeed())
+				status := http.StatusOK
+				if i == 1 {
+					status = http.StatusCreated
+				}
+				Expect(readObject(resp, status)).To(HaveKeyWithValue("client_id", string(clientID)))
+				Expect(stored(other.ID)).To(Equal(beforeOther))
+				definition["canonical_id"] = *other.CanonicalID
+				resp, err = helpers.ReconcileAgent(sharingServer, principal, value, definition, "")
+				Expect(err).To(Succeed())
+				Expect(readObject(resp, http.StatusConflict)).To(HaveKeyWithValue("error", "conflict"))
+				delete(definition, "canonical_id")
+			}
 		})
 
 		// Scenario US2.8 from specs/055-agent-external-id-upsert/spec.md
@@ -455,6 +530,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			var err error
 			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 45)
 			Expect(err).To(Succeed())
+			Expect(postgres.RecoverExternalIDMigration(ctx)).NotTo(Succeed())
 			legacyStore = externalIDPostgresStorage(postgres)
 			legacyServer = externalIDAdminServer(legacyStore)
 			db, err = sql.Open("pgx", postgres.ConnectionURL)
@@ -462,6 +538,8 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			legacy = nil
 			for range 3 {
 				a := fixtures.AgentWithExternalID(id.ExternalID(id.NewAgentID().String()), fixtures.PlaceholderPermissionSetID)
+				a.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: storage.RequirementTypeOptional}}
+				a.ClientURIs = []string{"https://agent.example/" + id.NewAgentID().String() + ".json"}
 				Expect(legacyStore.Agents().Create(ctx, a)).To(Succeed())
 				g := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), a.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"})
 				Expect(legacyStore.UserGrants().Create(ctx, g)).To(Succeed())
@@ -490,7 +568,8 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			var result string
 			err := db.QueryRowContext(ctx, `SELECT jsonb_build_object(
 				'agents',(SELECT jsonb_agg(jsonb_build_object('id',id,'external_id',external_id,'permission_sets',permission_sets,'service_requirements',service_requirements,'created_at',created_at,'updated_at',updated_at) ORDER BY id) FROM agents),
-				'grants',(SELECT jsonb_agg(jsonb_build_object('id',id,'agent_id',agent_id,'permission_sets',granted_permission_sets,'created_at',created_at,'updated_at',updated_at) ORDER BY id) FROM user_grants))::text`).Scan(&result)
+				'grants',(SELECT jsonb_agg(jsonb_build_object('id',id,'agent_id',agent_id,'permission_sets',granted_permission_sets,'created_at',created_at,'updated_at',updated_at) ORDER BY id) FROM user_grants),
+				'uris',(SELECT jsonb_agg(jsonb_build_object('agent_id',agent_id,'client_uri',client_uri) ORDER BY agent_id,client_uri) FROM agent_client_uris))::text`).Scan(&result)
 			Expect(err).To(Succeed())
 			return result
 		}
@@ -507,6 +586,10 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(db.QueryRowContext(ctx, `SELECT to_regclass('uq_agents_external_id') IS NOT NULL, to_regclass('idx_agents_external_id') IS NOT NULL`).Scan(&newIndex, &oldIndex)).To(Succeed())
 			Expect(newIndex).To(BeFalse())
 			Expect(oldIndex).To(BeTrue())
+			version, dirty, err := postgres.MigrationVersion()
+			Expect(err).To(Succeed())
+			Expect(version).To(Equal(uint(46)))
+			Expect(dirty).To(BeTrue())
 		}
 		// Scenario US3.1 from specs/055-agent-external-id-upsert/spec.md
 		It("should block the migration on duplicates and report the value and agent IDs", func() {
@@ -531,7 +614,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			setID(legacy[2], "")
 			expectBlocked(legacy...)
 			for i, a := range legacy[1:] {
-				desired := map[string]any{"display_name": a.DisplayName, "description": a.Description, "permission_sets": definition["permission_sets"]}
+				desired := map[string]any{"display_name": a.DisplayName, "description": a.Description, "permission_sets": definition["permission_sets"], "client_uris": a.ClientURIs, "service_requirements": a.ServiceRequirements}
 				if i == 0 {
 					desired["external_id"] = string(selector) + "-eu"
 				}
@@ -542,7 +625,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 				Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(a.ID.String()))
 			}
 			before := snapshot()
-			Expect(postgres.ForceVersion(45)).To(Succeed())
+			Expect(postgres.RecoverExternalIDMigration(ctx)).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
 			definition["external_id"] = string(selector)

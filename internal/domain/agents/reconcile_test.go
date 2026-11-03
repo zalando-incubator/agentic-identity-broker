@@ -165,7 +165,12 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 	base.CanonicalID = ptr.To("research")
 	base.ClientID = ptr.To(id.ClientID("upstream"))
 	base.ExternalID = ptr.To(id.ExternalID("registry"))
-	base.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional}}
+	base.ServiceRequirements = []storage.ServiceRequirement{
+		{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"read", "write"}},
+		{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeMandatory},
+	}
+	base.RedirectURIs = []string{"https://example.com/a", "https://example.com/b"}
+	base.AllowedScopes = []string{"read", "write"}
 	base.PermissionSets = append(base.PermissionSets, storage.AgentPermissionSetEntry{PermissionSetID: id.NewPermissionSetID(), RequirementType: storage.RequirementTypeOptional})
 	for _, tc := range []struct {
 		name   string
@@ -179,11 +184,19 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 			a.ClearCanonicalID = true
 		}, true},
 		{"nil empty", func(a *storage.Agent) {
-			a.RedirectURIs = []string{}
-			a.AllowedScopes = []string{}
 			a.ClientURIs = []string{}
-			a.ServiceRequirements[0].RequiredScopes = []string{}
+			a.ServiceRequirements[1].RequiredScopes = []string{}
 		}, true},
+		{"service order", func(a *storage.Agent) {
+			a.ServiceRequirements[0], a.ServiceRequirements[1] = a.ServiceRequirements[1], a.ServiceRequirements[0]
+		}, false},
+		{"scope order", func(a *storage.Agent) {
+			a.ServiceRequirements[0].RequiredScopes[0], a.ServiceRequirements[0].RequiredScopes[1] = a.ServiceRequirements[0].RequiredScopes[1], a.ServiceRequirements[0].RequiredScopes[0]
+		}, false},
+		{"redirect order", func(a *storage.Agent) { a.RedirectURIs[0], a.RedirectURIs[1] = a.RedirectURIs[1], a.RedirectURIs[0] }, false},
+		{"allowed scope order", func(a *storage.Agent) {
+			a.AllowedScopes[0], a.AllowedScopes[1] = a.AllowedScopes[1], a.AllowedScopes[0]
+		}, false},
 		{"display name", func(a *storage.Agent) { a.DisplayName = "Changed" }, false},
 		{"description", func(a *storage.Agent) { a.Description = "Changed" }, false},
 		{"canonical", func(a *storage.Agent) { a.CanonicalID = nil }, false},
@@ -215,55 +228,61 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 }
 
 func TestReconcileBoundedConflictReread(t *testing.T) {
-	conflict := storage.NewStorageError("Create", storage.ErrorKindConflict, ports.ErrExternalIDConflict, "conflict")
-	for _, mode := range []string{"holder", "absent", "ambiguous", "lookup error", "update conflict"} {
-		t.Run(mode, func(t *testing.T) {
-			repo := newMockAgentRepo()
-			desired := desiredAgent()
-			holder := desired.Copy()
-			holder.ID = id.NewAgentID()
-			holder.ExternalID = ptr.To(id.ExternalID("registry"))
-			if mode == "update conflict" {
-				holder.DisplayName = "Old"
-			}
-			repo.agents[holder.ID] = holder.Copy()
-			reads, creates, updates := 0, 0, 0
-			lookupErr := errors.New("lookup failed")
-			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
-				reads++
-				if reads == 1 {
-					return nil, nil
+	for _, source := range []string{"external", "canonical", "client URI"} {
+		cause := error(nil)
+		if source == "external" {
+			cause = ports.ErrExternalIDConflict
+		}
+		conflict := storage.NewStorageError("Create", storage.ErrorKindConflict, cause, source+" conflict")
+		for _, mode := range []string{"holder", "absent", "ambiguous", "lookup error", "update conflict"} {
+			t.Run(mode, func(t *testing.T) {
+				repo := newMockAgentRepo()
+				desired := desiredAgent()
+				holder := desired.Copy()
+				holder.ID = id.NewAgentID()
+				holder.ExternalID = ptr.To(id.ExternalID("registry"))
+				if mode == "update conflict" {
+					holder.DisplayName = "Old"
 				}
-				switch mode {
-				case "absent":
-					return nil, nil
-				case "ambiguous":
-					return []*storage.Agent{holder, holder}, nil
-				case "lookup error":
-					return nil, lookupErr
+				repo.agents[holder.ID] = holder.Copy()
+				reads, creates, updates := 0, 0, 0
+				lookupErr := errors.New("lookup failed")
+				repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
+					reads++
+					if reads == 1 {
+						return nil, nil
+					}
+					switch mode {
+					case "absent":
+						return nil, nil
+					case "ambiguous":
+						return []*storage.Agent{holder, holder}, nil
+					case "lookup error":
+						return nil, lookupErr
+					}
+					return []*storage.Agent{holder}, nil
 				}
-				return []*storage.Agent{holder}, nil
-			}
-			repo.createFn = func(context.Context, *storage.Agent) error { creates++; return conflict }
-			repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return conflict }
-			got, result, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{})
-			if mode == "holder" {
-				require.NoError(t, err)
-				require.NotNil(t, got)
-				assert.Equal(t, holder.ID, got.ID)
-				assert.Equal(t, Unchanged, result)
-			} else {
-				require.Error(t, err)
-			}
-			if mode == "absent" || mode == "update conflict" {
-				assert.ErrorIs(t, err, conflict)
-			}
-			if mode == "lookup error" {
-				assert.ErrorIs(t, err, lookupErr)
-			}
-			assert.Equal(t, 2, reads)
-			assert.Equal(t, 1, creates)
-			assert.LessOrEqual(t, updates, 1)
-		})
+				repo.createFn = func(context.Context, *storage.Agent) error { creates++; return conflict }
+				repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return conflict }
+				got, result, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{})
+				if mode == "holder" {
+					require.NoError(t, err)
+					require.NotNil(t, got)
+					assert.Equal(t, holder.ID, got.ID)
+					assert.Equal(t, Unchanged, result)
+				} else {
+					require.Error(t, err)
+				}
+				if mode == "absent" || mode == "update conflict" {
+					assert.ErrorIs(t, err, conflict)
+				}
+				if mode == "lookup error" {
+					assert.ErrorIs(t, err, lookupErr)
+				}
+				assert.Equal(t, 2, reads)
+				assert.Equal(t, 1, creates)
+				assert.LessOrEqual(t, updates, 1)
+			})
+		}
 	}
 }

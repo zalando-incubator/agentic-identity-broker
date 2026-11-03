@@ -539,7 +539,7 @@ origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
 
-**Agent external-ID reconciliation (feature 055, approved design; implementation pending)**:
+**Agent external-ID reconciliation (feature 055, ADR 045)**:
 A non-nil External ID is non-empty and identifies at most one Agent by exact, case-sensitive
 comparison; nil is allowed on any number of agents. UUIDs remain stable relationship keys, while
 canonical IDs and client IDs retain their separate existing rules. Collection
@@ -560,8 +560,8 @@ closed. The new route inherits the existing admin proxy, Host, cross-origin and 
 Migration `046` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
 blocks on duplicate/empty values without changing rows, and preserves UUIDs/grants through rollback.
 See [ADR 045](adrs/045-unique-agent-external-id-upsert.md) and the
-[upgrade runbook](docs/operations/agent-external-id-uniqueness.md). Implementation and PostgreSQL
-acceptance validation must finish before release; approval alone does not establish delivery.
+[upgrade runbook](docs/operations/agent-external-id-uniqueness.md). PostgreSQL acceptance validation
+runs in the container test gate before release; approval alone does not establish delivery.
 
 **Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 

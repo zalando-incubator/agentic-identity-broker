@@ -39,6 +39,12 @@ func TestReconcileHandlerRejectsBeforeWrites(t *testing.T) {
 	valid := `{"display_name":"Research","description":"Definition","permission_sets":[{"permission_set_id":"` + id.NewPermissionSetID().String() + `","requirement_type":"optional"}]}`
 	for _, tc := range []struct{ name, path, body, errorCode string }{
 		{"missing selector", "/api/agents", valid, "invalid external_id"},
+		{"misspelled selector", "/api/agents?externalId=a", valid, "invalid external_id"},
+		{"empty selector", "/api/agents?external_id=", valid, "invalid external_id"},
+		{"null external", "/api/agents?external_id=a", strings.TrimSuffix(valid, "}") + `,"external_id":null}`, "invalid external_id"},
+		{"empty external", "/api/agents?external_id=a", strings.TrimSuffix(valid, "}") + `,"external_id":""}`, "invalid external_id"},
+		{"different external", "/api/agents?external_id=a", strings.TrimSuffix(valid, "}") + `,"external_id":"b"}`, "invalid external_id"},
+		{"empty client", "/api/agents?external_id=a", strings.TrimSuffix(valid, "}") + `,"client_id":""}`, "validation failed"},
 		{"repeated", "/api/agents?external_id=a&external_id=a", valid, "invalid external_id"},
 		{"escape", "/api/agents?external_id=%ZZ", valid, "invalid external_id"},
 		{"semicolon", "/api/agents?external_id=a;b", valid, "invalid external_id"},

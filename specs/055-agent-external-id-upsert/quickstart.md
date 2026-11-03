@@ -3,9 +3,9 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. Status: partial implementation-phase progress; the supplied maintainer approval
-is recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). Core runtime behavior and PostgreSQL test definitions are implemented; exhaustive regression coverage
-and PostgreSQL acceptance validation remain incomplete. Do not deploy this feature.
+automated suites. Implementation and local regression verification are complete under the maintainer approval
+recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). PostgreSQL and container-backed
+acceptance validation runs in the workflow on the pushed commit and remains a release gate.
 
 ## Prerequisites
 
@@ -36,32 +36,33 @@ been removed with uniqueness enforcement; its remaining scenarios pass unchanged
 
 | Scenario | `tests/e2e/agent_external_id_upsert_test.go` location |
 | --- | --- |
-| US1.1 | :128 |
-| US1.2 | :143 |
-| US1.3 | :165 |
-| US1.4 | :200 |
-| US1.5 | :254 |
-| US1.6 | :275 |
-| US1.7 | :295 |
-| US2.1 | :320 |
-| US2.2 | :331 |
-| US2.3 | :344 |
-| US2.4 | :355 |
-| US2.5 | :372 |
-| US2.6 | :383 |
-| US2.7 | :405 |
-| US2.8 | :429 |
-| US3.1 | :512 |
-| US3.2 | :521 |
-| US3.3 | :528 |
-| US3.4 | :557 |
-| US4.1 | :576 |
-| US4.2 | :586 |
-| US4.3 | :594 |
+| US1.1 | :129 |
+| US1.2 | :144 |
+| US1.3 | :166 |
+| US1.4 | :201 |
+| US1.5 | :279 |
+| US1.6 | :300 |
+| US1.7 | :320 |
+| US2.1 | :353 |
+| US2.2 | :364 |
+| US2.3 | :377 |
+| US2.4 | :388 |
+| US2.5 | :405 |
+| US2.6 | :416 |
+| US2.7 | :438 |
+| US2.8 | :504 |
+| US3.1 | :595 |
+| US3.2 | :604 |
+| US3.3 | :611 |
+| US3.4 | :640 |
+| US4.1 | :659 |
+| US4.2 | :669 |
+| US4.3 | :677 |
 
-Remaining work includes the exhaustive field/error/preference matrices and migration inventory/relationship
-checks listed in unchecked tasks. Container-backed red/green evidence comes from CI on the pushed
-commit; it must not prevent completion of locally runnable work.
+The field/error/preference matrices and migration inventory/relationship checks are authored.
+Migration tests verify complete inventories beyond the first 100 entries and preserve grants, credentials,
+authorization codes, refresh sessions, approvals and client URIs. Container-backed red/green evidence
+comes from CI on the pushed commit; it is not claimed as local validation.
 
 ## Manual journey (in-memory broker)
 
@@ -101,8 +102,8 @@ Automated same-second tests seed a future stored `updated_at` via test fixtures,
 actual update: the minimum advances it by exactly one microsecond, even if wall time is behind it.
 The next replay and GET retain that exact fractional timestamp and creation time on both stores.
 Service helper tests use fixed clock values; do not use sleeps or a new production clock API.
-The timestamp is not an ETag or a concurrent total ordering. Proposed API-ORDER/API-TIMESTAMPS
-require sign-off along with the other items before implementation.
+The timestamp is not an ETag or a concurrent total ordering. API-ORDER/API-TIMESTAMPS
+are covered by the supplied maintainer approval cited in ADR 045.
 
 Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.md#concrete-example-journeys-mandatory).
 

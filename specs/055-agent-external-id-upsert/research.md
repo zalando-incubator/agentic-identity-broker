@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
-**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and validation remain incomplete.
+**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and local verification are complete; PostgreSQL/container acceptance validation remains the workflow release gate.
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in
