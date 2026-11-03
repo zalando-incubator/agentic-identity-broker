@@ -44,11 +44,18 @@ steps:
       pattern: "*-test-results"
       path: /tmp/gh-aw/speckit/validation
 safe-outputs:
+  # Pushes through this App start ordinary PR CI, which GITHUB_TOKEN pushes cannot.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   report-failure-as-issue:
     - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   push-to-pull-request-branch:
+    github-token-for-extra-empty-commit: none
     target: ${{ inputs.pr }}
     required-title-prefix: "[Spec Kit] "
     base-branch: ${{ github.event.repository.default_branch }}

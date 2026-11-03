@@ -149,8 +149,8 @@ func TestArgon2Hasher_LimitsConcurrentHashes(t *testing.T) {
 			done <- err
 		}()
 		select {
-		case <-done:
-			t.Fatal("hash ran while every slot was taken")
+		case err := <-done:
+			t.Fatalf("hash ran while every slot was taken (error: %v)", err)
 		case <-time.After(50 * time.Millisecond):
 		}
 

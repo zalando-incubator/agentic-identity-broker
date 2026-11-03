@@ -52,9 +52,16 @@ just verify   # Security scanning plus test, integration, and E2E checks
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
 `just verify` runs security scanning before the existing test, integration, and E2E gate.
 
-`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.3 export-data format.
-If lint reports an unsupported export-data version, run `just install-tools` with the repository's Go toolchain.
+CI selects Go from `go.mod`. `just fmt` and `just fmt-check` use that toolchain's
+`gofmt`, not a separate formatter found on `PATH`; `go vet` also ships with Go.
+The pre-commit hook delegates formatting validation to `just fmt-check`.
+
+Development tool versions are pinned in `justfile`. Keep the Ginkgo CLI pins in the
+workflows and `justfile` aligned with the library version in `go.mod`.
+`just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
+replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
 Commit the corresponding lockfile when changing an override. Verify both site builds and the
@@ -193,6 +200,24 @@ The last command writes the combined browser and Vitest report to `web/coverage/
 - ✅ Static quality checks passing (`just check`)
 - ✅ Full verification gate passing (`just verify`)
 - ✅ Architecture changes require both maintainers
+
+### Opt-in conflict resolution
+
+Maintainers can add `auto-resolve-conflicts` to an open PR from this repository.
+The latest person to apply the label must have write, maintain, or admin access.
+The workflow does not run on fork PRs or PRs without merge conflicts.
+
+For PRs targeting `main`, the workflow starts on a label or PR update, or when `main` moves.
+For stacked PRs, a scheduled scan runs every ten minutes and merges the current parent branch into the child branch.
+The workflow pushes one merge commit to the same PR only after its checks pass. It never merges the PR itself.
+Changes to protected files, including workflow sources and dependencies, require a human review.
+Remove the label to stop later runs. A blocked resolution leaves the remote branch unchanged and adds a PR comment.
+
+Before enabling the label, make sure the App with the private key in the existing Actions secret
+`AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
+Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
+The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines
 

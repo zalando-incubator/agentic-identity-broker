@@ -9,13 +9,17 @@ on:
     types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
   pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
     types: [submitted]
-  # A failed CI run on an implementation's commit starts a bounded repair. CI runs the PR code without privileges;
-  # this workflow only reads its outcome and test reports as data, and the repair runs in the worker sandbox.
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the CI run.
-    workflows: [CI]
+  # Failed container tests on a code phase's commit start a bounded repair. The tests run the PR code in the branch's
+  # own unprivileged context; this workflow only reads their outcome and reports as data, and repairs in the sandbox.
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the test run.
+    workflows: [Container tests]
     types: [completed]
 
 permissions: {}
+
+# Pushing workers publish through this App, so the automation also trusts comments from its bot.
+env:
+  AGENTIC_WORKFLOWS_APP_CLIENT_ID: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
 
 concurrency:
   group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
@@ -34,7 +38,7 @@ jobs:
         github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
         startsWith(github.event.review.body, '/speckit-')) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch' &&
         github.event.workflow_run.conclusion == 'failure' &&
         startsWith(github.event.workflow_run.head_branch, 'speckit/issue-'))
     runs-on: ubuntu-latest
@@ -171,7 +175,7 @@ jobs:
       review: ${{ fromJSON(needs.route.outputs.action == 'clarify' && needs.route.outputs.review || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -232,7 +236,7 @@ jobs:
       review: ${{ fromJSON(needs.route.outputs.action == 'plan' && needs.route.outputs.review || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -253,7 +257,7 @@ jobs:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -294,7 +298,7 @@ jobs:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -337,7 +341,7 @@ jobs:
       validation: ${{ fromJSON(needs.route.outputs.validation || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -493,7 +497,7 @@ jobs:
       pr: ${{ fromJSON(needs.route.outputs.pr) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -516,7 +520,7 @@ jobs:
       proposal: ${{ fromJSON(needs.route.outputs.proposal) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -623,9 +627,74 @@ jobs:
               throw error;
             }
 
+  # After a code phase pushes, the container tests run on its commit in the PR branch's own context; their failure
+  # starts a repair through workflow_run. Only this job holds the App key, and it never checks out PR code.
+  tests:
+    needs: [route, implement, verify, review, reviewed, fix, verified, apply]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.implement.result == 'success' || needs.fix.result == 'success' || needs.apply.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.dispatch.outputs.error || steps.target.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Find the pushed commit to test
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR: ${{ needs.route.outputs.pr }}
+        with:
+          script: |
+            const { testTarget } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const target = await testTarget({ github, context, pr: process.env.PR });
+              core.setOutput('target', target ? JSON.stringify(target) : '');
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+      - name: Create an App token that may dispatch workflows
+        id: app
+        if: steps.target.outputs.target != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: zalando-incubator
+          repositories: agentic-identity-broker
+          permission-actions: write
+      - name: Dispatch the container tests on the PR branch
+        id: dispatch
+        if: steps.target.outputs.target != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET: ${{ steps.target.outputs.target }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { dispatchTests } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await dispatchTests({ github, context, target: JSON.parse(process.env.TARGET) });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
   report:
     needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals,
-      review, reviewed, fix, verified, apply, rereview, proposals]
+      review, reviewed, fix, verified, apply, rereview, proposals, tests]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
