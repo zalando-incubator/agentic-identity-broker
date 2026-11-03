@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,14 +48,14 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 
 			// Log after the request completes
 			duration := time.Since(start)
-			clientIP := sanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
+			clientIP := httpmiddleware.SanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
 			method := r.Method
 			if r.URL.Path == "/oauth2/token" {
 				method = telemetryhttp.MethodName(method)
 			}
 			logger.InfoContext(r.Context(), "HTTP request",
-				"method", sanitizeLogValue(method),
-				"path", sanitizeLogValue(r.URL.Path),
+				"method", httpmiddleware.SanitizeLogValue(method),
+				"path", httpmiddleware.SanitizeLogValue(r.URL.Path),
 				"status", wrapped.statusCode,
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", clientIP,
@@ -79,11 +78,11 @@ func RecoveryMiddleware(logger *slog.Logger, traceResponseEnabled bool) func(nex
 					if r.URL.Path == "/oauth2/token" {
 						logger.ErrorContext(r.Context(), "Panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
 					} else {
-						clientIP := sanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
+						clientIP := httpmiddleware.SanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
 						logger.ErrorContext(r.Context(), "Panic recovered",
-							"error", sanitizeLogValue(fmt.Sprint(err)),
-							"method", sanitizeLogValue(r.Method),
-							"path", sanitizeLogValue(r.URL.Path),
+							"error", httpmiddleware.SanitizeLogValue(fmt.Sprint(err)),
+							"method", httpmiddleware.SanitizeLogValue(r.Method),
+							"path", httpmiddleware.SanitizeLogValue(r.URL.Path),
 							"remote_addr", clientIP,
 							"client_ip", clientIP,
 							"stack", string(debug.Stack()),
@@ -117,14 +116,6 @@ func (rw *responseWriter) WriteHeader(code int) {
 
 func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
-}
-
-func sanitizeLogValue(value string) string {
-	if !strings.ContainsAny(value, "\\\r\n\v\f\u0085\u2028\u2029") {
-		return value
-	}
-	quoted := strconv.Quote(value)
-	return quoted[1 : len(quoted)-1]
 }
 
 func clientIPFromContext(ctx context.Context, fallback string) string {
