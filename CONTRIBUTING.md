@@ -52,9 +52,16 @@ just verify   # Security scanning plus test, integration, and E2E checks
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
 `just verify` runs security scanning before the existing test, integration, and E2E gate.
 
-`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.3 export-data format.
-If lint reports an unsupported export-data version, run `just install-tools` with the repository's Go toolchain.
+CI selects Go from `go.mod`. `just fmt` and `just fmt-check` use that toolchain's
+`gofmt`, not a separate formatter found on `PATH`; `go vet` also ships with Go.
+The pre-commit hook delegates formatting validation to `just fmt-check`.
+
+Development tool versions are pinned in `justfile`. Keep the Ginkgo CLI pins in the
+workflows and `justfile` aligned with the library version in `go.mod`.
+`just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
+replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
 Commit the corresponding lockfile when changing an override. Verify both site builds and the

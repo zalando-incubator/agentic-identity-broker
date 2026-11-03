@@ -39,7 +39,7 @@ jobs:
           tool: just
       - name: Install Ginkgo and Playwright
         run: |
-          go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
+          go install github.com/onsi/ginkgo/v2/ginkgo@v2.34.0
           go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps
       - name: Pre-pull E2E images
         run: |
