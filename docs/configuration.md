@@ -1617,7 +1617,7 @@ The broker classifies a request as `agent` only after the rule's signed subject 
 
 Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
 
-See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), [examples index](../examples/config/README.md), and [API 2.0.0 collision migration](api/enduser-api.md#migrate-to-end-user-api-200).
+See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md), and [API 2.0.0 collision migration](api/enduser-api.md#migrate-to-end-user-api-200).
 
 ##### Agent-subject detection for third-party exchange
 
