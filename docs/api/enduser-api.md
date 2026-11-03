@@ -2,6 +2,28 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
+## Inbound Broker-Token Consent Readiness
+
+Local-mode impersonation token exchange uses the same consent prerequisites as browser
+`/oauth2/authorize`: active delegation, still-declared permission sets, usable included-service
+sessions, and mandatory service scopes. When browser action is needed, the token endpoint
+returns HTTP 403 `access_denied`, a generic description, and the target-agent consent URL:
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+Cache-Control: no-store
+WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+
+{"error":"access_denied","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+```
+
+The user completes consent or reconnects the service at that URL, then the privileged client
+retries its exchange. A refreshable session is usable without refreshing during this check.
+Unselected optional services do not block. Unknown repository state returns HTTP 500 without
+a recovery URL or challenge. The header omits the URL attribute if it cannot safely represent
+its bytes under RFC 6750; the JSON URL is retained. Other exchange paths are unchanged.
+
 ## CIMD Client Authentication
 
 In local or hybrid mode with CIMD enabled, a pre-registered CIMD client can authenticate at the token endpoint with `private_key_jwt`. The client signs a short-lived assertion with a key from its metadata document. The broker requires a fresh assertion for each authorization-code exchange and refresh request.

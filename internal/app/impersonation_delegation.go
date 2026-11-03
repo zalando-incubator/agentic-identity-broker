@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
@@ -23,15 +22,5 @@ func (v userDelegationVerifier) VerifyUserDelegation(ctx context.Context, princi
 		return "", fmt.Errorf("user delegation verifier is not configured")
 	}
 
-	_, err := v.consentService.VerifyAgentAccess(ctx, principal, agentID)
-	if err == nil {
-		return ports.UserDelegationActive, nil
-	}
-	if errors.Is(err, consent.ErrAgentAccessDenied) {
-		return ports.UserDelegationMissing, nil
-	}
-	if errors.Is(err, consent.ErrGrantExpired) {
-		return ports.UserDelegationExpired, nil
-	}
-	return "", fmt.Errorf("verify user delegation: %w", err)
+	return v.consentService.VerifyAuthorizationReadiness(ctx, principal, agentID)
 }

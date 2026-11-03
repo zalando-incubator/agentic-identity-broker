@@ -442,6 +442,20 @@ issues an email claim.
 
 ### Response and errors
 
+After credential and rule authorization, inbound broker-token minting uses the same consent
+readiness evaluator as `/oauth2/authorize`. The subject needs an active grant whose permission
+sets are still declared by the target agent, usable sessions for every service included in
+the grant, and mandatory service sessions covering required scopes. A session with usable
+refresh credentials remains usable. Unselected optional services do not block.
+
+Any unmet consent prerequisite returns HTTP 403 `access_denied`, a generic description,
+and the target-agent consent-management `error_uri`. This impersonation response also has
+`WWW-Authenticate: Bearer error="insufficient_scope"`; its `error_uri` attribute is included
+only when it complies with RFC 6750 character rules. The JSON URL remains available.
+The user completes consent or reconnects the service at that URL, then the client retries
+the same exchange. Repository failures return HTTP 500 with no recovery URI or challenge.
+These checks do not decrypt or refresh credentials and do not alter third-party exchange.
+
 Success returns a locally signed broker JWT. It does not return a provider credential:
 
 ```json

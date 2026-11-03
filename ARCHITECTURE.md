@@ -1083,8 +1083,8 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
   ↓   │    (signature, algorithm allow-list, iss, per-role expected audience, exp, nbf)
   ↓   ├─ Extract privileged-client, actor-token issuer, actor, and subject identities (+ optional subject email)
   ↓   └─ Evaluate the rule's single CEL authorization predicate (ADR-009 pattern)
-  ↓ Verify an active UserGrant for (extracted subject principal, target agent)
-  ↓   missing/expired → terminal access_denied + error_uri=<public-url>/agents/<target-id>; lookup failure → server_error
+  ↓ EvaluateAuthorizationReadiness for (extracted subject principal, target agent), shared with /oauth2/authorize
+  ↓   unmet consent prerequisite → terminal 403 access_denied + error_uri=<public-url>/agents/<target-id> + Bearer insufficient_scope challenge; repository failure → server_error
   ↓ Mint through normal local access-token path: target agent_id + local CEL agent.*, sub=subject, act.iss=validated actor-token issuer, act.sub=actor, granted scope
   ↓ Local token_claims_expression alone emits aud (or omits it); RFC 8693 response returns non-empty granted scope; audit target and privileged client
 ```
@@ -1101,7 +1101,9 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Reused Machinery**: the JWKS adapter (`internal/adapters/jwks`), the ADR-009 CEL evaluator pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern, and the local issuer's signing key + `token_claims_expression` principal context (`internal/domain/oauth2server`).
 
-**See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
+**Shared Readiness**: `consent.EvaluateAuthorizationReadiness` owns active-grant, still-declared permission-set, delegated-session usability, and mandatory service/scope checks. Browser authorization calls it directly with builder-injected repositories; the app-layer delegation verifier reaches it through `consent.Service`. Impersonation still depends only on the narrow delegation port. Session metadata is read once per service per evaluation, without decryption or refresh. Missing/unusable included sessions force consent; unselected optional services do not. Unknown repository state fails closed. Third-party token-vault exchanges retain their separate service-specific authorization and refresh contract.
+
+**See Also**: [ADR 045](adrs/045-shared-authorization-readiness.md) supersedes ADR 032's agent-level-only decision and no-challenge rule; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
 
 ### 3.2. Envoy External Processor (ExtProc) Token Exchange Service
 
@@ -1621,6 +1623,8 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 **Grant Expiration**: The point at which a grant becomes inactive (valid_until < NOW()). Expired grants are filtered out when listing grants. Grants with valid_until=null never expire (indefinite grants). Users must specify future timestamps when creating grants.
 
 **Consent Flow**: The process where a user reviews agent metadata and available OAuth2 services, then decides which permissions to grant. Implemented via GET /api/consent/agent/:agent-id (view info) and POST /api/consent/agent/:agent-id/grants (grant permissions). Authorization returns the user to this flow when the grant is missing or expired, or when a service included in the grant has no usable session.
+
+**Authorization Readiness**: Shared consent-domain decision for browser authorization and inbound broker-token minting. An active grant must still reference agent-declared permission sets; included-service sessions must be usable, and mandatory service sessions must cover required scopes. A denial requires browser consent; repository errors represent unknown readiness, never consent approval.
 
 **Scope Validation**: Business rule (FR-018) enforcing that all requested scopes in a grant must exist in the corresponding service's scope configuration. Invalid scopes are rejected with a 400 error listing which scopes are not defined.
 

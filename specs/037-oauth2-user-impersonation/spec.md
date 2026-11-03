@@ -30,7 +30,11 @@
 ### Session 2026-09-04
 
 - Q: Must an impersonation request respect the impersonated user's existing consent (`UserGrant`) for the target agent? → A: Yes. After a rule matches and before minting, the broker MUST verify an active `UserGrant` for the extracted subject identity and the resolved target agent. The extracted subject identity is the consent principal. There is no rule-level or global opt-out, and the unverified-subject profile extension grants no exemption. A missing or expired grant returns `access_denied` carrying an RFC 6749 §5.2 `error_uri` that points at the broker consent page for the target agent; the two cases are indistinguishable in the response and are separated only in the audit event.
-- Q: How is a missing consent signalled to a non-interactive privileged client? → A: Through the RFC 6749 §5.2 `error_uri` field of the existing RFC 8693 error body — the mechanism the broker already uses for "the user must act" (third-party re-authentication) and that ExtProc already converts into an MCP URL elicitation. `WWW-Authenticate` is a resource-server challenge header and is NOT used at the token endpoint. The URI is the broker's own consent-management page for the resolved target agent, which renders and accepts a first-time delegation without any authorization-session token.
+- Q: How is a missing consent signalled to a non-interactive privileged client? → A: Through the RFC 6749 §5.2 `error_uri` field of the existing RFC 8693 error body — the mechanism the broker already uses for "the user must act" (third-party re-authentication) and that ExtProc already converts into an MCP URL elicitation. `WWW-Authenticate` is a resource-server challenge header and is NOT used at the token endpoint. The URI is the broker's own consent-management page for the resolved target agent, which renders and accepts a first-time delegation without any authorization-session token. This historical decision is superseded by the 2026-11-03 clarification and ADR 045.
+
+### Session 2026-11-03
+
+- Q: Should inbound broker-token exchange enforce the same consent prerequisites as browser authorization? → A: Yes, per #367. Both entry points use the same code-level readiness evaluator: active grant, still-declared permission sets, usable included-service sessions, and mandatory service sessions covering required scopes. Readiness denial returns HTTP 403 with the existing consent `error_uri` and a Bearer `insufficient_scope` challenge; repository failures return 500 without a recovery signal. Refreshable sessions are usable; unselected optional services do not block.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -116,11 +120,12 @@ A user who has never delegated a target agent must not be impersonated through i
 
 **Acceptance Scenarios**:
 
-1. **Given** an authorized request whose impersonated subject holds an active delegation for the resolved target agent, **When** the broker processes it, **Then** it mints the impersonated token exactly as in User Story 1.
+1. **Given** an authorized request whose impersonated subject holds an active delegation satisfying the browser consent prerequisites for the resolved target agent, **When** the broker processes it, **Then** it mints the impersonated token exactly as in User Story 1.
 2. **Given** an otherwise fully authorized request whose impersonated subject holds no delegation for the resolved target agent, **When** the broker processes it, **Then** it returns `access_denied`, issues no token, and includes an `error_uri` addressing the broker consent page for that target agent.
 3. **Given** the impersonated subject's delegation for the target agent has expired, **When** the broker processes the request, **Then** it returns the same response as scenario 2 with no indication that a delegation once existed, and the audit event records the expired-delegation category.
 4. **Given** a matching unverified-subject rule whose predicate permits the supplied subject, **When** that subject holds no delegation for the target agent, **Then** the broker rejects the request and issues no token.
-5. **Given** delegation storage cannot be queried, **When** the broker processes the request, **Then** it fails closed with `server_error`, issues no token, and emits no `error_uri`.
+5. **Given** delegation or session storage cannot be queried, **When** the broker processes the request, **Then** it fails closed with `server_error`, issues no token, and emits neither `error_uri` nor `WWW-Authenticate`.
+6. **Given** an active grant includes a service whose session is missing or unusable, **When** the user starts browser authorization and a privileged client submits an otherwise authorized impersonation exchange, **Then** browser authorization redirects to sealed consent resumption and exchange returns HTTP 403 with no token, the target-agent consent `error_uri`, and `WWW-Authenticate: Bearer error="insufficient_scope"`; after the user reconnects the service, browser authorization issues a code and the retried exchange mints a token.
 
 ---
 
@@ -174,11 +179,11 @@ A user who has never delegated a target agent must not be impersonated through i
 - **FR-014**: The configuration reference and working example MUST document `audience_prefix`, registered target resolution, multi-rule signed/unverified subjects, credential trust, the mandatory user-delegation check, and local policy semantics.
 - **FR-015**: Deployment configuration MUST be updated for the renamed setting.
 - **FR-016**: A signed credential role (client assertion, actor, or signed subject) MAY configure `audience_requirement: absent` instead of `expected_audience`. When set, validation MUST accept only a credential with no `aud` claim and MUST reject a credential that presents an `aud`, while retaining signature, algorithm allow-list, issuer, expiry, and not-before checks. The rule's authorization predicate MUST reference the role's token variable (`client_assertion`, `actor_token`, or `subject_token`). Startup MUST evaluate this condition from the compiled expression and fail otherwise. `audience_requirement` MUST NOT be set on an unverified subject (`verification: none`).
-- **FR-017**: After selecting the first matching rule and before minting, the system MUST verify that the impersonated subject holds an active user delegation (`UserGrant`) for the resolved target agent. A missing, revoked, or expired delegation MUST reject the request and issue no token. No configuration value may disable, weaken, or narrow this check.
+- **FR-017**: After selecting the first matching rule and before minting, the system MUST evaluate the same authorization readiness as `/oauth2/authorize` through a shared code abstraction. This requires an active `UserGrant`, granted permission sets still declared by the target agent, usable sessions for every included service, and usable mandatory service sessions covering every required scope. Refreshable sessions remain usable; unselected optional services do not block. Any unmet prerequisite MUST reject the request without a token. No configuration value may disable or narrow this check.
 - **FR-017a**: The identity extracted for the subject role IS the consent principal used for the `(principal, target agent)` delegation lookup — byte-for-byte the value minted as `sub` — for a signed subject and for an unverified subject (FR-003d) alike. A subject identity that resolves to no principal holding an active delegation MUST be rejected; the broker MUST NOT substitute, normalize away, or infer an alternative principal.
 - **FR-017b**: The delegation decision is terminal: evaluation MUST occur after the selected rule's authorization predicate has passed, so an unauthorized caller learns nothing about a user's delegation state, and it MUST NOT fall through to later rules or alter FR-004a precedence.
-- **FR-018**: A missing or expired delegation MUST be reported as `access_denied` with a generic description that does not distinguish the two cases, and MUST carry an `error_uri` addressing the broker consent page for the resolved target agent (`<end-user public base URL>/consent/agent/<AgentID>`). The response MUST NOT contain credential values, credential claims, or delegation contents. A delegation lookup failure MUST be reported as `server_error` without an `error_uri`.
-- **FR-019**: Each delegation decision MUST be recorded in the existing credential-free audit event with the resolved outcome and a distinguishing failure category (`user_grant_missing`, `user_grant_expired`, or `user_grant_lookup_failed`) alongside the target-agent and subject identities.
+- **FR-018**: Any consent-readiness denial MUST return HTTP 403 `access_denied` with a generic description, `error_uri` addressing `<end-user public base URL>/agents/<AgentID>`, and `WWW-Authenticate: Bearer error="insufficient_scope"`. The challenge additionally carries `error_uri` only if it complies with RFC 6750 attribute grammar; JSON retains the recovery URI. No credential values, claims, or delegation contents are returned. A repository failure MUST return `server_error` without a recovery URI or challenge.
+- **FR-019**: Each readiness decision MUST be recorded in the existing credential-free audit event. Token-exchange diagnostic details distinguish `grant_missing`, `grant_expired`, `consent_required` (active grant with unmet prerequisites), and repository failures, alongside the target-agent and subject identities.
 
 ### Configuration Requirements
 
@@ -220,6 +225,30 @@ A user who has never delegated a target agent must not be impersonated through i
 - **SC-006**: 100% of impersonated tokens are issued only when an active user delegation exists for the impersonated subject and the resolved target agent; 100% of attempts without one mint no token and return `access_denied` carrying a consent `error_uri`.
 
 
+## Example Journey: Reconnect Before Inbound Minting (US5.6)
+
+Alice (`sub=user-1`) has an active grant for agent `550e8400-e29b-41d4-a716-446655440000`
+including GitHub, but the GitHub session is missing. A valid signed-rule exchange addressed
+to `https://broker.example.com/impersonation/550e8400-e29b-41d4-a716-446655440000` cannot
+mint, even though its CEL rule permits the caller. Browser authorization for the same
+principal and agent redirects to `/agents/<agent-id>?session_token=<sealed-context>`.
+The non-interactive exchange instead receives:
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+Cache-Control: no-store
+WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+
+{"error":"access_denied","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+```
+
+Alice opens the recovery page as `user-1` and reconnects GitHub. With the included session
+usable again, browser authorization issues an authorization code and the privileged client
+retries its unchanged signed exchange. The minted token retains `sub=user-1`, the target
+agent UUID in `agent_id`, and the validated actor in `act`. A usable refresh token also
+satisfies readiness; no readiness check decrypts credentials or initiates a refresh.
+
 ## Assumptions
 
 - The user's instruction to extend the existing token endpoint and approved remediation plan constitute stakeholder confirmation for the updated behavior.
@@ -237,5 +266,5 @@ A user who has never delegated a target agent must not be impersonated through i
 - Accepting unsigned JWTs for the client-assertion or actor roles, or opaque actor or client-assertion credentials. (An unsigned unverified **subject** JWT under the broker profile extension is in scope and gated per FR-003d / FR-007a; unsigned or opaque actor and client-assertion credentials remain out of scope.)
 - Recursive or multi-level actor delegation beyond the single standardized `act.sub` attribution.
 - New interactive consent or administrative user-interface flows. Consent *enforcement* is in scope (FR-017); the broker reuses the existing consent-management page and introduces no new user interface or endpoint.
-- Permission-set completeness or scope-to-delegation intersection checks for impersonation; FR-017 is an agent-level delegation check only.
+- Scope-to-delegation intersection and additional permission-set completeness rules beyond the shared browser readiness checks of FR-017.
 - Replacing or changing normal token-exchange behavior for requests that do not select the configured audience prefix.
