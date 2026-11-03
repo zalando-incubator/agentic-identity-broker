@@ -1,0 +1,134 @@
+# Container tests — the suites that need Docker: infra-backed integration and
+# docker-labelled backend E2E.
+#
+# CI calls this workflow for every PR. The Spec Kit pipeline also dispatches it
+# on a speckit/issue-N branch after a code phase pushes, because its agents run
+# without a container runtime. A dispatched run executes in that branch's own
+# context, so it gets branch-scoped caches and no secrets, like PR CI. A failed
+# dispatched run starts a repair run in speckit-assisted.yml.
+
+name: Container tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request whose head this run validates
+        type: number
+        required: false
+
+run-name: ${{ inputs.pr && format('Container tests for PR {0}', inputs.pr) || 'Container tests' }}
+
+permissions:
+  contents: read
+
+# A newer dispatch on the same branch supersedes the older one; calls from CI keep CI's own concurrency.
+concurrency:
+  group: container-tests-${{ github.event_name == 'workflow_dispatch' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  integration-infra:
+    name: Infra integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: Infra integration suites with JUnit
+        run: just verify-integration-infra-junit
+      - name: Upload infra integration test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-infra-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  e2e-docker:
+    name: Docker E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: Install web dependencies
+        run: just web-ci
+      - name: Pre-pull PostgreSQL E2E image
+        run: timeout 3m docker pull postgres:15-alpine@sha256:09e4f20b14ddb3dfe3a0c825b206032aaf8f28300ba2070c0b60fc1c10c6abc7
+      - name: Pre-pull agentgateway E2E images
+        run: |
+          docker pull cr.agentgateway.dev/agentgateway:v1.5.0
+          docker pull testcontainers/sshd:1.4.0
+          docker pull testcontainers/ryuk:0.14.0
+      - name: Docker E2E scenarios with JUnit
+        run: just verify-e2e-docker-junit
+      - name: Upload Docker E2E test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-docker-test-results
+          path: test-results/
+          if-no-files-found: warn

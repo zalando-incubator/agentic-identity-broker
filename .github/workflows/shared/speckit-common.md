@@ -40,6 +40,7 @@ steps:
     uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
     env:
       SPECKIT_INPUTS: ${{ toJSON(inputs) }}
+      AGENTIC_WORKFLOWS_APP_CLIENT_ID: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     with:
       script: |
         const { prepare } = require('/tmp/gh-aw/speckit/automation.cjs');

@@ -16,6 +16,7 @@ BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
 INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/bootstrap/... ./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
+INTEGRATION_INFRA_GO_TEST_ARGS := "-count=1 -tags=integration -p " + INTEGRATION_INFRA_PACKAGE_PROCS + " " + INTEGRATION_INFRA_TEST_PACKAGES
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
 
@@ -369,43 +370,18 @@ verify-integration-junit:
 
     echo "Running integration suites with JUnit output..."
     mkdir -p test-results
-    rm -f test-results/{integration-junit.xml,integration-self-contained-junit.xml,integration-infra-junit.xml,integration-self-contained-output.json,integration-infra-output.json,integration-self-contained-stderr.log,integration-infra-stderr.log}
-
-    go test -json ./tests/integration/... \
-        > test-results/integration-self-contained-output.json 2> test-results/integration-self-contained-stderr.log
-    SELF_CONTAINED_EXIT=$?
-
-    go test -json -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} \
-        {{INTEGRATION_INFRA_TEST_PACKAGES}} \
-        > test-results/integration-infra-output.json 2> test-results/integration-infra-stderr.log
-    INFRA_EXIT=$?
-
-    if [ "$SELF_CONTAINED_EXIT" -ne 0 ]; then
-        echo "--- Self-contained integration output (FAILED) ---"
-        cat test-results/integration-self-contained-output.json test-results/integration-self-contained-stderr.log
-    fi
-    if [ "$INFRA_EXIT" -ne 0 ]; then
-        echo "--- Infra-backed integration output (FAILED) ---"
-        cat test-results/integration-infra-output.json test-results/integration-infra-stderr.log
-    fi
+    rm -f test-results/integration-junit.xml
+    SELF_CONTAINED_EXIT=0
+    INFRA_EXIT=0
+    just verify-integration-self-contained-junit || SELF_CONTAINED_EXIT=$?
+    just verify-integration-infra-junit || INFRA_EXIT=$?
 
     REPORT_FAILED=0
-    inputs=(integration-self-contained-output.json integration-infra-output.json)
-    leaves=(integration-self-contained-junit.xml integration-infra-junit.xml)
     reports=()
-    for index in "${!inputs[@]}"; do
-        input="test-results/${inputs[$index]}"
-        report="test-results/${leaves[$index]}"
-        if [ -s "$input" ]; then
-            go-junit-report -parser gojson < "$input" > "$report" || REPORT_FAILED=1
-        else
-            echo "Missing Go test output: $input" >&2
-            REPORT_FAILED=1
-        fi
+    for report in test-results/integration-self-contained-junit.xml test-results/integration-infra-junit.xml; do
         if [ -s "$report" ]; then
             reports+=("$report")
         else
-            echo "Missing JUnit report: $report" >&2
             REPORT_FAILED=1
         fi
     done
@@ -426,27 +402,83 @@ verify-integration-junit:
     fi
     echo "Integration JUnit report generated at test-results/integration-junit.xml"
 
+# Run the self-contained integration suites and generate a JUnit XML report
+verify-integration-self-contained-junit: (_integration-tier-junit "self-contained" "./tests/integration/...")
+
+# Run the container-backed integration suites and generate a JUnit XML report
+verify-integration-infra-junit: (_integration-tier-junit "infra" INTEGRATION_INFRA_GO_TEST_ARGS)
+
+_integration-tier-junit tier args:
+    #!/usr/bin/env bash
+    set -u
+    mkdir -p test-results
+    output="test-results/integration-{{tier}}-output.json"
+    stderr="test-results/integration-{{tier}}-stderr.log"
+    report="test-results/integration-{{tier}}-junit.xml"
+    rm -f "$output" "$stderr" "$report"
+
+    TEST_EXIT=0
+    go test -json {{args}} > "$output" 2> "$stderr" || TEST_EXIT=$?
+    if [ "$TEST_EXIT" -ne 0 ]; then
+        echo "--- {{tier}} integration output (FAILED) ---"
+        cat "$output" "$stderr"
+    fi
+
+    REPORT_FAILED=0
+    if [ -s "$output" ]; then
+        go-junit-report -parser gojson < "$output" > "$report" || REPORT_FAILED=1
+    else
+        echo "Missing Go test output: $output" >&2
+        REPORT_FAILED=1
+    fi
+    if [ ! -s "$report" ]; then
+        echo "Missing JUnit report: $report" >&2
+        REPORT_FAILED=1
+    fi
+    if [ "$TEST_EXIT" -ne 0 ] || [ "$REPORT_FAILED" -ne 0 ]; then
+        exit 1
+    fi
+
 # Run the backend E2E acceptance suite and publish its reports
-verify-e2e-backend-junit:
+verify-e2e-backend-junit: verify-e2e-backend-default-junit verify-e2e-docker-junit
+
+# Run the backend E2E suite without container-backed scenarios and publish its reports
+verify-e2e-backend-default-junit: _e2e-backend-web-build
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p test-results
-    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log,e2e-backend-web-build.log,e2e-backend-docker-junit.xml,e2e-backend-docker.json,e2e-backend-docker.log}
-    just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
+    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log}
     ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" \
         --timeout=20m --poll-progress-after=30s --show-node-events \
         --junit-report=test-results/e2e-backend-junit.xml --json-report=test-results/e2e-backend.json \
         ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log
-    ginkgo run --procs=1 --label-filter="docker" \
-        --timeout=20m --poll-progress-after=30s --show-node-events \
-        --junit-report=test-results/e2e-backend-docker-junit.xml --json-report=test-results/e2e-backend-docker.json \
-        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend-docker.log
-    for report in test-results/e2e-backend-junit.xml test-results/e2e-backend.json test-results/e2e-backend-docker-junit.xml test-results/e2e-backend-docker.json; do
+    for report in test-results/e2e-backend-junit.xml test-results/e2e-backend.json; do
         if [ ! -s "$report" ]; then
             echo "Missing E2E report: $report" >&2
             exit 1
         fi
     done
+
+# Run the container-backed backend E2E scenarios and publish their reports
+verify-e2e-docker-junit: _e2e-backend-web-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f test-results/{e2e-backend-docker-junit.xml,e2e-backend-docker.json,e2e-backend-docker.log}
+    ginkgo run --procs=1 --label-filter="docker" \
+        --timeout=20m --poll-progress-after=30s --show-node-events \
+        --junit-report=test-results/e2e-backend-docker-junit.xml --json-report=test-results/e2e-backend-docker.json \
+        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend-docker.log
+    for report in test-results/e2e-backend-docker-junit.xml test-results/e2e-backend-docker.json; do
+        if [ ! -s "$report" ]; then
+            echo "Missing E2E report: $report" >&2
+            exit 1
+        fi
+    done
+
+_e2e-backend-web-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-results
+    just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
 
 # Run the ExtProc E2E acceptance suite and publish its reports
 verify-e2e-extproc-junit:

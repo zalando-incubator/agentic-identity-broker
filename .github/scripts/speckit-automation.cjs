@@ -21,7 +21,7 @@ const statusMarker = "<!-- speckit-status -->";
 const commitNotice = /^Commit pushed: \[`([0-9a-f]{7,40})`\]\((https:\/\/github\.com\/\S+?\/commit\/[0-9a-f]{40})\)/;
 const blocking = ["CRITICAL", "HIGH"];
 const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
-  "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+  "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals", "tests"];
 const reviewJobs = ["review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
 const labels = {
   clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze", remediate: "Remediate",
@@ -38,7 +38,7 @@ const reviewRecommendations = { APPROVE: "✅", DISCUSS: "🟡", "REQUEST CHANGE
 const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
 const maxRepairs = 3;
-const ciWorkflow = ".github/workflows/ci.yml";
+const testsWorkflow = ".github/workflows/container-tests.yml";
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -131,6 +131,14 @@ function actionsBot(user) {
   return user?.login === "github-actions[bot]" && user?.type === "Bot";
 }
 
+// Workers that push publish through the Agentic Workflows App so the push starts CI, which makes that App's
+// bot the author of their comments. Any other App's bot stays untrusted.
+function workerBot(comment) {
+  const app = process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
+  return actionsBot(comment.user) || Boolean(app) && comment.user?.type === "Bot" &&
+    comment.performed_via_github_app?.client_id === app;
+}
+
 function parseCommand(body) {
   const match = typeof body === "string" && body.match(/^\/(?:speckit-([a-z]+)|(architecture-review))(?=\s|$)([\s\S]*)$/);
   return match ? { phase: match[1] || match[2], argument: match[3].trim() } : null;
@@ -144,7 +152,7 @@ function parseResult(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/\d+$/);
   const sections = body.split(marker);
-  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
+  if (!workerBot(comment) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
       sections.length > 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement|remediate-review|apply-review)) -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
@@ -324,15 +332,17 @@ async function failedJobs(github, repo, id) {
   }));
 }
 
-// CI runs the pushed code without privileges; this pipeline only reads its outcome and test reports as data.
-async function ciFailure(github, repo, pr, id) {
+// The container tests run the pushed code in the PR branch's own context, without privileges or secrets;
+// this pipeline only reads their outcome and test reports as data.
+async function testFailure(github, repo, pr, id) {
   const { data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: id });
-  if (run.path?.split("@")[0] !== ciWorkflow || run.event !== "pull_request" || run.conclusion !== "failure" ||
-      run.head_sha !== pr.head.sha || run.head_repository?.full_name !== `${repo.owner}/${repo.repo}`) return null;
+  if (run.path?.split("@")[0] !== testsWorkflow || run.event !== "workflow_dispatch" || run.conclusion !== "failure" ||
+      run.head_branch !== pr.head.ref || run.head_sha !== pr.head.sha ||
+      run.head_repository?.full_name !== `${repo.owner}/${repo.repo}`) return null;
   return { run: run.id, url: run.html_url, head: run.head_sha, jobs: await failedJobs(github, repo, run.id) };
 }
 
-// A repair answers CI only on the commit that the latest code phase (implementation, review fix, or
+// A repair answers the container tests only on the commit that the latest code phase (implementation, review fix, or
 // applied proposal) pushed, and only after that phase completed. The latest implementation without a
 // repair round is the one a maintainer started, so every /speckit-implement allows maxRepairs more repairs.
 async function repairs(github, repo, pr, entries, comments) {
@@ -349,6 +359,25 @@ async function repairs(github, repo, pr, entries, comments) {
   return { round: runs.filter(({ result, comment }) => result.repair && comment.id > base.comment.id).length + 1 };
 }
 
+// The container tests validate exactly the commits a repair could answer, so they start under the same rule.
+async function testTarget({ github, context, pr: number }) {
+  const state = await pullRequestState(github, context.repo, Number(number));
+  if (!state || !await repairs(github, context.repo, state.pr, state.entries, state.comments)) return null;
+  return { pr: state.pr.number, branch: state.pr.head.ref, head: state.pr.head.sha };
+}
+
+// The dispatched run uses the PR branch's copy of the workflow, so a branch created before it existed cannot run it.
+async function dispatchTests({ github, context, target }) {
+  try {
+    await github.rest.actions.createWorkflowDispatch({
+      ...context.repo, workflow_id: path.posix.basename(testsWorkflow), ref: target.branch, inputs: { pr: String(target.pr) },
+    });
+  } catch (error) {
+    throw new Error(`Container tests could not start on \`${target.branch}\`: ${error.message}. ` +
+      `If the branch predates ${testsWorkflow}, merge the default branch into it, then comment \`/speckit-implement\``);
+  }
+}
+
 async function implementationGate(github, repo, pr, entries) {
   const current = await artifacts(github, repo, pr);
   requireSpecification(entries, current.hashes);
@@ -360,11 +389,17 @@ async function implementationGate(github, repo, pr, entries) {
 
 async function routeRepair(github, repo, payload) {
   const run = payload.workflow_run;
-  const number = run?.pull_requests?.[0]?.number;
-  if (payload.action !== "completed" || !number) return { action: "noop" };
+  if (payload.action !== "completed" || !/^speckit\/issue-\d+$/.test(run?.head_branch || "")) return { action: "noop" };
+  let number = run.pull_requests?.[0]?.number;
+  if (!number) {
+    const open = await github.paginate(github.rest.pulls.list,
+      { ...repo, state: "open", head: `${repo.owner}:${run.head_branch}`, per_page: 100 });
+    number = open.length === 1 ? open[0].number : 0;
+  }
+  if (!number) return { action: "noop" };
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
   const issue = managedPR(pr, repo);
-  if (!issue || !await ciFailure(github, repo, pr, run.id)) return { action: "noop" };
+  if (!issue || !await testFailure(github, repo, pr, run.id)) return { action: "noop" };
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
   const entries = comments.map((comment) => ({ comment, result: parseResult(comment) })).filter((entry) => entry.result);
   const repair = await repairs(github, repo, pr, entries, comments);
@@ -406,7 +441,7 @@ async function routeIssue(github, repo, issue, comment) {
 
 async function route({ github, context }) {
   const { payload, repo, eventName } = context;
-  // The CI run's actor is whoever pushed; a repair acts for the maintainer who started the implementation.
+  // The test run's actor is the App that dispatched it; a repair acts for the maintainer who started the implementation.
   if (eventName === "workflow_run") return routeRepair(github, repo, payload);
   const label = payload.label?.name;
   const isIssue = eventName === "issues" && payload.action === "labeled" &&
@@ -465,8 +500,8 @@ async function route({ github, context }) {
 
 async function prepare({ github, context, inputs }) {
   const repairing = Number(inputs.validation) > 0;
-  if (repairing && inputs.phase !== "implement") throw new Error("Only implementation repairs CI failures");
-  // A repair is re-authorized below from the maintainer's implementation run, not from the CI run's actor.
+  if (repairing && inputs.phase !== "implement") throw new Error("Only implementation repairs container test failures");
+  // A repair is re-authorized below from the maintainer's implementation run, not from the test run's actor.
   if (!repairing && !await maintainer(github, context.repo, context.actor)) throw new Error("Maintainer permission is required");
   const run = `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`;
   const data = { phase: inputs.phase, run, repository: `${context.repo.owner}/${context.repo.repo}` };
@@ -518,8 +553,8 @@ async function prepare({ github, context, inputs }) {
         const comments = await github.paginate(github.rest.issues.listComments,
           { ...context.repo, issue_number: pr.number, per_page: 100 });
         const repair = await repairs(github, context.repo, pr, entries, comments);
-        const failure = await ciFailure(github, context.repo, pr, Number(inputs.validation));
-        if (!repair || repair.round > maxRepairs || !failure) throw new Error("This CI failure is not eligible for a repair");
+        const failure = await testFailure(github, context.repo, pr, Number(inputs.validation));
+        if (!repair || repair.round > maxRepairs || !failure) throw new Error("This container test failure is not eligible for a repair");
         data.validation = { round: repair.round, max: maxRepairs, ...failure, reports: `${directory}/validation` };
       }
     }
@@ -886,7 +921,7 @@ function phaseLabel(result) {
   return result.repair ? `Repair ${result.repair}` : labels[result.phase];
 }
 
-// A CI repair has no maintainer actor; the route job authorized it and names the PR only when it did.
+// A repair has no maintainer actor; the route job authorized it and names the PR only when it did.
 async function authorized(github, context, route) {
   if (context.eventName === "workflow_run") return Number(route?.outputs?.pr) > 0;
   return maintainer(github, context.repo, context.actor);
@@ -944,7 +979,7 @@ function progress(stages, { active, approve, review }) {
 function agentComments(comments, repo, run) {
   const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const footer = new RegExp(`^> Generated by \\[[^\\]\\n]+\\]\\(${escape(runURL(repo, run))}\\)`, "m");
-  return comments.filter((entry) => actionsBot(entry.user) && footer.test(entry.body || "") &&
+  return comments.filter((entry) => workerBot(entry) && footer.test(entry.body || "") &&
     !(entry.body || "").includes(statusMarker) && !approvalMarker.test(entry.body || "") &&
     !(entry.body || "").includes(reviewMarker));
 }
@@ -1048,9 +1083,9 @@ async function announce({ github, context, needs }) {
   const repair = Number(needs.route?.outputs?.validation);
   if (repair) {
     return publishStatus(github, repo, number,
-      `⏳ Repairing CI failures (round ${needs.route.outputs.round} of ${maxRepairs})`, [
+      `⏳ Repairing container test failures (round ${needs.route.outputs.round} of ${maxRepairs})`, [
         state ? [progress(state.stages, { active, approve, review: reviewIcon(state) })] : [], [
-        `Started by the failed [CI run](${runURL(repo, repair)}). ` +
+        `Started by the failed [container test run](${runURL(repo, repair)}). ` +
           `Follow the [workflow run](${runURL(repo, context.runId)}).`,
       ]]);
   }
@@ -1109,11 +1144,11 @@ async function report({ github, context, needs }) {
     title = `⛔ Stopped in \`${error[0]}\``;
     lines = [quoted(error[1].outputs.error)];
   } else if (route.outputs?.action === "exhausted") {
-    const ci = Number(route.outputs.validation);
-    title = `⛔ CI is still red after ${maxRepairs} repairs`;
+    const tests = Number(route.outputs.validation);
+    title = `⛔ Container tests are still red after ${maxRepairs} repairs`;
     lines = [
-      `The [CI run](${runURL(repo, ci)}) on the last repair's commit failed in:`, "",
-      ...(await failedJobs(github, repo, ci)).map((job) => `- [${cell(job.name)}](${job.url})`), "",
+      `The [container test run](${runURL(repo, tests)}) on the last repair's commit failed in:`, "",
+      ...(await failedJobs(github, repo, tests)).map((job) => `- [${cell(job.name)}](${job.url})`), "",
       `Fix the failures, or comment \`/speckit-implement\` to allow up to ${maxRepairs} more repair runs.`,
     ];
   } else if (stopped) {
@@ -1143,7 +1178,7 @@ async function report({ github, context, needs }) {
     title = "✅ Implementation complete";
     approve = "✅";
     lines = [
-      "CI validates the pushed commit. If it fails, a repair run starts automatically, " +
+      "Container tests run on the pushed commit. If they fail, a repair run starts automatically, " +
         `up to ${maxRepairs} times after each \`/speckit-implement\`.`,
       "When CI is green, review the changes, then mark the pull request ready for review.", "", details(stages.implement),
     ];
@@ -1288,7 +1323,7 @@ function selectFeature() {
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
-  remediable, reviewDimensions,
+  remediable, reviewDimensions, testTarget, dispatchTests,
 };
 
 if (require.main === module) {
