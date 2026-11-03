@@ -223,6 +223,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.toResponseWithServiceMap(agent, h.batchLoadServices(ctx, []*storage.Agent{agent}))
 	if err != nil {
+		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}

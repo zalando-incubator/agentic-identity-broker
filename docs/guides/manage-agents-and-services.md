@@ -772,9 +772,10 @@ for grants that reference the set.
 
 An agent is the AI agent that requests delegated access. Create one with `POST /api/agents`.
 
-**Feature 055 delivery status:** Admin API 3.0.0 has maintainer approval; implementation and
-mandatory acceptance validation are pending. The uniqueness/reconcile descriptions below are its
-approved contract, not a release announcement. Before upgrading, follow the
+**Feature 055 delivery status:** This PR ships the maintainer-approved Admin API 3.0.0
+implementation and acceptance tests for external-ID uniqueness and reconciliation. PostgreSQL and
+container-backed acceptance validation remain the release gate; this is not a release announcement.
+Before upgrading, follow the
 [external-ID uniqueness runbook](../operations/agent-external-id-uniqueness.md).
 
 The fields:

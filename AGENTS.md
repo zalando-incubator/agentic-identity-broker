@@ -178,6 +178,7 @@ See Principle II in `.specify/memory/constitution.md`.
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
 | **External ID** | Optional nonempty, globally unique Agent governance identifier, matched literally; collection PUT reconciles by it without changing UUID identity. |
+| **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `Unchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |
