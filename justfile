@@ -781,7 +781,7 @@ compose-logs-frontend:
 compose-logs-service SERVICE:
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f {{SERVICE}}
 
-# Restart backend service (after code changes)
+# Restart backend and its namespace-sharing sample agent (after code changes)
 compose-restart-backend:
     @echo "Restarting identity-broker service..."
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} restart identity-broker
