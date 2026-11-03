@@ -7,6 +7,9 @@ paths:
   .github/workflows/architecture-review-assisted.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-assist.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
   .github/workflows/*.lock.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\.'
