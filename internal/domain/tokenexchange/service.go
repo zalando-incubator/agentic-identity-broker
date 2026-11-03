@@ -215,33 +215,21 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 
-	// Step 4: Extract principal from subject_token via CEL
+	// Steps 4–5: resolve the human principal and agent_id; agent-subject tokens are denied
+	// before agent extraction and any grant or session lookup (ADR 045 decision 6).
 	stage = StageIdentityResolution
 	subjectTokenClaims := jwtclaims.FromToken(subjectTokenJWT)
-	principal, err := s.celEvaluator.ExtractPrincipal(subjectTokenClaims)
-	if err != nil {
-		return nil, err
-	}
+	principal, agentID, err := s.celEvaluator.ResolveHumanSubject(subjectTokenClaims)
 
 	// ADR 033 §3: finalize the request security context at the post-validation
 	// token-exchange seam. The subject-token principal (Actor) and the validated
 	// client_assertion subject (CallingPeer) are both known here. Finalizing before
 	// the authorization decision guarantees a denied exchange still carries
 	// actor/calling_peer on the security-sensitive failure audit path.
-	callingPeer, _ := clientAssertionJWT.Subject()
-	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
-
-	isAgent, err := s.celEvaluator.IsAgentSubject(subjectTokenClaims)
-	if err != nil {
-		return nil, err
+	if principal != "" {
+		callingPeer, _ := clientAssertionJWT.Subject()
+		_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
 	}
-	if isAgent {
-		return nil, NewAccessDeniedError("agent-subject tokens cannot be exchanged for third-party service tokens").
-			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailSubjectCategoryUnsupported))
-	}
-
-	// Step 5: Extract agent_id from subject_token via CEL
-	agentID, err := s.celEvaluator.ExtractAgentID(subjectTokenClaims)
 	if err != nil {
 		return nil, err
 	}

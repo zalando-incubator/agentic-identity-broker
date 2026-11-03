@@ -273,6 +273,16 @@ N/A under API-004. No frontend component, Storybook story, semantic-token/WCAG c
 
 ---
 
+## Phase R: Architecture Review Remediation (PR #293 comment `6546623321`)
+
+**Purpose**: Resolve the six 🟡 findings of the architecture review on head `f106060`. A11 and A12 are approved through the referenced comment.
+
+- [X] T077 [R] Index ADR 032/045 in `ARCHITECTURE.md` §10, add the ADR 032 partial-supersession note, replace stale Proposed statuses and draft ADR links in feature documents, and align glossary terms and the `AuditRecord.SubjectIdentity` comment (findings 4, 5)
+- [X] T078 [R] Write failing tests, then make `impersonation.ParseAllowedSubjectCategories` the single category rule for domain and config validation, remove `ports.SubjectCategory*`, and replace `internal/config/impersonation_shape.go` with a `ports.SubjectCategoryList` decode hook (finding 3)
+- [X] T079 [R] Write failing tests, then require a configured `agent_subject_expression` to reference `subject_token.sub` at startup via the shared `tokenexchange.FieldSelections` walk; update ADR 045 decision 6, FR-011, CFG-005, SC-005, US3.4, research R5 and operator docs (finding 1, A12)
+- [X] T080 [R] Restructure the US3.4 E2E into a `DescribeTable` with one entry per detector and human-state case plus a startup-rejection scenario (finding 6)
+- [X] T081 [R] Update the OpenAPI approval create/consume responses, then write failing tests and route third-party exchange and subject-token approval authentication through `CELEvaluator.ResolveHumanSubject`; agent-subject tokens return `403 forbidden` and detection failures `503` on approvals; add ADR 045 decision 6a, FR-013 and the US3.5 E2E scenario (finding 2, A11)
+
 ## Acceptance Coverage
 
 All locations below refer to `tests/e2e/agent_subject_impersonation_test.go`. The initial design work is T013–T017; scenario variants remain inside the single corresponding `It()`, with nearby `// USx.y from specs/054-agent-subject-impersonation/spec.md` references.

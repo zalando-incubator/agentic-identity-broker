@@ -513,6 +513,40 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			Entry("detector failure fails closed despite same-text human state", failingDetector, failed, true),
 		)
 
+		// US3.5 from specs/054-agent-subject-impersonation/spec.md
+		It("rejects agent-subject tokens on approval endpoints without creating approvals", func() {
+			boot(configure(""), false)
+			agentToken := mint(target.ID.String())
+			gateway := sign("gateway-prod", fixtures.ImpersonationAudience)
+			request := helpers.CreateApprovalRequest{
+				Metadata: helpers.CreateApprovalMetadata{Description: "Run tests"}, ToolName: "run_tests", Arguments: map[string]any{"suite": "unit"},
+			}
+
+			resp, err := postJSONWithHeaders(enduser, "/api/approvals", helpers.ApprovalCreateHeaders(agentToken, gateway, target.ID), request)
+			Expect(err).NotTo(HaveOccurred())
+			var body map[string]string
+			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+			Expect(resp.Body.Close()).To(Succeed())
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+			Expect(body["error"]).To(Equal("forbidden"))
+
+			resp, err = postJSONWithHeaders(enduser, "/api/approvals/"+uuid.NewString()+"/consume", helpers.ApprovalSubjectTokenHeaders(agentToken), struct{}{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Body.Close()).To(Succeed())
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+
+			active, err := store.ToolApprovalQueries().ListAllActive(ctx, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(active).To(BeEmpty())
+
+			seedGrant("approval-control", false)
+			humanToken := mint("approval-control")
+			resp, err = postJSONWithHeaders(enduser, "/api/approvals", helpers.ApprovalCreateHeaders(humanToken, gateway, target.ID), request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Body.Close()).To(Succeed())
+			Expect(resp.StatusCode).To(Equal(http.StatusCreated), "a human subject token still creates approvals")
+		})
+
 		It("rejects a replacement detector that does not reference subject_token.sub at startup", func() {
 			for _, expression := range []string{"false", "true", "subject_token.azp == subject_token.agent_id"} {
 				_, err := bootstrap.NewServerFactory(configure(expression), bootstrap.TestLogger(slog.LevelInfo)).BuildApp(store)

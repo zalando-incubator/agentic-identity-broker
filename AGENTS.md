@@ -174,7 +174,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
 | **Subject Category** | `agent` only for a verified signed raw `sub` exactly equal to the audience-selected target UUID; otherwise `human`. |
 | **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
-| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression`. Default third-party detection rejects it before human-state access; an override replaces that detector. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |

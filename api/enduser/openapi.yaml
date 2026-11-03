@@ -1910,8 +1910,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "403":
+          description: |
+            The subject token is an agent-subject token (`token_exchange.claim_extraction.agent_subject_expression`
+            matched, ADR 045 decision 6a). Error code `forbidden`. Agent-subject tokens cannot act as a human
+            principal for approvals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "429":
           description: Rate limit exceeded for (principal, agent_id) pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:
@@ -2329,7 +2344,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
         "403":
-          description: Subject token principal does not match approval owner
+          description: |
+            Subject token principal does not match approval owner, or the subject token is an agent-subject
+            token (`token_exchange.claim_extraction.agent_subject_expression` matched, ADR 045 decision 6a).
+            Error code `forbidden`.
           content:
             application/json:
               schema:
@@ -2342,6 +2360,12 @@ paths:
                 $ref: "#/components/schemas/ApprovalError"
         "422":
           description: Approval is not once-persistence or not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:
