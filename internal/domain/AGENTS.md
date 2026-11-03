@@ -30,7 +30,7 @@ and declared domain libraries.
 | `thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
 | `trustanchor/` | Trust-anchor key-source resolution and local key-set validation | `ResolveKeySetSource()`, `ParseLocalKeySet()` |
-| `urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
+| `urivalidation/` | Redirect and resource URI validation | `IsRegisteredRedirectURI()`, `RedirectURIClientKind`, `MatchesRedirectURI()`, `MatchesAgentRedirectURI()`, `NormalizeResourceURI()` |
 
 ## Critical Rules
 

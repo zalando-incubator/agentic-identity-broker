@@ -73,15 +73,32 @@ func IsValidPrivateUseRedirectURI(uriStr string) bool {
 	return true
 }
 
-// IsRegisteredRedirectURI requires private-use callbacks in both the client and Agent lists.
-// Web callbacks use the client list, preserving loopback HTTP port matching.
-func IsRegisteredRedirectURI(clientRedirectURIs, agentRedirectURIs []string, incoming string) bool {
-	if IsValidPrivateUseRedirectURI(incoming) {
-		return slices.Contains(clientRedirectURIs, incoming) && slices.Contains(agentRedirectURIs, incoming)
+type RedirectURIClientKind uint8
+
+const (
+	RedirectURIClientUnknown RedirectURIClientKind = iota
+	RedirectURIClientOpaque
+	RedirectURIClientCIMD
+)
+
+// IsRegisteredRedirectURI applies the callback registration policy for the client kind.
+// CIMD callbacks use document registrations; opaque callbacks use Agent registrations.
+func IsRegisteredRedirectURI(kind RedirectURIClientKind, clientRedirectURIs, agentRedirectURIs []string, incoming string) bool {
+	switch kind {
+	case RedirectURIClientCIMD:
+		if IsValidPrivateUseRedirectURI(incoming) {
+			return slices.Contains(clientRedirectURIs, incoming) && slices.Contains(agentRedirectURIs, incoming)
+		}
+		return slices.ContainsFunc(clientRedirectURIs, func(registered string) bool {
+			return MatchesRedirectURI(registered, incoming)
+		})
+	case RedirectURIClientOpaque:
+		return slices.ContainsFunc(agentRedirectURIs, func(registered string) bool {
+			return MatchesAgentRedirectURI(registered, incoming)
+		})
+	default:
+		return false
 	}
-	return slices.ContainsFunc(clientRedirectURIs, func(registered string) bool {
-		return MatchesRedirectURI(registered, incoming)
-	})
 }
 
 // MatchesRedirectURI matches a private-use registration only byte for byte.
