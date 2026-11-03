@@ -1300,6 +1300,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
 | `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.expected_audience` | string | `token_exchange.expected_audience` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE` | Audience required only for client assertions. When omitted, the shared token-exchange audience is retained for backward compatibility; subject tokens in third-party token exchange use `token_exchange.expected_audience`. Impersonation subject credentials use the applicable rule audience or no audience in unverified mode. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
 | `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
@@ -1312,6 +1313,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 token_exchange:
   client_assertion:
     issuer_uri: "https://privileged-gateway-idp.example.com"
+    expected_audience: "https://broker.example.com/oauth2/token"
     # Optional when discovery is unavailable:
     # jwks_uri: "https://privileged-gateway-idp.example.com/keys"
     # jwks_min_refresh: "15m"
@@ -1521,6 +1523,7 @@ See `examples/config/trust-anchor-local-jwks.yaml` for a complete configuration 
 | `oauth2_authorization_server.local.token_ttl` | duration | `1h` | Go duration (e.g. `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL` | — | Validity period for locally issued JWT access tokens. |
 | `oauth2_authorization_server.local.token_claims_expression` | string | `""` | CEL expression | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION` | — | CEL expression to inject custom claims into issued JWTs. |
 | `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` | duration | `90s` | Positive duration | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT` | — | Startup budget for signing-key bootstrap in local/hybrid mode. Covers advisory locking, key generation, encryption, and persistence. |
+| `oauth2_authorization_server.local.client_secret_hashing.max_concurrent` | int | `2` | Positive integer | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT` | — | Client secret hashes that may run at once in local/hybrid mode. Each Argon2id hash allocates 64 MiB, and further requests wait for a free slot. Plan about 128 MiB of container memory per slot. Each hash already uses up to four CPUs, so more slots add memory, not throughput. |
 
 **Required**: `oauth2_authorization_server.mode` is mandatory — the broker rejects startup when the block is absent or `mode` is empty or invalid. Set `mode` to `proxy`, `local`, or `hybrid` before deploying.
 

@@ -233,7 +233,7 @@ func (h *panicLogCaptureHandler) storeAttr(dst map[string]any, attr slog.Attr) {
 	if len(h.groups) > 0 {
 		key = strings.Join(append(append([]string{}, h.groups...), attr.Key), ".")
 	}
-	dst[key] = attr.Value.Any()
+	dst[key] = attr.Value.Resolve().Any()
 }
 
 func TestRecoveryMiddleware_PanicLogCarriesSecurityContextAndTraceHeader(t *testing.T) {

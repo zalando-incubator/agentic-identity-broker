@@ -14,6 +14,9 @@ on:
       comment:
         type: number
         default: 0
+      validation:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
@@ -23,10 +26,23 @@ network:
     - local
     - containers
     - linux-distros
+    - api.osv.dev
+    - openid.net
 permissions:
+  actions: read
   contents: read
   issues: read
   pull-requests: read
+steps:
+  # CI ran the pushed code without privileges; its test reports reach the sandbox only as data.
+  - name: Download the failed CI run's test reports
+    if: inputs.validation != 0
+    uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+    with:
+      run-id: ${{ inputs.validation }}
+      github-token: ${{ github.token }}
+      pattern: "*-test-results"
+      path: /tmp/gh-aw/speckit/validation
 safe-outputs:
   report-failure-as-issue:
     - "!report_incomplete"
@@ -47,6 +63,7 @@ safe-outputs:
       - "migrations/**"
       - "mocks/**"
       - "examples/**"
+      - "configs/**"
       - "docs/**"
       - "adrs/**"
       - "specs/**"
@@ -57,10 +74,10 @@ safe-outputs:
       - "justfile"
       - "Dockerfile*"
       - "ARCHITECTURE.md"
+      - "AGENTS.md"
+      - "**/AGENTS.md"
       - ".gitignore"
       - ".dockerignore"
-    excluded-files:
-      - "**/AGENTS.md"
     protected-files: request-review
     fallback-as-pull-request: false
   add-comment:
@@ -70,3 +87,5 @@ safe-outputs:
 ---
 
 Require `context.phase` to be `implement`. Do not run any other phase.
+Update `AGENTS.md` files when a task requires it, such as the ADR index,
+glossary, or area guidance, and limit those edits to what the feature adds.

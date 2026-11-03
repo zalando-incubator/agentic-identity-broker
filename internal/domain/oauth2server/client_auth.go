@@ -29,12 +29,13 @@ type ClientAuthService struct {
 func NewClientAuthService(
 	credentialRepo ports.ClientCredentialRepository,
 	clientResolver ports.ClientResolver,
+	hasher *Argon2Hasher,
 	logger *slog.Logger,
 ) *ClientAuthService {
 	return &ClientAuthService{
 		credentialRepo: credentialRepo,
 		clientResolver: clientResolver,
-		hasher:         &Argon2Hasher{},
+		hasher:         hasher,
 		logger:         logger,
 	}
 }
@@ -59,7 +60,7 @@ func (s *ClientAuthService) Authenticate(ctx context.Context, agentID id.AgentID
 		return nil, fosite.ErrInvalidClient
 	}
 
-	if err := s.hasher.Compare(cred.SecretHash, secret); err != nil {
+	if err := s.hasher.Compare(ctx, cred.SecretHash, secret); err != nil {
 		return nil, fosite.ErrInvalidClient
 	}
 

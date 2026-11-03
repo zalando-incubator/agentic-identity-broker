@@ -272,6 +272,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_ttl"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_claims_expression"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "signing_keys", "bootstrap_timeout"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "client_secret_hashing", "max_concurrent"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT")
 
 	// Set CIMD configuration defaults
 	cimdDefaults := ports.DefaultCIMDConfig()
@@ -307,6 +308,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "claim_extraction", "agent_subject_expression"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_file"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE")

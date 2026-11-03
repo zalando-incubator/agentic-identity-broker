@@ -167,6 +167,9 @@ Code quality and correctness MUST be ensured through Test-Driven Development (TD
   - **Tests MUST NOT contain comments marking them as "in the red phase"** (e.g., `// TODO: implement`,
     `// red phase`, `// will pass after implementation`). Tests are written once, turn green naturally
     as implementation progresses, and MUST NOT require cleanup of red-phase annotations later
+- Red and green evidence is recorded per test suite. A suite that needs infrastructure the development
+  environment lacks, such as containers, MAY take its evidence from CI on the pushed commit; work whose
+  tests run locally MUST NOT wait for that evidence
 - **Skipping tests or checking for "not implemented" errors is NOT TDD**: tests must verify actual functionality, not error handling
 - Tests MUST drive design: implementation decisions emerge from test requirements, not vice versa
 - Tests MUST change as little as possible during implementation: major test changes indicate poorly derived tests
@@ -718,7 +721,9 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 **OPTIONAL PHASES** (include when applicable — omit when not needed):
 - **Phase 0: Pre-implementation Refactoring** — include only when the approved feature requires
   significant changes to existing code (rename, restructure, extract interfaces, split files).
-  MUST be submitted as a separate PR from feature work. All existing tests MUST pass afterward.
+  MUST be committed separately from feature work: its own commit(s) with no behavior change,
+  ahead of the feature commits in the same PR. A separate PR is not required. All existing tests
+  MUST pass afterward.
 - **Phase 2.7: Entity Boilerplate** — include when the feature introduces new domain entities
   requiring new ports, storage adapters, and HTTP handlers. Creates empty-but-compiling CRUD
   scaffolding (handlers returning 501, empty repository methods) as a separate PR before business
@@ -737,4 +742,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
+**Version**: 4.4.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-02

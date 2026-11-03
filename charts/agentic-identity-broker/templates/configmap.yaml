@@ -168,7 +168,7 @@ data:
       {{- end }}
       {{- end }}
       {{- with .Values.broker.oauth2AuthorizationServer.local }}
-      {{- if or .tokenTtl .tokenClaimsExpression .signingKeys.bootstrapTimeout }}
+      {{- if or .tokenTtl .tokenClaimsExpression .signingKeys.bootstrapTimeout .clientSecretHashing.maxConcurrent }}
       local:
         {{- if .tokenTtl }}
         token_ttl: {{ .tokenTtl | quote }}
@@ -179,6 +179,10 @@ data:
         {{- if .signingKeys.bootstrapTimeout }}
         signing_keys:
           bootstrap_timeout: {{ .signingKeys.bootstrapTimeout | quote }}
+        {{- end }}
+        {{- if .clientSecretHashing.maxConcurrent }}
+        client_secret_hashing:
+          max_concurrent: {{ .clientSecretHashing.maxConcurrent }}
         {{- end }}
       {{- end }}
       {{- end }}

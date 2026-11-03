@@ -20,7 +20,10 @@ import (
 
 var ErrInvalidSweepRequest = errors.New("invalid session sweep request")
 
-var sweepMetricAttributes = metric.WithAttributeSet(attribute.NewSet(attribute.String("triggered_by", string(RefreshTriggerSweep))))
+var (
+	sweepTrigger          = attribute.String("triggered_by", string(RefreshTriggerSweep))
+	sweepMetricAttributes = metric.WithAttributeSet(attribute.NewSet(sweepTrigger))
+)
 
 type SweepRequest struct {
 	// Lookahead zero means use token_refresh.lookahead_duration; after defaulting, it must be > 0.
@@ -92,6 +95,16 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 	sweepDue := func() time.Time { return threshold }
 	var cursor storage.SessionExpiryCursor
 	seen := make(map[id.SessionID]struct{})
+	// One canonical ID lookup per service and run.
+	serviceAttrs := make(map[id.ServiceID]attribute.KeyValue)
+	serviceAttr := func(serviceID id.ServiceID) attribute.KeyValue {
+		attr, ok := serviceAttrs[serviceID]
+		if !ok {
+			attr = s.sessions.lookupServiceIDAttribute(ctx, serviceID)
+			serviceAttrs[serviceID] = attr
+		}
+		return attr
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -158,7 +171,8 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 						return result, refreshErr
 					default:
 						result.Failed++
-						s.failedCounter.Add(ctx, 1, sweepMetricAttributes)
+						s.failedCounter.Add(ctx, 1, metric.WithAttributes(sweepTrigger, serviceAttr(candidate.ServiceID),
+							attribute.String("failure_detail", string(metadata.Detail()))))
 						level := slog.LevelWarn
 						if metadata.Kind() == KindInternal || (metadata.Kind() == KindInfrastructure && metadata.Dependency() != DependencyProvider) {
 							level = slog.LevelError
@@ -178,7 +192,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 					}
 				} else if refreshed {
 					result.Refreshed++
-					s.refreshedCounter.Add(ctx, 1, sweepMetricAttributes)
+					s.refreshedCounter.Add(ctx, 1, metric.WithAttributes(sweepTrigger, serviceAttr(candidate.ServiceID)))
 				} else {
 					result.Skipped++
 					s.skippedCounter.Add(ctx, 1, sweepMetricAttributes)

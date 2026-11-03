@@ -45,7 +45,7 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 		providerService, sessionRepo, sessionRepo, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
 		encryption, &http.Client{}, domjwe.New(key), oauth2session.DefaultConfig(), logger,
 	)
-	handler := NewHandler(service)
+	handler := NewHandler(service, slog.Default())
 	handler.logger = logger
 	router := chi.NewRouter()
 	router.Use(middleware.OptionalPrincipalMiddleware(ports.AuthenticationConfig{
@@ -109,7 +109,7 @@ func TestHandleCallback_ProviderErrorsRequireValidStateAndNeverReflectRemoteText
 		providerService, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
 		encryption, &http.Client{}, domjwe.New(key), oauth2session.DefaultConfig(), logger,
 	)
-	handler := NewHandler(service)
+	handler := NewHandler(service, slog.Default())
 	handler.logger = logger
 	router := chi.NewRouter()
 	router.Use(middleware.OptionalPrincipalMiddleware(ports.AuthenticationConfig{

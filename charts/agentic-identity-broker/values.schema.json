@@ -787,6 +787,18 @@
                       "description": "Startup budget for signing-key bootstrap in local/hybrid mode"
                     }
                   }
+                },
+                "clientSecretHashing": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Local client secret hashing configuration",
+                  "properties": {
+                    "maxConcurrent": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Client secret hashes that may run at once. 0 uses the broker default of 2."
+                    }
+                  }
                 }
               }
             },

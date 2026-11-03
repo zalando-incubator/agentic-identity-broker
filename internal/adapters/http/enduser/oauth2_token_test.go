@@ -1254,7 +1254,7 @@ func TestLocalGrantStrategy_MintingFailureLogCarriesRequestContext(t *testing.T)
 	record, ok := findTokenEndpointLogRecord(*base.records, "TokenRequestFailed")
 	require.True(t, ok)
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"])
-	assert.Equal(t, want.Actor, record.attrs["actor"])
+	assert.Equal(t, want.Actor.String(), record.attrs["actor"])
 }
 
 func TestLocalGrantStrategy_CIMDAuthorizationCodeFailureDoesNotLogClientURI(t *testing.T) {
@@ -1372,7 +1372,7 @@ func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
 			record, ok := findTokenEndpointLogRecord(*base.records, tt.message)
 			require.True(t, ok)
 			assert.Equal(t, want.TraceID, record.attrs["trace_id"])
-			assert.Equal(t, want.Actor, record.attrs["actor"])
+			assert.Equal(t, want.Actor.String(), record.attrs["actor"])
 			assert.Equal(t, want.CallingPeer, record.attrs["calling_peer"])
 		})
 	}
@@ -1857,7 +1857,7 @@ func (h *tokenEndpointLogCaptureHandler) storeAttr(dst map[string]any, attr slog
 	if len(h.groups) > 0 {
 		key = strings.Join(append(append([]string{}, h.groups...), attr.Key), ".")
 	}
-	dst[key] = attr.Value.Any()
+	dst[key] = attr.Value.Resolve().Any()
 }
 
 func findTokenEndpointLogRecord(records []tokenEndpointLogRecord, message string) (tokenEndpointLogRecord, bool) {
@@ -2059,7 +2059,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
 		"iss": "https://auth.example.com",
 		"aud": "agentic-identity-broker",
-		"sub": want.Actor,
+		"sub": want.Actor.String(),
 		"azp": id.NewAgentID().String(),
 		"exp": now.Add(time.Hour).Unix(),
 		"iat": now.Unix(),
@@ -2100,7 +2100,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	record, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"], "handler logs must remain bound to the request trace")
-	assert.Equal(t, want.Actor, record.attrs["actor"], "handler logs must include the finalized actor")
+	assert.Equal(t, want.Actor.String(), record.attrs["actor"], "handler logs must include the finalized actor")
 	assert.Equal(t, want.CallingPeer, record.attrs["calling_peer"], "handler logs must include the finalized calling_peer")
 }
 
@@ -2140,13 +2140,13 @@ func TestOAuth2TokenHandler_FinalizesSecurityContextBeforeGrantHandler(t *testin
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	require.True(t, stub.observedOK, "grant handler must observe a finalized SecurityContext — non-exchange grants finalize at the /oauth2/token seam before dispatch so in-handler TokenIssued audit logs carry actor/trace_id")
-	assert.Equal(t, "svc-account@example.com", stub.observedSC.Actor)
+	assert.Equal(t, id.NewPrincipal("svc-account@example.com"), stub.observedSC.Actor)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", stub.observedSC.TraceID)
 	assert.Empty(t, stub.observedSC.CallingPeer, "non-delegated grants carry no calling peer")
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok)
-	assert.Equal(t, "svc-account@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("svc-account@example.com"), sc.Actor)
 }
 
 func TestOAuth2TokenHandler_TokenExchangeResourceOmittedFromLogsAndSpan(t *testing.T) {

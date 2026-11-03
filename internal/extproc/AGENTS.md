@@ -229,6 +229,12 @@ See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the
 
 ---
 
+## Logging
+
+Follow `coding-standards/LOGGING.md`. Get the logger with `loggerFromContext`, and log exchange outcomes with `logDiagnostic`. Do not import `internal/domain/id`: log a principal only under a reserved key (`principal`, `operator_principal`, `actor`) so the shared telemetry handler applies the principal policy.
+
+For spans and metrics, follow `coding-standards/OPENTELEMETRY.md`. Use the `extproc` scope, and record exchange diagnostics on spans and metrics only through the bounded `token_exchange.*` attributes. Set a principal on a span only under a key that ends in `.principal`, so the span pipeline from `telemetry.NewProvider` applies the principal policy. Until #356 adds that policy, do not add principal span attributes.
+
 ## Validation Rules
 
 `Validate()` has 19 numbered base and telemetry rules, nine authorization rules when enabled, eight tool-approval rules when enabled, and one always-on session-header rule. See `config/validate.go`.

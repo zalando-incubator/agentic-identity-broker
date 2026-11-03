@@ -331,6 +331,77 @@ func TestSyncHandler_WakeOnChange(t *testing.T) {
 	})
 }
 
+// The server's WriteTimeout (15s in production) is shorter than the default 30s long-poll.
+func TestSyncHandler_LongPollOutlivesServerWriteTimeout(t *testing.T) {
+	const writeTimeout = 100 * time.Millisecond
+
+	longPoll := func(t *testing.T, syncState *testSyncStateRepo, broadcaster *domainapproval.ApprovalSyncBroadcaster, timeout string) <-chan *http.Response {
+		t.Helper()
+		server := httptest.NewUnstartedServer(NewSyncHandler(newTestSyncService(&testQueryRepo{}, syncState, broadcaster)))
+		server.Config.WriteTimeout = writeTimeout
+		server.Start()
+		t.Cleanup(server.Close)
+
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/approvals", nil)
+		if err != nil {
+			t.Fatalf("failed to build request: %v", err)
+		}
+		req.Header.Set("If-None-Match", `"v5"`)
+		req.Header.Set("X-Long-Poll-Timeout", timeout)
+		responses := make(chan *http.Response, 1)
+		go func() {
+			resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+			if err != nil {
+				t.Errorf("the long-poll response was lost to the server write timeout: %v", err)
+				close(responses)
+				return
+			}
+			responses <- resp
+		}()
+		return responses
+	}
+
+	t.Run("returns 304 when the long-poll times out", func(t *testing.T) {
+		resp, ok := <-longPoll(t, newTestSyncStateRepo(5), domainapproval.NewApprovalSyncBroadcaster(0), "1")
+		if !ok {
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusNotModified {
+			t.Fatalf("expected 304, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("returns 200 when a change wakes the long-poll", func(t *testing.T) {
+		syncState := newTestSyncStateRepo(5)
+		versionChecked := make(chan struct{})
+		syncState.afterGet = func() { close(versionChecked) }
+		broadcaster := domainapproval.NewApprovalSyncBroadcaster(0)
+		responses := longPoll(t, syncState, broadcaster, "5")
+
+		select {
+		case <-versionChecked:
+		case <-time.After(time.Second):
+			t.Fatal("long poll did not check the current version")
+		}
+		time.Sleep(2 * writeTimeout)
+		syncState.version.Store(6)
+		broadcaster.Broadcast()
+
+		resp, ok := <-responses
+		if !ok {
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		if etag := resp.Header.Get("ETag"); etag != `"v6"` {
+			t.Fatalf("expected updated ETag, got %s", etag)
+		}
+	})
+}
+
 func TestSyncHandler_ClientDisconnect(t *testing.T) {
 	t.Run("exits cleanly when client context is cancelled", func(t *testing.T) {
 		syncState := newTestSyncStateRepo(5)

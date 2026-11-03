@@ -224,7 +224,7 @@ Prohibited span attributes (enforced by code review per SR-001):
 - Authentication tokens, API keys, JWE state values
 - Encryption keys, branch key IDs, KMS key ARNs
 - User credentials (passwords, secrets)
-- PII: user email addresses, full names (agent IDs are permissible as they are non-personal)
+- PII: user email addresses, full names (agent IDs are permissible as they are non-personal). Exception (SR-001 as amended 2026-11-01): a principal under a `.principal` key, set through `id.Principal.SpanAttribute` and rendered by the central principal policy before export
 - Request/response body content
 
 Permitted span attributes:

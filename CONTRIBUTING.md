@@ -61,12 +61,18 @@ Commit the corresponding lockfile when changing an override. Verify both site bu
 instrumented frontend build (`VITE_COVERAGE=1 npm run build --prefix web`). The frontend's
 js-yaml 4 override removes the unpatched sprintf-js dependency from coverage tooling.
 
-The root `osv-scanner.toml` temporarily excludes `GHSA-vfj7-8cjw-p6xm` until 2026-11-07.
-No patched braces release exists, and Docusaurus requires Chokidar 3's glob support. Its
-patterns are repository-controlled; the deployed documentation is static. Reassess this
-exception at expiry or if documentation tooling starts accepting untrusted patterns.
+The root `osv-scanner.toml` temporarily excludes three go-jose v3 advisories and one deepmerge
+advisory until 2026-11-30. Neither package has a patched release. go-jose v3 arrives only through
+ory/fosite, whose HTTP request parsers the broker does not call; deepmerge runs only on
+repository-controlled SVGO configuration during the documentation build. Reassess these
+exceptions at expiry, when fosite moves to go-jose v4, or if either path starts accepting
+untrusted input.
 
 Both commands must pass before you open a pull request.
+
+For agentic-workflow changes, run `gh aw compile <workflow>` and commit the generated `.lock.yml`.
+The CI workflow-lint job validates all agentic workflows with `gh aw` and runs `actionlint` and `zizmor`.
+The exceptions in `.github/actionlint.yaml` and `.github/zizmor.yml` apply only to specific workflow paths.
 
 ## Making Changes
 
@@ -84,12 +90,43 @@ For new features, follow this workflow using [Speckit](https://speckit.org/):
 4. Implement according to the plan
 5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
 
+### Architecture Review
+
+Maintainers can request an automated architectural review of any open pull request from
+this repository by commenting `/architecture-review`, optionally followed by a focus such
+as `/architecture-review session lifecycle`. The workflow in
+`.github/workflows/architecture-review-assisted.yml` checks the commenter's permission,
+then runs `.github/workflows/architecture-review.md`: one lead agent briefs eight
+sub-agents, one per analysis dimension (ubiquitous language, hexagonal compliance, ADR
+compliance, data authority, coupling and cohesion, OTel parity, E2E test quality, and
+maintainability), and consolidates their findings into a single review comment with a
+recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
+edits or pushes code. A new review folds the previous one.
+
+On a Spec Kit draft PR, `/architecture-review` and the automatic review after
+`/speckit-implement` go one step further. Each finding carries a remediation bucket:
+
+- **auto**: the pipeline applies the fix in the same run, with a worker that cannot push
+  changes under `api/`, `adrs/`, `migrations/`, or `specs/`, then reviews the result again.
+- **proposed**: the fix changes a contract, an ADR, persisted data, or a design choice with a
+  real alternative. The pipeline posts a **Spec Kit remediation proposal** comment with one
+  checkbox per item and the recommended change. Tick the items to apply, then tick
+  **Apply the selected items**; the pipeline applies them, pushes, and reviews again. The
+  ticks are the sign-off for exactly those items.
+- **question**: the reviewer needs knowledge only the author or a maintainer has. Answer with
+  `/speckit-plan <decision>`.
+
+The status comment links the latest review and proposal and names the next step. A new
+review replaces the proposal, so items left unticked stay open until the next review.
+
 ### Backend
 
 Follow hexagonal architecture:
 - **Domain** (`internal/domain/`): Pure business logic
 - **Ports** (`internal/ports/`): Interface boundaries
 - **Adapters** (`internal/adapters/`): HTTP, storage, config
+
+Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md) and [OpenTelemetry](coding-standards/OPENTELEMETRY.md).
 
 ### Frontend
 

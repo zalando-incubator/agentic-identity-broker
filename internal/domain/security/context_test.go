@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 func TestWithSecurityContext_RoundTrip(t *testing.T) {
@@ -60,7 +62,7 @@ func TestWithSecurityContext_UsesImmutableValueSemantics(t *testing.T) {
 
 		got, ok := FromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "alice@example.com", got.Actor)
+		assert.Equal(t, id.NewPrincipal("alice@example.com"), got.Actor)
 		assert.Equal(t, "gateway-client-1", got.CallingPeer)
 		assert.Equal(t, "/api/me", got.RequestTarget)
 	})
@@ -86,7 +88,7 @@ func TestWithSecurityContext_UsesImmutableValueSemantics(t *testing.T) {
 
 		secondRead, ok := FromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "service-user", secondRead.Actor)
+		assert.Equal(t, id.NewPrincipal("service-user"), secondRead.Actor)
 		assert.Equal(t, "gateway-client-2", secondRead.CallingPeer)
 	})
 }
@@ -115,7 +117,7 @@ func TestFromContext_EmptyCallingPeerRoundTripsAsOmitted(t *testing.T) {
 
 	got, ok := FromContext(ctx)
 	require.True(t, ok)
-	assert.Equal(t, "anonymous", got.Actor)
+	assert.Equal(t, id.NewPrincipal("anonymous"), got.Actor)
 	assert.Empty(t, got.CallingPeer, "calling_peer must stay omitted when no distinct peer exists")
 }
 
@@ -239,7 +241,7 @@ func TestNewSecurityContext_NormalizesAndCompletes(t *testing.T) {
 	t.Run("normalizes actor and retains a distinct calling peer", func(t *testing.T) {
 		t.Parallel()
 		sc := NewSecurityContext(capture, "  user@example.com  ", "peer@example.com")
-		assert.Equal(t, "user@example.com", sc.Actor)
+		assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 		assert.Equal(t, "peer@example.com", sc.CallingPeer)
 		assert.Equal(t, capture.TraceID, sc.TraceID)
 		assert.Equal(t, capture.ClientIP, sc.ClientIP)
@@ -250,14 +252,14 @@ func TestNewSecurityContext_NormalizesAndCompletes(t *testing.T) {
 	t.Run("oversized actor falls back to anonymous", func(t *testing.T) {
 		t.Parallel()
 		sc := NewSecurityContext(capture, strings.Repeat("a", MaxActorRunes+1), "")
-		assert.Equal(t, AnonymousActor, sc.Actor)
+		assert.Equal(t, id.NewPrincipal(AnonymousActor), sc.Actor)
 		assert.Empty(t, sc.CallingPeer)
 	})
 
 	t.Run("calling peer equal to actor collapses to empty", func(t *testing.T) {
 		t.Parallel()
 		sc := NewSecurityContext(capture, "same@example.com", "same@example.com")
-		assert.Equal(t, "same@example.com", sc.Actor)
+		assert.Equal(t, id.NewPrincipal("same@example.com"), sc.Actor)
 		assert.Empty(t, sc.CallingPeer)
 	})
 

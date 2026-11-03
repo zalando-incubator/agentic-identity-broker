@@ -60,6 +60,10 @@ token for the appropriate third-party token. It stores cached results in memory.
 an [OPA](https://www.openpolicyagent.org/) policy to restrict the proxied request. See
 [token exchange at the gateway](/docs/guides/token-exchange-gateway).
 
+Agentgateway v1.5.0 and later can call the broker without the sidecar. Its
+`oauthTokenExchange` policy performs the exchange. See the
+[agentgateway token-exchange policy](/docs/guides/agentgateway-token-exchange).
+
 ### State
 
 - **PostgreSQL** stores agents, services, permission sets, grants, and encrypted

@@ -219,6 +219,7 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.oauth2AuthorizationServer.local.tokenTtl` | Access token validity period (required in local/hybrid mode) | `""` |
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
+| `broker.oauth2AuthorizationServer.local.clientSecretHashing.maxConcurrent` | Client secret hashes that may run at once; each allocates 64 MiB and already uses up to four CPUs, so raising it adds memory, not throughput (0 = use application default of 2) | `0` |
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetCacheTtl` | Maximum cached key-set age; values above 24h are rejected | `1h` |
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMinRefetchInterval` | Minimum interval between refetches for an unknown key ID | `5m` |
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMaxBytes` | Maximum key-set response size in bytes | `65536` |

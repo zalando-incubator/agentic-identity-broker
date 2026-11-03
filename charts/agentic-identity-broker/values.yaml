@@ -517,6 +517,10 @@ broker:
       signingKeys:
         # -- Startup budget for signing-key bootstrap in local/hybrid mode. Defaults to 90s if empty.
         bootstrapTimeout: ""
+      clientSecretHashing:
+        # -- Client secret hashes that may run at once. Each Argon2id hash allocates 64 MiB and already uses
+        # up to four CPUs, so raising it adds memory, not throughput. Defaults to 2 if 0.
+        maxConcurrent: 0
 
     # RFC 8693 user impersonation (signed or unverified subject). Only valid in "local" mode.
     # Disabled by default (nil): the impersonation block is omitted from the rendered
