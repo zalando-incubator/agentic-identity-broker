@@ -1,7 +1,7 @@
 # Configuration Contract: Agent-Subject Impersonation
 #
 # Feature: 054-agent-subject-impersonation (spec CFG-001..CFG-004, research R8)
-# STATUS: Proposed; sign-off via plan.md Approval Items A2 (configuration key, default, validation,
+# STATUS: Approved (PR #293 comment 6495558326); sign-off via plan.md Approval Items A2 (configuration key, default, validation,
 # Helm schema).
 # Extends the 037 contract (specs/037-oauth2-user-impersonation/contracts/impersonation-config.yaml)
 # with one per-rule attribute. Every other key, default, and validation is unchanged.
