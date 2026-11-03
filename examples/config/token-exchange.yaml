@@ -63,11 +63,9 @@ token_exchange:
     # The default also rejects colliding legacy/mapped/unsigned human tokens and
     # trusted external issuer tokens with equal sub/agent_id. Correct human identity
     # mappings and explicitly reestablish consent; do not rewrite stored grants.
-    # WARNING: a non-matching override such as 'false' removes categorical rejection
+    # WARNING: a non-matching override that references sub removes categorical rejection
     # AND protection against same-text human grant/session access. Existing checks
     # then apply, possibly reading human credentials or returning consent errors.
-    # Do not use it as an upgrade-compatibility fix. See End-User API 2.0.0 migration:
-    # docs/api/enduser-api.md#migrate-to-end-user-api-200
 
     # agent_id_expression extracts the agent/application client ID from subject_token.
     # Expression MUST return the agent's internal UUID (agent.id), NOT the upstream client_id string.

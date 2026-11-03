@@ -31,9 +31,9 @@ See the [token endpoint contract](https://github.com/zalando-incubator/agentic-i
 
 ## Agent-Subject Token Exchange
 
-In local mode, a privileged client can request a token for a registered agent acting for itself. The [canonical OpenAPI](../../api/enduser/openapi.yaml) defines End-User API **2.0.0**. Use the complete [agent-subject configuration](../../examples/config/impersonation-agent-subject.yaml) and [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance).
+In local mode, a privileged client can request a token for a registered agent acting for itself. The [canonical OpenAPI](../../api/enduser/openapi.yaml) defines the contract. Use the complete [agent-subject configuration](../../examples/config/impersonation-agent-subject.yaml) and [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance).
 
-Classification is rule-local: the subject must be signed and verified, and its raw string `sub` must exactly equal the audience-selected target's canonical UUID. Everything else is human, including unsigned subjects. There is no request category field. Aliases, a different agent's UUID, or alternate UUID spellings never select agent issuance. The target must exist and existing scope limits still apply. Every credential validation, principal extraction and CEL authorization must succeed. The actor and client assertion always require signatures.
+Classification is rule-local: the raw string `sub` must exactly equal the audience-selected target's canonical UUID, and the subject must be signed and verified or, for an unsigned (`verification: none`) subject, the rule's predicate must bind `subject_token.sub`. Everything else is human. There is no request category field. Aliases, a different agent's UUID, or alternate UUID spellings never select agent issuance. The target must exist and existing scope limits still apply. Every credential validation, principal extraction and CEL authorization must succeed. The actor and client assertion always require signatures.
 
 | `allowed_subject_categories` | Human | Signed exact-target subject |
 | --- | --- | --- |
@@ -123,17 +123,5 @@ Content-Type: application/json
 ```
 
 A detection failure returns `503 service_unavailable`. `GET /api/approvals` authenticates only the client assertion and is unaffected.
-
-## Migrate to End-User API 2.0.0
-
-API 2.0.0 replaces the previous End-User contract on existing routes, including `POST /oauth2/token`. No runtime version selector, parallel compatibility route, endpoint removal or deprecation is introduced. The contract version is separate from broker release tags and the Admin API version. Treat the baseline as released; the checked-out baseline declares 1.1.0, while the feature's approved proposal described 1.0.0. Both require this major bump.
-
-Before deployment:
-
-1. Inventory clients using local impersonation and third-party RFC 8693 exchange. URLs, request fields and response envelopes are unchanged, but two formerly accepted collision cases now deny: signed raw `sub` equal to target UUID on human-only/omitted rules, even with delegation; and any token with equal `sub`/`agent_id` under default third-party detection. Nonmatching human flows retain their existing delegation, errors and consent links.
-2. For intended self-agent issuance, configure a signed rule allowing `agent` and a narrowly authorizing CEL policy. Do not enable it to work around a real human identity collision; same-text grants cannot restore human-only eligibility.
-3. For real human collisions, correct the upstream subject or principal mapping so the minted human principal differs from the target UUID. Explicitly reestablish required human delegation and provider sessions through existing flows under the intended human identity. Never automatically rewrite grants/sessions, fabricate consent, or add a database migration for this feature.
-4. Review previously minted and trusted external issuer tokens with equal `sub`/`agent_id`, including mapped-principal and unsigned-subject human outputs. The new default rejects them regardless of age or issuer. Reissuing without fixing the collision does not help. Do not use `agent_subject_expression: false` as a compatibility fix: it removes categorical protection. Any override retains operator responsibility to keep matching broker agent tokens.
-5. Require consumer readiness and passing complete acceptance/regression/full checks before rollout. If consumers are not ready, defer deployment rather than weaken controls or claim compatibility with the earlier major contract.
 
 The [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [field reference](../reference/token-exchange.md#agent-subject-boundary) and [example configurations](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md#impersonation-agent-subjectyaml--signed-self-agent-issuance) describe the same contract.

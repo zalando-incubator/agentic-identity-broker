@@ -104,7 +104,7 @@ This does **not** introduce third-party agent identities. Third-party exchange e
 
 A configured expression fully replaces the default. Keep matching broker agent-subject tokens, for example by retaining the default as a disjunct. **A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access.** Existing checks can then read human grants/sessions and return consent errors; exchange success is not promised. Detection errors/timeouts and dynamic non-boolean output instead fail closed with `500 server_error`, no `error_uri`, and no human-state access. They never become false.
 
-See the [End-User API 2.0.0 migration guide](../api/enduser-api.md#migrate-to-end-user-api-200) before upgrading, the [configuration reference](../configuration.md#agent-subject-detection-for-third-party-exchange), [detector example](../../examples/config/token-exchange.yaml) and [diagnostic reference](../reference/token-exchange.md#agent-subject-boundary). Correct human identity collisions and explicitly reestablish consent; do not automatically rewrite grants or disable detection as a compatibility fix.
+See the [configuration reference](../configuration.md#agent-subject-detection-for-third-party-exchange), [detector example](../../examples/config/token-exchange.yaml) and [diagnostic reference](../reference/token-exchange.md#agent-subject-boundary).
 
 ## Related
 

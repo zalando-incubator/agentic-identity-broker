@@ -171,7 +171,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 | SR-001–SR-003, SR-006 | Research R3, R8, and R2. Credential verification is unchanged. |
 | SR-004 | Research R7. Internal contracts §5. |
 | API-001–API-004 | [contracts/openapi-token-agent-subject.yaml](contracts/openapi-token-agent-subject.yaml) (C2–C4 proposed, C1 withdrawn; Approval Items A4). |
-| API-005 | [contracts/enduser-api-versioning.md](contracts/enduser-api-versioning.md) (approved A10); T001 approval, T010 blocking version/architecture design, T048 migration, T053/T058/T059 verification. |
+| API-005 | Withdrawn by A14: End-User OpenAPI stays at `1.1.0`; no versioning contract or migration guide. |
 
 ## Project Structure
 
@@ -188,7 +188,6 @@ specs/054-agent-subject-impersonation/
 │   ├── impersonation-config.yaml             # allowed_subject_categories contract + Helm schema
 │   ├── token-exchange-agent-subject-config.yaml  # agent_subject_expression contract + Helm schema
 │   ├── openapi-token-agent-subject.yaml      # OpenAPI delta (C2–C4 proposed; C1 withdrawn)
-│   ├── enduser-api-versioning.md             # approved A10: 2.0.0 major contract and migration
 │   └── internal-contracts.md                 # ports, mint, exchange rejection, audit, diagnostics
 ├── checklists/requirements.md
 └── tasks.md                                  # /speckit-tasks (dependent entries aligned with the review)
@@ -364,7 +363,8 @@ Every row is **Approved** through the pipeline approval comment [6495558326](htt
 | A7 | Decision | No unsigned-subject startup guard: an unsigned rule listing `agent` starts, and the setting has no effect because unsigned subjects are always human. Alternative: fail startup for that combination. | `specs/054-agent-subject-impersonation/research.md:124` |
 | A8 | Decision | Subject to approved A10's major-version gate, backward-incompatible: on a human-only rule (including the omitted setting), a signed subject whose `sub` exactly equals the target UUID is rejected as ineligible even with active human delegation (spec Q4). Alternative: keep legacy human handling for that collision. | `specs/054-agent-subject-impersonation/spec.md:445` |
 | A9 | Decision | Subject to approved A10's major-version gate, backward-incompatible, fail closed: with the default detector, any subject token with equal `sub` and `agent_id` (including pre-upgrade human tokens and trusted external issuer tokens) is rejected for third-party exchange. Alternative: restrict detection to the broker's own issuer (no security benefit; expressible in an override). | `specs/054-agent-subject-impersonation/research.md:86-89` |
-| A10 | API | Major End-User API contract bump from 1.0.0 to 2.0.0 on existing routes, treating the baseline as released; includes A8/A9 compatibility impact, architecture versioning strategy, migration guidance and blocking delivery checks. No runtime version selector or legacy compatibility route. Alternative: a new versioned endpoint with parallel old semantics. | `specs/054-agent-subject-impersonation/contracts/enduser-api-versioning.md:5-32` |
+| A10 | API | **Withdrawn by A14.** Major End-User API contract bump from 1.0.0 to 2.0.0 on existing routes, treating the baseline as released; includes A8/A9 compatibility impact, architecture versioning strategy, migration guidance and blocking delivery checks. No runtime version selector or legacy compatibility route. Alternative: a new versioned endpoint with parallel old semantics. | `specs/054-agent-subject-impersonation/contracts/enduser-api-versioning.md:5-32` |
 | A11 | ADR / API | Architecture review follow-up (PR #293 comment `6546623321`, approved by mjungsbluth on 2026-10-31): approval endpoints (`/api/approvals*`, ADR 018) reject subject tokens that `agent_subject_expression` detects with `403 access_denied`, through one domain entry point shared with third-party exchange (ADR 045 decision 6a). | `adrs/045-agent-subject-impersonation.md` |
 | A12 | ADR / Config | Architecture review follow-up (PR #293 comment `6546623321`, approved by mjungsbluth on 2026-10-31), revising C4 (A3/A6): a configured `agent_subject_expression` still replaces the default but must reference `subject_token.sub`; otherwise startup fails with a CEL configuration error. | `adrs/045-agent-subject-impersonation.md` (decision 6) |
 | A13 | ADR / Decision | Maintainer follow-up on PR #293 (comment `6601909328`, approved by mjungsbluth on 2026-11-03): an unverified (`verification: none`) subject whose raw `sub` equals the registered target UUID is agent-category when the rule's authorization predicate binds `subject_token.sub`; otherwise it stays human. Revises SR-003 and ADR 045 (decision 2a). | `adrs/045-agent-subject-impersonation.md` (decision 2a) |
+| A14 | API | Maintainer decision on PR #293 (2026-11-03): withdraw A10. End-User OpenAPI `info.version` stays at `1.1.0`, and the End-User API 2.0.0 migration guide and its cross-references are removed; request and response shapes are unchanged. Replaces ADR 045 decision 8. | `adrs/045-agent-subject-impersonation.md` (decision 8) |

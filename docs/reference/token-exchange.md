@@ -486,7 +486,7 @@ A non-empty override **replaces the default entirely**. A configured expression 
 | `subject_category_ineligible` | `client_authorization` | `impersonation` | Rule fall-through; no match is generic `403 access_denied`, no `error_uri` |
 | `subject_category_unsupported` | `identity_resolution` | `third_party` | `403 access_denied`, no `error_uri` |
 
-See the [token-endpoint request/claims/denial examples](../api/enduser-api.md#agent-subject-token-exchange), [End-User API 2.0.0 migration guide](../api/enduser-api.md#migrate-to-end-user-api-200), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [configuration](../configuration.md#agent-subject-detection-for-third-party-exchange), and [detector example](../../examples/config/token-exchange.yaml). Correct human identity collisions and explicitly reestablish delegation/session state; never automatically rewrite grants or disable detection as a compatibility fix.
+See the [token-endpoint request/claims/denial examples](../api/enduser-api.md#agent-subject-token-exchange), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [configuration](../configuration.md#agent-subject-detection-for-third-party-exchange), and [detector example](../../examples/config/token-exchange.yaml).
 
 ## Configuration
 

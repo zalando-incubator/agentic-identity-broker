@@ -1,7 +1,6 @@
 # Complete local-mode configuration for feature 054, spec Journeys 1–2.
 # Replace example issuer/JWKS URLs and provision the target Agent before use.
 # Development-only fixed keys below MUST be replaced for deployment.
-# End-User API 2.0.0 migration: docs/api/enduser-api.md#migrate-to-end-user-api-200
 log:
   level: info
   format: json

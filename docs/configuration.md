@@ -1620,7 +1620,7 @@ The broker classifies a request as `agent` only after the rule's signed subject 
 
 Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
 
-See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md), and [API 2.0.0 collision migration](api/enduser-api.md#migrate-to-end-user-api-200).
+See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), and [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md).
 
 ##### Agent-subject detection for third-party exchange
 
@@ -1645,7 +1645,7 @@ token_exchange:
       (has(subject_token.token_use) && subject_token.token_use == 'machine')
 ```
 
-**Warning:** A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access. Existing checks may then consult matching human grants/sessions and return consent errors; this is not support for third-party agent identity or guaranteed exchange success. Do not use it as an upgrade-compatibility fix. See [token-exchange examples](../examples/config/token-exchange.yaml), [concepts](concepts/token-exchange.md), [reference](reference/token-exchange.md), and [token endpoint](api/enduser-api.md#agent-subject-token-exchange).
+**Warning:** A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access. Existing checks may then consult matching human grants/sessions and return consent errors; this is not support for third-party agent identity or guaranteed exchange success. See [token-exchange examples](../examples/config/token-exchange.yaml), [concepts](concepts/token-exchange.md), [reference](reference/token-exchange.md), and [token endpoint](api/enduser-api.md#agent-subject-token-exchange).
 
 **Configuration block** (nested under `oauth2_authorization_server`, `local` mode only):
 
