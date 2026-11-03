@@ -27,5 +27,11 @@ func logPrincipals(ctx context.Context, logger *slog.Logger, p id.Principal, raw
 	logger.LogAttrs(ctx, slog.LevelInfo, "any attr literal", slog.Attr{Key: "actor", Value: slog.AnyValue(raw)})
 	logger.LogAttrs(ctx, slog.LevelInfo, "unkeyed attr literal", slog.Attr{"operator_principal", p.LogValue()})
 	logger.LogAttrs(ctx, slog.LevelInfo, "other attr literal", slog.Attr{Key: "agent_id", Value: slog.StringValue(raw)})
+	spread := []any{"principal", raw}
+	logger.InfoContext(ctx, "spread args", spread...)
+	typedSpread := []any{"principal", p, "agent_id", raw}
+	typedSpread = append(typedSpread, "actor", raw)
+	typedSpread = append(typedSpread, "operator_principal", p)
+	logger.InfoContext(ctx, "spread typed args", typedSpread...)
 	logger.InfoContext(ctx, "other key", "agent_id", raw)
 }

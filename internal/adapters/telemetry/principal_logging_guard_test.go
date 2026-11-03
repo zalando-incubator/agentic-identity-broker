@@ -24,8 +24,9 @@ var principalGuardExemptPackages = []string{
 
 // TestLoggedPrincipalsAreTyped enforces LOGGING.md §5.1 rules 2 and 5: every
 // value logged under a reserved principal key through log/slog, as a key-value
-// argument or a slog.Attr literal, must be an id.Principal, never slog.String,
-// .String(), string(...) or a plain string.
+// argument, a slog.Attr literal, or a pair in a []any literal or append to a
+// []any (spread later with args...), must be an id.Principal, never
+// slog.String, .String(), string(...) or a plain string.
 func TestLoggedPrincipalsAreTyped(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks the module")
@@ -53,6 +54,8 @@ func TestPrincipalGuardDetectsUntypedPrincipals(t *testing.T) {
 		"slog.Attr{Key: \"principal\"} with slog.StringValue(raw)",
 		"slog.Attr{Key: \"actor\"} with slog.AnyValue(raw)",
 		"slog.Attr{Key: \"operator_principal\"} with p.LogValue()",
+		"[]any{\"principal\", ...} with raw",
+		"append(..., \"actor\", ...) with raw",
 	}
 	if len(offenders) != len(want) {
 		t.Fatalf("expected %d offenders, got %d:\n%s", len(want), len(offenders), strings.Join(offenders, "\n"))
@@ -86,34 +89,74 @@ func findUntypedLoggedPrincipals(t *testing.T, patterns ...string) []string {
 		}
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
-				if lit, ok := n.(*ast.CompositeLit); ok {
-					if offender, found := untypedAttrLiteral(pkg.TypesInfo, lit); found {
-						pos := pkg.Fset.Position(lit.Pos())
+				switch node := n.(type) {
+				case *ast.CompositeLit:
+					if offender, found := untypedAttrLiteral(pkg.TypesInfo, node); found {
+						pos := pkg.Fset.Position(node.Pos())
 						offenders = append(offenders, pos.String()+": "+offender)
 					}
-					return true
-				}
-				call, ok := n.(*ast.CallExpr)
-				if !ok || !callsSlog(pkg.TypesInfo, call) || call.Ellipsis.IsValid() {
-					return true
-				}
-				for i := 0; i+1 < len(call.Args); i++ {
-					key, ok := reservedKeyArg(pkg.TypesInfo, call.Args[i])
-					if !ok {
-						continue
+					// Key-value pairs collected in []any for a later args... spread.
+					if isAnySlice(pkg.TypesInfo.TypeOf(node)) {
+						offenders = append(offenders, untypedPairs(pkg, node.Elts, func(key string, value ast.Expr) string {
+							return "[]any{\"" + key + "\", ...} with " + types.ExprString(value)
+						})...)
 					}
-					value := call.Args[i+1]
-					if isPrincipalType(pkg.TypesInfo.TypeOf(value)) {
-						continue
+				case *ast.CallExpr:
+					if isAppendToAnySlice(pkg.TypesInfo, node) {
+						offenders = append(offenders, untypedPairs(pkg, node.Args[1:], func(key string, value ast.Expr) string {
+							return "append(..., \"" + key + "\", ...) with " + types.ExprString(value)
+						})...)
+					} else if callsSlog(pkg.TypesInfo, node) && !node.Ellipsis.IsValid() {
+						offenders = append(offenders, untypedPairs(pkg, node.Args, func(key string, value ast.Expr) string {
+							return offenderExpr(node, key, value)
+						})...)
 					}
-					pos := pkg.Fset.Position(value.Pos())
-					offenders = append(offenders, pos.String()+": "+offenderExpr(call, key, value))
 				}
 				return true
 			})
 		}
 	}
 	return offenders
+}
+
+// untypedPairs reports each value that follows a reserved principal key
+// constant in exprs and is not an id.Principal.
+func untypedPairs(pkg *packages.Package, exprs []ast.Expr, describe func(key string, value ast.Expr) string) []string {
+	var offenders []string
+	for i := 0; i+1 < len(exprs); i++ {
+		key, ok := reservedKeyArg(pkg.TypesInfo, exprs[i])
+		if !ok {
+			continue
+		}
+		value := exprs[i+1]
+		if isPrincipalType(pkg.TypesInfo.TypeOf(value)) {
+			continue
+		}
+		pos := pkg.Fset.Position(value.Pos())
+		offenders = append(offenders, pos.String()+": "+describe(key, value))
+	}
+	return offenders
+}
+
+func isAnySlice(typ types.Type) bool {
+	if typ == nil {
+		return false
+	}
+	slice, ok := typ.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	elem, ok := slice.Elem().Underlying().(*types.Interface)
+	return ok && elem.Empty()
+}
+
+func isAppendToAnySlice(info *types.Info, call *ast.CallExpr) bool {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	builtin, ok := info.Uses[ident].(*types.Builtin)
+	return ok && builtin.Name() == "append" && isAnySlice(info.TypeOf(call.Args[0]))
 }
 
 func moduleRoot(t *testing.T) string {
