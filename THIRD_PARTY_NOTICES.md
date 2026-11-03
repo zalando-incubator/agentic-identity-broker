@@ -1,7 +1,7 @@
-## SimpleEnglish Agent Skill
+## SimpleEnglish Agent Skill 2.1.1
 * Local Path: .agents/skills/simple-english
 * Upstream Source: https://github.com/AminBlg/SimpleEnglish
-* Upstream Commit: 8e8a008a13e4b478f9ccc20ca16e79aef66c0739
+* Upstream Commit: a6fcb4fde098b33617cc1578d151ebf58774b883
 * License: MIT License (c) AminBlg
 
 ## JWX Guide v4 Agent Skill
