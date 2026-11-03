@@ -43,11 +43,12 @@ func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler 
 
 			// Log audit information
 			duration := time.Since(startTime).Milliseconds()
+			method, target := LoggedRequestLine(r.WithContext(ctx))
 			logAuditEvent(ctx, logger, &auditEvent{
 				RequestID:  requestID,
 				Principal:  principalValue,
-				Method:     SanitizeLogValue(r.Method),
-				Path:       SanitizeLogValue(r.URL.Path),
+				Method:     SanitizeLogValue(method),
+				Path:       SanitizeLogValue(target),
 				StatusCode: wrapped.statusCode,
 				Duration:   duration,
 				RemoteAddr: auditRemoteAddr(ctx, r.RemoteAddr),

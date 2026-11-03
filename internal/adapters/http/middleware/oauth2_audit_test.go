@@ -398,3 +398,14 @@ func assertGeneratedRequestID(t *testing.T, requestID string) {
 	require.NoError(t, err, "request ID %q", requestID)
 	assert.Equal(t, parsed.String(), requestID)
 }
+
+func TestOAuth2AuditMiddleware_LogsSecurityContextRequestLine(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/a%2Fb", nil)
+	capture := security.TransportCapture{RequestMethod: http.MethodGet, RequestTarget: "/oauth2/a%2Fb"}
+	req = req.WithContext(security.WithCaptureHolder(req.Context(), security.NewCaptureHolder(capture)))
+
+	record, _ := serveAudit(t, req)
+
+	assert.Equal(t, http.MethodGet, record["method"])
+	assert.Equal(t, "/oauth2/a%2Fb", record["path"])
+}

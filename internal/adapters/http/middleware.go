@@ -49,13 +49,13 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 			// Log after the request completes
 			duration := time.Since(start)
 			clientIP := httpmiddleware.SanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
-			method := r.Method
+			method, target := httpmiddleware.LoggedRequestLine(r)
 			if r.URL.Path == "/oauth2/token" {
 				method = telemetryhttp.MethodName(method)
 			}
 			logger.InfoContext(r.Context(), "HTTP request",
 				"method", httpmiddleware.SanitizeLogValue(method),
-				"path", httpmiddleware.SanitizeLogValue(r.URL.Path),
+				"path", httpmiddleware.SanitizeLogValue(target),
 				"status", wrapped.statusCode,
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", clientIP,
