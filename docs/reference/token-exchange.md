@@ -195,7 +195,7 @@ Descriptions are credential-free summaries, not stable diagnostic identifiers. C
 | HTTP status | `error` | When it occurs |
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
-| 400 | `invalid_target` | The `resource` matches no configured service. |
+| 400 | `invalid_target` | The `resource` matches no configured service, or repeated resource values identify distinct targets. |
 | 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
 | 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
@@ -293,6 +293,7 @@ Successful logs and spans omit failure-only stage/detail fields. Successful metr
 Recovery values are diagnostic recommendations, not instructions for automatic retries.
 
 Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+Conflicting resource values use `request_validation` / `request_malformed` diagnostics while returning `invalid_target`; no registration lookup has occurred. `resource_unregistered` means a lookup found no configured service.
 CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
 Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
 

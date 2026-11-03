@@ -168,11 +168,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // dropOmittedValues removes a parameter sent without a value, which RFC 6749 Section 3.2
 // requires to be treated as omitted from the request.
 func dropOmittedValues(formData url.Values, parameter string) {
-	values, ok := formData[parameter]
-	if !ok {
-		return
-	}
-	kept := slices.DeleteFunc(values, func(value string) bool { return value == "" })
+	kept := slices.DeleteFunc(formData[parameter], func(value string) bool { return value == "" })
 	if len(kept) == 0 {
 		delete(formData, parameter)
 		return
@@ -202,7 +198,7 @@ func resolveExchangeResource(values []string) (string, error) {
 		}
 		if candidate.Value() != resource.Value() {
 			return "", tokenexchange.NewInvalidTargetError("multiple resources must map to the same service").
-				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailResourceUnregistered))
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 		}
 	}
 	return values[0], nil

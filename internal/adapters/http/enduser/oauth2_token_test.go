@@ -431,8 +431,10 @@ func TestOAuth2TokenHandler_ServeHTTP_RejectsInvalidExchangeResources(t *testing
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 			impersonationService := &recordingTokenImpersonationService{}
-			handler := &OAuth2TokenHandler{Impersonation: impersonationService}
+			handler := &OAuth2TokenHandler{Impersonation: impersonationService, Logger: slog.New(logs)}
 			form := url.Values{
 				"grant_type": {tokenexchange.TokenExchangeGrantType},
 				"resource":   tt.resources,
@@ -450,6 +452,9 @@ func TestOAuth2TokenHandler_ServeHTTP_RejectsInvalidExchangeResources(t *testing
 			assert.NotEmpty(t, response["error_description"])
 			assert.Equal(t, 1, impersonationService.resolveCalls)
 			assert.Zero(t, impersonationService.impersonateCalls)
+			require.Len(t, spans.Ended(), 1)
+			require.Len(t, *logs.records, 1)
+			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 		})
 	}
 }
