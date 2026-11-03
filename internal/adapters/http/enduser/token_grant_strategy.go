@@ -52,7 +52,7 @@ func NewProxyTokenGrantStrategy(
 func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, _ string, formData url.Values, resolution *ports.TokenGrantResolution) {
 	ctx, span := otel.Tracer("upstream").Start(r.Context(), "oauth2.token_proxy")
 	defer span.End()
-	span.SetAttributes(attribute.String("http.method", "POST"))
+	span.SetAttributes(attribute.String("http.request.method", http.MethodPost))
 
 	response, failure, err := s.outcomes.Proxy(ctx, formData, r.Header.Get("Content-Type"), resolution)
 	if err != nil {
@@ -77,7 +77,7 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	defer func() { _ = response.CloseBody() }()
 
 	statusCode := response.ResponseStatus()
-	span.SetAttributes(attribute.Int("http.status_code", statusCode))
+	span.SetAttributes(attribute.Int("http.response.status_code", statusCode))
 	for _, headerName := range proxyTokenResponseHeaders {
 		for _, value := range response.HeaderValues(headerName) {
 			w.Header().Add(headerName, value)

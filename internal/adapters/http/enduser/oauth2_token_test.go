@@ -465,6 +465,40 @@ func TestOAuth2TokenHandler_ServeHTTP_UpstreamError(t *testing.T) {
 	assert.Contains(t, string(respBody), "invalid_grant")
 }
 
+// TestProxyGrantStrategy_SpanUsesCanonicalHTTPKeys verifies that the oauth2.token_proxy
+// span uses the HTTP keys from coding-standards/OPENTELEMETRY.md §4.1.
+func TestProxyGrantStrategy_SpanUsesCanonicalHTTPKeys(t *testing.T) {
+	recorder := captureTokenExchangeSpans(t)
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": "invalid_grant"}`))
+	}))
+	defer mockUpstream.Close()
+
+	strategy := newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil)
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+	resolution := &ports.TokenGrantResolution{AgentID: id.NewAgentID(), ClientType: storage.ProxyClient, ClientID: ptr.To(id.ClientID("upstream-client"))}
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), req, "authorization_code", url.Values{"grant_type": {"authorization_code"}}, resolution)
+
+	var span sdktrace.ReadOnlySpan
+	for _, ended := range recorder.Ended() {
+		if ended.Name() == "oauth2.token_proxy" {
+			span = ended
+		}
+	}
+	require.NotNil(t, span)
+	attrs := make(map[string]any, len(span.Attributes()))
+	for _, attr := range span.Attributes() {
+		attrs[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	assert.Equal(t, http.MethodPost, attrs["http.request.method"])
+	assert.Equal(t, int64(http.StatusBadRequest), attrs["http.response.status_code"])
+	assert.NotContains(t, attrs, "http.method")
+	assert.NotContains(t, attrs, "http.status_code")
+}
+
 // TestProxyGrantStrategy_InfraErrorsReturnJSON verifies that infrastructure failures
 // in the proxy strategy return application/json per RFC 6749 §5.2.
 func TestProxyGrantStrategy_InfraErrorsReturnJSON(t *testing.T) {

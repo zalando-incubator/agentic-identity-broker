@@ -1865,8 +1865,8 @@ When tracing is enabled, the following operations emit child spans:
 | `storage.get.thirdPartyService` | PostgreSQL `ThirdpartyServiceRepository.Get` | `db.system=postgresql` |
 | `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
-| `jwks.fetch` | JWKS key set fetch/cache lookup | `url.full` |
-| `oauth2.token_exchange` | Upstream OAuth2 token proxy | `http.method=POST`, `http.status_code` |
+| `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
+| `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
 
 ### Security notes
 
