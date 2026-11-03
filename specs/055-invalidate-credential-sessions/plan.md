@@ -10,11 +10,11 @@ When an operator changes a third-party service's client ID or shared secret, the
 
 1. **Per-service credential generation** in a new internal table, `thirdparty_credential_states` (R2). Every covered change increments the generation in the same transaction that makes the change effective. That transaction also **invalidates** every session of the service by expiring the retained row: the access token expires now, the refresh token is discarded, and the private callback generation is rotated (R1).
 2. **Stored changes** are detected in the administrative `PUT` by exact comparison with the persisted, decrypted values (R3).
-3. **Filesystem changes** are detected on demand. Before third-party initiation, code exchange, every token-supply or refresh decision, and broker `/oauth2/authorize` admission, the broker reads the pair. It checks the pair against a process-local HMAC cache and then against a durable salted Argon2id fingerprint. It commits a recognition before the operation proceeds (R3, R4).
-4. **In-flight fencing**. The authorization state seals the generation, first-connection inserts compare it under the existing service-row share lock, reconnections are fenced by the rotated callback generation, and refreshes are serialized by the existing session row lock (R5).
+3. **Filesystem changes** are detected on demand. Before third-party initiation, code exchange, every token-supply or refresh decision, and broker `/oauth2/authorize` admission, the broker reads the pair. It checks the pair against a process-local HMAC cache and then against a durable salted Argon2id fingerprint. It validates the coherent operator revision and pair, rejects stale mounts, and makes at most one CAS mutation attempt before proceeding (R3, R4; D-PUBLICATION/API-CONFIG). First valid acquisition expires unknown legacy sessions (D-INITIALIZE).
+4. **In-flight fencing**. The authorization state seals the generation, first-connection inserts compare it under the existing service-row share lock, reconnections are fenced by the rotated callback generation, and refresh admission/final token release use generation-aware service-share-before-session locking for both sources. Every singleflight joiner independently makes a guarded release decision (R5).
 5. **Recovery reuses existing flows**. Broker `/oauth2/authorize` already sends a user with an active grant to consent when an included or mandatory connection is unusable. RFC 8693 keeps ADR 044's recoverable `invalid_grant` and `error_uri`. The sessions page keeps its "Log in to reconnect" action. No React change and no new endpoint or response shape are planned (R6).
 
-Because C1 and C3 contradict Accepted ADR 041, a narrow superseding [ADR draft](adr-draft-credential-change-session-invalidation.md) is proposed. Admin API `3.0.0` and End-User API `2.0.0` document the behavior changes ([contracts/](contracts/)). Every consequential item is listed under [Approval Items](#approval-items). None is approved.
+Because C1/C3 and publication freshness contradict Accepted ADR 041, and guarded refresh admission narrowly changes ADR 038, a narrow superseding [ADR draft](adr-draft-credential-change-session-invalidation.md) is proposed. Admin API `3.0.0` and End-User API `2.0.0` document the behavior changes ([contracts/](contracts/)). Every consequential item is listed under [Approval Items](#approval-items). None is approved.
 
 ## Approval Items
 
@@ -22,15 +22,18 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-ADMIN | API | Admin API `2.1.0` → `3.0.0`. `PUT /api/services/{service-id}` documents that a change of effective client ID or stored secret atomically invalidates every user session for the service. Unchanged values, metadata edits, rejected updates, and unchanged-pair source transitions do not invalidate. Restored values never revive sessions. File rotation has the same effect, without changing the ETag. | specs/055-invalidate-credential-sessions/contracts/admin-api.md:1-65 |
-| API-ENDUSER | API | End-User API `1.1.0` → `2.0.0`, documenting the following existing response sets. `/oauth2/authorize` redirects to consent for an unusable included or mandatory connection despite an active grant, and returns `server_error` on filesystem source failure. Third-party initiation reads both credential files. A callback begun before a change returns `callback_failed`. Invalidated sessions list as `is_expired: true` and `has_refresh_token: false`, and refresh returns `409`. RFC 8693 returns the recoverable `invalid_grant` with the ADR 044 `error_uri`. Filesystem token use returns `500 server_error` when the files are unavailable, even for an unexpired token. | specs/055-invalidate-credential-sessions/contracts/enduser-api.md:1-116 |
-| ADR-045 | ADR | Draft ADR 045 (number provisional): credential-change session invalidation. It narrowly supersedes five ADR 041 rules and amends Feature 051 scenarios US2-S1, US2-S5, and US5-S3. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:1-138 |
+| API-ADMIN | API | Admin API `2.1.0` → `3.0.0`. `PUT /api/services/{service-id}` documents that a change of effective client ID or stored secret atomically invalidates every user session for the service. Unchanged values, metadata edits, rejected updates, and unchanged-pair source transitions do not invalidate. Restored values never revive sessions. File rotation has the same effect, without changing the ETag. | specs/055-invalidate-credential-sessions/contracts/admin-api.md:1-70 |
+| API-ENDUSER | API | End-User API `1.1.0` → `2.0.0`, documenting the following existing response sets. `/oauth2/authorize` redirects to consent for an unusable included or mandatory connection despite an active grant, and returns `server_error` on filesystem source failure. Initiation reads a coherent revision/client-ID/secret publication. Staleness before exchange avoids a provider call; a change during admitted exchange fences persistence; both return `callback_failed`. Unknown legacy sessions expire at first valid initialization. Invalidated sessions list as `is_expired: true` and `has_refresh_token: false`, and refresh returns `409`. RFC 8693 returns the recoverable `invalid_grant` with the ADR 044 `error_uri`. Filesystem token use returns `500 server_error` when the files are unavailable, even for an unexpired token. | specs/055-invalidate-credential-sessions/contracts/enduser-api.md:1-124 |
+| ADR-045 | ADR | Draft ADR 045 (number provisional): credential-change session invalidation. It narrowly supersedes ADR 041 acquisition/invalidation/evidence rules and its publication-identifier prohibition, and ADR 038 session-only refresh admission locking. It amends Feature 051 scenarios US2-S1, US2-S5, and US5-S3. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:1-152 |
 | D-SCOPE | Decision | C1: invalidate on any actual change of the operator-managed effective client ID or shared secret, including secret-only rotation, from the stored and filesystem sources and across transitions. CIMD-derived identifiers, CIMD key rotation, discovery and DCR lifecycles, and same-value saves are excluded. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:21-34 |
-| D-CONSENT | Decision | C2: consent appears on the next agent browser authorization through the existing unusable-connection gate, in every broker mode, using the existing consent and sessions UI. Protocol recovery keeps ADR 044's direct provider login and `/sessions` return. | specs/055-invalidate-credential-sessions/research.md:129-138 |
-| D-CURRENCY | Decision | C3: for filesystem services, the broker establishes currency on demand before initiation, exchange, every token-supply or refresh decision (including unexpired tokens), and `/oauth2/authorize` admission. This trades availability: unreadable files now fail token use. No polling is added, and a publish-and-restore between observations is not detected. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:49-73 |
+| D-CONSENT | Decision | C2: consent appears on the next agent browser authorization through the existing unusable-connection gate, in every broker mode, using the existing consent and sessions UI. Protocol recovery keeps ADR 044's direct provider login and `/sessions` return. | specs/055-invalidate-credential-sessions/research.md:114-123 |
+| D-CURRENCY | Decision | C3: for filesystem services, the broker establishes currency on demand before initiation, exchange, every token-supply or refresh decision (including unexpired tokens), and `/oauth2/authorize` admission. This trades availability: unreadable files now fail token use. No polling is added, and a publish-and-restore between observations is not detected. | specs/055-invalidate-credential-sessions/research.md:76-112 |
 | D-INVALIDATE | Decision | Invalidation retains and expires session rows: the access token expires at the change instant, the refresh-token ciphertext is discarded, and `callback_id` is rotated. Rows are not deleted. Grants are unchanged. | specs/055-invalidate-credential-sessions/research.md:7-32 |
-| D-FINGERPRINT | Decision | Persist a salted Argon2id fingerprint of the last recognized filesystem pair, using the existing hasher parameters and at most 2 concurrent computations. A per-process random-key HMAC-SHA256 cache avoids repeated computations. Stored comparisons decrypt in memory, and decryption failure counts as a change. No plaintext or ciphertext of a last-known credential is persisted. | specs/055-invalidate-credential-sessions/research.md:53-74 |
-| D-SCHEMA | Decision | Add the atomic migration `046_create_thirdparty_credential_states` (number provisional). It creates a lazily populated table keyed by service with a cascading foreign key, generation, fingerprint, and timestamps, under `NOWAIT` with a one-second timeout and no backfill. DOWN drops the table after a 10-minute drain of authorization flows. | specs/055-invalidate-credential-sessions/data-model.md:97-118 |
+| D-FINGERPRINT | Decision | Persist a salted Argon2id fingerprint of the last recognized filesystem pair, using the existing hasher parameters and at most 2 concurrent computations. A per-process random-key HMAC-SHA256 cache avoids repeated computations. Stored comparisons decrypt in memory, and decryption failure counts as a change. No plaintext or ciphertext of a last-known credential is persisted. | specs/055-invalidate-credential-sessions/research.md:54-74 |
+| D-SCHEMA | Decision | Add atomic migration 046 (provisional) with a lazy service-keyed cascading state table, generation, fingerprint, publication-revision high-water mark and timestamps; NOWAIT/one-second timeout, no backfill. Convert filesystem services to stored and drain contexts before DOWN drops evidence. | specs/055-invalidate-credential-sessions/data-model.md:102-124 |
+| API-CONFIG | API | Add required credential_revision_file to filesystem credential bindings, no default; validate through the existing configuration system and carry it through the chart mapping. | specs/055-invalidate-credential-sessions/contracts/configuration.md:5-30 |
+| D-PUBLICATION | Decision | Require coherent operator-monotonic revision/pair publication to independently reject stale replicas; retain revision high-water marks across source transitions and permit restoration only with a higher revision. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:51-57 |
+| D-INITIALIZE | Decision | On first valid acquisition, conservatively invalidate every unknown legacy filesystem session and advance generation atomically; empty services initialize without an increment. This adds one-time upgrade reconnection rather than grandfathering. | specs/055-invalidate-credential-sessions/research.md:82 |
 
 ## Technical Context
 
@@ -62,8 +65,8 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 
 **Performance Goals**:
 
-- Stored services: no added work on the token path.
-- Filesystem services: each token decision adds one primary-key read, two file opens, and one HMAC computation. The first observation of a new pair costs one Argon2id computation (64 MiB) per process, with at most 2 at a time.
+- Stored services: consistent provider/state acquisition and a generation-aware final release guard; no file/hash work.
+- Filesystem services: state revalidation, three coherent file opens, HMAC and the final release guard. The first observation of a new pair costs one Argon2id computation (64 MiB) per process, with at most 2 at a time.
 - An administrative update with a credential change runs one `UPDATE user_sessions ... WHERE service_id` through the existing `idx_user_sessions_service_id` index.
 
 **Constraints**:
@@ -71,7 +74,7 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 - Fail closed (SR-001, SR-005).
 - No credential, digest, fingerprint, or path in logs, errors, spans, or metrics (SR-002, SR-003).
 - No change to the administrative ETag from file rotation (ADR 041).
-- Lock order: service row, then session rows. Refresh never locks the service row.
+- Lock order: service share/write lock, then session lock. Refresh/release use service share locks; invalidation uses the write lock. No acquisition/hash/recognition under a session lock.
 
 **Scale/Scope**:
 
@@ -87,9 +90,9 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 - [x] **Domain Model**: [data-model.md](data-model.md) defines CredentialState, CredentialChange, CredentialChangeResult, the generation state machine, and the UserSession transitions.
 - [x] **Domain Concepts**: The `ARCHITECTURE.md` Glossary and the AGENTS.md glossary gain **Credential Change**, **Credential Generation**, **Credential Fingerprint**, **Credential Currency**, and **Session Invalidation** (Phase 2 task).
 - [x] **Entity IDs**: No new UUID-keyed entity. CredentialState is keyed by the existing `id.ServiceID` (ADR 013 is not triggered).
-- [x] **Configuration Design**: No new key (R10). The existing `third_party_oauth2.credential_files` YAML is shown in the spec.
-- [x] **Config Examples**: No new options. `examples/config/third-party-oauth2.yaml` comments and `examples/config/README.md` gain the rotation behavior note.
-- [x] **Helm Deployment Contract**: No chart-managed parameter changes. The chart README's rollback section gains the migration `046` drain note.
+- [x] **Configuration Design**: Proposed required credential_revision_file is defined in contracts/configuration.md and shown in spec.md (API-CONFIG).
+- [x] **Config Examples Design**: Existing examples/config YAML/README gain the revision path, monotonic publication and cutover notes during implementation.
+- [x] **Helm Deployment Contract Design**: Nested credentialFiles binding gains revision-file documentation/examples and a ConfigMap render test through existing mapping; README gains cutover/rollback requirements.
 - [x] **API Design First**: The deltas are in [contracts/admin-api.md](contracts/admin-api.md) and [contracts/enduser-api.md](contracts/enduser-api.md). They are copied into `api/` only after approval.
 - [x] **API Documentation**: `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, and `docs/api/enduser-api.md`.
 - [ ] **API Changes**: Pending the maintainer's 👍 on API-ADMIN and API-ENDUSER. This is the expected open state for planning.
@@ -106,7 +109,7 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 - [x] **Architecture Docs**: `ARCHITECTURE.md` gets updates to storage (key tables), the credential-source section, API versioning, and the glossary.
 - [x] **ADRs**: The superseding draft is in this directory. It moves to `adrs/` after approval.
 - [x] **Library-First Security**: Argon2id through the existing hasher. HMAC, SHA-256, random, and constant-time compare from Go `crypto/*`.
-- [x] **Zalando Guidelines**: No new resources or fields. Major version bumps for released behavior changes (Principles IV and X; research R7).
+- [x] **Zalando Guidelines**: No new HTTP resources or fields; one required configuration binding. Major version bumps for released behavior changes (Principles IV and X; research R7).
 - [x] **End-User Docs**: `docs/api/enduser-api.md` and `docs/reference/token-exchange.md`.
 - [x] **Migration Testing**: Apply, rollback, and reapply, plus CHECK and cascade tests, in PostgreSQL integration tests (container-backed in CI).
 - [x] **Hexagonal Architecture**: The domain depends on new ports. The adapters implement them. The builder wires them. No handler reaches a port directly.
@@ -123,9 +126,9 @@ These planning-phase reconciliations are recorded in the spec's Clarifications s
 - The spec's persistence assumption is refined to allow only a non-recoverable fingerprint (D-FINGERPRINT).
 - The API and database requirement sections reference the proposed contracts and migration.
 
-No acceptance scenario or success criterion changed.
+Remediation reconciles Scenario 1.6 with revision freshness/legacy initialization, Scenario 1.4 with both callback timings, and SC-001/SC-006 with guarded release versus preauthorized delivery. Clarifications records each requirement change.
 
-**Task-generation reconciliations**: `tasks.md` schedules 60 unchecked tasks. API-ADMIN and API-ENDUSER now propose major versions `3.0.0` and `2.0.0`, because `v0.1.133` contains the existing `2.1.0`/`1.1.0` contracts and Principles IV/X govern released behavior (research R7; spec Clarifications). The new repository belongs in `internal/ports/storage.go`. Acceptance tests/red evidence/screenshots remain pending implementation, not completed planning evidence. Protocol recovery gets a separate backend test file for disjoint test-writing work. No new CRUD entity/boilerplate phase is needed.
+**Task-generation reconciliations**: `tasks.md` schedules implementation and remediation-derived TDD work, all unchecked. API-ADMIN and API-ENDUSER now propose major versions `3.0.0` and `2.0.0`, because `v0.1.133` contains the existing `2.1.0`/`1.1.0` contracts and Principles IV/X govern released behavior (research R7; spec Clarifications). The new repository belongs in `internal/ports/storage.go`. Acceptance tests/red evidence/screenshots remain pending implementation, not completed planning evidence. Protocol recovery gets a separate backend test file for disjoint test-writing work. No new CRUD entity/boilerplate phase is needed.
 
 ## Project Structure
 
@@ -142,6 +145,7 @@ specs/055-invalidate-credential-sessions/
 ├── contracts/
 │   ├── admin-api.md                                    # API-ADMIN
 │   ├── enduser-api.md                                  # API-ENDUSER
+│   ├── configuration.md                              # API-CONFIG, D-PUBLICATION
 │   └── ports.md                                        # Internal ports, error mapping, audit events
 ├── checklists/requirements.md
 ├── wireframes/journey-2-{a-reconnect,b-connected,c-cancelled}.svg
@@ -159,7 +163,7 @@ internal/
 ├── ports/
 │   ├── storage.go                   # + ThirdpartyCredentialStateRepository
 │   ├── thirdparty_provider.go        # Update contract note
-│   ├── credential_file.go            # + CredentialFingerprinter
+│   ├── credential_file.go            # + CredentialFingerprinter, ReadPublication
 │   └── oauth2.go                     # + CredentialCurrencyChecker
 ├── domain/
 │   ├── storage/credential_state.go   # CredentialState, CredentialChange, CredentialChangeResult (+ tests)
@@ -171,6 +175,7 @@ internal/
 │   │   ├── credentials.go            # selectCredentials uses the validated pair
 │   │   ├── state_token.go            # + CredentialGeneration claim
 │   │   └── service.go                # initiation, callback fence, GetValidAccessToken, refreshLockedSession
+│   ├── oauth2server/argon2_hasher.go # + compatible HashContext entry point
 │   └── oauth2/service.go             # currency check before steps 4–5 of HandleAuthorization
 ├── adapters/
 │   ├── storage/factory.go           # credential-state repository accessor; compose each backend
@@ -193,7 +198,7 @@ tests/
 api/admin/openapi.yaml, api/enduser/openapi.yaml, docs/api/enduser-api.md,
 docs/reference/token-exchange.md, docs/configuration.md, docs/operations/deployment-checklist.md,
 examples/config/third-party-oauth2.yaml, examples/config/README.md,
-charts/agentic-identity-broker/README.md (rollback note), ARCHITECTURE.md, AGENTS.md,
+charts/agentic-identity-broker/{values.yaml,README.md} (revision binding/cutover), ARCHITECTURE.md, AGENTS.md,
 internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 ```
 
@@ -220,7 +225,7 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 
 **Test Locations**: `tests/e2e/credential_change_invalidation_test.go` (US1) and `tests/e2e/credential_change_recovery_test.go` (US2 2.4), both labeled `credential-change-invalidation`
 
-**Framework**: Ginkgo/Gomega ([tests/e2e/README.md](../../tests/e2e/README.md)). It uses the production bootstrap through `tests/e2e/bootstrap/` and the mock OAuth2 provider. Filesystem variants use `helpers.PublishCredentialPair`.
+**Framework**: Ginkgo/Gomega ([tests/e2e/README.md](../../tests/e2e/README.md)). It uses the production bootstrap through `tests/e2e/bootstrap/` and the mock OAuth2 provider. Filesystem variants use the test-only `helpers.PublishCredentialPublication` (pair plus revision).
 
 **Test Organization**: `Describe("Credential-change session invalidation")` → `Context` per precondition (stored or filesystem service, two users and two services) → one `It` per scenario. Every `It` carries a `// Scenario X.Y from specs/055-invalidate-credential-sessions/spec.md` comment.
 
@@ -230,10 +235,10 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 |---------------|-------------------|------------------|
 | US1 1.1 | `tests/e2e/credential_change_invalidation_test.go` | `DescribeTable("1.1 invalidates every user's session for the changed service only", ...)`. One `Entry` each for stored client ID, stored secret-only, filesystem client ID, and filesystem secret-only. Asserts: the RFC 8693 response for Alice is `400 invalid_grant` with the ADR 044 `error_uri`, although her access token has not expired. Bob's refresh does not reach the provider. Alice's Calendar token is still supplied. |
 | US1 1.2 | same | `It("1.2 keeps sessions usable after an unchanged-credential or display-name update")`: tokens still supplied, no `credentials_changed` event |
-| US1 1.3 | same | `It("1.3 keeps sessions usable when a credential update is rejected")`: `409` stale version, session unchanged |
-| US1 1.4 | same | `It("1.4 refuses an authorization callback and a refresh begun before the change")`: paused callback leads to `callback_failed` with no provider token request; a gated in-flight refresh commits and is then invalidated |
+| US1 1.3 | same | `It("1.3 keeps sessions usable when a credential update is rejected")`: `412` stale If-Match, session unchanged |
+| US1 1.4 | same | `It("1.4 refuses an authorization callback and a refresh begun before the change")`: pre-exchange gate yields callback_failed with zero provider calls; during-exchange gate permits the call but rejects persistence; delayed old refresh acquisition after fresh login is rejected; already-admitted refresh finishes then is invalidated |
 | US1 1.5 | same | `It("1.5 keeps invalidated sessions unusable after restart, on another replica, and after restoring former values")`: second broker sharing the storage |
-| US1 1.6 | same | `It("1.6 recognizes a filesystem pair change on the next unexpired-token request and on another replica")`: zero provider calls, Bob rejected via the second broker, service ETag unchanged |
+| US1 1.6 | same | `It("1.6 recognizes a filesystem pair change on the next unexpired-token request and on another replica")`: higher-revision rotation, delayed/cold lower-revision replica rejected without writes, CAS loser abort/fresh retry, unknown legacy initialization expires A sessions on first B observation; zero obsolete provider calls and unchanged service ETag |
 | US1 1.7 | same | `It("1.7 fails closed without inferring a change when the filesystem pair is unavailable")`: `500 server_error` without `error_uri`, no provider call; after restoring unchanged files the session still works |
 | US2 2.4 | `tests/e2e/credential_change_recovery_test.go` | `It("2.4 returns the recoverable invalid_grant whose error_uri starts direct provider login")`: follows `error_uri`, asserts the `302` to the provider with the current client ID, completes the callback, lands on `/sessions` |
 
@@ -243,7 +248,7 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 
 **Bootstrap Strategy**: A fresh broker and storage per test. Scenarios 1.5 and 1.6 start a second broker on the same storage adapter, following `proactive_token_refresh_test.go` (two replicas). The second broker has its own process-local digest cache.
 
-**Helper Utilities**: Reuse `helpers.PublishCredentialPair` and `helpers.CredentialTokenRequest`, and the mock provider's request counters and authorization gates. Add a small `tokenExchange(principal, resource)` helper in the test file if one does not already exist.
+**Helper Utilities**: Extend test-only publication helpers with `helpers.PublishCredentialPublication` and `helpers.CredentialTokenRequest`, and the mock provider's request counters and authorization gates. Add a small `tokenExchange(principal, resource)` helper in the test file if one does not already exist.
 
 **Amended Feature 051 scenarios** (ADR-045): US2-S1, US2-S5, and US5-S3, as listed in [research R9](research.md#r9-feature-051-acceptance-scenarios-affected). Each amended `It` keeps its 051 scenario ID and adds a `// Amended by specs/055-invalidate-credential-sessions (ADR 045)` comment.
 
@@ -267,7 +272,7 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 
 - `internal/domain/storage/credential_state_test.go`: validation (table-driven).
 - `internal/domain/thirdparty/credential_change_test.go`: change detection matrix covering unchanged values, metadata, client ID, secret, removal or addition of a secret, transitions, and decryption failure.
-- `internal/domain/oauth2session/credential_currency_test.go`: cache hit, baseline, recognition, lost compare-and-set, source error with no write, persistence failure.
+- `internal/domain/oauth2session/credential_currency_test.go`: revision-aware cache, conservative initialization, stale revision/equal mismatch, higher same-pair evidence advance, bounded CAS loss/discard, source/state failure, transition high-water preservation.
 - `internal/domain/oauth2session/credential_fence_test.go`: stale sealed generation, stale reconnection, legacy zero claim.
 - `internal/domain/oauth2/service_test.go`: currency error leads to `server_error`; recognition leads to a consent redirect.
 - `internal/adapters/credentialfile/fingerprint_test.go`.
@@ -279,7 +284,7 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 - `thirdparty_credential_state` repository: compare-and-set.
 - `Update` with a `CredentialChange`: atomic or rolled back on conflict.
 - The `create()` generation fence under concurrency.
-- Invalidation waits for a locked refresh.
+- Invalidation versus service-share/session refresh and release guards; delayed old acquisition after fresh reconnection; singleflight joiner release ordering.
 
 **Test Coverage Goals**:
 

@@ -36,9 +36,12 @@ Insert the following after the existing **Secret Rotation** block of the `update
           earlier
         - A rejected update (`400`, `404`, `409`, `412`, `428`, `500`, or `504`) leaves sessions unchanged
         - The broker does not revoke tokens already delivered to agents or held by the provider
-        - For `filesystem` services, publishing a different client ID or secret in the bound files
-          has the same effect. The broker detects it on the next authorization or token use for the
-          service, before it supplies any token. Detection never changes this resource's `ETag` or
+        - For `filesystem` services, publishing a coherent higher-revision client ID/secret pair
+          has the same effect. The broker recognizes it on the next authorization or token decision,
+          before newly authorizing token release. Lower revisions and equal-revision/different-pair
+          material fail closed without changing any session. Unknown legacy filesystem sessions
+          are conservatively invalidated on first valid initialization; unchanged-value protection
+          requires comparison evidence. Detection never changes this resource's `ETag` or
           `updated_at`
 ```
 
@@ -59,6 +62,8 @@ The example `value` is unchanged.
             Service updated successfully. If the effective client credentials changed, every
             user session for the service was invalidated in the same update.
 ```
+
+The required revision-file binding and cutover procedure are Proposed separately in [configuration.md](configuration.md). A response authorized by a guarded decision before commit can still be delivered afterward. Restoring former file values requires a higher publication revision, not replay of old material. Revision high-water marks survive source transitions and are never administrative inputs or outputs.
 
 ## Unchanged
 

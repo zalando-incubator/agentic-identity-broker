@@ -35,6 +35,13 @@ In case thirdparty service client credentials change, established sessions must 
 - Q: What API versions cover the proposed lifecycle behavior changes? → A: **Proposed approval items API-ADMIN and API-ENDUSER** now propose Admin API `3.0.0` and End-User API `2.0.0` on the existing routes. Release `v0.1.133` contains `2.1.0` and `1.1.0`; Constitution Principles IV and X require a major version bump or a new endpoint when released behavior changes. This changes the API-version requirement from the plan's minor increments, not the requested flows. The main alternative is new versioned endpoints, rejected to avoid duplicating the same service and recovery workflows. Research R7 and both feature contracts are reconciled accordingly; neither contract is approved.
 - Q: Where do the new persistence contract and test scaffolding belong? → A: Declare `ThirdpartyCredentialStateRepository` in `internal/ports/storage.go` as Principle IX requires. The state is internal to the existing service aggregate, so no new CRUD entity/endpoint or separately arranged boilerplate PR is needed. Write acceptance tests in Phase 2f and add only minimal compiling scaffolding to obtain semantic-red evidence before business implementation. This is task-order and architecture consistency, not a scope or requirement change. Pending acceptance tests and screenshots are explicitly unchecked in the plan rather than represented as completed evidence.
 
+### Session 2026-11-03 (analysis remediation)
+
+- Q: How can a stale mount be distinguished from restoring former values? → A: **Proposed approval items D-PUBLICATION and API-CONFIG** require a monotonic `credential_revision_file` published atomically with the pair. Lower revisions and equal-revision/different-pair material fail closed, even on a cold replica. A/41 → B/42 → A/43 distinguishes restoration from replay. This changes the earlier no-new-key requirement because pair CAS alone cannot prove freshness. The main alternative is coordinated all-replica drain/publication verification on every rotation, rejected for downtime and lack of independent stale-replica evidence. ADR-045 additionally supersedes ADR 041's publication-identifier prohibition; see [configuration contract](contracts/configuration.md).
+- Q: What happens to legacy filesystem sessions without comparison evidence? → A: **Proposed approval item D-INITIALIZE** conservatively invalidates all existing sessions on first valid publication acquisition, advancing generation atomically; an empty service initializes without an increment. This adds a one-time upgrade reconnect, not unconditional first-observation grandfathering. It prevents A-established sessions surviving first observation of B and preserves the first-request guarantee. Main alternative: mandatory pre-rotation baselining, rejected because unobserved prior rotation cannot be proved absent. FR-004's unchanged-value protection applies to evidenced sessions, not unknown legacy initialization.
+- Q: How are delayed refreshes and final token supply ordered with invalidation? → A: Bind the acquired provider/pair to a consistent service generation for both sources, then use service-share-before-session locking for refresh admission and every caller's final release decision. Validate/decrypt the latest row while guarded; singleflight joiners each decide independently. This replaces unguarded rereads without changing release scope. Main alternative: session-only refresh locking, rejected because old acquisition can refresh a new connection. ADR-045 narrowly supersedes ADR 038's lock admission rule, not its scheduler/retries. The already-authorized delivery exception is now explicit in journey outcomes and SC-001/SC-006.
+- Q: Can every stale callback be rejected before provider exchange? → A: Only when staleness is detected before admission. A change during an admitted provider exchange cannot recall that call, but generation/CallbackID fencing prevents usable persistence and returns `callback_failed`. Scenario 1.4 covers both timings. This corrects the impossible unconditional no-exchange promise; the main alternative would inaccurately claim recall of an external request.
+
 ## User Scenarios & Testing *(mandatory)*
 
 A credential change must not leave the broker treating an old third-party connection as usable. Users must be guided through reconnecting rather than discovering stale credentials through repeated failures. An **in-scope credential change** means an actual change of the operator-managed effective OAuth2 client ID, shared secret, or both, through stored-service administration or eligible filesystem credentials. Same-identity secret rotation is included. This is the C1 proposal, not an implementation approval.
@@ -52,11 +59,11 @@ As an operator replacing a third-party service's client credentials, I want esta
 **Acceptance Scenarios**:
 
 1. **Given** Alice and Bob have usable sessions for GitHub Production and Alice also has a usable Calendar session, **When** an in-scope credential change takes effect for GitHub Production, **Then** subsequent broker requests cannot obtain or refresh either old GitHub session's tokens, and Alice's Calendar session remains usable.
-2. **Given** Alice has a usable GitHub Production session, **When** an operator saves unchanged effective credentials or changes only the service's display name, **Then** the session remains usable and no credential-change reauthentication is requested.
+2. **Given** Alice has a usable GitHub Production session, **When** an operator saves unchanged effective credentials or changes only the service's display name, **Then** the evidenced session remains usable and no credential-change reauthentication is requested; unknown legacy filesystem sessions instead require the one-time safe initialization described in D-INITIALIZE.
 3. **Given** Alice has a usable GitHub Production session, **When** a credential update is rejected before taking effect, **Then** the existing session remains usable and the update is not reported as successfully applied.
 4. **Given** a refresh or authorization callback began before an in-scope credential change, **When** it finishes after that change takes effect, **Then** it cannot restore usable tokens tied to the replaced credentials, and Alice must start a new connection using the current credentials.
 5. **Given** an in-scope change has durably invalidated Alice's GitHub Production session, **When** the broker restarts, another serving replica handles her request, or the operator restores the former credential values, **Then** Alice's invalidated session does not become usable again without a new successful authorization.
-6. **Given** GitHub Production uses eligible filesystem credentials and Alice has an unexpired session, **When** a new coherent client-ID or secret-only pair is published and her next broker token request is made without a preceding refresh, **Then** that request detects and durably recognizes the change before supplying a token, requires recovery instead of returning the old token, and subsequent requests for Bob's old session on another replica also require recovery.
+6. **Given** GitHub Production uses eligible filesystem credentials and Alice has an unexpired session, **When** a new coherent client-ID or secret-only pair with a higher publication revision is published and her next broker token request is made without a preceding refresh, **Then** that request detects and durably recognizes the change before supplying a token, requires recovery instead of returning the old token, and subsequent requests for Bob's old session on a current replica also require recovery. A stale replica with a lower revision fails closed without changing evidence or invalidating fresh connections. First observation of an unbaselined service with existing sessions conservatively invalidates them before token use.
 7. **Given** GitHub Production uses filesystem credentials, **When** the required pair is missing, unreadable, or incoherent during an authorization or token-use decision, **Then** the broker fails closed with the existing source-availability failure, supplies no old token or fallback credentials, and does not infer a credential change or send the user into a login loop; a later successful read of unchanged effective values does not itself invalidate a previously usable connection.
 
 ---
@@ -85,7 +92,7 @@ As a user whose third-party connection was invalidated, I want the consent exper
 - A missing or unreadable mounted credential file is not proof of an actual credential change. Existing fail-closed source-error behavior must not be replaced by an unsafe fallback or an endless login loop.
 - If recognition or invalidation cannot be durably guaranteed, affected authorization and token-use decisions fail closed and do not claim a successfully applied change. A rejected stored update leaves the prior durable state unchanged. A missing filesystem pair is an availability failure, not proof of rotation.
 - Filesystem rotation is observed on demand, not at an arbitrary external write instant. A publish-and-restore sequence entirely between successful observations is outside the detection guarantee; a previously recognized change cannot be undone by restoring old values. Operations must not wait for token expiry to observe a changed pair.
-- All serving replicas must use the configured publication of the same service credentials. A replica using stale material must not undo recognized invalidation or complete an old callback/refresh as a usable session. If currency cannot be established, it fails closed. Metadata-only listings do not read credential files; their status reflects durable recognized invalidation rather than independently detecting a file replacement.
+- All replicas use one operator revision authority and coherent revision/pair publications; a serving mount may temporarily lag. A replica with lower-revision material must fail closed, not undo recognized invalidation or complete an old callback/refresh as a usable session. Equal revision with different values is invalid publication. Restoration requires a higher revision; CAS losers discard their acquisition after one attempt. If currency cannot be established, it fails closed. Metadata-only listings do not read credential files; their status reflects durable recognized invalidation rather than independently detecting a file replacement.
 - An already delivered token cannot be recalled. In-flight work may not newly authorize token release or commit a usable replacement from the old state after the change-effective boundary; network delivery of a response already authorized before that boundary is not a revocation guarantee.
 - Already distributed tokens may still be accepted directly by a third party; see the scope boundary in Assumptions.
 
@@ -103,17 +110,37 @@ GitHub Production uses stored client ID `report-client-v1`. Alice's GitHub acces
 
 The operator successfully replaces GitHub Production's client ID with `report-client-v2` and supplies the corresponding synthetic replacement secret through the existing administrative service-management flow. The same invalidation outcome applies to a stored secret-only change, an eligible filesystem client-ID change, and an eligible filesystem secret-only change. These four variants form the required credential-change acceptance matrix. No new management endpoint or request shape is prescribed here.
 
-For stored credentials, 09:05 is the successful durable commit of the credential update and invalidation boundary. In the filesystem variants, the operator publishes a coherent replacement pair at 09:05; Alice's first subsequent broker token request must successfully acquire and durably recognize that pair before deciding whether it may supply tokens. That recognition is the filesystem boundary, even though no refresh is due. Merely changing the files does not claim that an idle broker has already observed them (Scenario 1.6).
+For stored credentials, 09:05 is the successful durable commit of the credential update and invalidation boundary. In the filesystem variants, the operator publishes the coherent replacement pair with revision 42 (previously 41) at 09:05; Alice's first subsequent broker token request must successfully acquire and durably recognize that pair before deciding whether it may supply tokens. That recognition is the filesystem boundary, even though no refresh is due. Merely changing the files does not claim that an idle broker has already observed them (Scenario 1.6).
+
+The stored variant uses the full-replacement PUT below (Scenario 1.1). Initial ETag is `"1"`, the service is manual/static/standard, discovery is disabled, and its protected resource is `https://api.github.example.com`. The authenticated admin proxy supplies the operator identity. All optional fields shown preserve the existing settings; the response never exposes the supplied secret.
+
+```http
+PUT /api/services/880e8400-e29b-41d4-a716-446655440010 HTTP/1.1
+Host: admin.broker.example.com
+X-Remote-User: operator@example.com
+If-Match: "1"
+Content-Type: application/json
+
+{"display_name":"GitHub Production","canonical_id":"github-production","credential_source":"stored","client_registration":"static","oauth2_flavor":"standard","client_id":"report-client-v2","client_secret":"SYNTHETIC_SECRET_V2","issuer_uri":"https://github.example.com","discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"endpoints":{"authorize_endpoint":"https://github.example.com/authorize","token_endpoint":"https://github.example.com/token"},"protected_resources":["https://api.github.example.com"],"scopes":[{"scope_value":"repo","description":"Repository read access"}]}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+ETag: "2"
+
+{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github-production","display_name":"GitHub Production","credential_source":"stored","client_registration":"static","token_endpoint_auth_method":null,"oauth2_flavor":"standard","client_id":"report-client-v2","client_secret":"REDACTED","issuer_uri":"https://github.example.com","discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"endpoints":{"authorize_endpoint":"https://github.example.com/authorize","token_endpoint":"https://github.example.com/token"},"protected_resources":["https://api.github.example.com"],"scopes":[{"scope_value":"repo","description":"Repository read access"}],"created_at":"2026-11-03T09:00:00Z","updated_at":"2026-11-03T09:05:00Z"}
+```
+
+The `200` occurs only after both affected sessions expire and lose refreshability in the same commit. Repeating this replacement with `If-Match: "2"` and identical values preserves evidenced sessions (1.2); sending stale `If-Match: "1"` fails the existing precondition response and changes nothing (1.3). Filesystem recognition preserves ETag `"1"` because it is not an administrative replacement.
 
 **Step 3 — 09:05 onward: attempts to use old connections require recovery**
 
-Alice's next broker-mediated use cannot return her old GitHub token despite its future expiry. Bob's next use cannot refresh his old connection. Alice can still use Calendar. Report Assistant receives an interactive-recovery action for GitHub rather than silently continuing with either old session. On Alice's next agent browser authorization, broker consent appears automatically. Following the protocol recovery action instead starts direct GitHub login and returns to `/sessions`, as ADR 044 requires.
+Alice's next broker-mediated request cannot newly authorize release of her old GitHub token despite its future expiry. A snapshot whose final guarded release decision completed before 09:05 may still arrive afterward; this is the preauthorized-delivery exception, not a new release. Bob's next use cannot refresh his old connection. Alice can still use Calendar. Report Assistant receives an interactive-recovery action for GitHub rather than silently continuing with either old session. On Alice's next agent browser authorization, broker consent appears automatically. Following the protocol recovery action instead starts direct GitHub login and returns to `/sessions`, as ADR 044 requires.
 
 **Step 4 — boundary variants: rejected updates and concurrent work**
 
 A rejected update or a save of unchanged effective values leaves the original connections usable (Scenarios 1.2–1.3). A refresh or callback started before 09:05 cannot later restore a usable old-credential connection (Scenario 1.4). Restoring `report-client-v1` at 09:10, restarting the broker, or using another replica does not reactivate the invalidated sessions (Scenario 1.5). In the filesystem variant, an unreadable or incoherent pair instead produces the existing infrastructure failure, no token, and no login loop; restoring access to unchanged effective values is not proof of rotation (Scenario 1.7).
 
-**Observable result**: Both GitHub users need a new connection; Calendar does not. No obsolete GitHub token is newly supplied by the broker after the change takes effect.
+**Observable result**: Both GitHub users need a new connection; Calendar does not. No obsolete GitHub token is newly authorized for release after the change takes effect. Network delivery of a previously authorized snapshot is permitted.
 
 ### Journey 2 — Alice reconnects from automatic consent guidance (User Story 2, Scenarios 2.1–2.4)
 
@@ -122,6 +149,19 @@ The following is the next affected agent browser authorization, using the existi
 **Step 1 — 09:06: the affected browser flow shows consent guidance**
 
 Alice is still authenticated to the broker. Her delegation still exists, but the required GitHub connection is no longer usable. She starts Report Assistant's normal authorization flow. After the existing agent, redirect URI, scope, and PKCE checks, the browser goes automatically to `/agents/550e8400-e29b-41d4-a716-446655440000?session_token=SYNTHETIC_AUTHORIZATION_CONTEXT` and shows State A. The opaque marker represents the existing sealed authorization context for that validated request, not a new token claim. The active grant does not skip this reconnect guidance, because the existing gate checks every connection that the grant includes and every mandatory connection. An unconnected required GitHub login blocks **Save**; a disconnected optional service that the grant does not include does not.
+
+For the local-mode instance, Report Assistant's registered client ID is its agent UUID, its allowlisted callback is `https://report.example.com/callback`, and its granted broker scope is `openid`. The required provider scope is `repo`, separate from this broker scope. Proxy/hybrid tests use their existing validated continuation contracts, with the same consent decision (Scenario 2.1).
+
+```http
+GET /oauth2/authorize?response_type=code&client_id=550e8400-e29b-41d4-a716-446655440000&redirect_uri=https%3A%2F%2Freport.example.com%2Fcallback&scope=openid&state=SYNTHETIC_AGENT_STATE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000?session_token=SYNTHETIC_AUTHORIZATION_CONTEXT
+```
+
+The sealed context preserves the validated original request, including PKCE and agent state; an invalid client/redirect/scope is rejected before this decision, never sealed into consent.
 
 ![State A: consent guidance after credential change](wireframes/journey-2-a-reconnect.svg)
 
@@ -243,6 +283,52 @@ Action from State C: **Login** on the GitHub Production card deliberately starts
 
 **Observable result**: Successful login restores only Alice's GitHub connection. Cancellation restores nothing. Neither outcome silently changes agent delegation. A non-browser request remains a protocol failure with recovery guidance, never an unsolicited HTML consent response.
 
+### Journey 3 — Noninteractive failure followed by direct recovery (User Story 2, Scenario 2.4)
+
+This is an alternative recovery branch from Journey 1: Alice has not completed Journey 2 login before this request.
+
+**09:07 — Report Assistant asks for GitHub tokens after invalidation.** Its trusted, signed client assertion and signed subject credential are represented by synthetic opaque markers; the existing trust anchor validates Alice's subject and authorizes this agent/resource. They are not executable tokens. The configured public origin is `https://broker.example.com`; resource resolution selects GitHub's service UUID, not a caller-supplied recovery target.
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=SYNTHETIC_VERIFIED_ALICE_SUBJECT&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&resource=https%3A%2F%2Fapi.github.example.com&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=SYNTHETIC_TRUSTED_REPORT_ASSERTION
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+Cache-Control: no-store
+
+{"error":"invalid_grant","error_description":"User session is unavailable. Please re-authenticate.","error_uri":"https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"}
+```
+
+No old token, HTML, unsolicited redirect or `WWW-Authenticate` header is returned. For stale/unavailable filesystem publications the response is instead `500 server_error` without `error_uri`; login cannot repair a mount outage.
+
+**09:07:05 — Alice deliberately opens the exact recovery action in her authenticated browser.** This GET starts provider login directly, without entering Journey 2's consent view.
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://github.example.com/authorize?response_type=code&client_id=report-client-v2&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440010%2Foauth2%2Fcallback&scope=repo&state=SYNTHETIC_DIRECT_STATE_V2&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
+```
+
+**09:07:20 — Alice completes provider authorization.** The provider redirects with the one-time code and sealed state below. The broker validates principal, state, PKCE and generation, exchanges the code using the acquired current pair, and persists the replacement behind the generation/CallbackID fence.
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/callback?code=SYNTHETIC_DIRECT_CODE_V2&state=SYNTHETIC_DIRECT_STATE_V2 HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/sessions?success=true&service_id=880e8400-e29b-41d4-a716-446655440010
+```
+
+Alice lands on `/sessions` with her usable GitHub replacement; Bob's invalidated row and Alice's delegation remain unchanged. Report Assistant retries its original token request with fresh valid assertion material and can receive the current connection's token. No output JWT is introduced by this feature; access/refresh tokens remain opaque. Provider cancellation instead returns `/sessions?error=access_denied` and restores nothing, as Journey 2 State C describes.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -250,7 +336,7 @@ Action from State C: **Login** on the GitHub Production card deliberately starts
 - **FR-001**: An actual in-scope credential change MUST invalidate every established user session for the affected third-party service, not just the operator's or the next user's session.
 - **FR-002**: Changes to the operator-managed effective client ID, shared secret, or both MUST invalidate sessions for stored and eligible filesystem credential sources, including same-client-ID secret rotation. Existing filesystem eligibility restrictions remain. Automatic CIMD metadata/key refresh and discovery/DCR registration lifecycles are outside this change. Changing source without changing effective credentials MUST NOT add an invalidation trigger, without relaxing ADR 041's existing legacy-identity restrictions. This is Proposed approval item C1 and requires a narrow superseding ADR 041 before implementation.
 - **FR-003**: After a covered change takes effect, the broker MUST NOT newly authorize release or refresh of tokens from affected old sessions, regardless of token expiry or refreshability. All broker-mediated token access paths MUST agree that those sessions are unusable. For filesystem sources, authorization initiation and every decision to supply or refresh tokens MUST establish credential currency first, including unexpired access-token use. This broader acquisition boundary is proposal C3.
-- **FR-004**: A save with unchanged effective credentials, unrelated service metadata changes, or an update rejected before taking effect MUST NOT trigger credential-change invalidation.
+- **FR-004**: A save with unchanged effective credentials, unrelated service metadata changes, or an update rejected before taking effect MUST NOT trigger credential-change invalidation. Unknown legacy filesystem sessions MUST instead be conservatively invalidated on first valid publication initialization; this one-time upgrade boundary is Proposed D-INITIALIZE. Known transition/evidenced pairs retain no-op behavior.
 - **FR-005**: Invalidation MUST survive broker restarts and apply across serving replicas. Returning to former credential values MUST NOT reactivate an invalidated session.
 - **FR-006**: Concurrent refreshes and callbacks tied to replaced credentials MUST NOT restore session usability after the change takes effect. Recovery MUST require a new authorization against the current credential state.
 - **FR-007**: On the next agent browser authorization flow with an invalidated required service connection, the broker MUST automatically show consent guidance at the existing `/agents/{agent-id}` view, even with an active delegation, before continuing authorization. This applies in each supported broker mode after existing request validation. Existing sealed authorization context and tab-local return-state handling MUST preserve the interrupted request on successful reconnection. Optional connections MUST retain existing optionality. This is Proposed approval item C2.
@@ -258,7 +344,7 @@ Action from State C: **Login** on the GitHub Production card deliberately starts
 - **FR-009**: Successful authorization with the current credentials MUST establish a usable replacement session and allow continuation within existing permissions. A failed or cancelled attempt MUST leave old sessions unusable and expose a deliberate retry action without a redirect loop.
 - **FR-010**: Sessions for unrelated services and other users' newly established connections MUST remain unaffected. Existing user grants MUST retain their permissions, status, and expiry unless the user explicitly changes them through the existing consent controls.
 - **FR-011**: Non-interactive clients MUST receive the existing recoverable session failure rather than an old token, unsolicited browser redirect, or HTML. RFC 8693 uses `400 invalid_grant` and the existing resolved-service authorization `error_uri` with the configured same-origin `/sessions` return (ADR 044). Following it starts provider login directly. Source availability failures retain their existing non-recoverable infrastructure response without a recovery URI. Existing ExtProc forwarding behavior is unchanged.
-- **FR-012**: A stored credential update MUST become effective with its successful durable commit, without reporting success while obsolete sessions remain usable. A filesystem change MUST become effective at the first successful validated acquisition and durable recognition of a changed effective pair, before that operation admits authorization or supplies or refreshes tokens. If durable recognition fails, the operation MUST fail closed. No polling or instantaneous external-write detection is promised. Metadata-only listings MUST remain independent of file reads and reflect durably recognized state. The plan MUST design atomicity, race fencing, replica consistency, and failure handling that satisfy these boundaries; this is proposal C3.
+- **FR-012**: A stored credential update MUST become effective with its successful durable commit, without reporting success while obsolete sessions remain usable. A filesystem change MUST become effective at the first successful validated acquisition and durable recognition of a changed effective pair, before that operation admits authorization or supplies or refreshes tokens. If durable recognition fails, the operation MUST fail closed. No polling or instantaneous external-write detection is promised. Metadata-only listings MUST remain independent of file reads and reflect durably recognized state. Filesystem publications MUST include a monotonic service-scoped revision: lower revisions and equal-revision/different-pair observations fail closed, CAS losers discard acquired material, and restoration uses a higher revision. Initial acquisition of unknown legacy sessions MUST expire them atomically before proceeding. Final token-release authorization MUST validate/decrypt the current session under a generation-aware service→session guard; every singleflight joiner MUST make its own decision. The plan defines these boundaries (C3, D-PUBLICATION, D-INITIALIZE).
 
 ### Domain Model *(if applicable - document before API or database design)*
 
@@ -286,7 +372,7 @@ stateDiagram-v2
 
 ### Configuration Requirements *(if applicable - document before implementation)*
 
-No new runtime setting is requested. The existing source selection determines where effective credentials come from. For filesystem credentials, the existing configuration contract is:
+The existing source selection determines where effective credentials come from. **Proposed API-CONFIG/D-PUBLICATION** add one required revision-file path to the existing filesystem binding:
 
 ```yaml
 third_party_oauth2:
@@ -294,9 +380,10 @@ third_party_oauth2:
     github-production:
       client_id_file: /meta/github/client-id
       client_secret_file: /meta/github/client-secret
+      credential_revision_file: /meta/github/credential-revision
 ```
 
-This binding supplies credentials only when GitHub Production explicitly selects `credential_source: filesystem`. It does not select that source itself. Paths are synthetic. Publishing a different effective client ID or secret through these files is an in-scope change, including secret-only rotation. Replacing a file with the same effective value after the existing whitespace normalization is not a credential change. No polling mechanism or new configuration key is selected.
+This binding supplies credentials only when GitHub Production explicitly selects `credential_source: filesystem`. It does not select that source itself. Paths are synthetic. Publishing a different effective client ID or secret through these files is an in-scope change, including secret-only rotation. Replacing a file with the same effective value after the existing whitespace normalization is not a credential change. The revision content starts at a positive decimal int64 (example 41), advances to 42 for changed values and to 43 for intentional restoration. Publish all three files coherently. No default, fallback or polling is added; [contracts/configuration.md](contracts/configuration.md) defines exact validation and chart mapping.
 
 ### API Requirements *(if applicable - design before database)*
 
@@ -326,12 +413,12 @@ The existing ThirdpartyOAuth2Service, UserSession, UserGrant, Agent, and authent
 
 ### Measurable Outcomes
 
-- **SC-001**: In the acceptance matrix for every selected credential-change type, 100% of subsequent broker-mediated attempts to obtain or refresh affected old tokens require recovery, including old access tokens that have not expired.
+- **SC-001**: In every credential-change matrix case, 100% of token-release decisions and refresh admissions ordered after invalidation reject old tokens, including unexpired tokens. Delivery of a snapshot authorized before commit is permitted and tested separately.
 - **SC-002**: In the two-user, two-service journey, both affected users require reauthorization and the unrelated service remains usable in 100% of runs.
 - **SC-003**: In every supported broker mode, 100% of next agent browser authorization attempts with an invalidated required connection show consent guidance despite an active grant and without manual navigation. In protocol-recovery cases, 100% of followed action links start direct service login and return to `/sessions`, without introducing a consent-first detour.
 - **SC-004**: A user with valid provider access can restore the affected connection with one successful third-party authorization and continue without an administrative reset or unintended delegation change.
 - **SC-005**: Rejected updates, unchanged-credential saves, cancellation, concurrent old callbacks, former-value restoration, restarts, and other serving replicas produce zero accidental reactivations of an invalidated session in the acceptance cases.
-- **SC-006**: In all filesystem client-ID and secret-only rotation cases, the first subsequent broker token-use request recognizes the changed pair and supplies zero old tokens, including when no refresh is due. Failed or incoherent acquisition supplies zero tokens, uses zero fallback credentials, and produces no automatic login loop.
+- **SC-006**: In all filesystem rotation cases with a coherent higher revision, the first subsequent token-use request recognizes the changed pair and newly authorizes zero old tokens, even without refresh due. Unknown legacy sessions expire on first valid initialization. Lower-revision replicas and equal-revision mismatches authorize zero tokens and perform zero state/session writes; intentional higher-revision restoration never revives old sessions. Failed or incoherent acquisition supplies zero tokens, uses zero fallback credentials, and produces no automatic login loop.
 
 ## Assumptions
 

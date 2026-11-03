@@ -32,8 +32,9 @@ Replace the **Local/Hybrid Mode** bullets and add a **Connection checks** block:
           even when the grant is active. The grant itself is not changed. Optional services that
           the grant does not include never trigger this redirect
         - For a service whose credentials come from mounted files, the broker reads the files first.
-          If they are missing, unreadable, or incoherent, the response is the `server_error`
-          redirect. If they differ from the last observed credentials, the broker invalidates
+          If the revision/pair publication is missing, unreadable, incoherent, malformed, stale,
+          or reuses a revision with different values, the response is the `server_error`
+          redirect. If a coherent higher-revision pair differs from the last observed credentials, the broker invalidates
           every connection for that service first, and the request redirects to consent
 ```
 
@@ -54,10 +55,12 @@ In the `Location` header description of the `"302"` response, change the consent
 Append to both descriptions:
 
 ```yaml
-        For a service whose credentials come from mounted files, initiation reads both the client
-        ID and the secret file and establishes that they are current before it redirects. If either
-        file is missing, unreadable, or incoherent, the existing `500` response is returned and no
-        provider redirect occurs. A changed pair first invalidates every connection for the service.
+        For mounted credentials, initiation reads one coherent client ID, secret and publication
+        revision (credential_revision_file) and establishes currency before redirecting. Invalid,
+        unavailable or stale material returns the existing `500` without a provider redirect or
+        recovery URI. A changed higher-revision pair first invalidates all service connections.
+        First valid observation of unknown legacy connections also invalidates them conservatively;
+        no existing connection is grandfathered without comparison evidence.
 ```
 
 ## `GET /api/third-party/{serviceId}/oauth2/callback`
@@ -67,10 +70,11 @@ Replace the **competing callbacks** sentence and add a bullet:
 ```yaml
           The first completed callback from a shared starting state wins; competing callbacks return
           success without replacing its credentials while the winner's connection is usable.
-        - A callback for an authorization that began before the service's client credentials changed
-          redirects to `/sessions?error=callback_failed` without completing the code exchange, and
-          the change remains in effect. This includes a reconnect whose connection was invalidated
-          in the meantime. The user starts a new login.
+        - A stale generation detected before provider exchange returns
+          `/sessions?error=callback_failed` without contacting the provider. If a change is recognized
+          during an already admitted exchange, that provider call cannot be recalled; the broker
+          rejects stale session persistence and returns the same `callback_failed` redirect.
+          This applies to first connections and reconnections. The user starts a fresh login.
 ```
 
 ## `GET /api/third-party/sessions` and `GET /api/third-party/{serviceId}/session`
@@ -99,13 +103,17 @@ Append to the token exchange error documentation, next to the existing recoverab
         - A connection invalidated by a change of the service's client credentials returns the
           existing recoverable `400 invalid_grant` with the service-specific `error_uri` (ADR 044).
           Following it starts the provider login directly and returns to `/sessions`. The broker
-          never returns an old access token after the change takes effect, even if the token has
-          not expired
+          never newly authorizes old-token release after the change-effective commit, even for an
+          unexpired token. Its final generation/session-guarded decision orders release with that
+          commit. A snapshot authorized before commit may still be delivered afterward
         - For a service whose credentials come from mounted files, every token request reads the
-          files before it returns or refreshes a token. A changed pair invalidates the connections
-          first. Missing, unreadable, or incoherent files return the existing non-recoverable
+          coherent revision/pair files before token decisions. A changed higher-revision pair
+          invalidates connections first; unknown legacy sessions expire on initialization. Missing,
+          unreadable, incoherent, invalid or stale publications return the existing non-recoverable
           `500 server_error` without `error_uri`, even if the stored access token has not expired
 ```
+
+The new required binding key and upgrade procedure are Proposed in [configuration.md](configuration.md). Lower-revision replicas cannot invalidate a fresh session. CAS conflicts abort the operation with the existing non-recoverable failure; retries require fresh acquisition, not relabeling old material.
 
 ## Unchanged
 

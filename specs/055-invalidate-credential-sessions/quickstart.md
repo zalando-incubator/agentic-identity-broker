@@ -20,11 +20,11 @@ just test
 Expected: everything passes. The new unit tests cover these areas:
 
 - Change detection in `internal/domain/thirdparty/`: unchanged values, metadata edits, secret-only and client-ID changes, transitions, and the decryption-failure rule
-- `establishCurrency` in `internal/domain/oauth2session/`: cache hit, baseline, recognition, lost compare-and-set, source errors, and no write on failure
-- Callback fencing in `internal/domain/oauth2session/`: stale sealed generation, stale reconnection, and a legacy zero claim
+- `establishCurrency` in `internal/domain/oauth2session/`: revision-aware cache, conservative legacy initialization, higher-revision recognition, lost-CAS discard without reuse, stale/equal-mismatch source errors and no write on failure
+- Callback fencing in `internal/domain/oauth2session/`: both stale-callback exchange timings, guarded reconnection, delayed old refresh acquisition after fresh login, every singleflight joiner's final guarded release ordering, and legacy zero claim
 - Currency at `HandleAuthorization` admission in `internal/domain/oauth2/`
 - Memory repository parity in `internal/adapters/storage/memory/`: atomic invalidation, compare-and-set, and cascade
-- The fingerprinter adapter in `internal/adapters/credentialfile/`: encoding, mismatch reported as `false`, and concurrency bound
+- The fingerprinter adapter in `internal/adapters/credentialfile/`: coherent three-file publication/revision parsing, encoding, match/mismatch, concurrency bound and context-aware queued cancellation versus noninterruptible running Argon2
 
 ## 2. PostgreSQL repositories and migration (container-backed; validated by CI)
 
@@ -36,10 +36,11 @@ Expected:
 
 - Migration `046` (number provisional) applies, rolls back, and reapplies.
 - The foreign key cascades on service deletion.
-- The CHECKs reject a zero generation and a non-Argon2id fingerprint.
+- CHECKs reject zero generation, nonpositive publication revision and non-Argon2id fingerprint. High-water marks persist across source transitions.
 - `RecognizeChange` and `Update` with a `CredentialChange` invalidate exactly the service's sessions in one transaction.
 - A concurrent `CreateIfAbsent` with a stale expected generation returns Conflict.
-- A refresh holding the session lock commits before the invalidation and is then overwritten.
+- A refresh holding service-share/session locks commits before invalidation and is then overwritten. An old acquisition admitted after rotation/new login is rejected before provider authentication.
+- Final guarded release orders correctly with invalidation in both directions; preauthorized delivery is permitted, copied/shared results without a guard are not.
 
 ## 3. Backend acceptance journeys (User Story 1 and Scenario 2.4)
 
@@ -54,10 +55,13 @@ Expected: one passing `It` per scenario 1.1–1.7 and 2.4 (see [plan.md](plan.md
 | After a stored client-ID change (`PUT /api/services/{id}` with `report-client-v2`) | RFC 8693 for Alice returns `400 invalid_grant` with `error_uri=https://<public>/api/third-party/<github-uuid>/oauth2/authorize?redirect_uri=https%3A%2F%2F<public>%2Fsessions`, even though her access token expires at 10:00. Bob's refresh does not reach the provider. Calendar still returns a token. |
 | `GET /api/third-party/sessions` as Alice | GitHub has `is_expired: true` and `has_refresh_token: false`. Calendar is unchanged. |
 | Unchanged-value PUT, or a display-name PUT | Sessions stay usable. No `service.thirdparty.credentials_changed` event is emitted. |
-| Rejected PUT (`409` stale version) | Sessions stay usable. |
-| Filesystem variants | Publish a new pair with `helpers.PublishCredentialPair`. The next token request by Alice is rejected without a provider call. Bob's request through a second broker sharing the storage is also rejected. The service `ETag` is unchanged. |
+| Rejected PUT (`412` stale If-Match) | Sessions stay usable. |
+| Filesystem variants | Publish a coherent revision/pair with `helpers.PublishCredentialPublication`, advancing 41 to 42. The next token request by Alice is rejected without a provider call. Bob's request through a second broker sharing the storage is also rejected. The service `ETag` is unchanged. |
 | Filesystem outage | The token request returns `500 server_error` without `error_uri`. Sessions stay usable after the files return unchanged. |
-| Paused callback across a change | `/sessions?error=callback_failed`. No provider token request is made. |
+| Callback paused before exchange versus inside exchange | Both return `/sessions?error=callback_failed`. Before admission: zero provider calls. During admitted exchange: call allowed, stale persistence rejected. |
+| Stale replica or delayed A/41 observation after B/42 | Source/state failure without token or state/session mutation; fresh B connection remains usable on a current replica. Intentional A restoration requires revision 43. |
+| Legacy service with A sessions and no evidence first observes B | All sessions expire atomically; no unexpired A token is authorized. Empty service records evidence without generation increment. |
+| Final release/invalidation race and singleflight joiners | Commit first rejects old release; decision first permits only the preauthorized snapshot's delayed delivery. Every joiner independently checks latest state/source/revision/session. |
 
 The amended Feature 051 scenarios must pass under their existing label:
 
@@ -85,8 +89,12 @@ just verify
 
 Run every recipe that needs no container. CI covers `just test-integration-infra` and `just test-e2e-docker`.
 
-## 6. Manual operator check (optional, local)
+## 6. Cutover and restoration
+
+Follow [contracts/configuration.md](contracts/configuration.md): apply schema, publish revision material, exclude old replicas from filesystem traffic/background/sweeps and replace them before resuming. Unknown legacy sessions need one fresh login on first observation. A cold stale mount is independently rejected by the durable revision high-water mark. Preserve that mark through source transitions; returning to filesystem needs a higher revision. Before DOWN convert filesystem services to stored and drain contexts for 10 minutes under ADR 041 rollback prerequisites. Never reset live publication evidence.
+
+## 7. Manual operator check (optional, local)
 
 1. Start the broker with `examples/config/` filesystem credentials for one service.
-2. Connect a user, then replace the bound secret file with a new value by publishing a fresh symlink generation.
+2. Publish client ID, secret and revision 41 coherently. Connect a user, then publish a fresh immutable generation with the new secret and revision 42. Supply the required credential_revision_file binding; never independently overwrite files or reuse revision 41.
 3. Call the token exchange. Expect the recoverable `invalid_grant`, one `service.thirdparty.credentials_changed` log record with `trigger=filesystem_recognized`, and no secret or path in any log line.

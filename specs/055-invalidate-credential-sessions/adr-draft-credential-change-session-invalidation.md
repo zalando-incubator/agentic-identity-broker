@@ -3,7 +3,7 @@
 **Status**: Proposed
 **Date**: 2026-11-03
 **Feature**: 055-invalidate-credential-sessions
-**Supersedes (narrowly)**: [ADR 041: OAuth2 Client-Secret File Overrides](../../adrs/041-oauth2-client-secret-file-overrides.md), only the rules listed under "Superseded ADR 041 rules"
+**Supersedes (narrowly)**: [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md), only the rules listed under "Superseded ADR 041 rules", and [ADR 038](../../adrs/038-proactive-token-refresh.md), only session-only refresh admission locking as described in section 4
 
 The number 045 is provisional. Implementation assigns the next free ADR number when it moves this draft into `adrs/`, and updates every reference to it.
 
@@ -25,7 +25,7 @@ A **credential change** is an actual change of a service's **effective outbound 
 | Source | Trigger | Effective-at boundary |
 |---|---|---|
 | Stored | A non-discovery administrative replacement (`PUT /api/services/{service-id}`) whose effective client ID or stored secret differs from the persisted values | Successful commit of that update |
-| Filesystem | The broker acquires a coherent pair that differs from the last recognized pair | Successful commit of the recognition transaction, before the triggering operation proceeds |
+| Filesystem | A coherent publication has a higher operator revision and differs from the recognized pair | Successful commit of the recognition transaction, before the triggering operation proceeds |
 | Stored ↔ filesystem transition | Covered only when the effective pair differs | Commit of the update (to stored), or first recognition (to filesystem) |
 
 These rules use exact value comparisons. Stored secrets are compared in constant time after the domain decrypts the persisted secret. An update that keeps both values, a display-name or scope edit, and a rejected or conflicting update are not credential changes. If the persisted secret cannot be decrypted, the update counts as a change, so sessions are invalidated instead of being kept.
@@ -48,6 +48,16 @@ Rows are retained, not deleted. Every existing reader then treats the connection
 
 ### 3. Filesystem currency (C3)
 
+#### Publication freshness (Proposed D-PUBLICATION and API-CONFIG)
+
+Each filesystem binding adds required `credential_revision_file` (no default). Its content is a positive decimal int64, optionally followed by one newline. The operator publishes revision, client ID, and secret as one immutable projected-volume generation. `ReadPublication` extends ADR 041's descriptor/coherence checks to all three files; independent overwrites are unsupported. Revisions are service-scoped, not timestamps or symlink names, and strictly increase whenever effective values change, including restoration. All replicas share the same operator revision authority.
+
+Persist `publication_revision` beside the fingerprint. A lower revision is stale; an equal revision with a different pair is invalid publication. Neither can change evidence, invalidate fresh sessions, admit provider authentication, or supply tokens. A higher revision with matching values advances only publication evidence; with different values it increments the generation and invalidates sessions. Restoration must use a new revision: A/41 → B/42 → A/43. Replaying A/41 is not restoration. Reject overflow, never wrap. Source transitions retain the publication revision high-water mark even when clearing the fingerprint for stored credentials; re-entering filesystem requires a revision strictly above that mark. The stored-pair transition fingerprint still prevents unchanged-pair invalidation.
+
+This requires an additional operator file and configuration/deployment work beyond the initial no-new-key proposal. It is recommended because generation CAS cannot distinguish stale material from intentional restoration. The main alternative is stopping/draining all admission, publishing and verifying all mounts, then resuming on every rotation; that adds downtime and lacks independent freshness evidence on a misconfigured replica.
+
+#### Currency operations
+
 For a filesystem-sourced service, the broker **establishes credential currency** before each of these operations:
 
 1. Third-party authorization initiation
@@ -58,13 +68,13 @@ For a filesystem-sourced service, the broker **establishes credential currency**
 
 Currency is established through these steps:
 
-1. Acquire one coherent pair with `ReadPair`. ADR 041's acquisition safety rules still apply.
+1. Read a consistent service/state snapshot; acquire one coherent revision and pair with `ReadPublication`; reread the state. If generation or publication revision advanced during acquisition, discard it and fail closed. Never relabel that acquisition against the newer state.
 2. Compute an HMAC-SHA256 digest of the length-prefixed pair. Use a 32-byte key that `crypto/rand` generates per process. The digest exists only in memory.
-3. If the process cache already holds this digest for this service at the current generation, the pair is current.
+3. Validate publication freshness before any cache hit. A digest match at the current generation and publication revision establishes currency.
 4. Otherwise compare the pair with the durable fingerprint. A fingerprint is an Argon2id PHC string over the same length-prefixed pair. It uses the existing `oauth2server.Argon2Hasher` parameters (64 MiB, t=3, p=4, 16-byte salt) and runs with at most 2 concurrent computations.
-   - Match: cache the digest.
-   - No fingerprint (legacy filesystem state): record a baseline fingerprint with compare-and-set. Do not invalidate. The broker cannot prove a change it never observed.
-   - Mismatch: commit a recognition. Lock the service row `FOR UPDATE`, compare-and-set the generation, store the new fingerprint, and invalidate sessions. A concurrent replica can lose the compare-and-set. It then rereads the state and repeats the comparison.
+   - Match at the same revision: cache the digest. At a higher revision, CAS-update only revision evidence before caching; preserve generation and sessions. Treat a known stored-transition fingerprint with no revision similarly, recording first revision and comparing the pair.
+   - No fingerprint (legacy filesystem state): initialize fingerprint and revision under the service write lock. If any sessions exist, invalidate them and advance the generation atomically because their establishing pair is unknown. With no sessions, initialize without a generation increment (Proposed D-INITIALIZE).
+   - Mismatch at a higher revision: lock the service row `FOR UPDATE`, compare-and-set expected generation and publication revision, store the new fingerprint/revision, and invalidate sessions atomically. A CAS loser fails closed with a sanitized conflict and zero token/provider calls. Diagnostic rereads cannot repeat recognition or relabel the acquired pair. A new request must make a fresh acquisition. Each operation permits at most one mutation attempt. After any successful recognition/evidence initialization, a newly issued consistent observation binds the same verified pair to the transaction result; only that successful transaction, never a CAS loss, may advance the operation's observation.
 5. Continue the operation with the same validated pair. Code exchange and refresh still make one acquisition per logical operation. Initiation now reads both files, not only the client ID.
 
 Unavailable, incoherent, or invalid files return the existing ADR 041 source errors. They supply no token and use no fallback credential. They are never treated as a change. If the broker cannot load the credential state or commit the recognition, the operation fails closed with the existing repository or persistence failure. No polling or background detection is added. A file publication that is reverted before the next observation cannot be detected. This limit is part of the guarantee.
@@ -77,10 +87,11 @@ Stored-to-filesystem updates write a fingerprint of the persisted stored pair, w
 - The callback compares the sealed generation with the current generation before it contacts the provider.
 - A first-connection insert accepts only a matching generation. The insert keeps the service row `FOR SHARE` lock that it already takes, and recognition and stored updates take that row `FOR UPDATE`.
 - A reconnection to an existing session is fenced by the rotated `callback_id`. When the fence rejects a reconnection, the callback fails with the existing `callback_failed` redirect. It does not report success with an unusable session.
-- Refreshes keep holding the session row lock. An invalidation waits for an in-flight refresh and then overwrites its result.
+- For both stored and filesystem services, acquisition binds provider, source, pair, and generation from a consistent service/state snapshot. Refresh uses `WithLockedSessionAtCredentialGeneration`: service `FOR SHARE`, then session `FOR UPDATE`, then compare current generation, source and optional publication revision with the acquired CredentialObservation before due/identity checks and provider authentication. No acquisition or recognition occurs under these locks. Memory uses `issuerSessionGate.RLock` then the per-session lock. An old acquisition cannot refresh a newly reconnected session. Invalidation takes the service write lock first, waits for an admitted refresh, then overwrites its result. This narrowly extends ADR 038 locking without changing scheduling, singleflight, or retries.
+- Every caller, including each singleflight joiner, makes a final token-release decision through the same guarded operation. Under service share/session locks, check acquired CredentialObservation (generation/source/revision) and latest row validity/scopes/identity, decrypt that row's token, and authorize release before unlocking. A copy, refresh result, or unguarded reread never authorizes release. Invalidation committed first means no old-token authorization; a decision completed first permits later network delivery. Research R5 defines the deterministic tests.
 - A state token without the claim, which an older replica issued during a rolling upgrade, is accepted only while the generation is 1.
 
-A response that the broker authorized before the change committed can still be delivered. Tokens already delivered to agents, the ExtProc cache, or providers are not revoked.
+A response whose final guarded release decision completed before the change committed can still be delivered. Tokens already delivered to agents, the ExtProc cache, or providers are not revoked.
 
 ### 5. Recovery and consent (C2)
 
@@ -105,21 +116,24 @@ No event or error contains a credential, digest, fingerprint, path, or token.
 
 ### Superseded ADR 041 rules
 
+The prohibition on publication generation identifiers is narrowly replaced by the operator revision file and durable high-water mark above. Coherent acquisition covers three descriptors rather than two. All remaining reader safety rules stay binding.
+
 | ADR 041 rule | Replacement |
 |---|---|
 | "Fresh acquisition supports same-identity secret rotation without service writes or restarts" (continuity of existing sessions) | A same-identity secret change is a credential change. It invalidates the sessions. It writes the internal credential state, not the service record. |
-| Authorization initiation: "One `ReadClientID` call. No secret read." | Initiation performs one `ReadPair` and establishes currency. Only the client ID leaves the domain. |
+| Authorization initiation: "One `ReadClientID` call. No secret read." | Initiation performs one `ReadPublication` and establishes currency. Only the client ID leaves the domain. |
 | Unexpired access tokens are supplied without credential acquisition | A filesystem token-supply decision requires a successful acquisition and currency. This adds an availability dependency on the files. |
 | "Publication after validation can leave an in-flight operation using its validated pair" | This remains true for provider authentication. No operation can commit a usable connection from a generation that a recognized change has superseded. |
 | "No file secret, file path, descriptor, or last-known credential persists across operations" | Only a salted Argon2id fingerprint of the last recognized pair persists. No plaintext, ciphertext, path, or descriptor persists. |
 
-All other ADR 041 rules remain binding: source selection, bindings, reader safety, identity association and transition evidence, source errors, migrations 040 and 041, and the rollback procedure. ADR 008 AAD, ADR 012 encryption ownership, ADR 038 refresh scheduling, and ADR 044 recovery targets are unchanged.
+All other ADR 041 rules remain binding: source selection, bindings, reader safety, identity association and transition evidence, source errors, migrations 040 and 041, and the rollback procedure. ADR 008 AAD, ADR 012 encryption ownership, ADR 044 recovery targets are unchanged. This draft also narrowly supersedes ADR 038's session-only refresh admission lock with service-share-before-session locking; its scheduler, update-only behavior, bounded contexts, singleflight and drain rules remain binding.
 
 ## Consequences
 
 - Rotating any operator-managed client credential forces every user of that service to reconnect once. Operators should coordinate rotation windows.
-- Filesystem token use now depends on file availability, even when the access token has not expired. A cache hit costs two file reads and one HMAC computation. The first observation of each new pair costs one Argon2id computation per process.
-- Migration `046` (number provisional) adds one internal table. It is metadata-only and does not rewrite rows.
+- Filesystem token use now depends on file availability, even when the access token has not expired. A cache hit costs three coherent file reads and one HMAC computation. The first observation of each new pair costs one Argon2id computation per process.
+- Migration `046` (number provisional) adds one internal table including publication revision. It is metadata-only; first acquisition of an unbaselined filesystem service expires any existing sessions (D-INITIALIZE).
+- Before cutover, apply schema, publish coherent revision material, and replace all old application replicas before admitting filesystem traffic. Their reader cannot enforce this protocol. Never reset the revision high-water mark during rotation.
 - The Feature 051 acceptance scenarios that assert session continuity across secret rotation, and initiation that needs only the client ID, are amended (US2-S1, US2-S5, US5-S3).
 - Already delivered tokens remain usable at providers until they expire.
 
