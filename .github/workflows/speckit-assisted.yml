@@ -17,10 +17,6 @@ on:
 
 permissions: {}
 
-# Pushing workers publish through this App, so the automation also trusts comments from its bot.
-env:
-  AGENTIC_WORKFLOWS_APP_CLIENT_ID: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
-
 concurrency:
   group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
@@ -633,6 +629,7 @@ jobs:
     needs: [route, implement, verify, review, reviewed, fix, verified, apply]
     if: >-
       always() && needs.route.result == 'success' &&
+      needs.verify.result != 'failure' && needs.verified.result != 'failure' &&
       (needs.implement.result == 'success' || needs.fix.result == 'success' || needs.apply.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -40,7 +40,6 @@ steps:
     uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
     env:
       SPECKIT_INPUTS: ${{ toJSON(inputs) }}
-      AGENTIC_WORKFLOWS_APP_CLIENT_ID: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     with:
       script: |
         const { prepare } = require('/tmp/gh-aw/speckit/automation.cjs');
@@ -51,7 +50,7 @@ steps:
     with:
       go-version-file: go.mod
   - name: Install just
-    uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+    uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
     with:
       tool: just
   # The agent sandbox inherits XDG_RUNTIME_DIR from the runner but cannot write

@@ -132,11 +132,12 @@ function actionsBot(user) {
 }
 
 // Workers that push publish through the Agentic Workflows App so the push starts CI, which makes that App's
-// bot the author of their comments. Any other App's bot stays untrusted.
+// bot the author of their comments. Only an App's own bot has a [bot] login, so any other App stays untrusted.
+// The login identifies it because the single-comment endpoint omits performed_via_github_app.
+const workerApp = "zalando-incubator-agent-workflows[bot]";
+
 function workerBot(comment) {
-  const app = process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
-  return actionsBot(comment.user) || Boolean(app) && comment.user?.type === "Bot" &&
-    comment.performed_via_github_app?.client_id === app;
+  return actionsBot(comment.user) || comment.user?.login === workerApp && comment.user?.type === "Bot";
 }
 
 function parseCommand(body) {
