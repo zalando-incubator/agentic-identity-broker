@@ -31,7 +31,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 **Design Preconditions (BLOCKING)**:
 
 - [x] **Domain Model**: Reuse `Agent.RedirectURIs`; model the wildcard as a validated URI-pattern value, not a new persisted entity.
-- [x] **Domain Concepts**: Add “Redirect URI Pattern” to the `ARCHITECTURE.md` glossary.
+- [x] **Domain Concepts**: Add “Agent Redirect URI Host Pattern” and “Opaque Agent Client” to the `ARCHITECTURE.md` glossary.
 - [x] **Entity IDs**: Not applicable; no new entity or UUID is introduced.
 - [x] **Configuration Design**: No runtime configuration is added.
 - [x] **Config Examples**: Not applicable; no configuration is added.

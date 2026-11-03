@@ -47,7 +47,7 @@ Include private PSL suffixes. Do not interpret `icann == false` as proof that no
 
 ## Decision 4: Record the security policy as an ADR
 
-**Decision**: Add ADR 045 for the wildcard grammar, public-suffix boundary, source-specific matcher, and preserved exact-match cases. Update the `ARCHITECTURE.md` glossary for “Redirect URI Pattern”.
+**Decision**: Add ADR 045 for the wildcard grammar, public-suffix boundary, source-specific matcher, and preserved exact-match cases. Update the `ARCHITECTURE.md` glossary for “Agent Redirect URI Host Pattern” and “Opaque Agent Client”.
 
 **Rationale**: Host wildcards change an authorization redirect trust boundary. The decision must be explicit, auditable, and consistent with ADR 042's exact private-use behavior.
 
