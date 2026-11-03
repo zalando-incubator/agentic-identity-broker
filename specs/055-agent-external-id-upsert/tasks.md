@@ -319,3 +319,22 @@ Current passing validation:
 | Infrastructure test compilation | Both migration and PostgreSQL test binaries compile with `-tags=integration -c`; no containers executed locally. |
 
 No deferred agent work or additional approval item remains. Release still requires the workflow's PostgreSQL/migration and container E2E gate.
+
+## Implementation verification — 2026-11-03
+
+The implementation at `bd75127cf6fbaf9c522dd566c66f07c4e892afb3` satisfies the approved feature artifacts. All 70 tasks remain complete; all 22 scenario-to-test locations in quickstart.md are current. No new application behavior, API, ADR, dependency, configuration or sign-off item was introduced. The architecture's Admin route diagram now includes the implemented collection PUT; spec.md, plan.md and reviewer-owned checklist markers are unchanged.
+
+| Check | Current-run evidence |
+| --- | --- |
+| `just check` | Pass; formatting, vet and lint, 0 issues. |
+| `just test` | Pass with race detection. |
+| `just test-integration` | Pass, including concurrent first calls, unchanged replays, timestamp advancement and coherent mixed definitions. |
+| `just test-coverage` | Pass on unchanged rerun; agents domain 93.2%, memory 77.6%, Admin handlers 83.5%, PostgreSQL 19.1% (unit-only). The first attempt failed in unrelated `internal/adapters/jwks/static_adapter_test.go:25`: process-wide goroutine count fell from 28 to 27. No test or production code was changed to obtain the passing rerun. |
+| `just test-e2e-backend` | 928/946 pass, 0 failures/pending; 18 excluded by the existing non-container/performance recipe. All 15 local feature scenarios pass. |
+| `just test-e2e-frontend` | 67/67 pass, no failures/pending/skips. |
+| `ginkgo -v --procs=2 --skip-file=agentgateway ./tests/e2e/extproc/` | 98/115 pass, 0 failures/pending; 17 container scenarios assigned to CI. |
+| Infrastructure compilation | `go test -tags=integration -c` compiles both migration and PostgreSQL test binaries. No database execution is claimed. |
+
+Initial 240-second test invocations timed out during cold compilation/suite execution; the complete invocations above passed with sufficient time. These attempts are not counted as successful checks.
+
+`just test-integration-infra`, `just test-e2e-docker` and ExtProc agentgateway scenarios are validated by the workflow's container tests on the pushed commit. They were not run locally and no container pass is claimed. All non-container work is finished; no task is waiting on container evidence. This record does not authorize deployment before that gate passes.

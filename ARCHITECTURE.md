@@ -516,6 +516,7 @@ Admin Server (Port 14000):
   ├── GET /health
   ├── /api/agents/*
   │   ├── POST / (create)
+  │   ├── PUT /?external_id={value} (create/update/no-op)
   │   ├── GET / (list)
   │   ├── GET /{id}
   │   ├── PUT /{id}
