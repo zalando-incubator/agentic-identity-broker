@@ -101,6 +101,16 @@ func IsRegisteredRedirectURI(kind RedirectURIClientKind, clientRedirectURIs, age
 	}
 }
 
+// IsAgentRedirectURIHostPattern reports whether a URI uses an Agent host wildcard.
+// Malformed URI strings containing a wildcard fail closed as patterns.
+func IsAgentRedirectURIHostPattern(uri string) bool {
+	if !strings.Contains(uri, "*") {
+		return false
+	}
+	u, ok := parseRedirectURI(uri)
+	return !ok || strings.Contains(u.Hostname(), "*")
+}
+
 // MatchesRedirectURI matches a private-use registration only byte for byte.
 // For loopback web callbacks it ignores the port; other components must match exactly.
 func MatchesRedirectURI(registered, incoming string) bool {

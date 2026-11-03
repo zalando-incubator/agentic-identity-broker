@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -20,9 +21,11 @@ type confidentialClient struct {
 	credential *storage.ClientCredential
 }
 
-func (c *confidentialClient) GetID() string             { return c.clientID }
-func (c *confidentialClient) GetHashedSecret() []byte   { return []byte(c.credential.SecretHash) }
-func (c *confidentialClient) GetRedirectURIs() []string { return c.agent.RedirectURIs }
+func (c *confidentialClient) GetID() string           { return c.clientID }
+func (c *confidentialClient) GetHashedSecret() []byte { return []byte(c.credential.SecretHash) }
+func (c *confidentialClient) GetRedirectURIs() []string {
+	return concreteAgentRedirectURIs(c.agent.RedirectURIs)
+}
 func (c *confidentialClient) GetGrantTypes() fosite.Arguments {
 	return fosite.Arguments{"authorization_code", "client_credentials", "refresh_token"}
 }
@@ -46,9 +49,14 @@ type publicClient struct {
 	metadata     *ports.CIMDMetadataDTO
 }
 
-func (c *publicClient) GetID() string             { return c.clientID }
-func (c *publicClient) GetHashedSecret() []byte   { return nil }
-func (c *publicClient) GetRedirectURIs() []string { return c.redirectURIs }
+func (c *publicClient) GetID() string           { return c.clientID }
+func (c *publicClient) GetHashedSecret() []byte { return nil }
+func (c *publicClient) GetRedirectURIs() []string {
+	if c.metadata != nil {
+		return c.redirectURIs
+	}
+	return concreteAgentRedirectURIs(c.redirectURIs)
+}
 func (c *publicClient) GetGrantTypes() fosite.Arguments {
 	return c.grantTypes
 }
@@ -64,6 +72,16 @@ func (c *publicClient) GetAudience() fosite.Arguments { return fosite.Arguments{
 
 func (c *publicClient) requiresPrivateKeyJWT() bool {
 	return c.metadata != nil && c.metadata.AuthMethod == "private_key_jwt"
+}
+
+func concreteAgentRedirectURIs(redirectURIs []string) []string {
+	concrete := make([]string, 0, len(redirectURIs))
+	for _, redirectURI := range redirectURIs {
+		if !urivalidation.IsAgentRedirectURIHostPattern(redirectURI) {
+			concrete = append(concrete, redirectURI)
+		}
+	}
+	return concrete
 }
 
 // agentHolder provides access to the underlying Agent for internal use.

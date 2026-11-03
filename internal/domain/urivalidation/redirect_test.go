@@ -124,6 +124,25 @@ func TestIsRegisteredRedirectURI(t *testing.T) {
 	}
 }
 
+func TestIsAgentRedirectURIHostPattern(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want bool
+	}{
+		{name: "exact URI", uri: "https://client.example/callback", want: false},
+		{name: "hostname wildcard", uri: "https://preview*.example.com/callback", want: true},
+		{name: "literal path star", uri: "https://client.example/callback/*", want: false},
+		{name: "literal query star", uri: "https://client.example/callback?target=*", want: false},
+		{name: "malformed wildcard URI fails closed", uri: "https://preview*.example.com:bad/callback", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, IsAgentRedirectURIHostPattern(test.uri))
+		})
+	}
+}
+
 func TestMatchesAgentRedirectURI(t *testing.T) {
 	pattern := "https://preview*.app-*.example.com/api/oidc/callback"
 	tests := []struct {
