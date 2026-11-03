@@ -1,7 +1,7 @@
 # ADR 045: Agent-Subject Impersonation Without User Delegation
 
 **Date**: 2026-10-27
-**Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6495558326); revised in this PR by architecture-review items A11 and A12, approved by mjungsbluth on 2026-10-31 (https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6546623321); decision 2a revised by item A13 (https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6601909328)
+**Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6495558326); revised in this PR by architecture-review items A11 and A12, approved by mjungsbluth on 2026-10-31 (https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6546623321); decision 2a revised by item A13, approved by mjungsbluth on 2026-11-03 (https://github.com/zalando-incubator/agentic-identity-broker/pull/293#issuecomment-6601909328)
 **Feature**: 054-agent-subject-impersonation
 **Supersedes (in part)**: [ADR 032](032-impersonation-requires-user-delegation.md), decisions 1 and 2, for agent-category requests only
 
