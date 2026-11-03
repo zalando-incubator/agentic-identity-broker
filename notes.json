@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "cursors": {
+    "labelling_after": null,
+    "investigation_after": null
+  },
+  "issues": [],
+  "fixes": [
+    {
+      "issue": 367,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-367-authorization-readiness",
+      "status": "open",
+      "updated_at": "2026-11-03",
+      "note": "Shared browser/inbound minting readiness and consent challenge prepared for draft PR. Runtime checks blocked by missing just and Go toolchain TLS failure; CI validation required."
+    }
+  ],
+  "checks": [
+    {
+      "area": "tests",
+      "checked_at": "2026-11-03",
+      "result": "#367: gofmt and whitespace checks passed. Added readiness, challenge, terminal-denial and E2E reconnect coverage; execution blocked by missing just and Go toolchain TLS failure.",
+      "follow_up": "Run just check, just build, affected package tests and focused impersonation E2E in CI before approval."
+    }
+  ],
+  "completed_actions": [],
+  "priorities": []
+}
