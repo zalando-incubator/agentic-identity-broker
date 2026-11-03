@@ -12,12 +12,8 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Running pre-commit checks...${NC}"
 
-# Check if gofmt is needed
-UNFORMATTED=$(gofmt -l . 2>/dev/null | wc -l)
-if [ "$UNFORMATTED" -gt 0 ]; then
+if ! just fmt-check; then
     echo -e "${RED}✗ Code formatting issues detected${NC}"
-    echo "Run 'just fmt' to fix formatting"
-    gofmt -l .
     exit 1
 fi
 

@@ -226,7 +226,7 @@ lint:
 # Format Go code with gofmt
 fmt:
     @echo "Formatting Go code..."
-    gofmt -s -w .
+    "$(go env GOROOT)/bin/gofmt" -s -w .
     @echo "Format complete"
 
 # Run go vet for static analysis
@@ -237,10 +237,10 @@ vet:
 # Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
 install-tools:
     @echo "Installing development tools..."
-    @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
-    @golangci-lint --version 2>/dev/null | grep -q "version 2.14.0" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+    @air -v 2>/dev/null | grep -q 'v1\.67\.4' || go install github.com/air-verse/air@v1.67.4
+    @GOTOOLCHAIN="$(go env GOVERSION)" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
-    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
+    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.34.0
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
         echo "Playwright driver and browsers already installed, skipping download"; \
     else \
@@ -560,7 +560,7 @@ verify: check security test web-test cdk-test mock-sample-agent-test mock-upstre
 fmt-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi; done | xargs -0 gofmt -s -l)"
+    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi; done | xargs -0 "$(go env GOROOT)/bin/gofmt" -s -l)"
     if [ -n "$unformatted" ]; then
         echo "Files need gofmt -s:"
         printf '%s\n' "$unformatted"

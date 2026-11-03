@@ -87,7 +87,7 @@ jobs:
 
       - name: Install Ginkgo
         if: steps.skip-check.outputs.skip != 'true'
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.1
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.34.0
 
       - name: Install Playwright browsers
         if: steps.skip-check.outputs.skip != 'true'

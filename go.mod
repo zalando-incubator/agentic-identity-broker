@@ -29,7 +29,7 @@ require (
 	github.com/moby/moby/api v1.56.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/mxschmitt/playwright-go v0.6201.1
-	github.com/onsi/ginkgo/v2 v2.33.0
+	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.43.1
 	github.com/open-policy-agent/opa v1.20.2
 	github.com/open-policy-agent/opa-envoy-plugin v1.20.2-envoy
