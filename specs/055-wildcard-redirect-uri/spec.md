@@ -37,6 +37,8 @@ An operator can rely on a wildcard registration to accept only HTTPS callbacks i
 2. **Given** the same registration, **When** a request changes the callback path or uses HTTP, **Then** the broker returns `invalid_redirect_uri` and does not redirect.
 3. **Given** a registration whose wildcard would replace the registrable domain or public suffix, or the entire hostname, **When** an operator attempts to register it, **Then** the registration is rejected.
 4. **Given** an existing exact registered callback, **When** it is used for authorization, **Then** the broker continues to accept it under the existing rules.
+5. **Given** a CIMD document registers an exact callback and its Agent has a host wildcard pattern, **When** the CIMD client uses the exact callback, **Then** the broker accepts it and continues authorization.
+6. **Given** the same CIMD registration, **When** the client uses a callback that only matches the Agent host pattern, **Then** the broker returns `invalid_request` and does not redirect.
 
 ### Edge Cases
 
@@ -89,6 +91,21 @@ Host: broker.example.test
 **Step 2 - Reject the request**: The broker does not redirect to the supplied callback.
 
 **Observable result**: The broker returns the existing `invalid_redirect_uri` error response. No authorization code or error response is sent to the unregistered callback.
+
+### Journey 3 - Keep CIMD callbacks exact (User Story 2, Scenarios 5-6)
+
+**Cast**: Alice, CIMD client `https://cimd.example.test/client`, and an Agent with `https://preview*.app-*.example.com/api/oidc/callback` registered. The CIMD document registers only `https://cimd.example.test/callback`.
+
+**Step 1 - Use the document callback**: The CIMD client requests authorization with its exact callback. The broker accepts the callback and redirects Alice to the Agent's consent page.
+
+```http
+GET /oauth2/authorize?client_id=https%3A%2F%2Fcimd.example.test%2Fclient&redirect_uri=https%3A%2F%2Fcimd.example.test%2Fcallback&response_type=code&state=cimd-exact HTTP/1.1
+Host: broker.example.test
+```
+
+**Step 2 - Request a callback covered only by the Agent pattern**: The CIMD client requests `https://preview-pr-123.app-test.example.com/api/oidc/callback`. The CIMD document does not register this URI.
+
+**Observable result**: The broker returns `invalid_request` and does not redirect to the preview callback. Only opaque Agent clients use the Agent's host pattern.
 
 ## Requirements *(mandatory)*
 
