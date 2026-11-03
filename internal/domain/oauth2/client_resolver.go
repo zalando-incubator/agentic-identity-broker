@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -63,10 +64,10 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 		}
 		var storageErr *storage.StorageError
 		if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict {
-			r.logger.WarnContext(ctx, "cimd_client_uri_ambiguous", "client_uri", rawURL)
+			r.logger.WarnContext(ctx, "cimd_client_uri_ambiguous", "client_uri", security.RedactURL(rawURL))
 			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "Client not registered"}
 		}
-		r.logger.ErrorContext(ctx, "failed to look up agent by client URI", "error", err, "client_uri", rawURL)
+		r.logger.ErrorContext(ctx, "failed to look up agent by client URI", "error", err, "client_uri", security.RedactURL(rawURL))
 		return nil, &ports.ClientIDError{Code: "server_error", Desc: "Failed to validate client"}
 	}
 
@@ -78,7 +79,7 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 			r.logger.ErrorContext(ctx, "CIMD document temporarily unavailable")
 			return nil, &ports.ClientIDError{Code: "server_error", Desc: "CIMD document unavailable"}
 		}
-		r.logger.WarnContext(ctx, "CIMD document validation failed", "error", err, "client_uri", rawURL)
+		r.logger.WarnContext(ctx, "CIMD document validation failed", "agent_id", agent.ID, "client_uri", security.RedactURL(rawURL))
 		return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "CIMD document validation failed"}
 	}
 

@@ -1,6 +1,7 @@
 package oauth2_sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 )
 
 // Handler handles HTTP requests for OAuth2 sessions.
@@ -135,13 +137,13 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 
 	redirectURL, err := url.Parse(redirectURI)
 	if err != nil {
-		h.logger.WarnContext(ctx, "invalid redirect_uri", "redirect_uri", redirectURI, "error", err)
+		h.logger.WarnContext(ctx, "invalid redirect_uri", "service_id", safeServiceIDStr, "redirect_uri", security.RedactURL(redirectURI), "reason", "invalid_redirect_uri")
 		writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri is not a valid URL")
 		return
 	}
 	callbackURL, err := url.Parse(h.service.GetCallbackBaseURL())
 	if err != nil {
-		h.logger.ErrorContext(ctx, "failed to parse callback base URL", "callback_url", h.service.GetCallbackBaseURL(), "error", err)
+		h.logger.ErrorContext(ctx, "failed to parse callback base URL", "callback_url", security.RedactURL(h.service.GetCallbackBaseURL()), "reason", "invalid_callback_base_url")
 		writeJSONError(w, http.StatusInternalServerError, "server_error", "failed to validate redirect_uri")
 		return
 	}
@@ -183,10 +185,7 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.logger.ErrorContext(ctx, "failed to initiate OAuth2 flow",
-			"principal", principalValue,
-			"service_id", serviceIDStr,
-			"error", err)
+		h.logSessionFailure(ctx, "failed to initiate OAuth2 flow", principalValue, serviceIDStr, err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to initiate OAuth2 flow")
 		return
 	}
@@ -333,10 +332,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Generic callback error - log and redirect
-		h.logger.ErrorContext(ctx, "failed to handle OAuth2 callback",
-			"principal", principalValue,
-			"service_id", serviceIDStr,
-			"error", err)
+		h.logSessionFailure(ctx, "failed to handle OAuth2 callback", principalValue, serviceIDStr, err)
 
 		redirectURL := "/sessions?error=callback_failed&error_description=" +
 			url.QueryEscape("Authorization failed - please try again")
@@ -361,8 +357,9 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// If parsing fails, fall back to sessions page
 		h.logger.ErrorContext(ctx, "failed to parse redirect URI",
-			"redirect_uri", redirectURIStr,
-			"error", err)
+			"service_id", serviceIDStr,
+			"redirect_uri", security.RedactURL(redirectURIStr),
+			"reason", "invalid_redirect_uri")
 		http.Redirect(w, r, "/sessions", http.StatusFound)
 		return
 	}
@@ -604,10 +601,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 				"message": "no valid refresh token available for this session",
 			})
 		case errors.Is(err, oauth2session.ErrRefreshFailed):
-			h.logger.ErrorContext(ctx, "force refresh failed at upstream",
-				"principal", principalValue,
-				"service_id", serviceIDStr,
-				"error", err)
+			h.logSessionFailure(ctx, "force refresh failed at upstream", principalValue, serviceIDStr, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -615,10 +609,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 				"message": "failed to refresh token with the third-party provider",
 			})
 		default:
-			h.logger.ErrorContext(ctx, "failed to refresh session",
-				"principal", principalValue,
-				"service_id", serviceIDStr,
-				"error", err)
+			h.logSessionFailure(ctx, "failed to refresh session", principalValue, serviceIDStr, err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{
@@ -644,4 +635,21 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Get("/third-party/{serviceId}/session", h.GetSessionDetails)
 	router.Delete("/third-party/{serviceId}/session", h.TerminateSession)
 	router.Post("/third-party/{serviceId}/session/refresh", h.RefreshSession)
+}
+
+// logSessionFailure logs a session operation failure at the provider boundary as typed
+// metadata. The wrapped cause can carry a provider URL with its query or a response body.
+func (h *Handler) logSessionFailure(ctx context.Context, msg string, principalValue id.Principal, serviceID string, err error) {
+	var operationErr *oauth2session.OperationError
+	if errors.As(err, &operationErr) {
+		h.logger.ErrorContext(ctx, msg,
+			"principal", principalValue,
+			"service_id", serviceID,
+			"failure", operationErr.Metadata())
+		return
+	}
+	h.logger.ErrorContext(ctx, msg,
+		"principal", principalValue,
+		"service_id", serviceID,
+		"error_kind", security.ClassifyOutboundError(err))
 }
