@@ -92,29 +92,34 @@ func TestMatchesRedirectURI(t *testing.T) {
 
 func TestIsRegisteredRedirectURI(t *testing.T) {
 	callback := "github-app://oauth/callback"
+	wildcard := "https://preview*.app-*.example.com/callback"
 	tests := []struct {
 		name     string
+		kind     RedirectURIClientKind
 		client   []string
 		agent    []string
 		incoming string
 		want     bool
 	}{
-		{"web URI comes from client list", []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
-		{"client-list wildcard stays exact", []string{"https://preview*.app-*.example.com/callback"}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
-		{"loopback port may vary", []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
-		{"private-use in both lists", []string{callback}, []string{callback}, callback, true},
-		{"private-use only in client list", []string{callback}, nil, callback, false},
-		{"private-use only in Agent list", nil, []string{callback}, callback, false},
-		{"scheme alone cannot authorize", []string{callback}, []string{callback}, "github-app://evil/steal", false},
-		{"host alone cannot authorize", []string{callback}, []string{callback}, "github-app://oauth", false},
-		{"prefix cannot authorize", []string{callback}, []string{callback}, "github-app://oauth/callback/extra", false},
-		{"wildcard cannot authorize", []string{callback}, []string{callback}, "github-app://*/callback", false},
-		{"case variant cannot authorize", []string{callback}, []string{callback}, "GITHUB-APP://oauth/callback", false},
-		{"port cannot vary", []string{"myapp://oauth:8080/callback"}, []string{"myapp://oauth:8080/callback"}, "myapp://oauth:9090/callback", false},
+		{"web URI comes from client list", RedirectURIClientCIMD, []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
+		{"client-list wildcard stays exact", RedirectURIClientCIMD, []string{wildcard}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
+		{"loopback port may vary", RedirectURIClientCIMD, []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
+		{"private-use in both lists", RedirectURIClientCIMD, []string{callback}, []string{callback}, callback, true},
+		{"private-use only in client list", RedirectURIClientCIMD, []string{callback}, nil, callback, false},
+		{"private-use only in Agent list", RedirectURIClientCIMD, nil, []string{callback}, callback, false},
+		{"scheme alone cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://evil/steal", false},
+		{"host alone cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://oauth", false},
+		{"prefix cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://oauth/callback/extra", false},
+		{"wildcard cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://*/callback", false},
+		{"case variant cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "GITHUB-APP://oauth/callback", false},
+		{"port cannot vary", RedirectURIClientCIMD, []string{"myapp://oauth:8080/callback"}, []string{"myapp://oauth:8080/callback"}, "myapp://oauth:9090/callback", false},
+		{"opaque Agent matches wildcard registration", RedirectURIClientOpaque, nil, []string{wildcard}, "https://preview-pr-123.app-test.example.com/callback", true},
+		{"opaque Agent does not use client callback list", RedirectURIClientOpaque, []string{wildcard}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
+		{"unknown client kind is rejected", RedirectURIClientUnknown, []string{callback}, []string{callback}, callback, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.client, tt.agent, tt.incoming))
+			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.kind, tt.client, tt.agent, tt.incoming))
 		})
 	}
 }

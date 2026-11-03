@@ -50,7 +50,7 @@ For other feature changes, read the relevant specification, plan, and tasks befo
 | `internal/domain/thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `internal/domain/tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
 | `internal/domain/trustanchor/` | Trust-anchor key-source resolution and local key-set validation | `ResolveKeySetSource()`, `ParseLocalKeySet()` |
-| `internal/domain/urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
+| `internal/domain/urivalidation/` | Redirect and resource URI validation | `IsRegisteredRedirectURI()`, `RedirectURIClientKind`, `MatchesRedirectURI()`, `MatchesAgentRedirectURI()`, `NormalizeResourceURI()` |
 
 ## Critical Rules
 
