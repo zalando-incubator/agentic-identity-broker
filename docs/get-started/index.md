@@ -43,12 +43,13 @@ Without `just`, run:
 test -f .env.compose || cp .env.compose.example .env.compose
 IDENTITY_BROKER_JWE_SIGNING_KEY="$(./scripts/generate-jwe-key.sh)" \
 IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)" \
-  docker compose --env-file .env.compose -f docker-compose.yml up -d --build
+  docker compose --env-file .env.compose -f docker-compose.yml up -d --build --wait --wait-timeout 600
 ```
 
 The first run builds eight service images, including the Go backend and Vite frontend.
 Startup depends on your machine, network, and build cache. A clean-machine cold-start time is not yet measured.
-The command starts the containers; broker health alone does not mean that sample-data seeding has finished.
+Startup waits for service health, including the frontend. The frontend runs `npm ci` to synchronize its dependency volume before Vite starts.
+Broker health alone does not mean that sample-data seeding has finished.
 Wait for the agents in Step 2 and enabled login buttons on the sample client.
 
 The `just` command prints these URLs after its health summary:

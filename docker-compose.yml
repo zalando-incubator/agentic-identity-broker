@@ -267,6 +267,7 @@ services:
       context: .
       dockerfile: build/docker/Dockerfile.web
     container_name: aib-frontend
+    command: ["sh", "-c", "npm ci && exec npm run dev -- --host 0.0.0.0"]
     ports:
       - "3000:3000"
     volumes:
@@ -281,6 +282,12 @@ services:
       # Enable polling and HMR for Docker hot-reload
       - VITE_USE_POLLING=true
       - VITE_HMR_HOST=localhost
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 5m
     networks:
       - aib-network
     depends_on:

@@ -146,6 +146,9 @@ just compose-restart-backend
 
 ### Frontend (React with Vite HMR)
 
+The frontend runs `npm ci` at startup to synchronize its dependency volume with `web/package-lock.json`.
+This prevents stale dependencies after an image rebuild or branch change.
+
 When you change a file in `./web/src`, Vite responds:
 
 1. Vite detects the change.
