@@ -334,7 +334,9 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
-ExtProc failed `extproc.token_exchange` spans and all `extproc.client_assertion.refresh` spans also carry:
+When the exchange call fails, ExtProc `extproc.token_exchange` spans also carry the attributes below.
+All `extproc.client_assertion.refresh` spans carry them.
+Other `extproc.token_exchange` failures, such as rejected token-exchange metadata, carry only the error status and the diagnostic attributes above.
 
 | Attribute | Values |
 |---|---|
