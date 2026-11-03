@@ -1407,7 +1407,7 @@ Purpose: [Briefly describe its function, e.g., "Payment processing."]
 
 Integration Method: [e.g., REST API, SDK]
 
-**Admin API 3.0.0 (feature 055, approved; implementation pending)** replaces released `2.1.0`
+**Admin API 3.0.0 (feature 055, approved)** replaces released `2.1.0`
 on the existing routes. Unique/non-empty external IDs introduce intentional `409 conflict` and
 `400 validation failed` outcomes on existing writes; filtered GET keeps its array shape with
 zero or one result. Shared URI ordering and microsecond timestamps are also approved contract
@@ -1588,7 +1588,7 @@ Define any project-specific terms or acronyms.)
 
 **Canonical ID**: Optional case-sensitive administrative identifier for an Agent, ThirdpartyOAuth2Provider, or PermissionSet. It is a 1–128-character URL-safe, non-UUID token, unique only within its resource type. Canonical IDs are resolved at the administrative boundary and never replace UUID primary keys, foreign keys, JSONB references, or encryption contexts.
 
-**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 045 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior; implementation is pending.
+**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 045 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior.
 
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 

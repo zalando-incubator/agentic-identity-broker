@@ -1,12 +1,16 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -64,6 +68,68 @@ func TestReconcileHandlerRejectsBeforeWrites(t *testing.T) {
 			assert.Equal(t, tc.errorCode, response.Error)
 			repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
 			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestReconcileHandlerLogsValidationFailures(t *testing.T) {
+	permissionSetID := id.NewPermissionSetID()
+	serviceID := id.NewServiceID()
+	valid := `{"display_name":"Research","description":"Definition","permission_sets":[{"permission_set_id":"` + permissionSetID.String() + `","requirement_type":"optional"}]}`
+	for _, tc := range []struct {
+		name, path, body            string
+		readError, coverage, lookup bool
+	}{
+		{name: "selector", path: "/api/agents", body: valid},
+		{name: "read failure", body: valid, readError: true},
+		{name: "body limit", body: strings.Repeat("a", 65537)},
+		{name: "JSON syntax", body: `{"display_name":`},
+		{name: "JSON type", body: `{"display_name":123}`},
+		{name: "null body", body: `null`},
+		{name: "client ID", body: strings.TrimSuffix(valid, "}") + `,"client_id":null}`},
+		{name: "permission sets", body: `{"permission_sets":[]}`},
+		{name: "service requirements", body: strings.TrimSuffix(valid, "}") + `,"service_requirements":[{"service_id":"` + serviceID.String() + `","requirement_type":"invalid"}]}`},
+		{name: "coverage", body: strings.TrimSuffix(valid, "}") + `,"service_requirements":[{"service_id":"` + serviceID.String() + `","requirement_type":"optional"}]}`, coverage: true},
+		{name: "client URIs", body: strings.TrimSuffix(valid, "}") + `,"client_uris":["https://agent.example/client?token=do-not-log-this","https://agent.example/client?token=do-not-log-this"]}`},
+		{name: "domain external ID", body: strings.TrimSuffix(valid, "}") + `,"external_id":null}`},
+		{name: "domain validation", body: strings.Replace(valid, `"display_name":"Research",`, "", 1), lookup: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, nil))
+			repo := new(MockAgentRepository)
+			handler := newAgentsHandlerForTest(repo, new(MockProviderRepository), logger)
+			if tc.coverage {
+				ps := new(MockPermissionSetValidator)
+				ps.On("ValidateIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return(nil).Once()
+				ps.On("GetByIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return([]*storage.PermissionSet{{ID: permissionSetID}}, nil).Once()
+				handler.psService = ps
+				t.Cleanup(func() { ps.AssertExpectations(t) })
+			}
+			if tc.lookup {
+				repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{}, nil).Once()
+			}
+			path := tc.path
+			if path == "" {
+				path = "/api/agents?external_id=registry"
+			}
+			var body io.Reader = strings.NewReader(tc.body)
+			if tc.readError {
+				body = iotest.ErrReader(errors.New("unreadable request"))
+			}
+			w := httptest.NewRecorder()
+			handler.ReconcileAgent(w, httptest.NewRequest(http.MethodPut, path, body))
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.NotContains(t, logs.String(), "do-not-log-this")
+			var record map[string]any
+			decoder := json.NewDecoder(&logs)
+			require.NoError(t, decoder.Decode(&record), "validation failure must be logged")
+			assert.Equal(t, "WARN", record["level"])
+			assert.NotEmpty(t, record["error"])
+			assert.ErrorIs(t, decoder.Decode(&record), io.EOF, "failure must be logged once")
+			repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+			repo.AssertExpectations(t)
 		})
 	}
 }

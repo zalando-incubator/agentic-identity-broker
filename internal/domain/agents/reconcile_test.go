@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -225,6 +226,59 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 	assert.True(t, sameDefinition(base, changed))
 	changed.ClientURIs[0] = "https://example.com/other"
 	assert.False(t, sameDefinition(base, changed))
+}
+
+func TestSameDefinitionCoversEveryAgentField(t *testing.T) {
+	changes := map[string]func(*storage.Agent){
+		"CanonicalID":          func(a *storage.Agent) { a.CanonicalID = ptr.To("research") },
+		"ClientID":             func(a *storage.Agent) { a.ClientID = ptr.To(id.ClientID("upstream")) },
+		"ExternalID":           func(a *storage.Agent) { a.ExternalID = ptr.To(id.ExternalID("registry")) },
+		"DisplayName":          func(a *storage.Agent) { a.DisplayName = "Changed" },
+		"Description":          func(a *storage.Agent) { a.Description = "Changed" },
+		"GovernanceURL":        func(a *storage.Agent) { a.GovernanceURL = ptr.To("https://example.com/gov") },
+		"UserDocumentationURL": func(a *storage.Agent) { a.UserDocumentationURL = ptr.To("https://example.com/docs") },
+		"AgentInterfaceURL":    func(a *storage.Agent) { a.AgentInterfaceURL = ptr.To("https://example.com/api") },
+		"ServiceRequirements": func(a *storage.Agent) {
+			a.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional}}
+		},
+		"PermissionSets": func(a *storage.Agent) {
+			a.PermissionSets = []storage.AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: storage.RequirementTypeOptional}}
+		},
+		"RedirectURIs":  func(a *storage.Agent) { a.RedirectURIs = []string{"https://example.com/cb"} },
+		"AllowedScopes": func(a *storage.Agent) { a.AllowedScopes = []string{"read"} },
+		"ClientURIs":    func(a *storage.Agent) { a.ClientURIs = []string{"https://example.com/client.json"} },
+	}
+	ignored := map[string]string{
+		"ID":               "UUID identity is retained independently of the desired definition",
+		"ClearCanonicalID": "update instruction, not persisted definition state",
+		"CreatedAt":        "creation metadata is retained independently of the desired definition",
+		"UpdatedAt":        "update metadata advances only after the definition changes",
+	}
+	agentType := reflect.TypeFor[storage.Agent]()
+	require.Equal(t, agentType.NumField(), len(changes)+len(ignored))
+	for i := range agentType.NumField() {
+		field := agentType.Field(i)
+		t.Run(field.Name, func(t *testing.T) {
+			if reason, ok := ignored[field.Name]; ok {
+				require.NotEmpty(t, reason)
+				return
+			}
+			change, ok := changes[field.Name]
+			require.True(t, ok, "Agent field must be compared by sameDefinition or explicitly excluded with a reason")
+			base := desiredAgent()
+			changed := base.Copy()
+			change(changed)
+			before, after := reflect.ValueOf(base).Elem(), reflect.ValueOf(changed).Elem()
+			for j := range agentType.NumField() {
+				other := agentType.Field(j)
+				if other.Name != field.Name {
+					assert.Equal(t, before.FieldByIndex(other.Index).Interface(), after.FieldByIndex(other.Index).Interface(), "mutation must affect only %s", field.Name)
+				}
+			}
+			assert.False(t, sameDefinition(base, changed))
+			assert.False(t, sameDefinition(changed, base))
+		})
+	}
 }
 
 func TestReconcileBoundedConflictReread(t *testing.T) {

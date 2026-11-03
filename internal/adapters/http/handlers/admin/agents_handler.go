@@ -152,45 +152,54 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		message = "external_id selector is required"
 	}
 	if message != "" {
+		h.logger.WarnContext(r.Context(), "external_id selector validation failed", "error", errors.New(message))
 		h.writeError(w, http.StatusBadRequest, "invalid external_id", message)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		h.logger.WarnContext(r.Context(), "failed to read request body", "error", errors.New("request body exceeds limit or cannot be read"))
 		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body exceeds limit or cannot be read")
 		return
 	}
 	var req AgentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		h.logger.WarnContext(r.Context(), "failed to decode request body", "error", errors.New("request body must be an AgentCreateRequest"))
 		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body must be an AgentCreateRequest")
 		return
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		h.logger.WarnContext(r.Context(), "invalid request body", "error", errors.New("request body must be an object"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", "request body must be an object")
 		return
 	}
 	if raw, ok := fields["client_id"]; ok && (bytes.Equal(raw, []byte("null")) || req.ClientID == nil || strings.TrimSpace(*req.ClientID) == "") {
+		h.logger.WarnContext(r.Context(), "client_id validation failed", "error", errors.New("client_id must be a nonempty string when supplied"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", "client_id must be a nonempty string when supplied")
 		return
 	}
 	ctx := r.Context()
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
+		h.logger.WarnContext(ctx, "permission set validation failed", "error", errors.New("invalid permission sets"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
+		h.logger.WarnContext(ctx, "invalid service requirements", "error", errors.New("invalid service requirements"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
+		h.logger.WarnContext(ctx, "service requirement coverage invariant violated", "error", errors.New("service requirements are not covered by permission sets"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
+		h.logger.WarnContext(ctx, "client_uris validation failed", "error", errors.New("invalid client_uris"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -200,6 +209,15 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 	httpmiddleware.FinalizeRequestSecurityContext(ctx)
 	agent, outcome, err := h.agentService.ReconcileByExternalID(ctx, selector, req.toAgent(serviceReqs, permissionSets), input)
 	if err != nil {
+		var storageErr *storage.StorageError
+		if !errors.As(err, &storageErr) {
+			h.logger.WarnContext(ctx, "agent reconciliation validation failed", "error", errors.New("invalid agent definition"))
+			h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
+			return
+		}
+		if storageErr.Kind == storage.ErrorKindValidation {
+			h.logger.WarnContext(ctx, "agent reconciliation validation failed", "error", errors.New("invalid agent definition"))
+		}
 		h.handleDomainError(w, r, "ReconcileAgent", err)
 		return
 	}
