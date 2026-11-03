@@ -4,7 +4,7 @@
 
 ## New ports (`internal/ports/`)
 
-### `ThirdpartyCredentialStateRepository` (`internal/ports/thirdparty_provider.go`)
+### `ThirdpartyCredentialStateRepository` (`internal/ports/storage.go`)
 
 ```go
 // ThirdpartyCredentialStateRepository stores the internal credential generation and
@@ -59,7 +59,7 @@ type CredentialCurrencyChecker interface {
 | `oauth2session.OAuth2SessionService` | Adds `establishCurrency(ctx, entity) (currentCredentials, error)`, with a process-local digest cache keyed by `(service_id, generation)`. `selectCredentials` receives the validated pair instead of reading again for exchange and refresh. Initiation calls `establishCurrency`, seals `CredentialGeneration`, and keeps exposing only the client ID. `GetValidAccessToken` and `refreshLockedSession` load the credential state and call `establishCurrency` for filesystem services before their fast path or session lock. `HandleCallback` rejects a sealed generation that differs from the current generation before any provider request, and returns `ErrCredentialGenerationChanged` when a reconnection is fenced and the current session is unusable. |
 | `thirdparty.ThirdpartyOAuth2ProviderService` | `Update` computes `CredentialChange` for non-discovery updates (research R3), including transitions and the decryption-failure rule. It emits the change audit event after a successful commit. |
 | `oauth2.AuthorizationService` | `HandleAuthorization` calls `EnsureCredentialCurrency` for each included or mandatory filesystem-sourced service before steps 4 and 5. An error yields the existing `server_error` redirect decision ("Failed to check session status"). |
-| `internal/app/builder.go` | Wires the two new repositories and the fingerprinter, and injects the currency checker. |
+| `internal/app/builder.go` | Receives the new credential-state repository from the storage factory, wires the fingerprinter and domain services, and injects the currency checker. The repository has memory and PostgreSQL implementations. |
 
 ## Error mapping (no new public codes)
 

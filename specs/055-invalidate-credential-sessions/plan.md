@@ -14,7 +14,7 @@ When an operator changes a third-party service's client ID or shared secret, the
 4. **In-flight fencing**. The authorization state seals the generation, first-connection inserts compare it under the existing service-row share lock, reconnections are fenced by the rotated callback generation, and refreshes are serialized by the existing session row lock (R5).
 5. **Recovery reuses existing flows**. Broker `/oauth2/authorize` already sends a user with an active grant to consent when an included or mandatory connection is unusable. RFC 8693 keeps ADR 044's recoverable `invalid_grant` and `error_uri`. The sessions page keeps its "Log in to reconnect" action. No React change and no new endpoint or response shape are planned (R6).
 
-Because C1 and C3 contradict Accepted ADR 041, a narrow superseding [ADR draft](adr-draft-credential-change-session-invalidation.md) is proposed. Admin API `2.2.0` and End-User API `1.2.0` document the behavior changes ([contracts/](contracts/)). Every consequential item is listed under [Approval Items](#approval-items). None is approved.
+Because C1 and C3 contradict Accepted ADR 041, a narrow superseding [ADR draft](adr-draft-credential-change-session-invalidation.md) is proposed. Admin API `3.0.0` and End-User API `2.0.0` document the behavior changes ([contracts/](contracts/)). Every consequential item is listed under [Approval Items](#approval-items). None is approved.
 
 ## Approval Items
 
@@ -22,8 +22,8 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-ADMIN | API | Admin API `2.1.0` → `2.2.0`. `PUT /api/services/{service-id}` documents that a change of effective client ID or stored secret atomically invalidates every user session for the service. Unchanged values, metadata edits, rejected updates, and unchanged-pair source transitions do not invalidate. Restored values never revive sessions. File rotation has the same effect, without changing the ETag. | specs/055-invalidate-credential-sessions/contracts/admin-api.md:1-65 |
-| API-ENDUSER | API | End-User API `1.1.0` → `1.2.0`, documenting the following existing response sets. `/oauth2/authorize` redirects to consent for an unusable included or mandatory connection despite an active grant, and returns `server_error` on filesystem source failure. Third-party initiation reads both credential files. A callback begun before a change returns `callback_failed`. Invalidated sessions list as `is_expired: true` and `has_refresh_token: false`, and refresh returns `409`. RFC 8693 returns the recoverable `invalid_grant` with the ADR 044 `error_uri`. Filesystem token use returns `500 server_error` when the files are unavailable, even for an unexpired token. | specs/055-invalidate-credential-sessions/contracts/enduser-api.md:1-116 |
+| API-ADMIN | API | Admin API `2.1.0` → `3.0.0`. `PUT /api/services/{service-id}` documents that a change of effective client ID or stored secret atomically invalidates every user session for the service. Unchanged values, metadata edits, rejected updates, and unchanged-pair source transitions do not invalidate. Restored values never revive sessions. File rotation has the same effect, without changing the ETag. | specs/055-invalidate-credential-sessions/contracts/admin-api.md:1-65 |
+| API-ENDUSER | API | End-User API `1.1.0` → `2.0.0`, documenting the following existing response sets. `/oauth2/authorize` redirects to consent for an unusable included or mandatory connection despite an active grant, and returns `server_error` on filesystem source failure. Third-party initiation reads both credential files. A callback begun before a change returns `callback_failed`. Invalidated sessions list as `is_expired: true` and `has_refresh_token: false`, and refresh returns `409`. RFC 8693 returns the recoverable `invalid_grant` with the ADR 044 `error_uri`. Filesystem token use returns `500 server_error` when the files are unavailable, even for an unexpired token. | specs/055-invalidate-credential-sessions/contracts/enduser-api.md:1-116 |
 | ADR-045 | ADR | Draft ADR 045 (number provisional): credential-change session invalidation. It narrowly supersedes five ADR 041 rules and amends Feature 051 scenarios US2-S1, US2-S5, and US5-S3. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:1-138 |
 | D-SCOPE | Decision | C1: invalidate on any actual change of the operator-managed effective client ID or shared secret, including secret-only rotation, from the stored and filesystem sources and across transitions. CIMD-derived identifiers, CIMD key rotation, discovery and DCR lifecycles, and same-value saves are excluded. | specs/055-invalidate-credential-sessions/adr-draft-credential-change-session-invalidation.md:21-34 |
 | D-CONSENT | Decision | C2: consent appears on the next agent browser authorization through the existing unusable-connection gate, in every broker mode, using the existing consent and sessions UI. Protocol recovery keeps ADR 044's direct provider login and `/sessions` return. | specs/055-invalidate-credential-sessions/research.md:129-138 |
@@ -76,7 +76,7 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 **Scale/Scope**:
 
 - 1 migration, 1 port with 2 adapters, 2 small ports (fingerprinter, currency checker), and edits to 3 domain services.
-- 2 new E2E files, 3 amended Feature 051 scenarios, and documentation.
+- 3 new E2E files (invalidation, protocol recovery, browser recovery), 3 amended Feature 051 scenarios, and documentation. `ThirdpartyCredentialStateRepository` is declared in `internal/ports/storage.go` (Principle IX); the existing provider update contract stays in `thirdparty_provider.go`.
 
 ## Constitution Check
 
@@ -94,11 +94,11 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 - [x] **API Documentation**: `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, and `docs/api/enduser-api.md`.
 - [ ] **API Changes**: Pending the maintainer's 👍 on API-ADMIN and API-ENDUSER. This is the expected open state for planning.
 - [x] **Database Design**: Migration `046` (provisional) with go-migrate naming ([data-model.md](data-model.md#migration-number-provisional-next-free-currently-046)).
-- [x] **E2E Acceptance Tests**: All 11 scenarios are mapped below and written before implementation.
-- [x] **E2E Test Mapping**: Each scenario maps to one `It`. Scenario 1.1's credential-change matrix uses one `DescribeTable` entry per variant, and every entry maps to Scenario 1.1.
-- [x] **E2E Red Phase**: The tests assert concrete status codes, `error_uri`, provider request counts, session fields, and UI elements.
-- [x] **Frontend Playwright E2E**: The UI is not changed, but Story 2 browser journeys get Playwright tests in `tests/e2e/frontend/` as the spec requires.
-- [x] **Frontend Screenshots**: Three states are captured (see [quickstart.md](quickstart.md#4-browser-journeys-user-story-2)).
+- [ ] **E2E Acceptance Tests**: Write all 11 mapped scenarios before business implementation (Phase 2f).
+- [x] **E2E Test Mapping Design**: Each scenario maps to one `It`. Scenario 1.1's credential-change matrix uses one `DescribeTable` entry per variant, and every entry maps to Scenario 1.1.
+- [ ] **E2E Red Phase**: Compile and run the tests, asserting concrete status codes, `error_uri`, provider request counts, session fields, and UI elements (Phase 2f).
+- [ ] **Frontend Playwright E2E**: The UI is not changed, but write Story 2 browser journeys in `tests/e2e/frontend/` as the spec requires (Phase 2f).
+- [ ] **Frontend Screenshots**: Capture the three states (see [quickstart.md](quickstart.md#4-browser-journeys-user-story-2)) during validation.
 
 **Implementation Considerations**:
 
@@ -106,13 +106,13 @@ None of these items is approved. Each one is Proposed and waits for the maintain
 - [x] **Architecture Docs**: `ARCHITECTURE.md` gets updates to storage (key tables), the credential-source section, API versioning, and the glossary.
 - [x] **ADRs**: The superseding draft is in this directory. It moves to `adrs/` after approval.
 - [x] **Library-First Security**: Argon2id through the existing hasher. HMAC, SHA-256, random, and constant-time compare from Go `crypto/*`.
-- [x] **Zalando Guidelines**: No new resources or fields. Minor version bumps for documented compatible behavior.
+- [x] **Zalando Guidelines**: No new resources or fields. Major version bumps for released behavior changes (Principles IV and X; research R7).
 - [x] **End-User Docs**: `docs/api/enduser-api.md` and `docs/reference/token-exchange.md`.
 - [x] **Migration Testing**: Apply, rollback, and reapply, plus CHECK and cascade tests, in PostgreSQL integration tests (container-backed in CI).
 - [x] **Hexagonal Architecture**: The domain depends on new ports. The adapters implement them. The builder wires them. No handler reaches a port directly.
 - [x] **Persistence Patterns**: The ISP repository is in `internal/ports`, with memory and PostgreSQL adapters, `StorageError` wrapping, and configured timeouts.
 
-**Post-design re-check (Phase 1)**: All preconditions hold. The one open item, API confirmation, is tracked in [Approval Items](#approval-items). No violation needs justification. The new availability coupling (D-CURRENCY) and the persisted fingerprint (D-FINGERPRINT) are trade-offs proposed for approval, not constitutional exceptions.
+**Post-design re-check (Phase 1)**: Design artifacts are complete, but implementation preconditions are not completed evidence. Approval, canonical OpenAPI publication, glossary updates, migration files, and semantic-red acceptance tests remain Phase 1–2 tasks. [Approval Items](#approval-items) records the proposals; none is approved. The new availability coupling (D-CURRENCY) and the persisted fingerprint (D-FINGERPRINT) are trade-offs proposed for approval, not constitutional exceptions.
 
 ## Spec Alignment
 
@@ -124,6 +124,8 @@ These planning-phase reconciliations are recorded in the spec's Clarifications s
 - The API and database requirement sections reference the proposed contracts and migration.
 
 No acceptance scenario or success criterion changed.
+
+**Task-generation reconciliations**: `tasks.md` schedules 60 unchecked tasks. API-ADMIN and API-ENDUSER now propose major versions `3.0.0` and `2.0.0`, because `v0.1.133` contains the existing `2.1.0`/`1.1.0` contracts and Principles IV/X govern released behavior (research R7; spec Clarifications). The new repository belongs in `internal/ports/storage.go`. Acceptance tests/red evidence/screenshots remain pending implementation, not completed planning evidence. Protocol recovery gets a separate backend test file for disjoint test-writing work. No new CRUD entity/boilerplate phase is needed.
 
 ## Project Structure
 
@@ -155,7 +157,8 @@ migrations/
 
 internal/
 ├── ports/
-│   ├── thirdparty_provider.go        # + ThirdpartyCredentialStateRepository; Update contract note
+│   ├── storage.go                   # + ThirdpartyCredentialStateRepository
+│   ├── thirdparty_provider.go        # Update contract note
 │   ├── credential_file.go            # + CredentialFingerprinter
 │   └── oauth2.go                     # + CredentialCurrencyChecker
 ├── domain/
@@ -170,6 +173,7 @@ internal/
 │   │   └── service.go                # initiation, callback fence, GetValidAccessToken, refreshLockedSession
 │   └── oauth2/service.go             # currency check before steps 4–5 of HandleAuthorization
 ├── adapters/
+│   ├── storage/factory.go           # credential-state repository accessor; compose each backend
 │   ├── credentialfile/fingerprint.go # Argon2id fingerprinter over oauth2server.Argon2Hasher
 │   ├── storage/postgres/thirdparty_credential_state.go  # new repository
 │   ├── storage/postgres/thirdparty_provider.go          # Update applies CredentialChange in-tx
@@ -180,7 +184,8 @@ internal/
 └── app/builder.go                    # wiring
 
 tests/
-├── e2e/credential_change_invalidation_test.go           # US1 1.1–1.7, US2 2.4
+├── e2e/credential_change_invalidation_test.go           # US1 1.1–1.7
+├── e2e/credential_change_recovery_test.go               # US2 2.4 (same backend label)
 ├── e2e/frontend/credential_change_reconnect_test.go     # US2 2.1–2.3 + screenshots
 ├── e2e/oauth2_secret_file_rotation_test.go              # amend US2-S1, US2-S5
 └── e2e/oauth2_secret_file_boundaries_test.go            # amend US5-S3
@@ -202,19 +207,18 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 |-------|---------|-----------|
 | **Phase 1** | Record the maintainer approval in the ADR draft, move it into `adrs/` with the next free number, and renumber the migration if needed | **First task** |
 | **Phase 2** | Design preconditions: copy the approved OpenAPI deltas, glossary, migration files, red E2E tests (backend and frontend), amended Feature 051 scenarios | **MANDATORY** |
-| **Phase 2.7** | Port and stub adapters for `ThirdpartyCredentialStateRepository`, `CredentialFingerprinter`, and `CredentialCurrencyChecker` so the red tests compile | Included (new persisted record) |
 | **Phase 3 (US1)** | Stored change detection and atomic invalidation, filesystem currency, fencing, both stores | P1 |
 | **Phase 4 (US2)** | `/oauth2/authorize` currency admission, callback-fence redirect, browser journeys green | P1 |
 | **Phase N** | Documentation, `just check`, `just test`, matching E2E suites, `just verify` (non-container recipes), constitution compliance | **MANDATORY** |
 
 - [x] Phase 0 (refactoring): skipped. The `selectCredentials` signature change is feature work. No structural refactor is needed beforehand.
-- [x] Phase 2.7 (entity boilerplate): included. It keeps the new repository's scaffolding reviewable apart from the invalidation logic.
+- Phase 2.7 (entity boilerplate) is not applicable: the internal credential state extends the existing service aggregate and introduces no CRUD API or new aggregate root. Minimal compiling types and port stubs required by tests belong to Phase 2f, with no business implementation before semantic red evidence.
 
 ## Testing Strategy
 
 ### End-to-End (E2E) Acceptance Tests
 
-**Test Location**: `tests/e2e/credential_change_invalidation_test.go`, labeled `credential-change-invalidation`
+**Test Locations**: `tests/e2e/credential_change_invalidation_test.go` (US1) and `tests/e2e/credential_change_recovery_test.go` (US2 2.4), both labeled `credential-change-invalidation`
 
 **Framework**: Ginkgo/Gomega ([tests/e2e/README.md](../../tests/e2e/README.md)). It uses the production bootstrap through `tests/e2e/bootstrap/` and the mock OAuth2 provider. Filesystem variants use `helpers.PublishCredentialPair`.
 
@@ -231,9 +235,9 @@ internal/ports/AGENTS.md, internal/adapters/AGENTS.md
 | US1 1.5 | same | `It("1.5 keeps invalidated sessions unusable after restart, on another replica, and after restoring former values")`: second broker sharing the storage |
 | US1 1.6 | same | `It("1.6 recognizes a filesystem pair change on the next unexpired-token request and on another replica")`: zero provider calls, Bob rejected via the second broker, service ETag unchanged |
 | US1 1.7 | same | `It("1.7 fails closed without inferring a change when the filesystem pair is unavailable")`: `500 server_error` without `error_uri`, no provider call; after restoring unchanged files the session still works |
-| US2 2.4 | same | `It("2.4 returns the recoverable invalid_grant whose error_uri starts direct provider login")`: follows `error_uri`, asserts the `302` to the provider with the current client ID, completes the callback, lands on `/sessions` |
+| US2 2.4 | `tests/e2e/credential_change_recovery_test.go` | `It("2.4 returns the recoverable invalid_grant whose error_uri starts direct provider login")`: follows `error_uri`, asserts the `302` to the provider with the current client ID, completes the callback, lands on `/sessions` |
 
-**Red Phase Requirements**: The tests compile against the Phase 2.7 stubs and fail on real assertions, for example `Expect(resp.StatusCode).To(Equal(400))` or `Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(n))`. They never use `XIt`, `PIt`, `Skip()`, or red-phase comments.
+**Red Phase Requirements**: The tests compile against minimal Phase 2f scaffolding and fail on real assertions, for example `Expect(resp.StatusCode).To(Equal(400))` or `Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(n))`. They never use `XIt`, `PIt`, `Skip()`, or red-phase comments.
 
 **Test Data Strategy**: Use the existing fixtures: principals (`fixtures.AnotherPrincipal`), credential fixtures (`CredentialClientID`, `AlternateCredentialClientID`, `RotatedCredentialSecret`), the agent with permission sets spanning two services, and the projected-volume binding helpers. New fixture constants are limited to the synthetic `report-client-v1` and `report-client-v2` IDs and their secrets.
 

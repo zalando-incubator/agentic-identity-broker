@@ -1,4 +1,4 @@
-# Contract: Admin API 2.2.0 — credential changes invalidate user sessions
+# Contract: Admin API 3.0.0 — credential changes invalidate user sessions
 
 **Status**: Proposed (approval item API-ADMIN). Not approved. Implementation copies these deltas into `api/admin/openapi.yaml` only after approval.
 
@@ -8,7 +8,7 @@
 
 ```yaml
 info:
-  version: 2.2.0   # was 2.1.0
+  version: 3.0.0   # was 2.1.0
 ```
 
 ## `PUT /api/services/{service-id}`: added description section

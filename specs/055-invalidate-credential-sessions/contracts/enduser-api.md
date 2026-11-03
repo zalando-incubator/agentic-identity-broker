@@ -1,4 +1,4 @@
-# Contract: End-User API 1.2.0 — invalidated connections and filesystem credential currency
+# Contract: End-User API 2.0.0 — invalidated connections and filesystem credential currency
 
 **Status**: Proposed (approval item API-ENDUSER). Not approved. Implementation copies these deltas into `api/enduser/openapi.yaml` and the rendered `docs/api/` pages only after approval.
 
@@ -8,7 +8,7 @@
 
 ```yaml
 info:
-  version: 1.2.0   # was 1.1.0
+  version: 2.0.0   # was 1.1.0
 ```
 
 ## `GET /oauth2/authorize` (`oauth2Authorize`)

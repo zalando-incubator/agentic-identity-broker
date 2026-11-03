@@ -45,7 +45,7 @@ Each entry records the decision, why it was chosen, and the main alternatives. A
 **Rationale**:
 
 - The administrative ETag is `strongETag(entity.Version)`. ADR 041 requires metadata operations and service records to be independent of files. If the generation were a service column, a filesystem recognition would change `version` and `updated_at`. That would break operators' `If-Match` and the Feature 051 "service unchanged" assertions in `tests/e2e/oauth2_secret_file_rotation_test.go`. A separate row changes neither.
-- Lazy rows avoid a backfill and any lock on `thirdparty_oauth2_services` beyond the foreign-key `SHARE ROW EXCLUSIVE` lock that `CREATE TABLE ... REFERENCES` takes. That lock is brief because the table is new and empty. It follows ADR 041's `NOWAIT` and short `lock_timeout` pattern. The migration is atomic, and no `CONCURRENTLY` exception is needed.
+- Lazy rows avoid a backfill and any lock on `thirdparty_oauth2_services` beyond the foreign-key `SHARE ROW EXCLUSIVE` lock that `CREATE TABLE ... REFERENCES` takes. That lock is brief because the table is new and empty. It follows ADR 041's `NOWAIT` and one-second `statement_timeout` pattern. The migration is atomic, and no `CONCURRENTLY` exception is needed.
 - The table has its own ISP repository interface, `ThirdpartyCredentialStateRepository`, which follows ADR 004. Both stores implement it.
 
 **Alternatives considered**: Columns on `thirdparty_oauth2_services` (rejected; ETag churn). An eager backfill (rejected; it is not needed, and it would lock the table).
@@ -140,8 +140,8 @@ The validated pair is passed to the operation that consumes it, so exchange and 
 
 **Decision**: Response shapes and routes are unchanged. Only documented behavior changes.
 
-- **Admin API 2.1.0 → 2.2.0** (approval item API-ADMIN): `PUT /api/services/{service-id}` documents the invalidation of all user sessions on an effective credential change, its atomicity, and the rule that unchanged values do not invalidate.
-- **End-User API 1.1.0 → 1.2.0** (approval item API-ENDUSER): The following behavior is documented:
+- **Admin API 2.1.0 → 3.0.0** (approval item API-ADMIN): `PUT /api/services/{service-id}` documents the invalidation of all user sessions on an effective credential change, its atomicity, and the rule that unchanged values do not invalidate.
+- **End-User API 1.1.0 → 2.0.0** (approval item API-ENDUSER): The following behavior is documented:
   - `/oauth2/authorize` redirects to consent for an unusable included or mandatory connection, including an invalidated one, and returns a filesystem source failure as `server_error`.
   - Third-party initiation requires both credential files for a filesystem service.
   - A callback from an authorization that began before a credential change returns `callback_failed`.
@@ -149,16 +149,16 @@ The validated pair is passed to the operation that consumes it, so exchange and 
   - The session list reports invalidated sessions with `is_expired: true` and `has_refresh_token: false`.
   - The session refresh endpoint returns its existing `409` for them.
 
-**Rationale**: These are compatible behavior changes within existing documented error and response sets. A minor version records the documented change. Principle IV requires stakeholder confirmation for any behavior change.
+**Rationale**: Release `v0.1.133` contains Admin API `2.1.0` and End-User API `1.1.0`. Invalidation and filesystem availability coupling change their released behavior even though response shapes remain unchanged. Constitution Principles IV and X require a major version bump or a new endpoint for released behavior changes. Propose Admin API `3.0.0` and End-User API `2.0.0` on the existing routes, with cutover documentation and no compatibility shim. The maintainer must approve API-ADMIN and API-ENDUSER before implementation.
 
 **Alternatives considered**:
 
-- *No version change*. ADR 044 kept 1.0.0 for a target change. Rejected, because the session lifecycle semantics visible to clients change.
-- *A major version*. No client-visible shape breaks. Rejected.
+- *No version change or a minor bump*. Rejected: neither satisfies the released-behavior rule. ADR 044's approved action-target treatment does not authorize this lifecycle change.
+- *New versioned endpoints*. Rejected: duplicating the existing service, authorization, and session flows would add unnecessary contract surface.
 
 ## R8. Logging, telemetry, and errors
 
-**Decision**: Three credential-free audit events (see the [ADR draft](adr-draft-credential-change-session-invalidation.md#6-audit)). Recognition and stored updates run inside existing spans (`thirdparty` update, session operations). This plan adds no new metric or span name. No new `oauth2session` error detail is exposed in token-exchange diagnostics. After a recognition, the triggering request reads an expired session and reports the existing `session_missing`, `refresh_unavailable`, or `access_token_expired` recoverable details. A failed recognition commit reports the existing `persistence_failed` or `repository_unavailable` details.
+**Decision**: Four credential-free audit events (see the [ADR draft](adr-draft-credential-change-session-invalidation.md#6-audit)). Recognition and stored updates run inside existing spans (`thirdparty` update, session operations). This plan adds no new metric or span name. No new `oauth2session` error detail is exposed in token-exchange diagnostics. After a recognition, the triggering request reads an expired session and reports the existing `session_missing`, `refresh_unavailable`, or `access_token_expired` recoverable details. A failed recognition commit reports the existing `persistence_failed` or `repository_unavailable` details.
 
 **Rationale**: `coding-standards/LOGGING.md` §2.2 treats event identifiers as contracts. Adding events is additive. Reusing the diagnostic details avoids a dashboard contract change.
 
@@ -179,7 +179,7 @@ Other Feature 051 scenarios keep their expectations. The `expectServiceUnchanged
 **Decision**:
 
 - Add no configuration key. `third_party_oauth2.credential_files` is unchanged. `docs/configuration.md` and `examples/config/` document the rotation behavior.
-- Make no Helm chart change.
+- Change no Helm parameter or template. Add only the migration rollback/drain note to the chart README.
 - Make no React change. Playwright tests and screenshots cover the existing consent and sessions UI for Journey 2.
 
 **Rationale**: The specification asks for no new setting. Principle VII is not triggered.
