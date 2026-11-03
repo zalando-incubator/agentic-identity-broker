@@ -520,14 +520,14 @@ func (te *TokenExchanger) refreshClientAssertion() (resultErr error) {
 			metadata = metadataFromError(context.Background(), resultErr)
 			diagnostic = diagnosticFromError(context.Background(), resultErr)
 			span.SetStatus(codes.Error, "client assertion refresh failed")
+			span.SetAttributes(attribute.String("error.type", string(metadata.Kind())))
 			logOperationError(ctx, te.logger, slog.LevelError, "client assertion refresh failed", metadata, diagnostic)
 		}
 		span.SetAttributes(
-			attribute.String("operation", string(metadata.Operation())),
-			attribute.String("error_kind", string(metadata.Kind())),
-			attribute.String("dependency", string(metadata.Dependency())),
+			attribute.String("token_exchange.operation", string(metadata.Operation())),
+			attribute.String("token_exchange.dependency", string(metadata.Dependency())),
 			attribute.Int("http.response.status_code", metadata.StatusCode()),
-			attribute.String("oauth.error_code", metadata.OAuthCode()))
+			attribute.String("token_exchange.oauth_error_code", metadata.OAuthCode()))
 		attrs := diagnostic.metricAttributes()
 		n := len(attrs)
 		if diagnostic.Outcome() == OutcomeSuccess {
