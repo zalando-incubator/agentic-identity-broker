@@ -250,21 +250,9 @@ steps:
     env:
       MEMORY_DIR: /tmp/gh-aw/repo-memory/default
     run: |
+      # Build the seed with jq: the workflow compiler strips a trailing ": null" from every line, including inside run scripts.
       if [[ ! -f "$MEMORY_DIR/notes.json" ]]; then
-        cat > "$MEMORY_DIR/notes.json" <<'EOF'
-      {
-        "version": 1,
-        "cursors": {
-          "labelling_after": null,
-          "investigation_after": null
-        },
-        "issues": [],
-        "fixes": [],
-        "checks": [],
-        "completed_actions": [],
-        "priorities": []
-      }
-      EOF
+        jq -n '{version: 1, cursors: {labelling_after: null, investigation_after: null}, issues: [], fixes: [], checks: [], completed_actions: [], priorities: []}' > "$MEMORY_DIR/notes.json"
       fi
 
   - name: Install Repo Assist memory validator
@@ -289,7 +277,9 @@ steps:
         echo '  if (result === false) { console.error("notes.json: validation returned false"); process.exit(1); }'
         echo '}).catch(error => { console.error(error.message); process.exit(1); });'
       } > "$VALIDATOR"
-      node "$VALIDATOR"
+      node --check "$VALIDATOR"
+      # Invalid memory is left for the agent to repair; the post-agent validation still gates the push.
+      node "$VALIDATOR" || echo "::warning::Repo memory does not match the schema yet; the agent must repair notes.json before pushing it"
 
   - name: Fetch repo data for task weighting
     env:
