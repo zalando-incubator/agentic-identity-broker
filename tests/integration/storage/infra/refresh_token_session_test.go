@@ -106,6 +106,6 @@ func runRefreshTokenSessionConsentContract(t *testing.T, newRepository func(*tes
 
 func TestRefreshTokenSessionStoreConsent(t *testing.T) {
 	runRefreshTokenSessionConsentContract(t, func(t *testing.T) (ports.RefreshTokenSessionRepository, id.AgentID, id.AgentID) {
-		return memory.NewRefreshTokenSessionStore(), id.NewAgentID(), id.NewAgentID()
+		return memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), id.NewAgentID(), id.NewAgentID()
 	})
 }

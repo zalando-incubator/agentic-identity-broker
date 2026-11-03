@@ -8,7 +8,7 @@ import (
 
 func TestNewOAuth2SessionServiceRequiresLogger(t *testing.T) {
 	assert.PanicsWithValue(t, "oauth2session.NewOAuth2SessionService: logger must not be nil", func() {
-		NewOAuth2SessionService(nil, nil, nil, nil, nil, nil, nil, nil, Config{}, nil)
+		NewOAuth2SessionService(nil, nil, nil, nil, nil, nil, nil, nil, Config{}, nil, nil, nil)
 	})
 }
 

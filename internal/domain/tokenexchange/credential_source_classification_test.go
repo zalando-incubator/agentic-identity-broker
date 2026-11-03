@@ -24,6 +24,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -187,8 +188,9 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 			var logs strings.Builder
 			logger := slog.New(slog.NewJSONHandler(&logs, nil))
 			thirdpartyService := newTestProviderService(repo)
+			ledgerStore := &ledgerfixture.Store{}
 			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil,
-				&MockEncryption{}, &http.Client{Timeout: time.Second}, nil, config, logger).WithCredentialFileReader(credentialfile.New())
+				&MockEncryption{}, &http.Client{Timeout: time.Second}, nil, config, logger, ledgerStore.Recorder(t), ledgerStore).WithCredentialFileReader(credentialfile.New())
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -197,9 +199,9 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 			})
 			require.NoError(t, err)
 			svc := &TokenExchangeService{
-				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
+				ledger: ledgerStore.Recorder(t), jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, nil, logger),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, nil, logger, ledgerfixture.NewRecorder()),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, logger),
 			}
 			claims := map[string]interface{}{
@@ -256,7 +258,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				if tc.sourceReason != "" {
 					assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
 					assert.NotErrorIs(t, err, oauth2session.ErrRefreshFailed)
-					assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
+					assert.NotErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
 					var sourceErr *model.CredentialSourceError
 					if assert.ErrorAs(t, err, &sourceErr) {
 						assert.Equal(t, tc.sourceReason, sourceErr.Reason)

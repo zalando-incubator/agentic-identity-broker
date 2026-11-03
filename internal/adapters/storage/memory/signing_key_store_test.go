@@ -35,7 +35,7 @@ func testSigningKeyInDomain(kid string, domain storage.KeyDomain, isCurrent bool
 
 func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	t.Run("returns context error when already canceled", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -50,7 +50,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	})
 
 	t.Run("returns context error while waiting for held lock", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		lockHeld := make(chan struct{})
 		releaseLock := make(chan struct{})
 		firstDone := make(chan error, 1)
@@ -86,7 +86,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	})
 
 	t.Run("blocks non-bootstrap writes until the bootstrap flow completes", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		counted := make(chan struct{})
 		allowCreate := make(chan struct{})
 		bootstrapDone := make(chan error, 1)
@@ -127,7 +127,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 
 func TestSigningKeyStore_SetCurrent(t *testing.T) {
 	t.Run("uses the provided activation time", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)
@@ -146,7 +146,7 @@ func TestSigningKeyStore_SetCurrent(t *testing.T) {
 }
 
 func TestSigningKeyStore_PublicJWK(t *testing.T) {
-	store := NewSigningKeyStore()
+	store := NewSigningKeyStore(NewTransactionManager())
 	ctx := context.Background()
 	publicJWK := []byte(`{"alg":"ES256","kid":"public-kid","kty":"EC"}`)
 	key := testSigningKey("public-kid", true)
@@ -170,7 +170,7 @@ func TestSigningKeyStore_PublicJWK(t *testing.T) {
 }
 
 func TestSigningKeyStore_SetPublicJWK(t *testing.T) {
-	store := NewSigningKeyStore()
+	store := NewSigningKeyStore(NewTransactionManager())
 	ctx := context.Background()
 	key := testSigningKey("legacy-public-kid", true)
 	require.NoError(t, store.Create(ctx, key))
@@ -191,7 +191,7 @@ func TestSigningKeyStore_SetPublicJWK(t *testing.T) {
 
 func TestSigningKeyStore_Delete(t *testing.T) {
 	t.Run("rejects deleting the last active key", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		key := testSigningKey("current-kid", true)
 		require.NoError(t, store.Create(ctx, key))
@@ -202,7 +202,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("rejects deleting the current key when another key exists", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)
@@ -215,7 +215,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("rejects deleting the currently usable fallback key during grace period", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		fallback := testSigningKey("fallback-kid", false)
 		fallback.ActivatesAt = time.Now().UTC().Add(-time.Minute)
@@ -230,7 +230,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("deletes a non-current key when another active key remains", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)
@@ -250,7 +250,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("filters lookup, active keys, and counts by key domain", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		tokenKey := testSigningKeyInDomain("token-key", storage.KeyDomainTokenSigning, false)
 		cimdKey := testSigningKeyInDomain("cimd-key", storage.KeyDomainCIMDClientAuthentication, false)
 		require.NoError(t, store.Create(ctx, tokenKey))
@@ -276,7 +276,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	})
 
 	t.Run("only promotes a key from the requested key domain", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		tokenCurrent := testSigningKeyInDomain("token-current", storage.KeyDomainTokenSigning, true)
 		cimdCandidate := testSigningKeyInDomain("cimd-candidate", storage.KeyDomainCIMDClientAuthentication, false)
 		require.NoError(t, store.Create(ctx, tokenCurrent))
@@ -292,7 +292,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	})
 
 	t.Run("does not delete a key from another key domain", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		tokenCurrent := testSigningKeyInDomain("token-current", storage.KeyDomainTokenSigning, true)
 		cimdKey := testSigningKeyInDomain("cimd-key", storage.KeyDomainCIMDClientAuthentication, false)
 		require.NoError(t, store.Create(ctx, tokenCurrent))
@@ -308,7 +308,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	})
 
 	t.Run("keeps grace-period fallback selection within the requested key domain", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		now := time.Now().UTC()
 		tokenFallback := testSigningKeyInDomain("token-fallback", storage.KeyDomainTokenSigning, false)
 		tokenFallback.ActivatesAt = now.Add(-2 * time.Minute)
@@ -326,7 +326,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	})
 
 	t.Run("observes an empty domain while bootstrapping under the lock", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		tokenKey := testSigningKeyInDomain("token-key", storage.KeyDomainTokenSigning, true)
 		require.NoError(t, store.Create(ctx, tokenKey))
 
@@ -340,7 +340,7 @@ func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
 	})
 
 	t.Run("rejects duplicate kids across key domains", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		tokenKey := testSigningKeyInDomain("shared-kid", storage.KeyDomainTokenSigning, true)
 		cimdKey := testSigningKeyInDomain("shared-kid", storage.KeyDomainCIMDClientAuthentication, true)
 		require.NoError(t, store.Create(ctx, tokenKey))

@@ -2,6 +2,7 @@ package impersonation
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestAgentSubjectRequiresEveryPrincipalExtraction(t *testing.T) {
@@ -29,7 +31,7 @@ func TestAgentSubjectRequiresEveryPrincipalExtraction(t *testing.T) {
 				verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive}
 				svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 					return configurableJWKSProvider{set: keyset}, nil
-				}, stubAgentRepository{}, mint, 0, nil, verifier, "https://broker.example.com")
+				}, stubAgentRepository{}, mint, 0, slog.New(slog.DiscardHandler), verifier, "https://broker.example.com", ledgerfixture.NewRecorder())
 				require.NoError(t, err)
 				target := testTarget()
 				builder := jwt.NewBuilder().Issuer("https://idp.example.com").Audience([]string{"aud"}).Subject(target.Agent.ID.String()).Expiration(time.Now().Add(time.Hour))

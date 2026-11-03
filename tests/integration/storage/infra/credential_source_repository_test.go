@@ -22,7 +22,21 @@ type credentialSourcePostgresHarness struct {
 	ctx       context.Context
 	providers *postgres.PostgresThirdpartyOAuth2ProviderRepository
 	sessions  *postgres.PostgresUserSessionRepository
+	adapter   *postgres.Adapter
 	db        *sql.DB
+}
+
+// persistRefreshedSession commits a refreshed session the way the session service does.
+func (h *credentialSourcePostgresHarness) persistRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	txCtx, err := h.adapter.BeginTX(ctx)
+	if err != nil {
+		return err
+	}
+	if err := h.sessions.UpdateRefreshedSession(txCtx, previous, current); err != nil {
+		_ = h.adapter.Rollback(txCtx)
+		return err
+	}
+	return h.adapter.Commit(txCtx)
 }
 
 func setupCredentialSourcePostgresHarness(t *testing.T) *credentialSourcePostgresHarness {
@@ -37,7 +51,7 @@ func setupCredentialSourcePostgresHarness(t *testing.T) *credentialSourcePostgre
 	db, err := sql.Open("pgx", shared.ConnectionString(dbName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	return &credentialSourcePostgresHarness{ctx: ctx, providers: providers, sessions: postgres.NewUserSessionRepository(adapter), db: db}
+	return &credentialSourcePostgresHarness{ctx: ctx, providers: providers, sessions: postgres.NewUserSessionRepository(adapter), adapter: adapter, db: db}
 }
 
 func credentialSourcePostgresProvider(source model.CredentialSource, resources ...string) *model.ThirdpartyOAuth2ProviderEntity {

@@ -31,6 +31,7 @@ import (
 // A separate record lock models the storage port's update-only row lock without
 // holding a global lock across an upstream request.
 type backgroundRecord struct {
+	gate    sync.Mutex
 	mu      sync.Mutex
 	session *storage.UserSession
 }
@@ -58,6 +59,13 @@ func (r *backgroundStore) record(principal id.Principal, serviceID id.ServiceID)
 	return r.records[backgroundKey(principal, serviceID)]
 }
 
+func copyBackgroundSession(session *storage.UserSession) *storage.UserSession {
+	copy := *session
+	copy.EncryptedAccessToken = bytes.Clone(session.EncryptedAccessToken)
+	copy.EncryptedRefreshToken = bytes.Clone(session.EncryptedRefreshToken)
+	return &copy
+}
+
 func (r *backgroundStore) find(_ context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
 	record := r.record(principal, serviceID)
 	if record == nil {
@@ -65,33 +73,49 @@ func (r *backgroundStore) find(_ context.Context, principal id.Principal, servic
 	}
 	record.mu.Lock()
 	defer record.mu.Unlock()
-	copy := *record.session
-	copy.EncryptedAccessToken = bytes.Clone(record.session.EncryptedAccessToken)
-	copy.EncryptedRefreshToken = bytes.Clone(record.session.EncryptedRefreshToken)
-	return &copy, nil
+	return copyBackgroundSession(record.session), nil
 }
 
-func (r *backgroundStore) withLocked(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+// withLocked holds the per-session gate across refresh without holding the record
+// lock, so update can apply the conditional write while the gate is still held.
+func (r *backgroundStore) withLocked(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 	record := r.record(principal, serviceID)
 	if record == nil {
 		return nil, nil
 	}
+	record.gate.Lock()
+	defer record.gate.Unlock()
 	record.mu.Lock()
-	defer record.mu.Unlock()
-	current := *record.session
-	current.EncryptedAccessToken = bytes.Clone(record.session.EncryptedAccessToken)
-	current.EncryptedRefreshToken = bytes.Clone(record.session.EncryptedRefreshToken)
-	changed, err := refresh(ctx, &current)
-	if err != nil {
+	current := copyBackgroundSession(record.session)
+	record.mu.Unlock()
+	if err := refresh(ctx, current); err != nil {
 		return nil, err
 	}
-	if changed {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		record.session = &current
+	return current, nil
+}
+
+func (r *backgroundStore) update(ctx context.Context, previous, current *storage.UserSession) error {
+	record := r.record(previous.Principal, previous.ServiceID)
+	if record == nil {
+		return storage.NewStorageError("UpdateRefreshedSession", storage.ErrorKindConflict, nil, "session deleted during refresh")
 	}
-	return &current, nil
+	record.mu.Lock()
+	defer record.mu.Unlock()
+	stored := record.session
+	if stored.ID != previous.ID || !stored.UpdatedAt.Equal(previous.UpdatedAt) || stored.CallbackID != previous.CallbackID ||
+		!bytes.Equal(stored.EncryptedAccessToken, previous.EncryptedAccessToken) ||
+		!bytes.Equal(stored.EncryptedRefreshToken, previous.EncryptedRefreshToken) {
+		return storage.NewStorageError("UpdateRefreshedSession", storage.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	record.session = copyBackgroundSession(current)
+	return nil
+}
+
+func (r *backgroundStore) refreshRepository() operationRefreshRepository {
+	return operationRefreshRepository{lock: r.withLocked, update: r.update}
 }
 
 func (r *backgroundStore) delete(principal id.Principal, serviceID id.ServiceID) {
@@ -154,7 +178,7 @@ func newBackgroundFixture(t *testing.T, sessions ...*storage.UserSession) (*OAut
 	provider.ID = sessions[0].ServiceID
 	store := newBackgroundStore(sessions...)
 	service.sessionRepo = operationSessionRepository{find: store.find}
-	service.refreshRepo = operationRefreshRepository(store.withLocked)
+	service.refreshRepo = store.refreshRepository()
 	service.encryption = operationEncryption{
 		encrypt: func(_ context.Context, data []byte, binding map[string]string) ([]byte, error) {
 			require.Equal(t, sessions[0].ServiceID.String(), binding["service_id"])
@@ -578,10 +602,12 @@ func TestOnDemandRefresh_RechecksExpiryAfterDelayedLock(t *testing.T) {
 			return operationTokenResponse(http.StatusOK, `{"access_token":"upstream-access","refresh_token":"upstream-refresh","expires_in":3600}`), nil
 		})
 		lockGate := make(chan struct{})
-		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		repository := store.refreshRepository()
+		repository.lock = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 			<-lockGate
 			return store.withLocked(ctx, principal, serviceID, refresh)
-		})
+		}
+		service.refreshRepo = repository
 		type result struct {
 			token string
 			err   error
@@ -636,12 +662,14 @@ func TestBackgroundRefresh_AdmittedRequestJoinsOnDemandNoOpAndRenews(t *testing.
 		}}
 		holdOnDemand := make(chan struct{})
 		var lockCalls atomic.Int32
-		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		repository := store.refreshRepository()
+		repository.lock = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 			if lockCalls.Add(1) == 1 {
 				<-holdOnDemand
 			}
 			return store.withLocked(ctx, principal, serviceID, refresh)
-		})
+		}
+		service.refreshRepo = repository
 		pool := newBackgroundRefresher(service, 1)
 		service.background = pool
 		type result struct {
@@ -763,7 +791,8 @@ func TestBackgroundRefresh_OnDemandJoinRefusesRejectionFoundUnderLock(t *testing
 			close(release)
 		}
 	}()
-	service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+	repository := store.refreshRepository()
+	repository.lock = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 		close(started)
 		select {
 		case <-release:
@@ -771,7 +800,8 @@ func TestBackgroundRefresh_OnDemandJoinRefusesRejectionFoundUnderLock(t *testing
 			return nil, ctx.Err()
 		}
 		return store.withLocked(ctx, principal, serviceID, refresh)
-	})
+	}
+	service.refreshRepo = repository
 	var requests atomic.Int32
 	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 		requests.Add(1)
@@ -886,20 +916,17 @@ func TestBackgroundRefresh_CloseDrainsCommittedTokenBeforeCancelingAndRejectsLat
 			close(releaseCommit)
 		}
 	}()
-	service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-		return store.withLocked(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
-			changed, err := refresh(ctx, current)
-			if changed && err == nil {
-				committing <- struct{}{}
-				select {
-				case <-releaseCommit:
-				case <-ctx.Done():
-					return false, ctx.Err()
-				}
-			}
-			return changed, err
-		})
-	})
+	repository := store.refreshRepository()
+	repository.update = func(ctx context.Context, previous, current *storage.UserSession) error {
+		committing <- struct{}{}
+		select {
+		case <-releaseCommit:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return store.update(ctx, previous, current)
+	}
+	service.refreshRepo = repository
 	pool := newBackgroundRefresher(service, 1)
 	submitBackground(t, pool, context.Background(), session)
 	receiveBackground(t, committing)
@@ -956,11 +983,13 @@ func TestBackgroundRefresh_DeletedSessionIsNotRecreated(t *testing.T) {
 			close(releaseLock)
 		}
 	}()
-	service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+	repository := store.refreshRepository()
+	repository.lock = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 		beforeLock <- struct{}{}
 		<-releaseLock
 		return store.withLocked(ctx, principal, serviceID, refresh)
-	})
+	}
+	service.refreshRepo = repository
 	var requests atomic.Int32
 	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 		requests.Add(1)

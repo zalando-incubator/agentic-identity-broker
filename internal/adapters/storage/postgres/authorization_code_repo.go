@@ -56,7 +56,7 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	defer cancel()
 
 	var code storage.AuthorizationCode
-	err := r.adapter.db.GetContext(queryCtx, &code,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &code,
 		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name
 		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > NOW()`, codeHash)
 	if err != nil {
@@ -97,8 +97,7 @@ func (r *AuthorizationCodeRepo) DeleteExpired(ctx context.Context) (int, error) 
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.db.ExecContext(execCtx,
-		`DELETE FROM authorization_codes WHERE expires_at < $1`, now)
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM authorization_codes WHERE expires_at < $1`, now)
 	if err != nil {
 		return 0, storage.NewStorageError("AuthorizationCodeRepo.DeleteExpired", storage.ErrorKindUnknown, err, "failed to delete expired codes")
 	}

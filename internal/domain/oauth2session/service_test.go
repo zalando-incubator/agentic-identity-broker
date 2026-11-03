@@ -32,6 +32,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type noopBranchKeyManager struct{}
@@ -2075,14 +2076,15 @@ func (batchOnlyProviderRepository) Get(context.Context, id.ServiceID) (*model.Th
 func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 	principal := id.Principal("user@example.com")
-	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	transactions := memory.NewTransactionManager()
+	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions)
 	provider := createTestService(id.NewServiceID())
 	provider.Secret = model.NewAbsentSecret()
 	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
 	require.NoError(t, providerRepo.Create(ctx, provider))
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
 		batchOnlyProviderRepository{providerRepo}, newTestEncryption(t), newNoopBranchKeyManager(), nil, false, slog.Default())
-	sessions := memory.NewInMemoryUserSessionRepository()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
 	for _, serviceID := range []id.ServiceID{provider.ID, id.NewServiceID()} {
 		past := time.Now().Add(-time.Minute)
 		require.NoError(t, sessions.Create(ctx, &storage.UserSession{
@@ -2093,7 +2095,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 		}))
 	}
 	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,
-		memory.NewUserGrantRepository(), nil, nil, nil, nil, oauth2session.DefaultConfig(), slog.Default())
+		memory.NewUserGrantRepository(transactions), nil, nil, nil, nil, oauth2session.DefaultConfig(), slog.Default(), ledgerfixture.NewRecorder(), transactions)
 	summaries, err := svc.ListUserSessions(ctx, principal)
 	require.NoError(t, err)
 	require.Len(t, summaries, 1, "sessions for deleted providers are omitted")
@@ -2135,6 +2137,19 @@ func setupServiceWithHTTPClient(
 	loggers ...*slog.Logger,
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
+	svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService, _ := setupServiceWithTransactions(t, configure, httpClient, loggers...)
+	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
+}
+
+// setupServiceWithTransactions also returns the transaction manager every repository and
+// the service share, for tests that persist through the refresh repository themselves.
+func setupServiceWithTransactions(
+	t *testing.T,
+	configure func(*oauth2session.Config),
+	httpClient *http.Client,
+	loggers ...*slog.Logger,
+) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService, *memory.TransactionManager) {
+	t.Helper()
 	logger := slog.Default()
 	if len(loggers) > 0 {
 		logger = loggers[0]
@@ -2149,11 +2164,12 @@ func setupServiceWithHTTPClient(
 	require.NoError(t, err)
 
 	// Create repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	transactions := memory.NewTransactionManager()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions)
+	sessionRepo := memory.NewInMemoryUserSessionRepository(transactions)
+	grantRepo := memory.NewUserGrantRepository(transactions)
+	agentRepo := memory.NewAgentRepository(transactions)
 	serviceRepo.WithUserSessionRepository(sessionRepo)
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
 
 	// Create service
 	config := oauth2session.DefaultConfig()
@@ -2187,9 +2203,11 @@ func setupServiceWithHTTPClient(
 		domjwe.New(key),
 		config,
 		logger,
+		ledgerfixture.NewRecorder(),
+		transactions,
 	)
 
-	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
+	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService, transactions
 }
 
 func createTestService(serviceID id.ServiceID) *model.ThirdpartyOAuth2ProviderEntity {
@@ -2322,8 +2340,9 @@ func newStoredDCRSessionService(t *testing.T, tokenClient *http.Client, provider
 
 	encryption := newTestEncryption(t)
 	repo := &storedDCRProviderRepository{entities: make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(providers))}
-	sessions := memory.NewInMemoryUserSessionRepository()
-	storedProviders := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	transactions := memory.NewTransactionManager()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
+	storedProviders := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions).WithUserSessionRepository(sessions)
 	repo.ThirdpartyOAuth2ProviderRepository = storedProviders
 	for _, provider := range providers {
 		stored := provider.Copy()
@@ -2345,8 +2364,8 @@ func newStoredDCRSessionService(t *testing.T, tokenClient *http.Client, provider
 	config.MaxRetries = 3
 	config.RetryBaseDelay = time.Millisecond
 	service := oauth2session.NewOAuth2SessionService(
-		providerService, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
-		encryption, rejectingTokenHTTPClient(), domjwe.New(key), config, slog.Default(),
+		providerService, sessions, sessions, memory.NewUserGrantRepository(transactions), memory.NewAgentRepository(transactions),
+		encryption, rejectingTokenHTTPClient(), domjwe.New(key), config, slog.Default(), ledgerfixture.NewRecorder(), transactions,
 	).WithDiscoveryTokenHTTPClient(tokenClient)
 	return service, repo, providerService
 }
@@ -2905,10 +2924,11 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	transactions := memory.NewTransactionManager()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions)
+	sessionRepo := memory.NewInMemoryUserSessionRepository(transactions)
+	grantRepo := memory.NewUserGrantRepository(transactions)
+	agentRepo := memory.NewAgentRepository(transactions)
 	encryption := newTestEncryption(t)
 
 	// Create ThirdpartyOAuth2ProviderService to handle encryption context binding (simulates domain layer)
@@ -2930,6 +2950,8 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 		domjwe.New(key),
 		config,
 		logger, // Capture logs
+		ledgerfixture.NewRecorder(),
+		transactions,
 	)
 
 	ctx := context.Background()

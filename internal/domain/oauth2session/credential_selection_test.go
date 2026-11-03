@@ -154,24 +154,25 @@ func (e *credentialTokenEndpoint) captured(t *testing.T) []credentialTokenReques
 }
 
 type credentialSessionHarness struct {
-	service   *oauth2session.OAuth2SessionService
-	providers *thirdparty.ThirdpartyOAuth2ProviderService
-	records   *memory.InMemoryThirdpartyOAuth2ProviderRepository
-	sessions  ports.UserSessionRepository
-	reader    *credentialReaderSpy
-	endpoint  *credentialTokenEndpoint
+	service      *oauth2session.OAuth2SessionService
+	providers    *thirdparty.ThirdpartyOAuth2ProviderService
+	records      *memory.InMemoryThirdpartyOAuth2ProviderRepository
+	sessions     ports.UserSessionRepository
+	reader       *credentialReaderSpy
+	endpoint     *credentialTokenEndpoint
+	transactions *memory.TransactionManager
 }
 
 func newCredentialSessionHarness(t *testing.T, bindings map[string]ports.CredentialFileBinding, loggers ...*slog.Logger) *credentialSessionHarness {
 	t.Helper()
-	service, records, sessions, _, _, providers := setupServiceWithHTTPClient(t, func(config *oauth2session.Config) {
+	service, records, sessions, _, _, providers, transactions := setupServiceWithTransactions(t, func(config *oauth2session.Config) {
 		config.CredentialFiles = bindings
 		config.MaxRetries = 3
 		config.RetryBaseDelay = time.Millisecond
 	}, &http.Client{}, loggers...)
 	reader := &credentialReaderSpy{reader: credentialfile.New()}
 	service.WithCredentialFileReader(reader)
-	return &credentialSessionHarness{service: service, providers: providers, records: records, sessions: sessions, reader: reader, endpoint: newCredentialTokenEndpoint(t)}
+	return &credentialSessionHarness{service: service, providers: providers, records: records, sessions: sessions, reader: reader, endpoint: newCredentialTokenEndpoint(t), transactions: transactions}
 }
 
 func credentialPair(t *testing.T, clientID, secret string) ports.CredentialFileBinding {

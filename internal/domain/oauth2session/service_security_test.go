@@ -28,6 +28,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type capturedTokenExchangeRequest struct {
@@ -283,8 +284,9 @@ func TestHandleCallbackSecurity_CIMDPublicClientExchangesAndRefreshesWithoutAuth
 	)
 	ctx := context.Background()
 	var logs strings.Builder
-	sessions := memory.NewInMemoryUserSessionRepository()
-	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.NewJSONHandler(&logs, nil)), 2, sessions)
+	transactions := memory.NewTransactionManager()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.NewJSONHandler(&logs, nil)), 2, transactions, sessions)
 	signer := &cimdAssertionSignerSpy{}
 	service = service.WithCIMDAssertionSigner(signer)
 	principal := id.Principal("user@example.com")
@@ -395,8 +397,9 @@ func TestHandleCallbackSecurity_CIMDPublicClientInvalidClientDoesNotRetryOrFallb
 	for _, rejectedGrant := range []string{"authorization_code", "refresh_token"} {
 		t.Run(rejectedGrant, func(t *testing.T) {
 			ctx := context.Background()
-			sessions := memory.NewInMemoryUserSessionRepository()
-			service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.DiscardHandler), 3, sessions)
+			transactions := memory.NewTransactionManager()
+			sessions := memory.NewInMemoryUserSessionRepository(transactions)
+			service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.DiscardHandler), 3, transactions, sessions)
 			signer := &cimdAssertionSignerSpy{}
 			service = service.WithCIMDAssertionSigner(signer)
 			serviceID := id.NewServiceID()
@@ -1132,8 +1135,9 @@ func TestRefreshLogsCarryOperationContext(t *testing.T) {
 
 func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
 	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
-	sessions := memory.NewInMemoryUserSessionRepository()
-	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, sessions)
+	transactions := memory.NewTransactionManager()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, transactions, sessions)
 	principal := id.Principal("user@example.com")
 	serviceID := id.NewServiceID()
 
@@ -1284,13 +1288,15 @@ func newSecurityTestOAuth2SessionService(
 	maxRetries int,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
-	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, memory.NewInMemoryUserSessionRepository())
+	transactions := memory.NewTransactionManager()
+	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, transactions, memory.NewInMemoryUserSessionRepository(transactions))
 }
 
 func newSecurityTestOAuth2SessionServiceWithSessions(
 	t *testing.T,
 	logger *slog.Logger,
 	maxRetries int,
+	transactions *memory.TransactionManager,
 	sessionRepo *memory.InMemoryUserSessionRepository,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
@@ -1302,7 +1308,7 @@ func newSecurityTestOAuth2SessionServiceWithSessions(
 
 	encryption := newTestEncryption(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions),
 		encryption,
 		newNoopBranchKeyManager(),
 		nil,
@@ -1319,13 +1325,15 @@ func newSecurityTestOAuth2SessionServiceWithSessions(
 		providerService,
 		sessionRepo,
 		sessionRepo,
-		memory.NewUserGrantRepository(),
-		memory.NewAgentRepository(),
+		memory.NewUserGrantRepository(transactions),
+		memory.NewAgentRepository(transactions),
 		encryption,
 		&http.Client{},
 		domjwe.New(key),
 		config,
 		logger,
+		ledgerfixture.NewRecorder(),
+		transactions,
 	), providerService
 }
 
@@ -1509,8 +1517,9 @@ func newDiscoveredSecurityTestService(t *testing.T, logger *slog.Logger, client 
 	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
 	require.NoError(t, key.Set(jwk.AlgorithmKey, "A256GCM"))
 
-	sessions := memory.NewInMemoryUserSessionRepository()
-	providers := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	transactions := memory.NewTransactionManager()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
+	providers := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions).WithUserSessionRepository(sessions)
 	encryption := newTestEncryption(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(providers, encryption, newNoopBranchKeyManager(), nil, false, logger)
 	config := oauth2session.DefaultConfig()
@@ -1518,8 +1527,8 @@ func newDiscoveredSecurityTestService(t *testing.T, logger *slog.Logger, client 
 	config.MaxRetries = 2
 	config.RetryBaseDelay = time.Millisecond
 	service := oauth2session.NewOAuth2SessionService(
-		providerService, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
-		encryption, rejectingTokenHTTPClient(), domjwe.New(key), config, logger,
+		providerService, sessions, sessions, memory.NewUserGrantRepository(transactions), memory.NewAgentRepository(transactions),
+		encryption, rejectingTokenHTTPClient(), domjwe.New(key), config, logger, ledgerfixture.NewRecorder(), transactions,
 	).WithDiscoveryTokenHTTPClient(client)
 	return service, providers, sessions
 }

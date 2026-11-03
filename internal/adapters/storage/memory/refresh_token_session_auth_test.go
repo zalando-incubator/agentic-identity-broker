@@ -12,7 +12,7 @@ import (
 )
 
 func TestRefreshTokenSessionStoreClientAuthMethodRoundTrip(t *testing.T) {
-	store := NewRefreshTokenSessionStore()
+	store := NewRefreshTokenSessionStore(NewTransactionManager())
 	method := "private_key_jwt"
 	for _, test := range []struct {
 		name   string
@@ -54,7 +54,7 @@ func TestRefreshTokenSessionStoreClientAuthMethodRoundTrip(t *testing.T) {
 }
 
 func TestRefreshTokenSessionStoreSuccessorCarriesClientAuthMethod(t *testing.T) {
-	store := NewRefreshTokenSessionStore()
+	store := NewRefreshTokenSessionStore(NewTransactionManager())
 	method := "private_key_jwt"
 	root := &storage.RefreshTokenSession{
 		Signature:        "root-signature",

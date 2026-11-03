@@ -41,7 +41,9 @@ import (
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -200,6 +202,8 @@ type OAuth2SessionService struct {
 	credentialFileReader     ports.CredentialFileReader
 	config                   Config
 	logger                   *slog.Logger
+	ledger                   *ledger.Service
+	transactions             ports.StorageTransactionManager
 }
 
 // Config holds configuration for the OAuth2 session service.
@@ -270,6 +274,8 @@ func NewOAuth2SessionService(
 	jweTokenService *domjwe.TokenService,
 	config Config,
 	logger *slog.Logger,
+	recorder *ledger.Service,
+	transactionManager ports.StorageTransactionManager,
 ) *OAuth2SessionService {
 	if logger == nil {
 		panic("oauth2session.NewOAuth2SessionService: logger must not be nil")
@@ -308,6 +314,8 @@ func NewOAuth2SessionService(
 		jweTokenService: jweTokenService,
 		config:          config,
 		logger:          logger,
+		ledger:          recorder,
+		transactions:    transactionManager,
 	}
 	service.background = newBackgroundRefresher(service, config.BackgroundRefreshWorkers)
 	return service
@@ -866,10 +874,13 @@ func (s *OAuth2SessionService) createSession(
 		tokenType = "Bearer"
 	}
 
-	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		if current == nil || current.ID != claims.SessionID || current.CallbackID != claims.SessionCallbackID {
-			return false, nil
+			return nil
 		}
+		previous := *current
 		current.CallbackID = uuid.NewString()
 		current.UpstreamClientID = claims.UpstreamClientID
 		current.EncryptedRefreshToken = encryptedRefresh
@@ -880,7 +891,13 @@ func (s *OAuth2SessionService) createSession(
 		current.Scope = scope
 		current.EncryptionContext = storage.EncryptionContext{ServiceID: serviceID}
 		current.UpdatedAt = now
-		return true, nil
+		// The replaced tokens and the session-established fact commit together.
+		return s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+			if err := s.refreshRepo.UpdateRefreshedSession(txCtx, &previous, current); err != nil {
+				return err
+			}
+			return s.recordSession(txCtx, "session-established", current, "")
+		})
 	})
 	if err != nil {
 		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
@@ -915,7 +932,19 @@ func (s *OAuth2SessionService) createSession(
 	}
 
 	// The unique key chooses the winner even when both callbacks observed no session.
-	session, err = s.sessionRepo.CreateIfAbsent(ctx, session)
+	// Only the winning insert records session-established, in the same transaction.
+	proposedID := session.ID
+	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+		winner, err := s.sessionRepo.CreateIfAbsent(txCtx, session)
+		if err != nil {
+			return err
+		}
+		session = winner
+		if winner == nil || winner.ID != proposedID {
+			return nil
+		}
+		return s.recordSession(txCtx, "session-established", winner, "")
+	})
 	if err != nil {
 		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
 		s.logger.ErrorContext(ctx, "failed to create session", "service_id", serviceID, "oauth2_session", failure.Metadata())
@@ -1340,15 +1369,13 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 		return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 	}
 
-	// Update session with new access token
-	session.EncryptedAccessToken = encryptedAccess
-
-	// Update access token expiration time
+	prepared := *session
+	prepared.EncryptedAccessToken = encryptedAccess
 	if !newToken.Expiry.IsZero() {
-		session.AccessTokenExpiresAt = &newToken.Expiry
+		expiry := newToken.Expiry
+		prepared.AccessTokenExpiresAt = &expiry
 	} else {
-		// If no expiry provided, assume token doesn't expire
-		session.AccessTokenExpiresAt = nil
+		prepared.AccessTokenExpiresAt = nil
 	}
 
 	if newToken.RefreshToken != "" {
@@ -1356,23 +1383,23 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 		if err != nil {
 			return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 		}
-		session.EncryptedRefreshToken = encryptedRefresh
-		session.RefreshRejectedAt = nil
+		prepared.EncryptedRefreshToken = encryptedRefresh
+		prepared.RefreshRejectedAt = nil
 	}
 	if newToken.TokenType != "" {
-		session.TokenType = newToken.TokenType
+		prepared.TokenType = newToken.TokenType
 	}
 	if scope, present := newToken.Extra("scope").(string); present {
-		session.Scope = make([]string, 0)
+		prepared.Scope = make([]string, 0)
 		for value := range strings.SplitSeq(scope, flavor.ScopeSeparator()) {
 			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				session.Scope = append(session.Scope, trimmed)
+				prepared.Scope = append(prepared.Scope, trimmed)
 			}
 		}
 	}
 
-	// Update timestamp
-	session.UpdatedAt = time.Now()
+	prepared.UpdatedAt = time.Now().UTC()
+	*session = prepared
 
 	return nil
 }
@@ -1527,8 +1554,26 @@ func (s *OAuth2SessionService) TerminateSession(
 		return fmt.Errorf("termination denied: %w", ErrUnauthorized)
 	}
 
-	// Step 3: Delete session from repository
-	err = s.sessionRepo.DeleteByPrincipalAndService(ctx, principal, serviceID)
+	// Step 3: Delete the session and record the fact in one subject-gated transaction
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+		current, err := s.sessionRepo.FindByPrincipalAndService(txCtx, principal, serviceID)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			return ErrSessionNotFound
+		}
+		if current.Principal != principal {
+			return ErrUnauthorized
+		}
+		session = current
+		if err := s.sessionRepo.DeleteByPrincipalAndService(txCtx, principal, serviceID); err != nil {
+			return err
+		}
+		return s.recordSession(txCtx, "session-terminated", session, "")
+	})
 	if err != nil {
 		// Audit log: Repository error during termination
 		s.logger.ErrorContext(ctx, "oauth2_session_termination_failed",
@@ -1754,51 +1799,76 @@ func (s *OAuth2SessionService) refreshDueSession(ctx context.Context, principal 
 	return s.refreshLockedSession(ctx, principal, serviceID, dueBy, trigger)
 }
 
-// A nil dueBy forces renewal. Otherwise dueBy runs after the session lock is acquired,
-// and the latest row must expire at or before its result.
+// A nil dueBy forces renewal. Otherwise dueBy runs after per-session coordination is
+// acquired, and the latest row must expire at or before its result. Refresh never runs
+// inside a business transaction: the upstream exchange happens outside any ledger gate,
+// and only the short conditional write in persistRefreshedSession owns a transaction.
 func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, dueBy func() time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
 	provider, providerErr := s.getRefreshProvider(ctx, serviceID)
-	refreshed := false
+	if _, active := ports.StorageTransactionEffectsFromContext(ctx); active {
+		return nil, false, provider, sessionRepositoryError(ctx, DetailRepositoryUnavailable,
+			storage.NewStorageError("RefreshSession", storage.ErrorKindConflict, nil, "refresh must begin outside a business transaction"))
+	}
+	var attempted *storage.UserSession
+	refreshed, indeterminate := false, false
 	var rejected error
-	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		if current == nil {
-			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
+			return sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 		}
 		if current.RefreshRejected() {
 			if trigger == RefreshTriggerBackground || trigger == RefreshTriggerSweep {
-				return false, nil
+				return nil
 			}
-			return false, refreshUnavailableError(ctx, current, nil)
+			return refreshUnavailableError(ctx, current, nil)
 		}
 		var threshold *time.Time
 		if dueBy != nil {
 			due := dueBy()
 			if !current.AccessTokenExpiresBy(due) {
-				return false, nil
+				return nil
 			}
 			threshold = &due
 		}
 		if !current.CanRefresh() {
-			return false, refreshUnavailableError(ctx, current, threshold)
+			return refreshUnavailableError(ctx, current, threshold)
 		}
+		attempted = current
 		if providerErr != nil {
-			return false, providerErr
+			return providerErr
 		}
+		previous := *current
 		if err := s.refreshSessionTokens(ctx, current, provider); err != nil {
 			if sessionFailureMetadata(err).Detail() != DetailRefreshRejected {
-				return false, err
+				return err
 			}
 			// invalid_grant means the stored refresh token can never succeed again (RFC 6749 §5.2).
-			// Recording the rejection stops further issuance and upstream attempts until the user reconnects.
+			// Recording the rejection stops issuance and upstream attempts until the user reconnects.
+			// The rejection observation and the failure fact commit together.
 			rejectedAt := time.Now()
 			current.RefreshRejectedAt = &rejectedAt
 			current.UpdatedAt = rejectedAt
 			rejected = err
-			return true, nil
+			var persistErr error
+			indeterminate, persistErr = s.persistRefreshedSession(ctx, principal, &previous, current, "session-refresh-failed", refreshReasonCode(err))
+			if persistErr != nil {
+				return sessionOperationError(ctx, OperationRefresh, DetailPersistenceFailed, persistErr)
+			}
+			return nil
+		}
+		var persistErr error
+		indeterminate, persistErr = s.persistRefreshedSession(ctx, principal, &previous, current, "session-refreshed", "")
+		if persistErr != nil {
+			return sessionOperationError(ctx, OperationRefresh, DetailPersistenceFailed, persistErr)
 		}
 		refreshed = true
-		return true, nil
+		return nil
 	})
+	if err != nil && attempted != nil && !refreshed && rejected == nil && !indeterminate {
+		if recordErr := s.recordSession(ctx, "session-refresh-failed", attempted, refreshReasonCode(err)); recordErr != nil {
+			err = errors.Join(err, recordErr)
+		}
+	}
 	if err != nil {
 		detail := DetailRepositoryUnavailable
 		if refreshed || rejected != nil {
@@ -1818,6 +1888,109 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 	return current, refreshed, provider, nil
 }
 
+// withTransaction runs work in one owning storage transaction so a session mutation and
+// its ledger fact commit or roll back together.
+func (s *OAuth2SessionService) withTransaction(ctx context.Context, hints ports.StorageTransactionHints, work func(context.Context) error) (err error) {
+	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := s.transactions.Rollback(txCtx); rollbackErr != nil {
+				err = errors.Join(err, rollbackErr)
+			}
+		}
+	}()
+	if err := work(txCtx); err != nil {
+		return err
+	}
+	if err := s.transactions.Commit(txCtx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// persistRefreshedSession owns only the conditional session write and its ledger fact.
+// An unsuccessful commit or rollback may be indeterminate: callers must not emit a
+// contradictory terminal failure fact in that case.
+func (s *OAuth2SessionService) persistRefreshedSession(ctx context.Context, principal id.Principal, previous, current *storage.UserSession, event, reasonCode string) (indeterminate bool, err error) {
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+	if err != nil {
+		return false, err
+	}
+	if err := s.refreshRepo.UpdateRefreshedSession(txCtx, previous, current); err != nil {
+		return rollbackRefreshWrite(s.transactions, txCtx, err)
+	}
+	if err := s.recordSession(txCtx, event, current, reasonCode); err != nil {
+		return rollbackRefreshWrite(s.transactions, txCtx, err)
+	}
+	if err := s.transactions.Commit(txCtx); err != nil {
+		_ = s.transactions.Rollback(txCtx)
+		return true, err
+	}
+	return false, nil
+}
+
+func rollbackRefreshWrite(transactions ports.StorageTransactionManager, txCtx context.Context, cause error) (bool, error) {
+	if err := transactions.Rollback(txCtx); err != nil {
+		return true, errors.Join(cause, err)
+	}
+	return false, cause
+}
+
+// refreshReasonCode maps a refresh failure to the session-refresh-failed reason vocabulary.
+func refreshReasonCode(err error) string {
+	switch sessionFailureMetadata(err).Detail() {
+	case DetailProviderUnavailable:
+		return "upstream_unavailable"
+	case DetailProviderRejected, DetailRefreshRejected, DetailProviderClientRejected:
+		return "upstream_rejected"
+	case DetailProviderResponseInvalid:
+		return "invalid_response"
+	case DetailRefreshUnavailable:
+		return "refresh_unavailable"
+	default:
+		return "internal_failure"
+	}
+}
+
+func (s *OAuth2SessionService) recordSession(ctx context.Context, name string, session *storage.UserSession, reasonCode string) error {
+	principal := session.Principal
+	actor := model.BusinessEventActor{Kind: "user"}
+	var gatewayClientID id.ClientID
+	if name == "session-refreshed" || name == "session-refresh-failed" {
+		// A stored session identifies the affected user, not an unauthenticated caller.
+		// ContextFacts resolves a direct user's identity from trusted request context.
+		if workflowActor, ok := ledger.WorkflowActorFromContext(ctx); ok {
+			actor = workflowActor
+			if actor.OnBehalfOf != nil && (actor.Kind == "agent" || actor.Kind == "gateway") {
+				if resolved, authenticated := security.FromContext(ctx); authenticated && resolved.CallingPeer != "" {
+					gatewayClientID = id.ClientID(resolved.CallingPeer)
+				}
+			}
+		}
+	} else {
+		actorID := principal.String()
+		actor.ID = &actorID
+	}
+	data := map[string]any{}
+	if reasonCode != "" {
+		data["reason_code"] = reasonCode
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+name, model.BusinessEvent{OccurredAt: time.Now().UTC(),
+		Subject: &principal, Actor: actor, GatewayClientID: gatewayClientID,
+		ServiceID: session.ServiceID, SessionID: session.ID, Data: data})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
+}
+
 func refreshUnavailableError(ctx context.Context, current *storage.UserSession, threshold *time.Time) error {
 	if current.RefreshRejected() {
 		return sessionOperationError(ctx, OperationRefresh, DetailRefreshRejected, errors.Join(ErrRefreshRejected, ErrReauthenticationRequired))
@@ -1834,15 +2007,15 @@ func refreshUnavailableError(ctx context.Context, current *storage.UserSession, 
 
 func (s *OAuth2SessionService) checkUnrefreshableSweepCandidate(ctx context.Context, principal id.Principal, serviceID id.ServiceID, threshold time.Time) (bool, error) {
 	needsRefresh := false
-	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		if current == nil || current.RefreshRejected() || !current.AccessTokenExpiresBy(threshold) {
-			return false, nil
+			return nil
 		}
 		if !current.CanRefresh() {
-			return false, refreshUnavailableError(ctx, current, &threshold)
+			return refreshUnavailableError(ctx, current, &threshold)
 		}
 		needsRefresh = true
-		return false, nil
+		return nil
 	})
 	if err != nil {
 		return false, sessionRepositoryError(ctx, DetailRepositoryUnavailable, err)

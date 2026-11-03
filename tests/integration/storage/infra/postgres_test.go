@@ -608,8 +608,14 @@ func setupCIMDKeyDomainDatabase(t *testing.T, migrationVersion uint) (*testboots
 	sharedPostgres := testbootstrap.RequireSharedPostgres(t)
 	dbName, connStr, cleanupDatabase := sharedPostgres.SetupDatabaseFromTemplate(t,
 		fmt.Sprintf("cimd_key_domain_migrations_%d", migrationVersion),
-		func(t *testing.T, dbName string) {
-			sharedPostgres.ApplyMigrationsUpTo(t, dbName, migrationVersion)
+		func(dbName string) {
+			migrationRunner := newProjectMigrationRunner(t, sharedPostgres.ConnectionString(dbName))
+			defer func() { _, _ = migrationRunner.Close() }()
+
+			err := migrationRunner.Migrate(migrationVersion)
+			if err != nil && err != migrate.ErrNoChange {
+				require.NoError(t, err)
+			}
 		},
 	)
 

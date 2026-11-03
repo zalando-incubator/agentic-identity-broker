@@ -314,6 +314,10 @@ func (o *testServerOptions) validate() error {
 	return nil
 }
 
+func withLedgerListener(listener net.Listener) TestServerOption {
+	return func(o *testServerOptions) { o.listener = listener }
+}
+
 // WithServerType sets the server type (EndUser or Admin).
 func WithServerType(st ServerType) TestServerOption {
 	return func(o *testServerOptions) {

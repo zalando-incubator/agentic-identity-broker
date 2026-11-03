@@ -3461,7 +3461,7 @@ func TestServicesHandler_CredentialSourceStoredCRUD(t *testing.T) {
 			name = "explicit stored source"
 		}
 		t.Run(name, func(t *testing.T) {
-			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 			router := credentialSourceHandlerRouter(t, repo)
 			body := credentialSourceHandlerBody()
 			body["client_id"] = "stored-client"
@@ -3501,7 +3501,7 @@ func TestServicesHandler_CredentialSourceStoredCRUD(t *testing.T) {
 }
 
 func TestServicesHandler_CredentialSourceFilesystemCRUD(t *testing.T) {
-	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 	router := credentialSourceHandlerRouter(t, repo)
 	body := credentialSourceHandlerBody()
 	body["credential_source"] = "filesystem"
@@ -3561,7 +3561,7 @@ func TestServicesHandler_CredentialSourceRejectsInvalidSelector(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
 		for _, selector := range selectors {
 			t.Run(method+"/"+selector.name, func(t *testing.T) {
-				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 				router := credentialSourceHandlerRouter(t, repo)
 				path := "/api/services"
 				if method == http.MethodPut {
@@ -3684,7 +3684,7 @@ func TestServicesHandler_CredentialSourceFilesystemRequiresCanonicalID(t *testin
 }
 
 func TestServicesHandler_CredentialSourceUpdateResponseTransitions(t *testing.T) {
-	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 	router := credentialSourceHandlerRouter(t, repo)
 	entity := credentialSourceHandlerStoredFixture(t, repo)
 	path := "/api/services/" + entity.ID.String()
@@ -3725,7 +3725,7 @@ func TestServicesHandler_CredentialSourceFilesystemResourcePreconditions(t *test
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 			router := credentialSourceHandlerRouter(t, repo)
 			body := credentialSourceHandlerBody()
 			body["credential_source"] = "filesystem"
@@ -3975,7 +3975,7 @@ func TestServicesHandler_ClientRegistrationFourModesAcrossCRUD(t *testing.T) {
 		{"CIMD public", model.ClientRegistrationCIMD, "none", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 			router := credentialSourceHandlerRouter(t, repo)
 			body := clientRegistrationHandlerBody(tc.registration, tc.method)
 			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
@@ -4015,7 +4015,7 @@ func TestServicesHandler_ClientRegistrationOmissionAndInvalidValues(t *testing.T
 		{"CIMD confidential", model.ClientRegistrationCIMD, "private_key_jwt"},
 	} {
 		t.Run("omitted/"+tc.name, func(t *testing.T) {
-			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 			router := credentialSourceHandlerRouter(t, repo)
 			body := clientRegistrationHandlerBody("", tc.method)
 			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
@@ -4036,7 +4036,7 @@ func TestServicesHandler_ClientRegistrationOmissionAndInvalidValues(t *testing.T
 	} {
 		for _, method := range []string{http.MethodPost, http.MethodPut} {
 			t.Run(method+"/"+tc.name, func(t *testing.T) {
-				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 				router := credentialSourceHandlerRouter(t, repo)
 				path := "/api/services"
 				if method == http.MethodPut {
@@ -4084,7 +4084,7 @@ func TestServicesHandler_ClientRegistrationRejectsInvalidPairsBeforeDiscovery(t 
 		for _, method := range []string{http.MethodPost, http.MethodPut} {
 			t.Run(method+"/"+tc.name, func(t *testing.T) {
 				requests.Store(0)
-				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 				router := credentialSourceHandlerRouter(t, repo)
 				path := "/api/services"
 				if method == http.MethodPut {
@@ -4123,7 +4123,7 @@ func TestServicesHandler_ClientRegistrationRejectsInvalidPairsBeforeDiscovery(t 
 func TestServicesHandler_ClientRegistrationRejectsDiscoverySelectionBeforeTraffic(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodPut} {
 		t.Run(method, func(t *testing.T) {
-			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 			client := adminCIMDDiscoveryClient(t)
 			handler := setupHandlerWithConfig(t, repo, testConfig())
 			handler.providerService.WithOAuthDiscoveryClient(client)
@@ -4160,7 +4160,7 @@ func TestServicesHandler_ClientRegistrationRejectsDiscoverySelectionBeforeTraffi
 }
 
 func TestServicesHandler_ClientRegistrationPublicPUTRequiresExplicitCIMD(t *testing.T) {
-	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 	router := credentialSourceHandlerRouter(t, repo)
 	body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
 	created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
@@ -4187,7 +4187,7 @@ func TestServicesHandler_ClientRegistrationPublicRejectsCallerCredentials(t *tes
 	} {
 		for _, method := range []string{http.MethodPost, http.MethodPut} {
 			t.Run(method+"/"+tc.name, func(t *testing.T) {
-				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 				router := credentialSourceHandlerRouter(t, repo)
 				path := "/api/services"
 				if method == http.MethodPut {
@@ -4214,7 +4214,7 @@ func TestServicesHandler_ClientRegistrationPublicRejectsCallerCredentials(t *tes
 }
 
 func TestServicesHandler_ClientRegistrationPublicNeedsNoCIMDKey(t *testing.T) {
-	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 	handler := setupHandlerWithConfig(t, repo, testConfig())
 	handler.providerService.WithCIMDKeyReadiness(unavailableCIMDKeyReadiness{})
 	router := chi.NewRouter()

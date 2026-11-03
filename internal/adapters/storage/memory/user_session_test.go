@@ -25,8 +25,20 @@ func refreshTestSession(principal id.Principal, serviceID id.ServiceID) *storage
 	}
 }
 
+func commitRefreshedSession(ctx context.Context, repo *InMemoryUserSessionRepository, previous, current *storage.UserSession) error {
+	txCtx, err := repo.transactions.BeginTX(ctx)
+	if err != nil {
+		return err
+	}
+	if err := repo.UpdateRefreshedSession(txCtx, previous, current); err != nil {
+		_ = repo.transactions.Rollback(txCtx)
+		return err
+	}
+	return repo.transactions.Commit(txCtx)
+}
+
 func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("user@example.com")
 	active := refreshTestSession(principal, id.NewServiceID())
@@ -55,7 +67,7 @@ func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
 }
 
 func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("slow-refresh@example.com")
 	serviceID := id.NewServiceID()
@@ -74,11 +86,12 @@ func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
 	}()
 	refreshDone := make(chan error, 1)
 	go func() {
-		_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+		_, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
+			previous := copyUserSession(session)
 			close(entered)
 			<-release
 			session.EncryptedAccessToken = []byte("new-access")
-			return true, nil
+			return commitRefreshedSession(ctx, repo, previous, session)
 		})
 		refreshDone <- err
 	}()
@@ -112,7 +125,7 @@ func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
 }
 
 func TestWithLockedSessionDoesNotResurrectDeletedSession(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("deleted-user@example.com")
 	serviceID := id.NewServiceID()
@@ -128,11 +141,12 @@ func TestWithLockedSessionDoesNotResurrectDeletedSession(t *testing.T) {
 	}()
 	refreshDone := make(chan error, 1)
 	go func() {
-		_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+		_, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
+			previous := copyUserSession(session)
 			close(entered)
 			<-release
 			session.EncryptedAccessToken = []byte("new-access")
-			return true, nil
+			return commitRefreshedSession(ctx, repo, previous, session)
 		})
 		refreshDone <- err
 	}()
@@ -175,7 +189,7 @@ func expiryTestCursor(session *storage.UserSession) storage.SessionExpiryCursor 
 }
 
 func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	before, after := threshold.Add(-time.Hour), threshold.Add(time.Second)
@@ -222,7 +236,7 @@ func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 }
 
 func TestListExpiringSessionsKeysetPages(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	firstExpiry := threshold.Add(-3 * time.Hour)
@@ -309,7 +323,7 @@ func TestListExpiringSessionsAdvancesAcrossMutations(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			ctx := context.Background()
 			for _, item := range []struct {
 				prefix byte
@@ -363,7 +377,7 @@ func TestListExpiringSessionsAdvancesAcrossMutations(t *testing.T) {
 }
 
 func TestListExpiringSessionsLimitValidation(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	for _, limit := range []int{-1, 0, 1001} {
 		t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
 			got, err := repo.ListExpiringSessions(context.Background(), time.Now(), storage.SessionExpiryCursor{}, limit)
@@ -376,7 +390,7 @@ func TestListExpiringSessionsLimitValidation(t *testing.T) {
 }
 
 func TestListExpiringSessionsRejectsExpiryWithoutID(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	createExpiringTestSession(t, repo, 0x20, &threshold)
 	got, err := repo.ListExpiringSessions(context.Background(), threshold, storage.SessionExpiryCursor{AccessTokenExpiresAt: threshold}, 1)
@@ -387,7 +401,7 @@ func TestListExpiringSessionsRejectsExpiryWithoutID(t *testing.T) {
 }
 
 func TestListExpiringSessionsContinuesAfterZeroExpiry(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	zero := time.Time{}
@@ -407,7 +421,7 @@ func TestListExpiringSessionsContinuesAfterZeroExpiry(t *testing.T) {
 }
 
 func TestListExpiringSessionsOrdersUUIDBytes(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	prefixes := []byte{0xff, 0x7f, 0x00, 0x80, 0x01, 0xf0}
 	expected := make([]id.SessionID, 0, len(prefixes))
@@ -427,7 +441,7 @@ func TestListExpiringSessionsOrdersUUIDBytes(t *testing.T) {
 }
 
 func TestWithLockedSessionSeesLatestCommittedTokens(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	session := refreshTestSession(id.Principal("latest@example.com"), id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, session))
@@ -435,11 +449,12 @@ func TestWithLockedSessionSeesLatestCommittedTokens(t *testing.T) {
 	release := make(chan struct{})
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(ctx context.Context, current *storage.UserSession) error {
+			previous := copyUserSession(current)
 			close(entered)
 			<-release
 			current.EncryptedAccessToken = []byte("committed-access")
-			return true, nil
+			return commitRefreshedSession(ctx, repo, previous, current)
 		})
 		firstDone <- err
 	}()
@@ -447,9 +462,9 @@ func TestWithLockedSessionSeesLatestCommittedTokens(t *testing.T) {
 	seen := make(chan []byte, 1)
 	secondDone := make(chan error, 1)
 	go func() {
-		_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) error {
 			seen <- current.EncryptedAccessToken
-			return false, nil
+			return nil
 		})
 		secondDone <- err
 	}()
@@ -460,14 +475,14 @@ func TestWithLockedSessionSeesLatestCommittedTokens(t *testing.T) {
 }
 
 func TestWithLockedSessionMissingDoesNotInvokeCallback(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("missing@example.com")
 	serviceID := id.NewServiceID()
 	called := false
-	got, err := repo.WithLockedSession(ctx, principal, serviceID, func(context.Context, *storage.UserSession) (bool, error) {
+	got, err := repo.WithLockedSession(ctx, principal, serviceID, func(context.Context, *storage.UserSession) error {
 		called = true
-		return true, nil
+		return nil
 	})
 	require.NoError(t, err)
 	assert.Nil(t, got)
@@ -489,17 +504,24 @@ func TestWithLockedSessionDoesNotWriteWhenDeclinedOrFailed(t *testing.T) {
 		{name: "failed_after_update_requested", updated: true, err: sentinel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			ctx := context.Background()
 			session := refreshTestSession(id.Principal("declined@example.com"), id.NewServiceID())
 			require.NoError(t, repo.Create(ctx, session))
 			newExpiry := session.UpdatedAt.Add(time.Hour)
-			returned, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			returned, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(ctx context.Context, current *storage.UserSession) error {
+				previous := copyUserSession(current)
 				current.EncryptedAccessToken = []byte("uncommitted-access")
 				current.EncryptedRefreshToken = []byte("uncommitted-refresh")
 				current.AccessTokenExpiresAt = &newExpiry
 				current.UpdatedAt = newExpiry
-				return tc.updated, tc.err
+				if tc.updated {
+					txCtx, err := repo.transactions.BeginTX(ctx)
+					require.NoError(t, err)
+					require.NoError(t, repo.UpdateRefreshedSession(txCtx, previous, current))
+					require.NoError(t, repo.transactions.Rollback(txCtx))
+				}
+				return tc.err
 			})
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
@@ -519,7 +541,7 @@ func TestWithLockedSessionDoesNotWriteWhenDeclinedOrFailed(t *testing.T) {
 
 func TestUserSessionIdentityPersistsThroughUpsertAndLockedRefresh(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	principal := id.Principal("session-identity@example.com")
 	serviceID := id.NewServiceID()
 	initialIdentity := id.ClientID("client-A")
@@ -532,12 +554,13 @@ func TestUserSessionIdentityPersistsThroughUpsertAndLockedRefresh(t *testing.T) 
 	reconnected.EncryptedAccessToken = []byte("reconnected-access")
 	require.NoError(t, repo.Create(ctx, reconnected))
 	assert.Equal(t, initial.ID, reconnected.ID)
-	refreshed, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+	refreshed, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		require.NotNil(t, current.UpstreamClientID)
 		assert.Equal(t, establishedIdentity, *current.UpstreamClientID)
+		previous := copyUserSession(current)
 		current.EncryptedAccessToken = []byte("refreshed-access")
 		current.EncryptedRefreshToken = []byte("rotated-refresh")
-		return true, nil
+		return commitRefreshedSession(ctx, repo, previous, current)
 	})
 	require.NoError(t, err)
 	assert.Equal(t, &establishedIdentity, refreshed.UpstreamClientID)
@@ -559,7 +582,7 @@ func TestUserSessionLockedIdentityMutationDoesNotLeakWithoutCommit(t *testing.T)
 	for _, rejected := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no update", true: "rejected refresh"}[rejected], func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			principal := id.Principal("identity-rollback@example.com")
 			serviceID := id.NewServiceID()
 			established := id.ClientID("established-client")
@@ -567,13 +590,13 @@ func TestUserSessionLockedIdentityMutationDoesNotLeakWithoutCommit(t *testing.T)
 			session.UpstreamClientID = &established
 			require.NoError(t, repo.Create(ctx, session))
 			rejectedError := errors.New("provider refresh rejected")
-			_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) error {
 				require.NotNil(t, current.UpstreamClientID)
 				*current.UpstreamClientID = "uncommitted-client"
 				if rejected {
-					return true, rejectedError
+					return rejectedError
 				}
-				return false, nil
+				return nil
 			})
 			if rejected {
 				assert.ErrorIs(t, err, rejectedError)
@@ -589,12 +612,13 @@ func TestUserSessionLockedIdentityMutationDoesNotLeakWithoutCommit(t *testing.T)
 }
 
 func TestWithLockedSessionPersistsTokenUpdateAtomically(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	session := refreshTestSession(id.Principal("atomic@example.com"), id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, session))
 	newExpiry := session.UpdatedAt.Add(time.Hour)
-	returned, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+	returned, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(ctx context.Context, current *storage.UserSession) error {
+		previous := copyUserSession(current)
 		current.EncryptedAccessToken = []byte("new-access")
 		current.EncryptedRefreshToken = []byte("new-refresh")
 		current.AccessTokenExpiresAt = &newExpiry
@@ -605,7 +629,7 @@ func TestWithLockedSessionPersistsTokenUpdateAtomically(t *testing.T) {
 		assert.Equal(t, session.EncryptedRefreshToken, beforeCommit.EncryptedRefreshToken)
 		assert.Nil(t, beforeCommit.AccessTokenExpiresAt)
 		assert.Equal(t, session.UpdatedAt, beforeCommit.UpdatedAt)
-		return true, nil
+		return commitRefreshedSession(ctx, repo, previous, current)
 	})
 	require.NoError(t, err)
 	require.NotNil(t, returned)
@@ -620,15 +644,16 @@ func TestWithLockedSessionPersistsTokenUpdateAtomically(t *testing.T) {
 
 func TestUserSessionLegacyMissingIdentityRemainsMissingThroughRefresh(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	principal := id.Principal("legacy-session@example.com")
 	serviceID := id.NewServiceID()
 	session := refreshTestSession(principal, serviceID)
 	require.NoError(t, repo.Create(ctx, session))
-	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		assert.Nil(t, current.UpstreamClientID)
+		previous := copyUserSession(current)
 		current.EncryptedAccessToken = []byte("legacy-refreshed-access")
-		return true, nil
+		return commitRefreshedSession(ctx, repo, previous, current)
 	})
 	require.NoError(t, err)
 	persisted, err := repo.Get(ctx, session.ID)
@@ -649,7 +674,7 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 	}
 	count := func(t *testing.T, ctx context.Context, sessions ...*storage.UserSession) ([]storage.SessionExpiryGroup, error) {
 		t.Helper()
-		repo := NewInMemoryUserSessionRepository()
+		repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 		for _, s := range sessions {
 			require.NoError(t, repo.Create(context.Background(), s))
 		}
@@ -706,4 +731,85 @@ func TestUserSessionCountSessionsByExpiry(t *testing.T) {
 		require.ErrorAs(t, err, &storageErr)
 		assert.Equal(t, storage.ErrorKindTimeout, storageErr.Kind)
 	})
+}
+
+func TestUserSessionUpsertReturnsRetainedIdentityAndTimestamps(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		name := "rollback"
+		if commit {
+			name = "commit"
+		}
+		t.Run(name, func(t *testing.T) {
+			transactions := NewTransactionManager()
+			repo := NewInMemoryUserSessionRepository(transactions)
+			ctx := context.Background()
+			first := refreshTestSession("reauthorizing-user", id.NewServiceID())
+			first.InitiatedAt = time.Now().UTC().Add(-2 * time.Hour)
+			first.CreatedAt = first.InitiatedAt.Add(time.Minute)
+			first.UpdatedAt = first.CreatedAt
+			require.NoError(t, repo.Create(ctx, first))
+
+			replacement := refreshTestSession(first.Principal, first.ServiceID)
+			discardedID := replacement.ID
+			replacement.EncryptedAccessToken = []byte("replacement-access")
+			replacement.EncryptedRefreshToken = []byte("replacement-refresh")
+			replacement.UpdatedAt = time.Now().UTC().Add(time.Hour)
+			beforeWrite := time.Now().UTC()
+			owner, err := transactions.BeginTX(ctx)
+			require.NoError(t, err)
+			defer func() { _ = transactions.Rollback(owner) }()
+			require.NoError(t, repo.Create(owner, replacement))
+			require.Equal(t, first.ID, replacement.ID)
+			require.Equal(t, first.InitiatedAt, replacement.InitiatedAt)
+			require.Equal(t, first.CreatedAt, replacement.CreatedAt)
+			require.False(t, replacement.UpdatedAt.Before(beforeWrite))
+			require.False(t, replacement.UpdatedAt.After(time.Now().UTC()))
+			stored, err := repo.Get(owner, replacement.ID)
+			require.NoError(t, err)
+			require.Equal(t, replacement, stored)
+			_, err = repo.Get(owner, discardedID)
+			require.Error(t, err)
+
+			expected := first
+			if commit {
+				require.NoError(t, transactions.Commit(owner))
+				expected = replacement
+			} else {
+				require.NoError(t, transactions.Rollback(owner))
+			}
+			stored, err = repo.FindByPrincipalAndService(ctx, first.Principal, first.ServiceID)
+			require.NoError(t, err)
+			require.Equal(t, expected, stored)
+		})
+	}
+}
+
+func TestWithLockedSessionRollbackRestoresRotatingTokens(t *testing.T) {
+	transactions := NewTransactionManager()
+	repo := NewInMemoryUserSessionRepository(transactions)
+	ctx := context.Background()
+	principal := id.Principal("rollback-user@example.com")
+	serviceID := id.NewServiceID()
+	session := refreshTestSession(principal, serviceID)
+	require.NoError(t, repo.Create(ctx, session))
+
+	txCtx, err := transactions.BeginTX(ctx)
+	require.NoError(t, err)
+	_, err = repo.WithLockedSession(txCtx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
+		previous := copyUserSession(current)
+		current.EncryptedAccessToken = []byte("new-access")
+		current.EncryptedRefreshToken = []byte("rotated-refresh")
+		return repo.UpdateRefreshedSession(ctx, previous, current)
+	})
+	require.NoError(t, err)
+	require.NoError(t, transactions.Rollback(txCtx))
+
+	byPair, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	byID, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	for _, current := range []*storage.UserSession{byPair, byID} {
+		assert.Equal(t, []byte("old-access"), current.EncryptedAccessToken)
+		assert.Equal(t, []byte("old-refresh"), current.EncryptedRefreshToken)
+	}
 }

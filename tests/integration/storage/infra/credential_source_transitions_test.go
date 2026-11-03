@@ -317,11 +317,12 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 					assertCredentialSourcePostgresIdentity(t, h, session, &identity)
 				}
 				before := credentialSourcePostgresSnapshot(t, h, provider.ID)
-				refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(_ context.Context, locked *storage.UserSession) (bool, error) {
+				refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(ctx context.Context, locked *storage.UserSession) error {
 					require.NotNil(t, locked.UpstreamClientID)
 					assert.Equal(t, identity, *locked.UpstreamClientID)
+					previous := *locked
 					locked.EncryptedAccessToken, locked.EncryptedRefreshToken = []byte("rotated-access-ciphertext"), []byte("rotated-refresh-ciphertext")
-					return true, nil
+					return h.persistRefreshedSession(ctx, &previous, locked)
 				})
 				require.NoError(t, err)
 				assert.Equal(t, &identity, refreshed.UpstreamClientID)
@@ -355,10 +356,11 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 		for range 2 {
 			transitionCredentialSourcePostgres(t, h, provider.ID)
 			before := credentialSourcePostgresSnapshot(t, h, provider.ID)
-			refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(_ context.Context, locked *storage.UserSession) (bool, error) {
+			refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(ctx context.Context, locked *storage.UserSession) error {
 				assert.Nil(t, locked.UpstreamClientID)
+				previous := *locked
 				locked.EncryptedAccessToken = []byte("new-access-ciphertext")
-				return true, nil
+				return h.persistRefreshedSession(ctx, &previous, locked)
 			})
 			require.NoError(t, err)
 			assert.Nil(t, refreshed.UpstreamClientID)
@@ -373,11 +375,11 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 		session := credentialSourcePostgresSession(id.Principal(provider.ID.String()+"@failure.test"), provider.ID, &identity)
 		require.NoError(t, h.sessions.Create(h.ctx, session))
 		failure := errors.New("synthetic provider rejection")
-		_, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(_ context.Context, candidate *storage.UserSession) (bool, error) {
+		_, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(_ context.Context, candidate *storage.UserSession) error {
 			require.NotNil(t, candidate.UpstreamClientID)
 			*candidate.UpstreamClientID = "must-not-commit"
 			candidate.EncryptedAccessToken = []byte("must-not-commit")
-			return false, failure
+			return failure
 		})
 		require.ErrorIs(t, err, failure)
 		assertCredentialSourcePostgresIdentity(t, h, session, &identity)
@@ -431,11 +433,12 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 				}
 				session := credentialSourcePostgresSession(id.Principal(provider.ID.String()+"@refresh.test"), provider.ID, expected)
 				require.NoError(t, h.sessions.Create(h.ctx, session))
-				refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(_ context.Context, locked *storage.UserSession) (bool, error) {
+				refreshed, err := h.sessions.WithLockedSession(h.ctx, session.Principal, provider.ID, func(ctx context.Context, locked *storage.UserSession) error {
+					previous := *locked
 					newIdentity := id.ClientID("different-current-credential-client")
 					locked.UpstreamClientID = &newIdentity
 					locked.EncryptedAccessToken = []byte("refreshed-access-ciphertext")
-					return true, nil
+					return h.persistRefreshedSession(ctx, &previous, locked)
 				})
 				require.NoError(t, err)
 				assert.Equal(t, expected, refreshed.UpstreamClientID)

@@ -22,7 +22,7 @@ var (
 )
 
 func TestInitialize(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -31,7 +31,7 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestInitialize_ContextCancelled(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -40,7 +40,7 @@ func TestInitialize_ContextCancelled(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -52,7 +52,7 @@ func TestClose(t *testing.T) {
 }
 
 func TestClose_Idempotent(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -68,7 +68,7 @@ func TestClose_Idempotent(t *testing.T) {
 }
 
 func TestHealthCheck(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -128,7 +128,7 @@ func TestCreateUser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			adapter := NewAdapter()
+			adapter := NewAdapter(NewTransactionManager())
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 
@@ -149,7 +149,7 @@ func TestCreateUser(t *testing.T) {
 }
 
 func TestCreateUser_Duplicate(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -174,7 +174,7 @@ func TestCreateUser_Duplicate(t *testing.T) {
 }
 
 func TestGetUser(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -197,7 +197,7 @@ func TestGetUser(t *testing.T) {
 }
 
 func TestGetUser_NotFound(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -211,7 +211,7 @@ func TestGetUser_NotFound(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -239,7 +239,7 @@ func TestUpdateUser(t *testing.T) {
 }
 
 func TestUpdateUser_NotFound(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -260,7 +260,7 @@ func TestUpdateUser_NotFound(t *testing.T) {
 }
 
 func TestDeleteUser(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -284,7 +284,7 @@ func TestDeleteUser(t *testing.T) {
 }
 
 func TestDeleteUser_Idempotent(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -296,7 +296,7 @@ func TestDeleteUser_Idempotent(t *testing.T) {
 }
 
 func TestListUsers(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -319,7 +319,7 @@ func TestListUsers(t *testing.T) {
 }
 
 func TestListUsers_WithPagination(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
@@ -348,7 +348,7 @@ func TestListUsers_WithPagination(t *testing.T) {
 
 // Concurrent access tests
 func TestConcurrentReads(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -382,7 +382,7 @@ func TestConcurrentReads(t *testing.T) {
 }
 
 func TestConcurrentWritesAndReads(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -436,7 +436,7 @@ func TestConcurrentWritesAndReads(t *testing.T) {
 }
 
 func TestContextCancellation(t *testing.T) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx, cancel := context.WithCancel(context.Background())
 
 	_ = adapter.Initialize(context.Background())
@@ -462,8 +462,8 @@ func TestContextCancellation(t *testing.T) {
 }
 
 func TestDataIsolation(t *testing.T) {
-	adapter1 := NewAdapter()
-	adapter2 := NewAdapter()
+	adapter1 := NewAdapter(NewTransactionManager())
+	adapter2 := NewAdapter(NewTransactionManager())
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel1()
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 1*time.Second)
@@ -488,7 +488,7 @@ func TestDataIsolation(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkCreateUser(b *testing.B) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx := context.Background()
 	_ = adapter.Initialize(ctx)
 
@@ -505,7 +505,7 @@ func BenchmarkCreateUser(b *testing.B) {
 }
 
 func BenchmarkGetUser(b *testing.B) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx := context.Background()
 	_ = adapter.Initialize(ctx)
 
@@ -524,7 +524,7 @@ func BenchmarkGetUser(b *testing.B) {
 }
 
 func BenchmarkListUsers(b *testing.B) {
-	adapter := NewAdapter()
+	adapter := NewAdapter(NewTransactionManager())
 	ctx := context.Background()
 	_ = adapter.Initialize(ctx)
 

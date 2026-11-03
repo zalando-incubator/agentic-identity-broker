@@ -55,11 +55,14 @@ go test -tags=integration -v ./tests/integration/storage/infra/...
 
 The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
 
+Approval and denial check expiry against PostgreSQL's current clock, not the transaction start time. `TestToolApprovalRepository_TransitionsRejectExpiryAfterOwnerBegan` covers approvals that expire while their owning transaction is open.
+
 Application-level PostgreSQL journeys must apply the migrations required by the current storage adapter, including migration 041 for credential-source support. Keep older schema versions only for migration-specific tests.
 
 `TestUserSessionReadsAfterSchemaExpansion` adds an unmapped `future_metadata` column and verifies that session reads and refresh writes preserve it. Keep this test column separate from production columns when adding migrations.
 
 Provider updates preserve protected-resource ownership and creation timestamps when normalized membership is unchanged, while advancing the parent version. `TestProtectedResourceUpdatePreservesUnchangedCreatedAt` covers omitted resources, normalized-equivalent membership, replacement, empty membership, and stale CAS through the domain service.
+Grant `Create` and `Update` copy persisted metadata, including a defensive `ValidUntil`, back to the input grant. When renewing a fixture, assign its new expiry to `grant.ValidUntil` before each write; changing the original time variable alone no longer changes the grant.
 
 Run them against PostgreSQL with:
 
@@ -73,6 +76,8 @@ Tests:
 - `TestPostgresAdapter_CreateUser_ValidationErrors` - Input validation
 - `TestPostgresAdapter_ContextCancellation` - Context cancellation handling
 - `TestPostgresAdapter_FullLifecycle_Integration` - Full lifecycle with real PostgreSQL container
+- `TestConsentLedgerConcurrentIdenticalFirstGrantRecordsOnlyWinner` - Two first-time consent requests wait on the PostgreSQL agent row and return the same grant ID. They retain one creation fact and no update fact.
+- `TestConsentLedgerRevocationTransactions` - Absent revocation preserves refresh cleanup without a ledger fact. Revocation and expired renewal leave grants unlocked while waiting for the agent, then commit refresh invalidation with their grant transition.
 
 ### Database schema setup
 
@@ -82,6 +87,7 @@ Ordinary PostgreSQL tests use `bootstrap.RequireSharedPostgres(t)` followed by
 and clones an isolated database for each test. New migrations require no test fixture
 version or filename updates. The PostgreSQL adapter package and PostgreSQL E2E fixture
 also apply all discovered migrations.
+The bootstrap helper registers its own `golang-migrate` file-source and PostgreSQL drivers, so callers do not need to import them for migration setup.
 
 Only migration-specific upgrade and rollback tests can request a historical schema.
 For those tests, use `SetupDatabaseFromTemplate` with `ApplyMigrationsUpTo(t, dbName, version)`.

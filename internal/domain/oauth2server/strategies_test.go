@@ -20,6 +20,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type strategySigningKeyStore struct {
@@ -42,7 +43,7 @@ func newStrategySigningKeyStore() *strategySigningKeyStore {
 
 func newStrategyTestSigningKeyService() (*SigningKeyService, *strategySigningKeyStore) {
 	repo := newStrategySigningKeyStore()
-	return NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger()), repo
+	return NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder()), repo
 }
 
 func cloneStrategySigningKey(key *storage.SigningKey) *storage.SigningKey {
@@ -241,7 +242,7 @@ func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -332,8 +333,8 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 		ctx := context.Background()
 		repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 		encryptor := newCountingDecryptor()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
-		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 		require.NoError(t, err)
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -365,8 +366,8 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 func TestJWXAccessTokenStrategy_RemotePromotionStopsOldSignerImmediately(t *testing.T) {
 	ctx := context.Background()
 	repo := newStrategySigningKeyStore()
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -400,7 +401,7 @@ func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) 
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -422,7 +423,7 @@ func TestJWXAccessTokenStrategy_InvalidatesCachedSignerOnMutation(t *testing.T) 
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	second, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
@@ -448,7 +449,7 @@ func TestJWXAccessTokenStrategy_ConcurrentMintsShareSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -498,7 +499,7 @@ func TestJWXAccessTokenStrategy_ExpiredSignerFailsClosed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		repo := &switchableMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 		require.NoError(t, err)
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -525,7 +526,7 @@ func TestJWXAccessTokenStrategy_GenerateAccessToken_DecryptFailure(t *testing.T)
 	t.Run("decrypt failure returns wrapped error", func(t *testing.T) {
 		// Use failingDecryptor so Encrypt succeeds (key is stored) but Decrypt always fails.
 		repo := newStrategySigningKeyStore()
-		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		ctx := context.Background()
 
 		// generateAndStore with time.Now() so activates_at is in the past and GetCurrent returns the key.
@@ -835,8 +836,8 @@ func TestNewJWXAccessTokenStrategy_Validation(t *testing.T) {
 func TestJWXAccessTokenStrategy_RejectsRemotelyRemovedKey(t *testing.T) {
 	ctx := context.Background()
 	repo := newStrategySigningKeyStore()
-	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
 	require.NoError(t, err)
 	issuer := "https://issuer.example.com"
@@ -980,7 +981,7 @@ func TestJWXAccessTokenStrategy_GetCurrent_NonNotFoundError(t *testing.T) {
 	t.Run("connection error does not produce 'no signing key provisioned' message", func(t *testing.T) {
 		repo := &connectionErrorSigningKeyRepo{strategySigningKeyStore: newStrategySigningKeyStore()}
 		enc := &testEncryptor{}
-		svc := NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
 		require.NoError(t, err)
 

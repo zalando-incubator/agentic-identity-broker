@@ -365,9 +365,18 @@ var _ = Describe("Session Metrics", func() {
 				Eventually(upstream.GetTokenRequests).Should(HaveLen(1))
 
 				renewed := now.Add(2 * time.Hour)
-				_, err := store.SessionRefresh().WithLockedSession(ctx, id.Principal(principals[1]), calendar, func(_ context.Context, session *storagedomain.UserSession) (bool, error) {
+				_, err := store.SessionRefresh().WithLockedSession(ctx, id.Principal(principals[1]), calendar, func(ctx context.Context, session *storagedomain.UserSession) error {
+					previous := *session
 					session.AccessTokenExpiresAt = &renewed
-					return true, nil
+					txCtx, err := store.BeginTX(ctx)
+					if err != nil {
+						return err
+					}
+					if err := store.SessionRefresh().UpdateRefreshedSession(txCtx, &previous, session); err != nil {
+						_ = store.Rollback(txCtx)
+						return err
+					}
+					return store.Commit(txCtx)
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(store.UserSessions().DeleteByPrincipalAndService(ctx, id.Principal(principals[2]), calendar)).To(Succeed())

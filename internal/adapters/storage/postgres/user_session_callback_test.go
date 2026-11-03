@@ -50,11 +50,12 @@ func TestCreateIfAbsentKeepsConcurrentCallbackWinner(t *testing.T) {
 	assert.Equal(t, first.session.ID, second.session.ID)
 	assert.Equal(t, first.session.EncryptedAccessToken, second.session.EncryptedAccessToken)
 	assert.Equal(t, first.session.UpstreamClientID, second.session.UpstreamClientID)
-	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
+		previous := *session
 		session.CallbackID = "reconnect-generation"
 		session.EncryptedAccessToken = []byte("reconnected-account")
 		session.UpstreamClientID = new(id.ClientID("reconnected-client"))
-		return true, nil
+		return commitRefreshedSession(ctx, adapter, repo, &previous, session)
 	})
 	require.NoError(t, err)
 	persisted, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
@@ -63,10 +64,11 @@ func TestCreateIfAbsentKeepsConcurrentCallbackWinner(t *testing.T) {
 	assert.Equal(t, "reconnect-generation", persisted.CallbackID)
 	assert.Equal(t, []byte("reconnected-account"), persisted.EncryptedAccessToken)
 	assert.Equal(t, new(id.ClientID("reconnected-client")), persisted.UpstreamClientID)
-	_, err = repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+	_, err = repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
+		previous := *session
 		*session.UpstreamClientID = "unexpected-refresh-client"
 		session.EncryptedAccessToken = []byte("refreshed-access")
-		return true, nil
+		return commitRefreshedSession(ctx, adapter, repo, &previous, session)
 	})
 	require.NoError(t, err)
 	persisted, err = repo.Get(ctx, persisted.ID)

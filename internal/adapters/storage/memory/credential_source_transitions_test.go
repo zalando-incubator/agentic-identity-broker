@@ -18,7 +18,7 @@ func TestCredentialSourceMemoryTransitionsAreAtomicAndMonotonic(t *testing.T) {
 	for _, initial := range []model.CredentialSource{model.CredentialSourceStored, model.CredentialSourceFilesystem} {
 		t.Run(string(initial), func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 			provider := credentialSourceProvider(initial, "https://api.example.test/original")
 			require.NoError(t, repo.Create(ctx, provider))
 			for range 2 {
@@ -76,7 +76,7 @@ func TestCredentialSourceMemoryPreservesHistoryOnEverySupportedWrite(t *testing.
 			}
 			t.Run(name, func(t *testing.T) {
 				ctx := context.Background()
-				repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 				provider := credentialSourceProvider(source, "https://api.example.test/first")
 				require.NoError(t, repo.Create(ctx, provider))
 				if marker {
@@ -149,7 +149,7 @@ func TestCredentialSourceMemoryFailedTransitionsPreserveEntireRecordAndIndexes(t
 		for _, failure := range []string{"stale CAS", "resource conflict", "canonical conflict", "invalid credentials"} {
 			t.Run(string(source)+"/"+failure, func(t *testing.T) {
 				ctx := context.Background()
-				repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+				repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 				provider := credentialSourceProvider(source, "https://api.example.test/original")
 				owner := credentialSourceProvider(model.CredentialSourceStored, "https://api.example.test/owned")
 				require.NoError(t, repo.Create(ctx, provider))
@@ -197,7 +197,7 @@ func TestCredentialSourceMemoryFailedTransitionsPreserveEntireRecordAndIndexes(t
 
 func TestCredentialSourceMemoryConcurrentCASHasOneCompleteWinner(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := credentialSourceProvider(model.CredentialSourceStored, "https://api.example.test/original")
 	require.NoError(t, repo.Create(ctx, provider))
 	before, err := repo.Get(ctx, provider.ID)
@@ -248,7 +248,7 @@ func TestCredentialSourceMemorySessionIdentityCopiesAreIsolated(t *testing.T) {
 	for _, projection := range []string{"create input", "get", "find", "list", "active list"} {
 		t.Run(projection, func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			session := refreshTestSession(id.Principal("identity@example.test"), id.NewServiceID())
 			identity := id.ClientID("established-client")
 			session.UpstreamClientID = &identity
@@ -286,8 +286,9 @@ func TestCredentialSourceMemorySessionIdentityCopiesAreIsolated(t *testing.T) {
 
 func TestCredentialSourceMemoryLockedRefreshPreservesIdentityAndProvider(t *testing.T) {
 	ctx := context.Background()
-	providers := NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessions := NewInMemoryUserSessionRepository()
+	transactions := NewTransactionManager()
+	providers := NewInMemoryThirdpartyOAuth2ProviderRepository(transactions)
+	sessions := NewInMemoryUserSessionRepository(transactions)
 	provider := credentialSourceProvider(model.CredentialSourceStored)
 	require.NoError(t, providers.Create(ctx, provider))
 	for _, legacy := range []bool{false, true} {
@@ -314,16 +315,17 @@ func TestCredentialSourceMemoryLockedRefreshPreservesIdentityAndProvider(t *test
 		before, err := providers.Get(ctx, provider.ID)
 		require.NoError(t, err)
 		for _, principal := range []id.Principal{"recorded@example.test", "legacy@example.test"} {
-			refreshed, err := sessions.WithLockedSession(ctx, principal, provider.ID, func(_ context.Context, locked *storage.UserSession) (bool, error) {
+			refreshed, err := sessions.WithLockedSession(ctx, principal, provider.ID, func(ctx context.Context, locked *storage.UserSession) error {
 				if principal == "legacy@example.test" {
 					assert.Nil(t, locked.UpstreamClientID)
 				} else {
 					require.NotNil(t, locked.UpstreamClientID)
 					assert.Equal(t, id.ClientID("established-client"), *locked.UpstreamClientID)
 				}
+				previous := copyUserSession(locked)
 				locked.EncryptedAccessToken = []byte("rotated-access-ciphertext")
 				locked.EncryptedRefreshToken = []byte("rotated-refresh-ciphertext")
-				return true, nil
+				return commitRefreshedSession(ctx, sessions, previous, locked)
 			})
 			require.NoError(t, err)
 			stored, err := sessions.Get(ctx, refreshed.ID)
@@ -351,19 +353,19 @@ func TestCredentialSourceMemoryRefreshFailureCannotMutateEstablishedIdentity(t *
 	for _, noOp := range []bool{false, true} {
 		t.Run(map[bool]string{false: "failed refresh", true: "no-op refresh"}[noOp], func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			session := refreshTestSession("identity@example.test", id.NewServiceID())
 			identity := id.ClientID("established-client")
 			session.UpstreamClientID = &identity
 			require.NoError(t, repo.Create(ctx, session))
 			failure := errors.New("synthetic provider rejection")
-			_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, candidate *storage.UserSession) (bool, error) {
+			_, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, candidate *storage.UserSession) error {
 				require.NotNil(t, candidate.UpstreamClientID)
 				*candidate.UpstreamClientID = "must-not-commit"
 				if noOp {
-					return false, nil
+					return nil
 				}
-				return false, failure
+				return failure
 			})
 			if noOp {
 				require.NoError(t, err)
@@ -380,7 +382,7 @@ func TestCredentialSourceMemoryRefreshFailureCannotMutateEstablishedIdentity(t *
 
 func TestCredentialSourceMemoryReconnectReplacesOnlyItsSessionAssociation(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	session := refreshTestSession("identity@example.test", id.NewServiceID())
 	identity := id.ClientID(strings.Repeat("a", 300))
 	session.UpstreamClientID = &identity
@@ -422,7 +424,7 @@ func TestCredentialSourceMemoryFilesystemUpdateValidationIsAtomic(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 			provider := credentialSourceProvider(model.CredentialSourceFilesystem, "https://api.example.test/filesystem")
 			require.NoError(t, repo.Create(ctx, provider))
 			before, err := repo.Get(ctx, provider.ID)
@@ -449,18 +451,19 @@ func TestCredentialSourceMemorySuccessfulRefreshCannotRelabelAssociation(t *test
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "recorded identity", true: "legacy absence"}[legacy], func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 			identity := id.ClientID("established-client")
 			session := refreshTestSession("identity@example.test", id.NewServiceID())
 			if !legacy {
 				session.UpstreamClientID = &identity
 			}
 			require.NoError(t, repo.Create(ctx, session))
-			refreshed, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, locked *storage.UserSession) (bool, error) {
+			refreshed, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(ctx context.Context, locked *storage.UserSession) error {
+				previous := copyUserSession(locked)
 				newIdentity := id.ClientID("different-current-credential-client")
 				locked.UpstreamClientID = &newIdentity
 				locked.EncryptedAccessToken = []byte("refreshed-access-ciphertext")
-				return true, nil
+				return commitRefreshedSession(ctx, repo, previous, locked)
 			})
 			require.NoError(t, err)
 			stored, err := repo.Get(ctx, session.ID)

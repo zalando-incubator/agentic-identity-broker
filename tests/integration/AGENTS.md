@@ -20,6 +20,7 @@ Use these helpers:
 - `(*SharedPostgres).SetupDatabaseFromTemplate(...)` — Clones a fresh database from a prepared template.
 - `(*SharedPostgres).ApplyMigrationsUpTo(t, dbName, version)` — Discovers migrations through a fixed version. Use it only for migration-specific tests.
 - `(*SharedPostgres).ApplyMigration(...)`, `QuerySQL(...)`, `ExecuteSQL(...)` — SQL helpers.
+- `(*SharedPostgres).ExecutePSQLScript(...)` — Runs psql scripts with variables and meta-commands in the shared container.
 - `bootstrap.TerminateSharedPostgres(ctx)` — Call from `TestMain` for a shared container.
 
 **Preferred pattern:**

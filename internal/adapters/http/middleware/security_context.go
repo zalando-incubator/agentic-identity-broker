@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -34,7 +35,7 @@ func SecurityContextMiddleware(resolved ports.RequestContextConfig, reuseSpanTra
 				ReceivedAt:    time.Now().UTC(),
 			}
 
-			ctx := r.Context()
+			ctx := ledger.CaptureRequestSpan(r.Context())
 			if shouldDeferSecurityContextFinalization(r) {
 				ctx = security.WithCaptureHolder(ctx, security.NewCaptureHolder(capture))
 			} else {
