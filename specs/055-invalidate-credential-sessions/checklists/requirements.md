@@ -33,10 +33,6 @@ Checkboxes assess requirements quality, not implementation completion. This buil
 
 ## Notes
 
-- Draft validation completed for the specify phase. Ten criteria pass; six remain open because two product decisions are unresolved. This is a clarification handoff, not an implementation approval.
-- Q1 / FR-002: “Does invalidation cover client-ID and secret-only changes made through service administration only, those changes plus externally rotated filesystem credentials, or only client-identity changes?” Until answered, the selected change types in Story 1 and SC-001 are not a final acceptance matrix.
-- Q2 / FR-007: “Should automatic consent apply when the user next enters the agent authorization flow, when a client follows a token-exchange recovery action, or both?” Until answered, Scenarios 2.1 and 2.4 and SC-003 need final entry-point and recovery-target expectations.
-- These questions also leave scope boundaries, full acceptance coverage, and the readiness outcome criterion incomplete. The specification provides suggested answers in its Clarification Handoff section; this run does not answer them.
-- Existing login HTTP contracts and configuration examples make the journeys reviewable under Constitution Principle XIV; they do not prescribe a new API or an implementation design. Proposed UI states have editable Wireloom source and generated SVGs alongside the specification.
-- The draft explicitly identifies potential conflicts with Accepted ADRs 041 and 044. No ADR was changed or marked Accepted, and no new API behavior was approved.
-- Items marked incomplete require clarification and spec updates before planning. The separate `/speckit-clarify` session should resolve them; specify intentionally stops here.
+- The 2026-11-03 clarification session resolved Q1 (C1 scope) and Q2 (C2 entry point), and added C3 (when filesystem changes take effect). All three remain Proposed approval items.
+- The planning reconciliation (2026-11-03) records four more decisions: retained, expired sessions; reuse of the existing consent gate and UI; the persisted Argon2id fingerprint and generation table; and the superseding ADR draft. The State A–C wireframes were re-rendered to show the existing UI. Acceptance scenarios and success criteria are unchanged.
+- The specification defers implementation choices to [plan.md](../plan.md), [research.md](../research.md), and [data-model.md](../data-model.md). `## Approval Items` in the plan lists every API, ADR, and decision that needs the maintainer's sign-off. Creating the specification or the plan approves none of them.
