@@ -682,25 +682,25 @@ func TestExchange_InvalidRequest(t *testing.T) {
 	}{
 		{
 			name:        "empty grant_type",
-			request:     NewTokenExchangeRequest("", "token", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest("", "token", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing subject_token",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing client_assertion",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing resource",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "assertion", "", "", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "assertion", JWTBearerType, "", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},

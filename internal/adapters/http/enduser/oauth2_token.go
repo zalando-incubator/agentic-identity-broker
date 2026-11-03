@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -52,8 +53,14 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 {
+		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "exactly one Content-Type header is required")
+		return
+	}
+
 	// OAuth 2.0 token endpoint must accept application/x-www-form-urlencoded per RFC 6749 Section 4.1.3.
-	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/x-www-form-urlencoded" {
+	if mediaType, _, err := mime.ParseMediaType(contentTypes[0]); err != nil || mediaType != "application/x-www-form-urlencoded" {
 		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "invalid Content-Type: expected application/x-www-form-urlencoded")
 		return
 	}
@@ -78,6 +85,34 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repeatedParameter := ""
+	for _, parameter := range [...]string{
+		"grant_type", "client_id", "client_secret", "code", "redirect_uri", "refresh_token",
+		"code_verifier", "scope", "subject_token", "subject_token_type", "client_assertion",
+		"client_assertion_type", "actor_token", "actor_token_type", "requested_token_type",
+	} {
+		// RFC 6749 Section 3.2 requires a parameter without a value to be treated as omitted.
+		dropOmittedValues(formData, parameter)
+		if len(formData[parameter]) > 1 && repeatedParameter == "" {
+			repeatedParameter = parameter
+		}
+	}
+
+	// RFC 8693 Section 2.1 defines resource and audience as repeatable.
+	dropOmittedValues(formData, "resource")
+	dropOmittedValues(formData, "audience")
+
+	if repeatedParameter != "" {
+		if len(formData["grant_type"]) == 1 && formData.Get("grant_type") == tokenexchange.TokenExchangeGrantType && h.Impersonation != nil && len(formData["audience"]) > 0 {
+			err := tokenexchange.NewInvalidRequestError(repeatedParameter + " must not be repeated").
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
+			h.handleTokenExchange(w, r, formData, err)
+		} else {
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", repeatedParameter+" must not be repeated")
+		}
+		return
+	}
+
 	grantType := formData.Get("grant_type")
 	if grantType == "" {
 		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "grant_type is required")
@@ -85,7 +120,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if grantType == tokenexchange.TokenExchangeGrantType {
-		h.handleTokenExchange(w, r, formData)
+		h.handleTokenExchange(w, r, formData, nil)
 		return
 	}
 	// Finalize the request security context at the /oauth2/token seam before
@@ -130,8 +165,51 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.GrantHandler.HandleTokenGrant(w, r, grantType, formData, resolution)
 }
 
+// dropOmittedValues removes a parameter sent without a value, which RFC 6749 Section 3.2
+// requires to be treated as omitted from the request.
+func dropOmittedValues(formData url.Values, parameter string) {
+	values, ok := formData[parameter]
+	if !ok {
+		return
+	}
+	kept := slices.DeleteFunc(values, func(value string) bool { return value == "" })
+	if len(kept) == 0 {
+		delete(formData, parameter)
+		return
+	}
+	formData[parameter] = kept
+}
+
+// resolveExchangeResource applies RFC 8693 Section 2.1, which allows repeated resource
+// parameters. The broker issues one service token, so repeated values must normalize to
+// the same URI; otherwise RFC 8693 Section 2.2.2 applies and the request fails invalid_target.
+func resolveExchangeResource(values []string) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	resource, err := tokenexchange.NewResourceURI(values[0])
+	if err != nil {
+		return "", tokenexchange.NewInvalidRequestError("resource parameter is invalid").
+			WithCause(err).
+			WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
+	}
+	for _, value := range values[1:] {
+		candidate, err := tokenexchange.NewResourceURI(value)
+		if err != nil {
+			return "", tokenexchange.NewInvalidRequestError("resource parameter is invalid").
+				WithCause(err).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
+		}
+		if candidate.Value() != resource.Value() {
+			return "", tokenexchange.NewInvalidTargetError("multiple resources must map to the same service").
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailResourceUnregistered))
+		}
+	}
+	return values[0], nil
+}
+
 // handleTokenExchange processes RFC 8693 token exchange requests.
-func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.Request, formData url.Values) {
+func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.Request, formData url.Values, requestErr error) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.exchange")
@@ -147,9 +225,19 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		}
 		if activated {
 			span.SetName("tokenexchange.impersonation")
-			h.handleImpersonation(ctx, span, w, formData, target)
+			h.handleImpersonation(ctx, span, w, formData, target, requestErr)
 			return
 		}
+	}
+	if requestErr != nil {
+		h.writeTokenExchangeFailure(ctx, span, w, requestErr, tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
+		return
+	}
+
+	resource, err := resolveExchangeResource(formData["resource"])
+	if err != nil {
+		h.writeTokenExchangeFailure(ctx, span, w, err, tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailInternalUnclassified))
+		return
 	}
 
 	if h.TokenExchange == nil {
@@ -171,7 +259,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		formData.Get("subject_token_type"),
 		formData.Get("client_assertion"),
 		formData.Get("client_assertion_type"),
-		formData.Get("resource"),
+		resource,
 		formData.Get("scope"),
 	)
 	if req.Resource == "" {
@@ -190,9 +278,12 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 }
 
 // handleImpersonation always emits its credential-free audit event before the response.
-func (h *OAuth2TokenHandler) handleImpersonation(ctx context.Context, span trace.Span, w http.ResponseWriter, formData url.Values, target *impersonation.Target) {
+func (h *OAuth2TokenHandler) handleImpersonation(ctx context.Context, span trace.Span, w http.ResponseWriter, formData url.Values, target *impersonation.Target, err error) {
 	span.SetAttributes(attribute.String("impersonation.target_agent_id", target.Agent.ID.String()))
-	req, err := impersonation.ParseRequest(formData)
+	var req *impersonation.Request
+	if err == nil {
+		req, err = impersonation.ParseRequest(formData)
+	}
 	if err != nil {
 		record := h.impersonationParseAudit(err)
 		record.TargetAgentID = target.Agent.ID.String()
