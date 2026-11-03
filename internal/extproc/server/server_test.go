@@ -2152,18 +2152,19 @@ func TestServer_OPA_AmbiguousMCPMembers_DeniedBeforePolicy(t *testing.T) {
 		name                string
 		body                []byte
 		downstreamArguments map[string]any
+		checkDownstream     bool
 	}{
 		{name: "standalone case-folded method", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
 		{name: "batch case-folded method", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
-		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: nil, checkDownstream: true},
 		{name: "batch repeated params", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}]`)},
 		{name: "case-folded tool name", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"read","Name":"delete"}}`)},
-		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}, checkDownstream: true},
 		{name: "repeated arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"arguments":{"env":"prod"}}}`)},
 		{name: "batch case-folded arguments", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.downstreamArguments != nil {
+			if tc.checkDownstream {
 				var downstream mcp.CallToolRequest
 				require.NoError(t, json.Unmarshal(tc.body, &downstream))
 				assert.Equal(t, tc.downstreamArguments, downstream.GetArguments(), "downstream would execute these arguments")
