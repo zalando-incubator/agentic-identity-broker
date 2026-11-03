@@ -24,7 +24,7 @@ type ProtectedResourcesHandler struct {
 
 func NewProtectedResourcesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderService, logger *slog.Logger) *ProtectedResourcesHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewProtectedResourcesHandler: logger must not be nil")
 	}
 	return &ProtectedResourcesHandler{providerService: providerService, logger: logger}
 }

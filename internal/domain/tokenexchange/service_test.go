@@ -45,7 +45,7 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 // newTestProviderService wraps a repository in a ThirdpartyOAuth2ProviderService
 // with passthrough encryption for use in domain-layer tests.
 func newTestProviderService(repo ports.ThirdpartyOAuth2ProviderRepository) *thirdparty.ThirdpartyOAuth2ProviderService {
-	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, nil)
+	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler))
 }
 
 // newMockPermissionSetService creates a PermissionSetService with mock for testing

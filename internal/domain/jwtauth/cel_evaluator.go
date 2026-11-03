@@ -82,7 +82,7 @@ type CELEvaluator struct {
 // email, picture URL) are only compiled if configured (non-empty).
 func NewCELEvaluator(config CELEvaluatorConfig, logger *slog.Logger) (*CELEvaluator, error) {
 	if logger == nil {
-		logger = slog.Default()
+		return nil, fmt.Errorf("logger must not be nil")
 	}
 
 	timeout := config.EvaluationTimeout

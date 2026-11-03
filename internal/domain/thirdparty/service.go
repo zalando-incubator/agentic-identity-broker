@@ -64,7 +64,7 @@ func NewThirdpartyOAuth2ProviderService(
 	logger *slog.Logger,
 ) *ThirdpartyOAuth2ProviderService {
 	if logger == nil {
-		logger = slog.Default()
+		panic("thirdparty.NewThirdpartyOAuth2ProviderService: logger must not be nil")
 	}
 	if repo == nil {
 		panic("thirdparty.NewThirdpartyOAuth2ProviderService: repo must not be nil")

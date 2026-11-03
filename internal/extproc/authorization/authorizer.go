@@ -55,7 +55,7 @@ type OPAAuthorizer struct {
 // Policy source: exactly one of cfg.Policy.Path or cfg.Policy.ConfigFile must be set.
 func NewOPAAuthorizer(cfg *config.AuthorizationConfig, logger *slog.Logger) (*OPAAuthorizer, error) {
 	if logger == nil {
-		logger = slog.Default()
+		return nil, fmt.Errorf("opa authorizer: logger must not be nil")
 	}
 
 	if cfg.Policy.Path == "" && cfg.Policy.ConfigFile == "" {

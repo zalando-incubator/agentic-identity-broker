@@ -162,7 +162,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default())
 
 	// Create handler
-	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	// Test 1: Create initial grant
 	t.Run("create_grant", func(t *testing.T) {
@@ -304,7 +304,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 
 	// Test 4: Revoke grant via DELETE /grants
 	t.Run("revoke_grant", func(t *testing.T) {
-		revokeHandler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+		revokeHandler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 		req := httptest.NewRequest("DELETE", "/api/consent/agent/"+testAgentID.String()+"/grants", nil)
 		//nolint:staticcheck // Using string key for test simplicity
@@ -372,7 +372,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	seedActiveSession(t, sessionRepo, principalValue, serviceID)
 
 	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(serviceID), slog.Default())
-	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	validUntil := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
 
@@ -463,7 +463,7 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	seedActiveSession(t, sessionRepo, id.Principal("bob@example.com"), optionalServiceID)
 
 	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(optionalServiceID), slog.Default())
-	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	t.Run("approve_optional_service", func(t *testing.T) {
 		reqBody := GrantRequest{
@@ -569,7 +569,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 	seedActiveSession(t, sessionRepo, id.Principal("test@example.com"), service.ID)
 
 	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default())
-	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	tests := []struct {
 		name           string
@@ -662,7 +662,7 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 
 	// Wire session repo so FR-020 validation is active; no sessions are seeded.
 	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(unconnectedServiceID), slog.Default())
-	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
+	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	t.Run("returns_400_when_included_service_has_no_active_session", func(t *testing.T) {
 		psID := permissionSetID

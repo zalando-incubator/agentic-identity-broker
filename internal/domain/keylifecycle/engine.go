@@ -42,7 +42,7 @@ type Engine struct {
 
 func NewEngine(repository ports.SigningKeyRepository, bootstrapCoordinator ports.SigningKeyBootstrapCoordinator, encryptor ports.EncryptionPort, branchKeyManager ports.BranchKeyManager, logger *slog.Logger) *Engine {
 	if logger == nil {
-		logger = slog.Default()
+		panic("keylifecycle.NewEngine: logger must not be nil")
 	}
 	return &Engine{repository: repository, bootstrapCoordinator: bootstrapCoordinator, encryption: encryptor, branchKeyManager: branchKeyManager, logger: logger}
 }
