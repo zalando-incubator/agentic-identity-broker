@@ -890,14 +890,14 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extproc
 	if s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled {
 		span := trace.SpanFromContext(ctx)
 		span.SetAttributes(
-			attribute.String("operation", string(metadata.Operation())),
-			attribute.String("error.kind", string(metadata.Kind())),
-			attribute.String("dependency", string(metadata.Dependency())),
+			attribute.String("token_exchange.operation", string(metadata.Operation())),
+			attribute.String("error.type", string(metadata.Kind())),
+			attribute.String("token_exchange.dependency", string(metadata.Dependency())),
 		)
 		if hasBrokerError {
 			span.SetAttributes(
 				attribute.Int("token_exchange.broker_status_code", metadata.StatusCode()),
-				attribute.String("token_exchange.broker_error_code", metadata.OAuthCode()),
+				attribute.String("token_exchange.oauth_error_code", metadata.OAuthCode()),
 			)
 		}
 	}

@@ -3769,11 +3769,21 @@ func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCo
 	assert.Equal(t, "exchange_routing", attrs["token_exchange.failure_stage"].AsString(), "broker origin stages are unknown to ExtProc")
 	assert.Equal(t, "unknown", attrs["token_exchange.exchange_kind"].AsString())
 	assert.NotContains(t, attrs, "outcome")
+	wantErrorType := "rejected"
+	if statusCode >= 500 {
+		wantErrorType = "unavailable"
+	}
+	assert.Equal(t, "exchange", attrs["token_exchange.operation"].AsString())
+	assert.Equal(t, "broker", attrs["token_exchange.dependency"].AsString())
+	assert.Equal(t, wantErrorType, attrs["error.type"].AsString())
+	for _, legacy := range []string{"operation", "dependency", "error.kind", "token_exchange.broker_error_code"} {
+		assert.NotContains(t, attrs, legacy)
+	}
 	status, ok := attrs["token_exchange.broker_status_code"]
 	require.True(t, ok, "broker status must be present")
 	assert.Equal(t, attribute.INT64, status.Type())
 	assert.Equal(t, int64(statusCode), status.AsInt64())
-	code, ok := attrs["token_exchange.broker_error_code"]
+	code, ok := attrs["token_exchange.oauth_error_code"]
 	require.True(t, ok, "broker code must be present")
 	assert.Equal(t, attribute.STRING, code.Type())
 	assert.Equal(t, errorCode, code.AsString())
