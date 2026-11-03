@@ -407,7 +407,7 @@ func TestTokenExchangeResponse_OptionalApprovalIdentity(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		principal string
+		principal id.Principal
 		agentID   string
 	}{
 		{
@@ -439,7 +439,7 @@ func TestTokenExchangeResponse_OptionalApprovalIdentity(t *testing.T) {
 			require.NoError(t, json.Unmarshal(body, &decoded))
 
 			for field, expected := range map[string]string{
-				"principal": tt.principal,
+				"principal": tt.principal.String(),
 				"agent_id":  tt.agentID,
 			} {
 				actual, present := decoded[field]
@@ -479,7 +479,7 @@ func TestTokenExchangeResponse_ObservationContextExcludedFromJSON(t *testing.T) 
 			"access_token":            "access-token",
 			"token_type":              BearerTokenType,
 			"issued_token_type":       AccessTokenType,
-			"principal":               response.Principal,
+			"principal":               response.Principal.String(),
 			"agent_id":                response.AgentID,
 			"granted_permission_sets": map[string]any{permissionSetID: []any{serviceID.String()}},
 		}, decoded)

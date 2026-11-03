@@ -10,6 +10,8 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 // CELEvaluatorConfig holds CEL-specific configuration for expression evaluation.
@@ -228,9 +230,9 @@ func (e *CELEvaluator) compileExpression(expr string) (cel.Program, error) {
 // ExtractPrincipal extracts the user principal from subject_token JWT claims.
 // Uses the configured principal_expression (default: "subject_token.sub").
 //
-// Returns the extracted principal string or ServerError on evaluation failure/timeout.
+// Returns the extracted principal or ServerError on evaluation failure/timeout.
 // Per T059, this is used to identify the authenticated user for grant verification.
-func (e *CELEvaluator) ExtractPrincipal(subjectTokenClaims map[string]interface{}) (string, error) {
+func (e *CELEvaluator) ExtractPrincipal(subjectTokenClaims map[string]interface{}) (id.Principal, error) {
 	// Create evaluation context
 	ctx, cancel := context.WithTimeout(context.Background(), e.evaluationTimeout)
 	defer cancel()
@@ -263,7 +265,7 @@ func (e *CELEvaluator) ExtractPrincipal(subjectTokenClaims map[string]interface{
 			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
 
-	return principal, nil
+	return id.NewPrincipal(principal), nil
 }
 
 // ExtractAgentID extracts the agent identifier from subject_token JWT claims.
@@ -420,7 +422,7 @@ type CELRequestContext struct {
 	Scope string
 
 	// Principal is the user principal extracted from subject_token
-	Principal string
+	Principal id.Principal
 
 	// AgentID is the agent identifier extracted from subject_token
 	AgentID string
@@ -433,7 +435,7 @@ func (r CELRequestContext) ToMap() map[string]interface{} {
 		"resource":   r.Resource,
 		"grant_type": r.GrantType,
 		"scope":      r.Scope,
-		"principal":  r.Principal,
+		"principal":  r.Principal.String(),
 		"agent_id":   r.AgentID,
 	}
 }
