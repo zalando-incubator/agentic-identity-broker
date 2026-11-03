@@ -225,6 +225,45 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		})
 	})
 
+	// US1.4 from specs/054-agent-subject-impersonation/spec.md
+	Context("unsigned self-agent credentials", func() {
+		unsignedRule := func(predicate string) *ports.Config {
+			cfg := configFor([]string{"agent"})
+			rule := imperUnverifiedRule("unsigned-agent", issuer.URL(), issuer.JWKSURL(), predicate)
+			rule.AllowedSubjectCategories = []string{"agent"}
+			cfg.OAuth2AuthServer.Impersonation.Rules = []ports.ImpersonationRuleConfig{rule}
+			return cfg
+		}
+		unsignedRequest := func(audienceTarget, subject string) url.Values {
+			token, err := helpers.CreateUnsignedJWT(map[string]any{"sub": subject})
+			Expect(err).NotTo(HaveOccurred())
+			form := requestFor(subject)
+			form.Set("audience", fixtures.ImpersonationAudience+"/"+audienceTarget)
+			form.Set("subject_token", token)
+			return form
+		}
+
+		It("issues an agent token only when the predicate binds subject_token.sub and the target is a registered agent", func() {
+			boot(unsignedRule("client_assertion.sub == 'gateway-prod' && subject_token.sub == request.agent_id"), false)
+			status, body := post(unsignedRequest(target.ID.String(), target.ID.String()))
+			Expect(status).To(Equal(http.StatusOK), "%v", body)
+			claims := decodeJWTClaims(body["access_token"].(string))
+			Expect(claims["sub"]).To(Equal(target.ID.String()))
+			Expect(claims["agent_id"]).To(Equal(target.ID.String()))
+			assertNoState(target.ID.String())
+
+			unregistered := id.NewAgentID().String()
+			status, body = post(unsignedRequest(unregistered, unregistered))
+			Expect(status).To(Equal(http.StatusBadRequest))
+			Expect(body["error"]).To(Equal("invalid_target"))
+			Expect(body).NotTo(HaveKey("access_token"))
+
+			boot(unsignedRule("client_assertion.sub == 'gateway-prod' && !has(subject_token.nonce)"), false)
+			assertDenied(unsignedRequest(target.ID.String(), target.ID.String()), false)
+			assertNoState(target.ID.String())
+		})
+	})
+
 	Context("category eligibility and human consent", func() {
 		// US2.1 from specs/054-agent-subject-impersonation/spec.md
 		It("enforces all six category-rule combinations, including same-text delegation", func() {

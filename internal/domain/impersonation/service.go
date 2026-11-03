@@ -222,7 +222,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 	res.subject = subjectID
-	res.category = classifySubject(subjectUnverified, subjectClaims, targetAgent.ID)
+	res.category = classifySubject(subjectUnverified, rule.authz.Binds(celSubjectToken, "sub"), subjectClaims, targetAgent.ID)
 	if res.category == SubjectCategoryAgent {
 		res.subject = targetAgent.ID.String()
 	}

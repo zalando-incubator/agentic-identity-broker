@@ -17,6 +17,8 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 		name                                        string
 		categories                                  [][]string
 		human, unsigned, firstDenied, verifierError bool
+		subjectUnbound                              bool
+		wantCategory                                SubjectCategory
 		status                                      ports.UserDelegationStatus
 		wantRule                                    string
 		wantDelegation                              int
@@ -30,8 +32,11 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 		{name: "missing human is terminal", categories: [][]string{{"human", "agent"}, {"agent"}}, human: true, status: ports.UserDelegationMissing, wantDelegation: 1},
 		{name: "expired human is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, status: ports.UserDelegationExpired, wantDelegation: 1},
 		{name: "verifier failure is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, verifierError: true, wantDelegation: 1},
-		{name: "unsigned exact text is delegated human", categories: [][]string{{"human", "agent"}}, unsigned: true, status: ports.UserDelegationActive, wantDelegation: 1, wantRule: "first"},
-		{name: "unsigned exact text never agent", categories: [][]string{{"agent"}}, unsigned: true, status: ports.UserDelegationActive},
+		{name: "unsigned exact target bound by predicate is agent", categories: [][]string{{"agent"}}, unsigned: true, wantRule: "first", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned exact target bound by predicate on dual rule is agent", categories: [][]string{{"human", "agent"}}, unsigned: true, status: ports.UserDelegationActive, wantRule: "first", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned exact target unbound by predicate is delegated human", categories: [][]string{{"human", "agent"}}, unsigned: true, subjectUnbound: true, status: ports.UserDelegationActive, wantDelegation: 1, wantRule: "first", wantCategory: SubjectCategoryHuman},
+		{name: "unsigned exact target unbound by predicate never agent", categories: [][]string{{"agent"}}, unsigned: true, subjectUnbound: true, status: ports.UserDelegationActive},
+		{name: "unsigned human bound by predicate stays human", categories: [][]string{{"agent"}}, unsigned: true, human: true, status: ports.UserDelegationActive},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testImpersonationConfig("first", "second")
@@ -44,6 +49,9 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 				cfg.Rules[i].AllowedSubjectCategories = categories
 				cfg.Rules[i].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 				cfg.Rules[i].Authorization.CEL.Expression = "subject_token.sub != ''"
+				if tc.subjectUnbound {
+					cfg.Rules[i].Authorization.CEL.Expression = "client_assertion.sub != '' && !has(subject_token.nonce)"
+				}
 				if i == 0 && tc.firstDenied {
 					cfg.Rules[i].Authorization.CEL.Expression = "false"
 				}
@@ -76,8 +84,8 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 				require.NoError(t, err)
 				require.True(t, issuer.called)
 				require.Equal(t, tc.wantRule, outcome.Audit.SelectedRule)
-				if tc.unsigned {
-					require.Equal(t, SubjectCategoryHuman, outcome.Audit.SubjectCategory)
+				if tc.wantCategory != "" {
+					require.Equal(t, tc.wantCategory, outcome.Audit.SubjectCategory)
 				}
 			} else {
 				require.Error(t, err)

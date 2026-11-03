@@ -282,6 +282,7 @@ N/A under API-004. No frontend component, Storybook story, semantic-token/WCAG c
 - [X] T079 [R] Write failing tests, then require a configured `agent_subject_expression` to reference `subject_token.sub` at startup via the shared `tokenexchange.FieldSelections` walk; update ADR 045 decision 6, FR-011, CFG-005, SC-005, US3.4, research R5 and operator docs (finding 1, A12)
 - [X] T080 [R] Restructure the US3.4 E2E into a `DescribeTable` with one entry per detector and human-state case plus a startup-rejection scenario (finding 6)
 - [X] T081 [R] Update the OpenAPI approval create/consume responses, then write failing tests and route third-party exchange and subject-token approval authentication through `CELEvaluator.ResolveHumanSubject`; agent-subject tokens return `403 forbidden` and detection failures `503` on approvals; add ADR 045 decision 6a, FR-013 and the US3.5 E2E scenario (finding 2, A11)
+- [X] T082 [R] Write failing tests, then classify an unverified exact-target subject as agent when the rule's predicate binds `subject_token.sub` (`classifySubject`); add FR-003a, US1.4 and its E2E scenario, and revise SR-003, ADR 045 (decision 2a), research R8, glossary and configuration docs (A13)
 
 ## Acceptance Coverage
 

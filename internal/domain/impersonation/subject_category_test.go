@@ -18,20 +18,25 @@ import (
 
 func TestClassifySubject(t *testing.T) {
 	target := id.MustParseAgentID("550e8400-e29b-41d4-a716-446655440000")
-	require.Equal(t, SubjectCategoryHuman, classifySubject(false, map[string]interface{}{}, target))
+	require.Equal(t, SubjectCategoryHuman, classifySubject(false, false, map[string]interface{}{}, target))
 	for _, tc := range []struct {
 		sub      any
 		unsigned bool
+		bound    bool
 		want     SubjectCategory
 	}{
-		{target.String(), false, SubjectCategoryAgent}, {target.String(), true, SubjectCategoryHuman},
-		{strings.ToUpper(target.String()), false, SubjectCategoryHuman}, {"{" + target.String() + "}", false, SubjectCategoryHuman},
-		{" " + target.String(), false, SubjectCategoryHuman},
-		{"research-agent", false, SubjectCategoryHuman}, {id.NewAgentID().String(), false, SubjectCategoryHuman},
-		{"", false, SubjectCategoryHuman}, {nil, false, SubjectCategoryHuman}, {123, false, SubjectCategoryHuman},
+		{target.String(), false, false, SubjectCategoryAgent},
+		{target.String(), true, false, SubjectCategoryHuman},
+		{target.String(), true, true, SubjectCategoryAgent},
+		{strings.ToUpper(target.String()), true, true, SubjectCategoryHuman},
+		{id.NewAgentID().String(), true, true, SubjectCategoryHuman},
+		{strings.ToUpper(target.String()), false, false, SubjectCategoryHuman}, {"{" + target.String() + "}", false, false, SubjectCategoryHuman},
+		{" " + target.String(), false, false, SubjectCategoryHuman},
+		{"research-agent", false, false, SubjectCategoryHuman}, {id.NewAgentID().String(), false, false, SubjectCategoryHuman},
+		{"", false, false, SubjectCategoryHuman}, {nil, false, false, SubjectCategoryHuman}, {123, false, false, SubjectCategoryHuman},
 	} {
-		t.Run(fmt.Sprintf("%v/%v", tc.sub, tc.unsigned), func(t *testing.T) {
-			require.Equal(t, tc.want, classifySubject(tc.unsigned, map[string]interface{}{"sub": tc.sub}, target))
+		t.Run(fmt.Sprintf("%v/unsigned=%v/bound=%v", tc.sub, tc.unsigned, tc.bound), func(t *testing.T) {
+			require.Equal(t, tc.want, classifySubject(tc.unsigned, tc.bound, map[string]interface{}{"sub": tc.sub}, target))
 		})
 	}
 }

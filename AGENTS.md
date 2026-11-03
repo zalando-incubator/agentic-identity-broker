@@ -177,7 +177,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | Term | Definition |
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
-| **Subject Category** | `agent` only for a verified signed raw `sub` exactly equal to the audience-selected target UUID; otherwise `human`. |
+| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified with a predicate binding `subject_token.sub`; otherwise `human`. |
 | **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
 | **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |

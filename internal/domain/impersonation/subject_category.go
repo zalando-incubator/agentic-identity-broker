@@ -43,11 +43,15 @@ func ParseAllowedSubjectCategories(categories []string) (allowsHuman, allowsAgen
 	return allowsHuman, allowsAgent, nil
 }
 
-func classifySubject(unverified bool, claims map[string]interface{}, target id.AgentID) SubjectCategory {
-	if subject, ok := claims["sub"].(string); !unverified && ok && subject == target.String() {
-		return SubjectCategoryAgent
+// classifySubject returns agent only when the raw sub exactly equals the resolved target's
+// UUID. An unverified subject also needs an authorization predicate that binds
+// subject_token.sub, so a caller-supplied sub cannot select agent issuance unchecked.
+func classifySubject(unverified, predicateBindsSub bool, claims map[string]interface{}, target id.AgentID) SubjectCategory {
+	subject, ok := claims["sub"].(string)
+	if !ok || subject != target.String() || (unverified && !predicateBindsSub) {
+		return SubjectCategoryHuman
 	}
-	return SubjectCategoryHuman
+	return SubjectCategoryAgent
 }
 
 func (r *compiledRule) allows(category SubjectCategory) bool {
