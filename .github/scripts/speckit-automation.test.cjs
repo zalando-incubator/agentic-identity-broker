@@ -1886,24 +1886,15 @@ test("container tests start only on the commit that a completed code phase pushe
     /could not start on `speckit\/issue-7`: No ref found.*merge the default branch into it/);
 });
 
-test("worker comments from the Agentic Workflows App count, but not from any other App", async (t) => {
-  const saved = process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
-  t.after(() => {
-    if (saved === undefined) delete process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
-    else process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID = saved;
-  });
-  const app = (entry, clientId = "Iv23-agentic") => ({
-    ...entry, user: { login: "agentic-workflows[bot]", type: "Bot" },
-    performed_via_github_app: { slug: "agentic-workflows", client_id: clientId },
-  });
-  const byApp = (clientId) => implemented(60).map((entry) => app(entry, clientId));
-  process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID = "Iv23-agentic";
-  assert.equal(parseResult(app(comment(result("implement")))).phase, "implement");
-  assert.equal((await route(repairFixture({ comments: byApp() }))).action, "implement");
-  assert.deepEqual(await route(repairFixture({ comments: byApp("Iv23-coderabbit") })), { action: "noop" });
-  assert.equal(parseResult({ ...app(comment(result("implement"))), user: { login: "agentic-workflows", type: "User" } }), null);
-  delete process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
-  assert.equal(parseResult(app(comment(result("implement")))), null);
-  assert.deepEqual(await route(repairFixture({ comments: byApp() })), { action: "noop" });
-  assert.equal(parseResult(app(comment(result("implement")), "")), null);
+test("worker comments from the Agentic Workflows App's bot count, but not from any other App", async (t) => {
+  preparationIO(t);
+  const worker = { login: "zalando-incubator-agent-workflows[bot]", type: "Bot" };
+  const f = fixture("pull_request_target", {}, { comments: [comment(result("remediate"), { user: worker })] });
+  assert.equal((await verify({ ...f, comment: 11, phase: "remediate" })).phase, "remediate");
+  const by = (user) => implemented(60).map((entry) => ({ ...entry, user }));
+  assert.equal((await route(repairFixture({ comments: by(worker) }))).action, "implement");
+  for (const user of [{ login: "coderabbitai[bot]", type: "Bot" }, { ...worker, type: "User" }]) {
+    assert.equal(parseResult(comment(result("implement"), { user })), null);
+    assert.deepEqual(await route(repairFixture({ comments: by(user) })), { action: "noop" });
+  }
 });
