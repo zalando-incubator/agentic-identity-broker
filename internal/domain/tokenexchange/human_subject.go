@@ -1,6 +1,10 @@
 package tokenexchange
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+)
 
 var (
 	// ErrAgentSubjectToken marks the denial of a detected agent-subject token.
@@ -13,7 +17,7 @@ var (
 // Agent-subject tokens are denied before agent extraction (ADR 045 decisions 6 and 6a), so
 // no caller can treat one as a human principal. The principal is returned whenever it was
 // extracted, including on failure, so callers can still attribute the request.
-func (e *CELEvaluator) ResolveHumanSubject(subjectTokenClaims map[string]interface{}) (principal, agentID string, err error) {
+func (e *CELEvaluator) ResolveHumanSubject(subjectTokenClaims map[string]interface{}) (principal id.Principal, agentID string, err error) {
 	principal, err = e.ExtractPrincipal(subjectTokenClaims)
 	if err != nil {
 		return "", "", err

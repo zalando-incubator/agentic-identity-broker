@@ -2561,7 +2561,7 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				require.NotNil(t, response)
 				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, response.Service)
 				assert.Equal(t, fixture.agentID.String(), response.AgentID)
-				assert.Equal(t, fixture.grant.Principal.String(), response.Principal)
+				assert.Equal(t, fixture.grant.Principal, response.Principal)
 				assert.Equal(t, map[string][]string{fixture.permissionSetID.String(): {fixture.serviceID.String()}}, response.GrantedPermissionSets)
 				actual = response.Authorization
 			} else {

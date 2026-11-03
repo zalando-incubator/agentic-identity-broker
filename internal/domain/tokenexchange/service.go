@@ -297,7 +297,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
 	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access")
-	grant, err = s.consentService.VerifyAgentAccess(grantCtx, id.Principal(principal), agent.ID)
+	grant, err = s.consentService.VerifyAgentAccess(grantCtx, principal, agent.ID)
 	grantSpan.End()
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
@@ -344,7 +344,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// Per T076: invalid_grant if both tokens are expired
 	stage = StageSessionLookup
 	sessionCtx, sessionSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.get_valid_access_token")
-	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(sessionCtx, id.Principal(principal), service.ID)
+	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(sessionCtx, principal, service.ID)
 	sessionSpan.End()
 	if err != nil {
 		diagnostic := sessionDiagnostic(err)

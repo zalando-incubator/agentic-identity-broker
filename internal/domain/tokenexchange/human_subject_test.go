@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 func TestResolveHumanSubject(t *testing.T) {
@@ -12,7 +14,7 @@ func TestResolveHumanSubject(t *testing.T) {
 
 	principal, agentID, err := evaluator.ResolveHumanSubject(map[string]interface{}{"sub": "alice", "azp": "agent-1"})
 	require.NoError(t, err)
-	require.Equal(t, "alice", principal)
+	require.Equal(t, id.NewPrincipal("alice"), principal)
 	require.Equal(t, "agent-1", agentID)
 
 	principal, agentID, err = evaluator.ResolveHumanSubject(map[string]interface{}{"sub": "agent-1", "agent_id": "agent-1", "azp": "agent-1"})
@@ -22,7 +24,7 @@ func TestResolveHumanSubject(t *testing.T) {
 	require.Equal(t, DetailSubjectCategoryUnsupported, exchangeErr.Diagnostic().Detail())
 	require.ErrorIs(t, err, ErrAgentSubjectToken)
 	require.True(t, IsTokenExchangeError(err))
-	require.Equal(t, "agent-1", principal, "principal is returned for request security-context capture")
+	require.Equal(t, id.NewPrincipal("agent-1"), principal, "principal is returned for request security-context capture")
 	require.Empty(t, agentID)
 
 	_, _, err = evaluator.ResolveHumanSubject(map[string]interface{}{"azp": "agent-1"})
@@ -35,5 +37,5 @@ func TestResolveHumanSubject(t *testing.T) {
 	require.ErrorIs(t, err, ErrAgentSubjectDetection)
 	require.True(t, IsTokenExchangeError(err))
 	require.Equal(t, "server_error", err.(*TokenExchangeError).Code())
-	require.Equal(t, "alice", principal)
+	require.Equal(t, id.NewPrincipal("alice"), principal)
 }

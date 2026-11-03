@@ -171,7 +171,7 @@ func (a *ApprovalRequestAuthenticator) authenticateCreate(ctx context.Context, a
 
 	gatewayClientID, err := a.authenticateClientAssertion(ctx, clientAssertionHeader, subjectClaims, tokenexchange.CELRequestContext{
 		GrantType: approvalCreateGrantType,
-		Principal: string(principalValue),
+		Principal: principalValue,
 		AgentID:   agentID.String(),
 	})
 	if err != nil {
@@ -184,7 +184,7 @@ func (a *ApprovalRequestAuthenticator) authenticateCreate(ctx context.Context, a
 func (a *ApprovalRequestAuthenticator) authenticateSync(ctx context.Context, authorizationHeader string, principalFilter *id.Principal) (string, error) {
 	requestContext := tokenexchange.CELRequestContext{GrantType: approvalSyncGrantType}
 	if principalFilter != nil {
-		requestContext.Principal = string(*principalFilter)
+		requestContext.Principal = *principalFilter
 	}
 
 	clientAssertion, err := extractBearerToken(authorizationHeader, "client assertion")
@@ -239,7 +239,7 @@ func (a *ApprovalRequestAuthenticator) authenticateSubjectToken(ctx context.Cont
 		return "", id.AgentID{}, nil, newUnauthorizedApprovalAuthError("subject token agent identity is invalid", err)
 	}
 
-	return id.Principal(principalValue), agentID, subjectClaims, nil
+	return principalValue, agentID, subjectClaims, nil
 }
 
 func (a *ApprovalRequestAuthenticator) authenticateClientAssertion(ctx context.Context, tokenSource string, subjectClaims map[string]any, requestContext tokenexchange.CELRequestContext) (string, error) {
