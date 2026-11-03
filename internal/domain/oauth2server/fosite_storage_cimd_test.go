@@ -45,3 +45,37 @@ func TestFositeStorage_GetClientPreservesCIMDAuthenticationMetadata(t *testing.T
 	assert.Equal(t, "RS256", public.metadata.SigningAlg)
 	assert.Equal(t, metadata.RedirectURIs, public.metadata.RedirectURIs)
 }
+
+func TestFositeClientsExposeConcreteRedirectURIs(t *testing.T) {
+	agent := &dstorage.Agent{
+		RedirectURIs: []string{
+			"https://client.example/callback",
+			"https://preview*.example.com/callback",
+			"https://client.example/callback/*",
+		},
+	}
+	wantOpaqueRedirectURIs := []string{
+		"https://client.example/callback",
+		"https://client.example/callback/*",
+	}
+
+	t.Run("confidential client excludes Agent host patterns", func(t *testing.T) {
+		client := &confidentialClient{agent: agent}
+		assert.Equal(t, wantOpaqueRedirectURIs, client.GetRedirectURIs())
+	})
+
+	t.Run("opaque public client excludes Agent host patterns", func(t *testing.T) {
+		client := &publicClient{agent: agent, redirectURIs: agent.RedirectURIs}
+		assert.Equal(t, wantOpaqueRedirectURIs, client.GetRedirectURIs())
+	})
+
+	t.Run("CIMD client exposes document callbacks", func(t *testing.T) {
+		redirectURIs := []string{"https://cimd.example/callback"}
+		client := &publicClient{
+			agent:        agent,
+			redirectURIs: redirectURIs,
+			metadata:     &ports.CIMDMetadataDTO{},
+		}
+		assert.Equal(t, redirectURIs, client.GetRedirectURIs())
+	})
+}
