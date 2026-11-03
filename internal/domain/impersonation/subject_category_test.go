@@ -136,3 +136,35 @@ func TestImpersonateAgentSubject(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAllowedSubjectCategories(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		categories []string
+		human      bool
+		agent      bool
+		valid      bool
+	}{
+		{"omitted", nil, true, false, true},
+		{"human", []string{"human"}, true, false, true},
+		{"agent", []string{"agent"}, false, true, true},
+		{"both", []string{"human", "agent"}, true, true, true},
+		{"both reversed", []string{"agent", "human"}, true, true, true},
+		{"empty", []string{}, false, false, false},
+		{"unknown", []string{"machine"}, false, false, false},
+		{"case", []string{"Human"}, false, false, false},
+		{"duplicate", []string{"agent", "agent"}, false, false, false},
+		{"three", []string{"human", "agent", "human"}, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			human, agent, err := ParseAllowedSubjectCategories(tc.categories)
+			if !tc.valid {
+				require.ErrorIs(t, err, ErrInvalidAllowedSubjectCategories)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.human, human)
+			require.Equal(t, tc.agent, agent)
+		})
+	}
+}

@@ -772,10 +772,9 @@ const (
 	ImpersonationAudienceRequirementAbsent = "absent"
 )
 
-const (
-	SubjectCategoryHuman = "human"
-	SubjectCategoryAgent = "agent"
-)
+// SubjectCategoryList is a named type so the loader can reject non-sequence YAML values before
+// weak decoding would coerce them (for example "agent" into ["agent"]).
+type SubjectCategoryList []string
 
 // ImpersonationConfig is the optional oauth2_authorization_server.impersonation subtree.
 // It activates an RFC 8693 user-impersonation flow in local mode (data-model §1).
@@ -789,7 +788,7 @@ type ImpersonationConfig struct {
 // ImpersonationRuleConfig is a self-contained, atomically reviewable impersonation rule (CR-002/CR-003).
 type ImpersonationRuleConfig struct {
 	// AllowedSubjectCategories defaults to human only when omitted.
-	AllowedSubjectCategories []string `mapstructure:"allowed_subject_categories"`
+	AllowedSubjectCategories SubjectCategoryList `mapstructure:"allowed_subject_categories"`
 	// Name is a unique, operator-facing rule name; appears in audit (CR-003).
 	Name string `mapstructure:"name"`
 	// Roles declares per-role semantics keyed by role name (client_assertion|actor|subject) (CR-003).

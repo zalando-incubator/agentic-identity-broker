@@ -157,10 +157,9 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 		}
 	}
 
-	allowsHuman, allowsAgent := cfg.AllowedSubjectCategories == nil, false
-	for _, category := range cfg.AllowedSubjectCategories {
-		allowsHuman = allowsHuman || category == ports.SubjectCategoryHuman
-		allowsAgent = allowsAgent || category == ports.SubjectCategoryAgent
+	allowsHuman, allowsAgent, err := ParseAllowedSubjectCategories(cfg.AllowedSubjectCategories)
+	if err != nil {
+		return nil, fmt.Errorf("rule %q: %w", cfg.Name, err)
 	}
 	return &compiledRule{
 		allowsHuman: allowsHuman,
@@ -176,17 +175,8 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 // startup, independently of internal/config.Validate, so a directly constructed config cannot
 // start the broker with an invalid impersonation rule (fail closed regardless of the loader).
 func validateRuleInvariants(cfg ports.ImpersonationRuleConfig) error {
-	if categories := cfg.AllowedSubjectCategories; categories != nil {
-		seen := make(map[string]bool, len(categories))
-		for _, category := range categories {
-			if (category != ports.SubjectCategoryHuman && category != ports.SubjectCategoryAgent) || seen[category] {
-				return fmt.Errorf("rule %q: allowed_subject_categories must contain 1–2 distinct human/agent strings", cfg.Name)
-			}
-			seen[category] = true
-		}
-		if len(categories) < 1 || len(categories) > 2 {
-			return fmt.Errorf("rule %q: allowed_subject_categories must contain 1–2 distinct human/agent strings", cfg.Name)
-		}
+	if _, _, err := ParseAllowedSubjectCategories(cfg.AllowedSubjectCategories); err != nil {
+		return fmt.Errorf("rule %q: %w", cfg.Name, err)
 	}
 	if cfg.Authorization.Type != "cel" {
 		return fmt.Errorf("rule %q: authorization.type must be \"cel\"", cfg.Name)
