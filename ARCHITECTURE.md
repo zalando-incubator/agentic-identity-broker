@@ -1482,6 +1482,10 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
 - [ADR 046: Observed Refresh-Token Rejection](adrs/046-observed-refresh-token-rejection.md) - Recorded provider rejection replaces predicted refresh expiry; `requires_reauthentication` refuses issuance after rejection; no schema change. Supersedes only ADR 038's availability consequence for terminal rejection.
 
+### OAuth2 Redirect URIs
+
+- [ADR 047: Wildcard Web Redirect URIs](adrs/047-wildcard-web-redirect-uris.md) - Bounded HTTPS host wildcards for opaque Agent callbacks; CIMD and private-use callbacks remain exact-match.
+
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
 

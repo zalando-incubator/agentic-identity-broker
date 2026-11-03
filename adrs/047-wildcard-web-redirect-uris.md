@@ -1,4 +1,4 @@
-# ADR 044: Wildcard Web Redirect URIs
+# ADR 047: Wildcard Web Redirect URIs
 
 **Date**: 2026-10-29
 **Status**: Accepted
@@ -33,5 +33,3 @@ The broker already supports wildcards for CIMD `client_uris`, but those are path
 
 - Feature specification: `specs/055-wildcard-redirect-uri/spec.md`
 - Research and alternatives: `specs/055-wildcard-redirect-uri/research.md`
-- ADR 042: `adrs/042-agent-allowlisted-private-use-redirect-uris.md`
-- `golang.org/x/net/publicsuffix` and `golang.org/x/net/idna`
