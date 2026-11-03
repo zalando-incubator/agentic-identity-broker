@@ -25,7 +25,7 @@
 
 - [X] T002 Review and finalize Agent callback invariants in `specs/055-wildcard-redirect-uri/data-model.md`, confirming that no new entity, identifier, or persisted field is needed (FR-001-FR-005).
 - [X] T003 [P] Add the Redirect URI Pattern domain term and its bounded-host definition to `ARCHITECTURE.md` (Principle V).
-- [X] T004 [P] Create `adrs/044-wildcard-web-redirect-uris.md` with context, decision, consequences, and proposed status for wildcard grammar, PSL boundary, and callback-source isolation (SR-001-SR-004, Principle II).
+- [X] T004 [P] Create `adrs/048-wildcard-web-redirect-uris.md` with context, decision, consequences, and proposed status for wildcard grammar, PSL boundary, and callback-source isolation (SR-001-SR-004, Principle II).
 
 ### Phase 2b: Configuration Design
 
@@ -102,7 +102,7 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 ## Phase 5: Polish and Cross-Cutting Verification
 
 - [X] T019 Reconcile the wildcard descriptions and examples across `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, and `docs/api/enduser-api.md` (API-001, FR-005-FR-007).
-- [X] T020 Review and set the final ADR status to Accepted when approved; ensure `adrs/044-wildcard-web-redirect-uris.md` matches the implemented trust boundary (SR-001-SR-004, Principle II).
+- [X] T020 Review and set the final ADR status to Accepted when approved; ensure `adrs/048-wildcard-web-redirect-uris.md` matches the implemented trust boundary (SR-001-SR-004, Principle II).
 - [X] T021 Verify the Redirect URI Pattern glossary definition and architecture notes match the implementation in `ARCHITECTURE.md` (Principles II and V).
 - [X] T022 Run the focused domain tests from `specs/055-wildcard-redirect-uri/quickstart.md` and resolve failures (FR-001-FR-010, SR-001-SR-004).
 

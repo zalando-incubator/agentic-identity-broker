@@ -50,7 +50,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 
 - [x] **Security-First**: Validate patterns at registration and again before matching; reject malformed and out-of-bound patterns.
 - [x] **Architecture Docs**: Update the architecture glossary and redirect-validation description.
-- [x] **ADRs**: Add ADR 044 for host wildcard grammar and the public-suffix trust boundary; accept it with the implementation change.
+- [x] **ADRs**: Add ADR 045 for host wildcard grammar and the public-suffix trust boundary; accept it with the implementation change.
 - [x] **Library-First Security**: Use `golang.org/x/net/publicsuffix` and `golang.org/x/net/idna`; do not implement a public suffix list.
 - [x] **API Guidelines**: No endpoint or payload shape is added; retain existing error contracts.
 - [x] **End-User Docs**: Update `docs/api/enduser-api.md` with the authorization callback matching behavior.
@@ -96,7 +96,7 @@ api/admin/openapi.yaml                  # Agent create/update/response contract
 api/enduser/openapi.yaml                # OAuth2 authorization contract
 docs/api/enduser-api.md                 # maintained end-user API documentation
 ARCHITECTURE.md                         # domain glossary and architecture notes
-adrs/044-wildcard-web-redirect-uris.md  # security decision
+adrs/048-wildcard-web-redirect-uris.md  # security decision
 tests/e2e/wildcard_redirect_uri_test.go # nine spec-mapped HTTP scenarios
 ```
 
