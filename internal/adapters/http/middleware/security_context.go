@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -37,7 +38,7 @@ func SecurityContextMiddleware(resolved ports.RequestContextConfig, reuseSpanTra
 			if shouldDeferSecurityContextFinalization(r) {
 				ctx = security.WithCaptureHolder(ctx, security.NewCaptureHolder(capture))
 			} else {
-				ctx = security.WithSecurityContext(ctx, security.NewSecurityContext(capture, actorFromContext(ctx), ""))
+				ctx = security.WithSecurityContext(ctx, security.NewSecurityContext(capture, id.NewPrincipal(actorFromContext(ctx)), ""))
 			}
 
 			if resolved.Trace.ResponseEnabled {
@@ -148,7 +149,7 @@ func FinalizeRequestSecurityContext(ctx context.Context) {
 	if !ok {
 		actor = security.AnonymousActor
 	}
-	_, _ = security.FinalizeCaptureHolder(ctx, actor, "")
+	_, _ = security.FinalizeCaptureHolder(ctx, id.NewPrincipal(actor), "")
 }
 
 func hexPair(value byte) (byte, byte) {

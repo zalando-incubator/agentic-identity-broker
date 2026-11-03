@@ -2401,7 +2401,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
 			assert.Len(t, body, 9, "observation context must not add wire fields")
 			assert.Equal(t, response.AccessToken, body["access_token"])
-			assert.Equal(t, response.Principal, body["principal"])
+			assert.Equal(t, response.Principal.String(), body["principal"])
 			assert.Equal(t, response.AgentID, body["agent_id"])
 			assert.Equal(t, map[string]any{"permission-set": []any{serviceID.String()}}, body["granted_permission_sets"])
 			assert.NotContains(t, body, "Authorization")
@@ -2412,7 +2412,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], tokenexchange.SuccessDiagnostic(tokenexchange.ExchangeThirdParty))
 			test.want["token_exchange.service.id"] = serviceID.String()
 			assertTokenExchangeObservationContext(t, (*logs.records)[0], spans.Ended()[0], test.want)
-			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", response.Principal)
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", response.Principal.String())
 		})
 	}
 }
