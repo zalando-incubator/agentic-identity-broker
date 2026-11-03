@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -33,7 +35,7 @@ var _ = Describe("Wildcard Redirect URI", func() {
 		enduserServer  *bootstrap.TestServer
 		wildcardAgent  string
 		registerAgent  func([]string) (*http.Response, error)
-		addActiveGrant func(string)
+		authorizeRaw   func(string, string, string, string) (*http.Response, error)
 		authorize      func(string, string, string) (*http.Response, error)
 		expectRedirect func(*http.Response, string, string)
 		expectRejected func(*http.Response)
@@ -53,7 +55,7 @@ var _ = Describe("Wildcard Redirect URI", func() {
 		enduserServer, err = bootstrap.NewEndUserTestServer(application, logger)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).To(Succeed())
-		Expect(fixtures.SeedPlaceholderGrantData(context.Background(), testStorage)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.NewPrincipal(wildcardRedirectUser))).To(Succeed())
 
 		registerAgent = func(redirectURIs []string) (*http.Response, error) {
 			payload, marshalErr := json.Marshal(map[string]any{
@@ -69,14 +71,7 @@ var _ = Describe("Wildcard Redirect URI", func() {
 			return adminServer.AuthenticatedPOST("/api/agents", "admin@example.test", "application/json", bytes.NewReader(payload))
 		}
 
-		addActiveGrant = func(agentID string) {
-			grant := fixtures.ActiveGrant(wildcardRedirectUser, agentID, fixtures.PlaceholderServiceID.String(), []string{"read"})
-			Expect(testStorage.UserGrants().Create(context.Background(), grant)).To(Succeed())
-			Expect(fixtures.SeedGrantSessions(context.Background(), testStorage, grant)).To(Succeed())
-		}
-
-		authorize = func(agentID, redirectURI, state string) (*http.Response, error) {
-			verifier := helpers.PKCEVerifier()
+		authorizeRaw = func(agentID, redirectURI, state, verifier string) (*http.Response, error) {
 			query := url.Values{
 				"response_type":         {"code"},
 				"client_id":             {agentID},
@@ -86,6 +81,67 @@ var _ = Describe("Wildcard Redirect URI", func() {
 				"code_challenge_method": {"S256"},
 			}
 			return enduserServer.AuthenticatedGET("/oauth2/authorize?"+query.Encode(), wildcardRedirectUser)
+		}
+
+		authorize = func(agentID, redirectURI, state string) (*http.Response, error) {
+			verifier := helpers.PKCEVerifier()
+			response, requestErr := authorizeRaw(agentID, redirectURI, state, verifier)
+			if requestErr != nil {
+				return nil, requestErr
+			}
+			Expect(response.StatusCode).To(Equal(http.StatusFound))
+			location, parseErr := url.Parse(response.Header.Get("Location"))
+			Expect(parseErr).ToNot(HaveOccurred())
+			if sessionToken := location.Query().Get("session_token"); sessionToken != "" {
+				_ = response.Body.Close()
+				grantBody, marshalErr := json.Marshal(map[string]any{
+					"granted_permission_sets": map[string][]string{
+						fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+					},
+				})
+				Expect(marshalErr).ToNot(HaveOccurred())
+				grantResponse, grantErr := enduserServer.AuthenticatedPOST(
+					"/api/consent/agents/"+agentID+"/grants?session_token="+url.QueryEscape(sessionToken),
+					wildcardRedirectUser,
+					"application/json",
+					bytes.NewReader(grantBody),
+				)
+				Expect(grantErr).ToNot(HaveOccurred())
+				Expect(grantResponse.StatusCode).To(Equal(http.StatusCreated))
+				var grantResult map[string]any
+				Expect(json.NewDecoder(grantResponse.Body).Decode(&grantResult)).To(Succeed())
+				_ = grantResponse.Body.Close()
+				reAuthorizeURL, ok := grantResult["redirect_url"].(string)
+				Expect(ok).To(BeTrue())
+				Expect(reAuthorizeURL).ToNot(BeEmpty())
+				response, requestErr = enduserServer.AuthenticatedGET(reAuthorizeURL, wildcardRedirectUser)
+				Expect(requestErr).ToNot(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusFound))
+			}
+
+			location, parseErr = url.Parse(response.Header.Get("Location"))
+			Expect(parseErr).ToNot(HaveOccurred())
+			code := location.Query().Get("code")
+			Expect(code).ToNot(BeEmpty())
+			tokenResponse, tokenErr := helpers.HTTPClient().Post(
+				enduserServer.BaseURL()+"/oauth2/token",
+				"application/x-www-form-urlencoded",
+				strings.NewReader(url.Values{
+					"grant_type":    {"authorization_code"},
+					"client_id":     {agentID},
+					"code":          {code},
+					"redirect_uri":  {redirectURI},
+					"code_verifier": {verifier},
+				}.Encode()),
+			)
+			Expect(tokenErr).ToNot(HaveOccurred())
+			Expect(tokenResponse.StatusCode).To(Equal(http.StatusOK))
+			var tokenBody map[string]any
+			Expect(json.NewDecoder(tokenResponse.Body).Decode(&tokenBody)).To(Succeed())
+			_ = tokenResponse.Body.Close()
+			Expect(tokenBody).To(HaveKey("access_token"))
+			Expect(tokenBody["token_type"]).To(Equal("Bearer"))
+			return response, nil
 		}
 
 		expectRedirect = func(response *http.Response, redirectURI, state string) {
@@ -122,7 +178,6 @@ var _ = Describe("Wildcard Redirect URI", func() {
 		_ = response.Body.Close()
 		Expect(created.ID).ToNot(BeEmpty())
 		wildcardAgent = created.ID
-		addActiveGrant(wildcardAgent)
 	})
 
 	AfterEach(func() {
@@ -184,7 +239,7 @@ var _ = Describe("Wildcard Redirect URI", func() {
 		Expect(err).ToNot(HaveOccurred())
 		expectRedirect(validResponse, validCallback, "valid-control")
 
-		response, err := authorize(wildcardAgent, "https://preview-pr-123.app-test.example.net/api/oidc/callback", "outside-domain")
+		response, err := authorizeRaw(wildcardAgent, "https://preview-pr-123.app-test.example.net/api/oidc/callback", "outside-domain", helpers.PKCEVerifier())
 		Expect(err).ToNot(HaveOccurred())
 		expectRejected(response)
 	})
@@ -200,7 +255,7 @@ var _ = Describe("Wildcard Redirect URI", func() {
 			"http://preview-pr-123.app-test.example.com/api/oidc/callback",
 			"https://preview-pr-123.app-test.example.com/other/callback",
 		} {
-			response, requestErr := authorize(wildcardAgent, callback, "out-of-scope")
+			response, requestErr := authorizeRaw(wildcardAgent, callback, "out-of-scope", helpers.PKCEVerifier())
 			Expect(requestErr).ToNot(HaveOccurred())
 			expectRejected(response)
 		}
@@ -238,8 +293,6 @@ var _ = Describe("Wildcard Redirect URI", func() {
 		Expect(json.NewDecoder(response.Body).Decode(&created)).To(Succeed())
 		_ = response.Body.Close()
 		Expect(created.ID).ToNot(BeEmpty())
-		addActiveGrant(created.ID)
-
 		authorization, err := authorize(created.ID, callback, "exact-callback")
 		Expect(err).ToNot(HaveOccurred())
 		expectRedirect(authorization, callback, "exact-callback")

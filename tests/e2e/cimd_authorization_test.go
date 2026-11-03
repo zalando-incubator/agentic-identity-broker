@@ -184,6 +184,93 @@ var _ = Describe("CIMD Authorization", func() {
 		})
 	})
 
+	// US2-S5 from specs/055-wildcard-redirect-uri/spec.md
+	Describe("when a CIMD document registers an exact callback and the Agent has a host pattern", func() {
+		const fakeHost = "cimd-wildcard-redirect.test.invalid"
+		const exactCallback = "https://cimd-wildcard-redirect.test.invalid/callback"
+		const wildcardCallback = "https://preview-pr-123.app-test.example.com/api/oidc/callback"
+
+		var (
+			cimdServer *httptest.Server
+			server     *bootstrap.TestServer
+			agent      *storage.Agent
+			clientURL  string
+		)
+
+		BeforeEach(func() {
+			clientURL = "https://" + fakeHost + "/client"
+			cimdServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "max-age=300")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(cimdDocument(clientURL, []string{exactCallback}))
+			}))
+
+			agent = fixtures.LocalAgent()
+			agent.ClientURIs = []string{clientURL}
+			agent.RedirectURIs = []string{wildcardRedirectPattern}
+			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
+			Expect(fixtures.SeedDefaultConsentData(
+				context.Background(), testStorage, id.NewPrincipal(fixtures.DefaultPrincipal().String()),
+			)).To(Succeed())
+
+			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
+			serverFactory = bootstrap.NewServerFactory(config, logger)
+			cimdFetcher, err := bootstrap.NewCIMDTestFetcher(cimdServer, fakeHost, 5120)
+			Expect(err).ToNot(HaveOccurred())
+			appInstance, err := serverFactory.BuildAppWithCIMDFetcher(testStorage, cimdFetcher)
+			Expect(err).ToNot(HaveOccurred())
+			server, err = bootstrap.NewEndUserTestServer(appInstance, logger)
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			if server != nil {
+				server.Close()
+			}
+			if cimdServer != nil {
+				cimdServer.Close()
+			}
+		})
+
+		authorize := func(redirectURI, state string) (*http.Response, error) {
+			verifier := helpers.PKCEVerifier()
+			query := url.Values{
+				"client_id":             {clientURL},
+				"redirect_uri":          {redirectURI},
+				"response_type":         {"code"},
+				"state":                 {state},
+				"code_challenge":        {helpers.GenerateCodeChallenge(verifier)},
+				"code_challenge_method": {"S256"},
+			}
+			return server.AuthenticatedGET("/oauth2/authorize?"+query.Encode(), fixtures.DefaultPrincipal().String())
+		}
+
+		// US2-S5 from specs/055-wildcard-redirect-uri/spec.md
+		It("accepts the exact callback listed by the CIMD document", func() {
+			response, err := authorize(exactCallback, "cimd-exact")
+			Expect(err).ToNot(HaveOccurred())
+			defer func() { _ = response.Body.Close() }()
+
+			Expect(response).To(matchers.HaveStatusCode(http.StatusFound))
+			location, parseErr := url.Parse(response.Header.Get("Location"))
+			Expect(parseErr).ToNot(HaveOccurred())
+			Expect(location.Path).To(ContainSubstring("/agents/" + agent.ID.String()))
+			Expect(location.Query().Get("session_token")).ToNot(BeEmpty())
+		})
+
+		// US2-S6 from specs/055-wildcard-redirect-uri/spec.md
+		It("rejects a callback matched only by the Agent host pattern", func() {
+			response, err := authorize(wildcardCallback, "cimd-wildcard")
+			Expect(err).ToNot(HaveOccurred())
+			defer func() { _ = response.Body.Close() }()
+
+			Expect(response).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			Expect(response).To(matchers.HaveOAuth2Error("invalid_request"))
+			Expect(response.Header.Get("Location")).To(BeEmpty())
+		})
+	})
+
 	// Scenario US1.2 from specs/028-cimd-support/spec.md
 	Describe("when CIMD document client_id does not match the request URL", func() {
 		var (
