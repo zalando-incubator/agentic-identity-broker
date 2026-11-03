@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,9 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -294,4 +298,114 @@ func (h *testLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *testLogHandler) WithGroup(name string) slog.Handler {
 	return h
+}
+
+func serveAudit(t *testing.T, req *http.Request) (map[string]any, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	contextRequestID := ""
+	OAuth2AuditMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contextRequestID = httpctx.RequestIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(httptest.NewRecorder(), req)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 1)
+	var record map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &record))
+	assert.Equal(t, record["request_id"], contextRequestID)
+	return record, contextRequestID
+}
+
+func TestOAuth2AuditMiddleware_EscapesLineBreaksInPath(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"CR LF", "/oauth2/authorize\r\nforged=1", `/oauth2/authorize\r\nforged=1`},
+		{"line separator", "/oauth2/authorize\u2028forged=1", `/oauth2/authorize\u2028forged=1`},
+		{"paragraph separator", "/oauth2/authorize\u2029forged=1", `/oauth2/authorize\u2029forged=1`},
+		{"next line", "/oauth2/authorize\u0085forged=1", `/oauth2/authorize\u0085forged=1`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize", nil)
+			req.URL.Path = tt.path
+
+			record, _ := serveAudit(t, req)
+
+			assert.Equal(t, tt.want, record["path"])
+		})
+	}
+}
+
+func TestOAuth2AuditMiddleware_KeepsValidRequestID(t *testing.T) {
+	for _, requestID := range []string{"req-123", "a", "0f8fad5b-d9cb-469f-a165-70867728950e", "trace.ID_1", strings.Repeat("a", maxRequestIDLength)} {
+		t.Run(requestID, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize", nil)
+			req.Header.Set("X-Request-ID", requestID)
+
+			record, contextRequestID := serveAudit(t, req)
+
+			assert.Equal(t, requestID, record["request_id"])
+			assert.Equal(t, requestID, contextRequestID)
+		})
+	}
+}
+
+func TestOAuth2AuditMiddleware_ReplacesInvalidRequestID(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		requestID string
+	}{
+		{"too long", strings.Repeat("a", maxRequestIDLength+1)},
+		{"line break", "req-123\nforged=1"},
+		{"line separator", "req-123\u2028forged"},
+		{"space", "req 123"},
+		{"quote", `req"123`},
+		{"non-ascii", "req-ü"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize", nil)
+			req.Header.Set("X-Request-ID", tt.requestID)
+
+			record, contextRequestID := serveAudit(t, req)
+
+			assert.NotEqual(t, tt.requestID, record["request_id"])
+			assertGeneratedRequestID(t, contextRequestID)
+		})
+	}
+}
+
+func TestOAuth2AuditMiddleware_GeneratesReadableUniqueRequestIDs(t *testing.T) {
+	seen := make(map[string]struct{})
+	for range 1000 {
+		req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize", nil)
+
+		_, requestID := serveAudit(t, req)
+
+		assertGeneratedRequestID(t, requestID)
+		_, duplicate := seen[requestID]
+		require.False(t, duplicate, "duplicate request ID %q", requestID)
+		seen[requestID] = struct{}{}
+	}
+}
+
+func assertGeneratedRequestID(t *testing.T, requestID string) {
+	t.Helper()
+	parsed, err := uuid.Parse(requestID)
+	require.NoError(t, err, "request ID %q", requestID)
+	assert.Equal(t, parsed.String(), requestID)
+}
+
+func TestOAuth2AuditMiddleware_LogsSecurityContextRequestLine(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/a%2Fb", nil)
+	capture := security.TransportCapture{RequestMethod: http.MethodGet, RequestTarget: "/oauth2/a%2Fb"}
+	req = req.WithContext(security.WithCaptureHolder(req.Context(), security.NewCaptureHolder(capture)))
+
+	record, _ := serveAudit(t, req)
+
+	assert.Equal(t, http.MethodGet, record["method"])
+	assert.Equal(t, "/oauth2/a%2Fb", record["path"])
 }

@@ -167,7 +167,7 @@ These data classes are prohibited at all levels, including `Debug`.
 | URL (CIMD `client_id`, `redirect_uri`, resource URI) | Scheme, host, and path only. If a registered ID exists, log the ID (`service_id`, `agent_id`), not the URL. |
 | Error from an external system | Typed metadata (`slog.LogValuer`), an enumerated `error_kind`, or an allowlisted code (section 4) |
 | User-Agent | `SecurityContext.UserAgent` or `security.TruncateUserAgent` |
-| Request method, path, client IP | `sanitizeLogValue`. Take values from `SecurityContext`. |
+| Request method, path, client IP | `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`). Take values from `SecurityContext`. |
 | Caller-supplied header (for example `X-Request-ID`) | Validate the format and limit the length before you log it. If it is not valid, generate a new value. |
 | JWT | Header and claim metadata only: `kid`, `alg`, `iss`, `aud`, `jti`, `exp`, validation failure reason |
 | JWK Set | `kid` list or diff (`DiffKeyIDs()`), not the set |
@@ -188,7 +188,7 @@ These data classes are prohibited at all levels, including `Debug`.
 ## 7. Untrusted Input
 
 - Put untrusted values only in attributes. Do not put them in the message.
-- Escape line breaks with `sanitizeLogValue` and limit the length of raw header and path values.
+- Escape line breaks with `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`) and limit the length of raw header and path values.
 - Log a classification, not the value. For example, log `reason=invalid_redirect_uri`, not the rejected URI. If an operator needs the value for diagnosis, log the derived form from section 6.2.
 
 ## 8. Audit Records
