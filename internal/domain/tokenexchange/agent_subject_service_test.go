@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 )
 
@@ -51,7 +52,7 @@ func TestExchangeAgentSubjectRejection(t *testing.T) {
 			require.Zero(t, sessions.findByPrincipalAndServiceCalls)
 			capture, ok := holder.Finalized()
 			require.True(t, ok)
-			require.Equal(t, "same-text-human", capture.Actor)
+			require.Equal(t, id.NewPrincipal("same-text-human"), capture.Actor)
 			require.Equal(t, "gateway", capture.CallingPeer)
 		})
 	}
