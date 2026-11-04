@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -38,7 +37,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 	)
 
 	BeforeEach(func() {
-		logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		logger := slog.New(slog.DiscardHandler)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse()
 		config = fixtures.OAuth2ConfigWithTokenExchange(mockUpstream.URL())
 

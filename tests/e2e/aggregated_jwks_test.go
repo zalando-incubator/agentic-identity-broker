@@ -37,7 +37,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 	)
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 	})
 

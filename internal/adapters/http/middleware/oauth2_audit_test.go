@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +24,7 @@ import (
 func TestOAuth2AuditMiddleware_LogsRequestID(t *testing.T) {
 	// Create a buffer to capture log output
 	var logBuf []slog.Record
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: &logBuf,
 		wrapped: handler,
@@ -55,7 +54,7 @@ func TestOAuth2AuditMiddleware_LogsRequestID(t *testing.T) {
 // TestOAuth2AuditMiddleware_ExtractsPrincipal tests that middleware reads principal from context
 func TestOAuth2AuditMiddleware_ExtractsPrincipal(t *testing.T) {
 	var logBuf []slog.Record
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: &logBuf,
 		wrapped: handler,
@@ -90,7 +89,7 @@ func TestOAuth2AuditMiddleware_ExtractsPrincipal(t *testing.T) {
 // TestOAuth2AuditMiddleware_LogsRequestDetails tests that middleware logs request method, path, status
 func TestOAuth2AuditMiddleware_LogsRequestDetails(t *testing.T) {
 	var logBuf []slog.Record
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: &logBuf,
 		wrapped: handler,
@@ -129,7 +128,7 @@ func TestOAuth2AuditMiddleware_LogsErrorResponses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var logBuf []slog.Record
-			handler := slog.NewTextHandler(io.Discard, nil)
+			handler := slog.DiscardHandler
 			testHandler := &testLogHandler{
 				records: &logBuf,
 				wrapped: handler,
@@ -157,7 +156,7 @@ func TestOAuth2AuditMiddleware_LogsErrorResponses(t *testing.T) {
 
 // TestOAuth2AuditMiddleware_NoSensitiveDataLogged tests that sensitive OAuth2 parameters not logged
 func TestOAuth2AuditMiddleware_NoSensitiveDataLogged(t *testing.T) {
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: nil,
 		wrapped: handler,
@@ -190,7 +189,7 @@ func TestOAuth2AuditMiddleware_NoSensitiveDataLogged(t *testing.T) {
 // TestOAuth2AuditMiddleware_HandlesNoPrincipalHeader tests middleware when X-Remote-User header missing
 func TestOAuth2AuditMiddleware_HandlesNoPrincipalHeader(t *testing.T) {
 	var logBuf []slog.Record
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: &logBuf,
 		wrapped: handler,
@@ -217,7 +216,7 @@ func TestOAuth2AuditMiddleware_HandlesNoPrincipalHeader(t *testing.T) {
 // TestOAuth2AuditMiddleware_PreservesRequestPath tests middleware preserves original request path
 func TestOAuth2AuditMiddleware_PreservesRequestPath(t *testing.T) {
 	var logBuf []slog.Record
-	handler := slog.NewTextHandler(io.Discard, nil)
+	handler := slog.DiscardHandler
 	testHandler := &testLogHandler{
 		records: &logBuf,
 		wrapped: handler,
@@ -248,7 +247,7 @@ func TestOAuth2AuditMiddleware_UsesBoundedSecurityContextUserAgent(t *testing.T)
 	var records []slog.Record
 	testHandler := &testLogHandler{
 		records: &records,
-		wrapped: slog.NewTextHandler(io.Discard, nil),
+		wrapped: slog.DiscardHandler,
 	}
 	logger := slog.New(telemetry.NewContextHandler(testHandler))
 	userAgent := strings.Repeat("a", security.MaxUserAgentByte+1)

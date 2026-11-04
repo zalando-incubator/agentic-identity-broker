@@ -81,7 +81,7 @@ func TestBuilder_SessionCleanupLifecycle(t *testing.T) {
 				seed("startup", time.Now().Add(-time.Second))
 				seed("live", time.Now().Add(time.Hour))
 				application, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
-					WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+					WithLogger(slog.New(slog.DiscardHandler)).
 					WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 				require.NoError(t, err)
 				defer func() { assert.NoError(t, application.Shutdown(context.Background())) }()
@@ -138,7 +138,7 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		}
 		adapter, err := storage.NewAdapter(&cfg.Storage)
 		require.NoError(t, err)
-		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger := slog.New(slog.DiscardHandler)
 		application, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).WithLogger(logger).Build()
 		require.NoError(t, err)
 		releaseCommit := make(chan struct{})

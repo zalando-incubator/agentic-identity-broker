@@ -66,7 +66,7 @@ func (s *shutdownControllerStub) ShutdownContext(context.Context) error {
 }
 
 func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 type countingRoundTripper struct {

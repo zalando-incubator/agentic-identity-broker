@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +49,7 @@ func (f *cimdMetadataProviderFake) JWKSet(_ context.Context, serviceID id.Servic
 }
 
 func newCIMDMetadataHandlerForTest(provider ports.CIMDClientMetadataProvider) *CIMDMetadataHandler {
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := slog.New(slog.DiscardHandler)
 	return NewCIMDMetadataHandler(provider, logger)
 }
 
