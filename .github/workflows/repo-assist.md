@@ -56,6 +56,7 @@ network:
   - python
   - rust
   - java
+  - go
   - github
 
 checkout:
@@ -246,6 +247,32 @@ jobs:
           EOF
 
 steps:
+  # The sandbox cannot download the go.mod toolchain itself, so the runner provides it.
+  - name: Set up Go for validation
+    uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+    with:
+      go-version-file: go.mod
+  - name: Install just
+    uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+    with:
+      tool: just
+  # The agent sandbox inherits XDG_RUNTIME_DIR from the runner but cannot write
+  # to it, so shebang recipes such as `just check` need another script directory.
+  - name: Give just a writable script directory
+    run: |
+      mkdir -p /tmp/gh-aw/just
+      echo "JUST_TEMPDIR=/tmp/gh-aw/just" >> "$GITHUB_ENV"
+  # The agent sandbox mounts an empty home with an allowlist of tool directories
+  # that excludes ~/go, so Go tools must live in ~/.local/bin to stay on its PATH.
+  - name: Put Go tools where the agent sandbox can run them
+    run: |
+      mkdir -p "$HOME/.local/bin"
+      echo "GOBIN=$HOME/.local/bin" >> "$GITHUB_ENV"
+      echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+  # `just lint` silently falls back to `go vet` without golangci-lint; keep the version in step with `just install-tools`.
+  - name: Install golangci-lint for just check
+    run: GOTOOLCHAIN="$(go env GOVERSION)" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+
   - name: Initialize Repo Assist memory
     env:
       MEMORY_DIR: /tmp/gh-aw/repo-memory/default
