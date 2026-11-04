@@ -621,7 +621,6 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
    - Use memory to keep track items checked off by user.
    - Be concise  -  one line per item., repeating the format lines as necessary:
 
-   * [ ] **Triage draft PR** #<number>: <what is outstanding before a maintainer marks it ready>  -  [View](<link>)
    * [ ] **Review PR** #<number>: <summary>  -  [Review](<link>)
    * [ ] **Check comment** #<number>: Repo Assist commented  -  verify guidance is helpful  -  [View](<link>)
    * [ ] **Merge PR** #<number>: <reason>  -  [Review](<link>)
@@ -658,7 +657,7 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
    - **Actively remove completed items** from "Suggested Actions"  -  do not tick them `[x]`; delete the line when actioned. The checklist contains only pending items.
    - Use `* [ ]` checkboxes in "Suggested Actions". Never use plain bullets there.
 4. **Comprehensive suggested actions**: The "Suggested Actions for Maintainer" section must be a **complete list** of all pending items requiring maintainer attention, including:
-   - All open Repo Assist PRs: "Triage draft PR" while draft; "Review PR" or "Merge PR" only once a maintainer has marked them ready
+   - All open Repo Assist PRs needing review or merge; mark drafts "(draft)" and never suggest merging one
    - **All Repo Assist comments** that haven't been acknowledged by a maintainer (use "Check comment" for each)
    - Issues that should be closed (duplicates, resolved, etc.)
    - PRs that should be closed (stale, superseded, etc.)
