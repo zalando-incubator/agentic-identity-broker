@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft — clarified; consequential proposals require maintainer approval
+**Status**: Draft — planned; consequential proposals require maintainer approval (see `plan.md` Approval Items)
 
 **Input**: User description:
 
@@ -18,6 +18,14 @@
 
 - Q: When must legacy sessions without a recorded establishing client identity reconnect? → A: On a service client-ID change after rollout, not solely on rollout (Q1 option B). **Proposed approval item DEC-001 (Decision; FR-013, AS-1.6)**: Preserve ADR 041's existing exception for unchanged, never-transitioned stored services, but end it for sessions predating a subsequent client-ID change. This meets the issue's service-change guarantee without forcing every legacy user to sign in on deployment. The main alternative is requiring all identity-less sessions to reconnect on rollout; retaining the exception after a known change would leave affected sessions outside the guarantee. No historical identity may be inferred or backfilled. Planning must register this item in `plan.md`'s Approval Items and draft a Proposed superseding ADR for the changed legacy exception, including any needed persisted change evidence and guarded rollout. This entry is a proposal, not approval of that ADR or a schema.
 - Q: What interaction must automatically show consent after invalidation? → A: The next relevant agent browser authorization (Q2 option A; FR-007 and FR-014). Existing pages must show sign-in when connection state is next loaded, but no unsolicited navigation, notification delivery, or client-driven agent-consent entry is required. This follows the issue's consent requirement using the established authorization entry point and avoids adding a notification feature. The main alternative is automatically navigating an already-open page into consent; that adds navigation and retry-loop scope without an active agent authorization context. Direct RFC 8693 recovery continues to return to `/sessions` under ADR 044. **Proposed approval item API-001 (API)**: Planning must register and specify the changed automatic-consent and session-usability behavior on existing authorization, consent, session-management, and token-acquisition contracts (FR-002, FR-006–FR-009), including applicable compatibility/versioning treatment. Reusing an existing route or response shape does not itself approve changed behavior.
+
+### Session 2026-11-05 (planning)
+
+- Maintainer direction (planning command): cover both client-ID change channels, filesystem credential publication and the Admin API, and treat client-secret rotation as an expected routine operation without session invalidation. → Requirement change: AS-1.1 is now the filesystem-publication scenario and new AS-1.7 is the Admin API scenario; FR-003 names both channels; AS-3.2 is now the filesystem secret-rotation scenario and new AS-3.4 covers Admin API secret rotation, metadata-only updates, and same-identity source transitions; FR-012 and SC-004 cover both channels. Reason: the maintainer required each channel and routine rotation to be explicit, independently testable acceptance scenarios.
+- Q: How is a client-ID change detected and remembered? → A: Each service records its last effective client identity and a monotonically increasing Client Identity Revision. An accepted Admin API update that changes the stored client ID increments the revision atomically with the update. A filesystem change is recorded the first time any broker operation reads a client-ID file value that differs from the recorded identity. Sessions and in-flight authorizations carry the revision under which they were established, so rollback cannot revive them. The main alternative, comparing only the session's client ID with the current one, revives sessions after a rollback (FR-005). **Proposed approval items ADR-001 and DEC-002** (`plan.md` Approval Items).
+- Q: What happens to a still-valid access token when the client-ID file cannot be read? → A: Token release fails closed with the existing infrastructure outcome (`500 server_error`, no `error_uri`), not a reconnection prompt (SR-001). The main alternative, returning the stored token while the file is unreadable, keeps availability but can release previous-identity tokens. **Proposed approval item DEC-003**.
+- Q: What if replicas briefly read different client-ID file contents while a publication propagates? → A: Every differing observation is recorded as a change, so a connection made during an incomplete multi-replica publication can need one more reconnection. Operators publish a new pair coherently and let it reach every replica before users reconnect. The main alternative, ignoring a reverted value, cannot distinguish a stale replica from an operator rollback (AS-1.5). **Proposed approval item DEC-004**.
+- Q: How do the browser surfaces represent an invalidated session? → A: Session responses gain an additive `requires_reauthentication` boolean; agent consent reports `connectionStatus: not_connected` for the service; `is_expired` keeps its meaning. The main alternative, a new `connectionStatus` enum value, changes a closed response enum. **Proposed approval item API-001**.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -33,12 +41,13 @@ As an operator replacing a third-party service's client ID, I need the broker to
 
 **Acceptance Scenarios**:
 
-1. **AS-1.1** — **Given** Alice has a session established under `reports-client-v1` with an access token that expires at 11:00, **When** the service's effective client ID changes to `reports-client-v2` at 10:00 and an agent requests a token at 10:01, **Then** the broker returns no token from that session and identifies reconnection as the recovery action, without waiting for token expiry or a scheduled maintenance pass.
+1. **AS-1.1** — **Given** Alice has a session established under `reports-client-v1` for a filesystem-credential service with an access token that expires at 11:00, **When** the operator publishes a new credential-file pair whose client-ID file contains `reports-client-v2` at 10:00 and an agent requests a token at 10:01, **Then** the broker returns no token from that session and identifies reconnection as the recovery action, without waiting for token expiry or a scheduled maintenance pass.
 2. **AS-1.2** — **Given** Alice and Bob each have sessions for the changed service, including one with no recorded access-token expiry, **When** each next attempts to use that service after the change, **Then** both sessions are unusable until each user reconnects; one user's reconnection does not reconnect the other user.
 3. **AS-1.3** — **Given** an old session has a refresh token, **When** an on-demand refresh, background refresh, or operator-triggered session sweep evaluates it after the client-ID change, **Then** the broker does not authenticate to the provider with that old session's refresh token and does not restore its usability.
 4. **AS-1.4** — **Given** a third-party authorization or refresh began under `reports-client-v1`, **When** the client ID changes before its resulting credentials would become usable, **Then** credentials associated with the previous client identity cannot become the usable connection under `reports-client-v2`; the user can start a fresh connection under the current identity.
 5. **AS-1.5** — **Given** a session has already been invalidated by a client-ID change, **When** an operator later restores `reports-client-v1` without the user reconnecting, **Then** the invalidated session does not automatically regain usability.
 6. **AS-1.6** — **Given** Alice and Bob have identity-less legacy sessions for a never-transitioned stored service that ADR 041 permits to remain usable, **When** the feature rolls out with that service's client ID unchanged, **Then** rollout alone does not require reconnection; **When** the operator subsequently changes that service's client ID, **Then** neither legacy session can supply a token or be refreshed until its owner reconnects, including after a broker restart or client-ID rollback. Alice's successful reconnection does not reconnect Bob. No historical session identity is inferred; legacy sessions already rejected by ADR 041 remain rejected. This scenario expresses proposed DEC-001.
+7. **AS-1.7** — **Given** Alice and Bob have sessions established under `reports-client-v1` for a stored-credential service, **When** an operator's accepted Admin API full-replacement `PUT /api/services/{service-id}` changes `client_id` to `reports-client-v2` at 10:00 and an agent requests a token for Alice at 10:01, **Then** the broker returns no token from her unexpired session and identifies reconnection as the recovery action; Bob's session is equally unusable. A rejected or version-conflicting update changes nothing.
 
 ---
 
@@ -73,8 +82,9 @@ As a user or operator, I need this change to affect only connections for a servi
 **Acceptance Scenarios**:
 
 1. **AS-3.1** — **Given** Alice has usable sessions for Reports Production and Calendar Production, **When** only Reports Production changes client ID, **Then** Calendar remains usable, Alice's broker authentication remains intact, and her existing agent delegation remains recorded without a broadened scope or extended validity.
-2. **AS-3.2** — **Given** a service's effective client ID stays unchanged, **When** its secret rotates, its credential source changes while preserving identity, or only its display metadata changes, **Then** that operation alone does not trigger client-ID-change invalidation; ordinary provider validation and existing source-transition rules still apply.
+2. **AS-3.2** — **Given** Alice has a usable session for a filesystem-credential service, **When** the operator routinely rotates the secret by publishing a new credential-file pair whose client-ID file still contains `reports-client-v1`, **Then** Alice's session stays usable: token requests continue, and refresh authenticates with the new secret. A provider rejection of the new secret remains a provider credential failure, not a reconnection prompt.
 3. **AS-3.3** — **Given** an optional service is not included in Alice's delegation, **When** that service changes client ID, **Then** it does not force the agent's otherwise eligible authorization into a reconnection flow. If it is included, its invalidated session is handled like any other included service.
+4. **AS-3.4** — **Given** Alice has a usable session for a stored-credential service, **When** an operator's accepted Admin API update keeps `client_id` unchanged and supplies a new `client_secret` (routine rotation), changes only metadata such as `display_name` or scopes, or transitions the credential source while the effective client ID stays the same, **Then** that update alone does not invalidate Alice's session. Existing validation and source-transition rules still apply.
 
 ### Edge Cases
 
@@ -94,7 +104,7 @@ All identifiers, identities, paths, codes, and token markers below are synthetic
 
 **Shared cast and initial state**: Alice (`alice@example.com`) and Bob (`bob@example.com`) authenticate through the broker's trusted pre-authentication proxy. Agent Reports Reader has ID `550e8400-e29b-41d4-a716-446655440000` and callback `https://agent.example.com/callback`. Reports Production has ID `880e8400-e29b-41d4-a716-446655440010`, canonical ID `reports-prod`, standard confidential authentication, and filesystem-selected credentials. Its provider authorization endpoint is `https://reports.example.com/oauth/authorize`. Alice and Bob have established sessions under `reports-client-v1`. Alice has already delegated Reports Reader the permission set covering Reports Production. Alice also has a usable Calendar Production session. Times are 2026-11-04 UTC.
 
-### Journey 1 — The operator changes identity and old connections stop working (User Story 1, AS-1.1–AS-1.6; User Story 3, AS-3.1–AS-3.2)
+### Journey 1 — The operator changes identity and old connections stop working (User Story 1, AS-1.1–AS-1.7; User Story 3, AS-3.1, AS-3.2, and AS-3.4)
 
 **Step 1 — 09:00: Existing service configuration selects the credential files**
 
@@ -145,6 +155,47 @@ The request token markers stand for valid test-fixture JWTs under the deployment
 **Step 4 — Maintenance and rollback do not reconnect users**
 
 Refreshing or sweeping Alice's old session does not submit its refresh token to the provider under the changed identity. An older in-flight callback cannot produce a usable connection for the new identity. Restoring `reports-client-v1` without a fresh user connection does not revive a session already invalidated by this change. Calendar remains usable throughout; a same-ID secret rotation alone would not have caused this invalidation.
+
+**Admin API variant (AS-1.7)**: Instead, Reports Production uses `credential_source: stored` with stored `client_id` `reports-client-v1`. At 10:00 the operator replaces the service through the existing administrative contract. The synthetic secret marker stands for the new client's operator-provided secret:
+
+```http
+PUT /api/services/880e8400-e29b-41d4-a716-446655440010 HTTP/1.1
+Host: broker-admin.example.com
+X-Remote-User: operator@example.com
+If-Match: "7"
+Content-Type: application/json
+
+{
+  "display_name": "Reports Production",
+  "credential_source": "stored",
+  "client_id": "reports-client-v2",
+  "client_secret": "SYNTHETIC_NEW_CLIENT_SECRET",
+  "issuer_uri": "https://reports.example.com",
+  "discovery": { "enable_discovery": false },
+  "endpoints": {
+    "authorize_endpoint": "https://reports.example.com/oauth/authorize",
+    "token_endpoint": "https://reports.example.com/oauth/token"
+  },
+  "scopes": [{ "scope_value": "reports:read", "description": "Read reports" }]
+}
+
+HTTP/1.1 200 OK
+ETag: "8"
+Content-Type: application/json
+
+{
+  "id": "880e8400-e29b-41d4-a716-446655440010",
+  "display_name": "Reports Production",
+  "credential_source": "stored",
+  "client_registration": "static",
+  "client_id": "reports-client-v2",
+  "client_secret": "REDACTED"
+}
+```
+
+The response is abbreviated to the fields relevant here; its shape is unchanged and exposes no session or revision data. From the commit of this update, Alice's and Bob's token requests receive the Step 3 outcome. A `409` or `412` response, or a validation `400`, changes neither the service nor any session.
+
+**Routine rotation variants (AS-3.2, AS-3.4)**: If the operator instead publishes a new secret file while the client-ID file still contains `reports-client-v1`, or sends the same `PUT` with `"client_id": "reports-client-v1"` and only a new `client_secret`, no session is invalidated. Alice's 10:01 token request returns her current token, and her next refresh authenticates with the new secret. The same holds for a `display_name` or scope change and for a stored-to-filesystem transition whose client-ID file contains the stored client ID.
 
 **Legacy rollout variant (AS-1.6; proposed DEC-001)**: Instead, take a stored Reports service that never changed credential source, with Alice's and Bob's sessions lacking recorded client identity. At 09:00 the feature rolls out while its configured ID remains `reports-client-v1`; these sessions retain ADR 041's exception, without assigning that ID to their history. At 10:00 an accepted administrative update changes the service to `reports-client-v2`. At 10:01 both users receive the same no-token recovery outcome illustrated above, even with unexpired tokens. Restarting the broker or restoring `reports-client-v1` does not revive these invalidated sessions. Alice follows Journey 2 or 3 to connect under the current identity; Bob must independently do so. Legacy sessions already denied by ADR 041 receive no new exception.
 
@@ -354,7 +405,7 @@ The next eligible token request uses Alice's new Reports connection. Calendar an
 
 - **FR-001**: A change to a third-party service's effective client ID MUST invalidate sessions established under the previous client identity for every affected principal. This concerns upstream service identity, not an Agent's broker client ID.
 - **FR-002**: The broker MUST withhold previous-identity credentials on subsequent token acquisition, including still-valid access tokens and tokens with unknown expiry. Invalidation MUST NOT depend on access-token expiry, provider rejection, a user-initiated refresh, or a scheduled sweep.
-- **FR-003**: The rule MUST cover effective identity changes through supported service updates and filesystem credential publication. It MUST NOT be limited to a particular OAuth2 client authentication method merely because an older identity check only covers some methods. Planning must identify each supported service variant's identity semantics, without inventing a mutable identity for an immutable registration.
+- **FR-003**: The rule MUST cover both supported change channels: an accepted Admin API update that changes a stored service's client ID (AS-1.7) and filesystem credential publication that changes the client-ID file value (AS-1.1). It MUST NOT be limited to a particular OAuth2 client authentication method merely because an older identity check only covers some methods. Each service variant's identity semantics are defined in [data-model.md](data-model.md); an immutable registration gains no invented mutable identity.
 - **FR-004**: Refresh paths and delayed authorization results MUST NOT restore usability of a previous-identity connection after a change. A successful current-identity reconnection MUST NOT be overwritten by older in-flight work.
 - **FR-005**: An invalidated session MUST remain unusable until a successful fresh connection under the current client identity. Restoring an old client-ID value alone MUST NOT reactivate it.
 - **FR-006**: Token requests blocked by this invalidation MUST provide the existing service-specific reauthorization action for recoverable session failures, with no token release. Grant failures and infrastructure failures MUST retain their distinct existing outcomes.
@@ -363,8 +414,8 @@ The next eligible token request uses Alice's new Reports connection. Calendar an
 - **FR-009**: Successful reconnection MUST use the current effective client identity and restore access for that principal only. Consent-initiated reconnection MUST preserve the existing valid authorization context and selections; direct service recovery MUST retain its established session-management return destination.
 - **FR-010**: Cancellation or failed reconnection MUST leave the previous session unusable and expose a retry path without granting extra permissions.
 - **FR-011**: Sessions for unrelated services, broker authentication, existing delegation records, selected scopes, and delegation expiry MUST NOT change solely because one service's client ID changes. A service not included in a delegation MUST NOT force that delegation into consent.
-- **FR-012**: Same-ID secret rotation, metadata-only updates, and same-identity credential-source transitions MUST NOT themselves trigger client-ID-change invalidation. Existing validation and source-transition constraints continue to apply.
-- **FR-013 (Proposed DEC-001)**: Rollout alone MUST NOT invalidate identity-less legacy sessions that ADR 041 permits for never-transitioned stored services. A subsequent effective service client-ID change MUST invalidate those pre-change sessions for every principal, even without a recorded establishing identity. Invalidation MUST survive restart and client-ID rollback. Legacy sessions already requiring identity under ADR 041 MUST remain unusable. No historical client identity may be inferred or backfilled from current credentials; successful fresh authorization records the actual initiating identity. Planning must define change evidence without assigning a fictitious historical identity and propose a superseding ADR before implementation.
+- **FR-012**: Client-secret rotation is an expected routine operation. Same-ID secret rotation through filesystem publication (AS-3.2) or the Admin API (AS-3.4), metadata-only updates, and same-identity credential-source transitions MUST NOT themselves trigger client-ID-change invalidation. Existing validation and source-transition constraints continue to apply.
+- **FR-013 (Proposed DEC-001)**: Rollout alone MUST NOT invalidate identity-less legacy sessions that ADR 041 permits for never-transitioned stored services. A subsequent effective service client-ID change MUST invalidate those pre-change sessions for every principal, even without a recorded establishing identity. Invalidation MUST survive restart and client-ID rollback. Legacy sessions already requiring identity under ADR 041 MUST remain unusable. No historical client identity may be inferred or backfilled from current credentials; successful fresh authorization records the actual initiating identity. The change evidence is the service's Client Identity Revision ([data-model.md](data-model.md)); no fictitious historical identity is assigned. The superseding decision is draft [ADR 045](adr-045-client-identity-revisions.md).
 - **FR-014**: Automatic agent-consent entry is required on the next relevant browser authorization only (FR-007). Already-open consent and session-management pages MUST reflect unusability on their next connection-state load and offer sign-in (FR-008), but MUST NOT initiate unsolicited navigation into agent consent solely because the client ID changed. Proactive notifications and new client recovery entry points are out of scope. Direct RFC 8693 recovery MUST retain ADR 044's service-specific authorization action and `/sessions` return destination.
 
 ### Domain Model *(if applicable - document before API or database design)*
@@ -403,11 +454,11 @@ No new runtime setting or opt-out is requested. The journey uses the existing `s
 
 Use the existing agent authorization/consent, third-party authorization/callback, session-management, and token-exchange surfaces. The RFC-style examples illustrate the current [End-User contract](../../api/enduser/openapi.yaml), not a newly approved schema or endpoint. Stored-client changes use the existing [Admin service contract](../../api/admin/openapi.yaml), including validation and concurrency preconditions.
 
-Planning MUST identify behavior changes to those contracts, document them in OpenAPI before implementation, and submit API changes and consequential decisions for explicit maintainer approval, starting with proposed API-001 in Clarifications. This clarification phase grants no such approval. In particular, UI invalidation must not be achieved by silently repurposing the existing expiry fields or changing error contracts without review.
+Planning MUST identify behavior changes to those contracts, document them in OpenAPI before implementation, and submit API changes and consequential decisions for explicit maintainer approval, starting with proposed API-001 in Clarifications. The planned deltas are in [contracts/enduser-api.md](contracts/enduser-api.md) and [contracts/admin-api.md](contracts/admin-api.md); they are proposals, not approved contracts. In particular, UI invalidation must not be achieved by silently repurposing the existing expiry fields or changing error contracts without review.
 
 ### Database Requirements *(if applicable)*
 
-Invalidation and recovery MUST have equivalent semantics across supported persistent and in-memory deployments and must not regain previous-identity usability after a restart. No schema or deletion strategy is selected in this phase. Any required schema changes must follow the repository's migration and both-store consistency requirements, including guarded rollout treatment and durable service-change evidence for proposed FR-013. Current service values must not be backfilled as legacy sessions' establishing identities.
+Invalidation and recovery MUST have equivalent semantics across supported persistent and in-memory deployments and must not regain previous-identity usability after a restart. Invalidated sessions are retained, not deleted; the planned schema and revision evidence are in [data-model.md](data-model.md) (proposed DEC-002). Any required schema changes must follow the repository's migration and both-store consistency requirements, including guarded rollout treatment and durable service-change evidence for proposed FR-013. Current service values must not be backfilled as legacy sessions' establishing identities.
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -434,7 +485,7 @@ The existing consent and session-management experiences must distinguish a usabl
 - **SC-001**: In the acceptance matrix, 100% of requests evaluated after an effective client-ID change release no previous-identity token, including unexpired and unknown-expiry access-token cases.
 - **SC-002**: In every affected next-browser-authorization test, consent appears without the user manually visiting session management, and the changed service offers sign-in rather than appearing usable.
 - **SC-003**: A successful reconnection completes the original eligible authorization on its first retry without manual deletion or operator repair; a declined or failed attempt releases no previous credentials and permits a fresh attempt.
-- **SC-004**: Across isolation tests, zero unrelated service sessions, broker logins, or delegation records are invalidated or expanded; same-ID secret rotation alone causes zero client-ID-change reconnections.
+- **SC-004**: Across isolation tests, zero unrelated service sessions, broker logins, or delegation records are invalidated or expanded; same-ID secret rotation through either the filesystem or the Admin API, metadata-only updates, and same-identity source transitions cause zero client-ID-change reconnections.
 - **SC-005**: In every overlapping-change and maintenance acceptance test, previous-identity work cannot restore a usable old connection or overwrite a successful current-identity connection.
 
 ## Assumptions
@@ -447,4 +498,4 @@ The existing consent and session-management experiences must distinguish a usabl
 - Existing delegations remain intact. Users do not need to regrant unrelated permissions solely to reconnect a service.
 - The automatic consent trigger is the next relevant browser authorization. Existing pages reflect invalidation on their next state load; proactive notification and unsolicited navigation into consent are not part of this feature.
 - Proposed DEC-001 defines acceptance expectations for identity-less legacy sessions after rollout. It requires maintainer sign-off and an approved superseding ADR before overriding ADR 041's legacy exception after a service client-ID change.
-- Existing accepted constraints include [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) for identity association and credential sources, [ADR 044](../../adrs/044-service-specific-session-recovery-url.md) for direct recovery, [ADR 038](../../adrs/038-proactive-token-refresh.md) for refresh behavior, and [ADR 035](../../adrs/035-root-mounted-spa.md) for canonical browser routes. Planning must identify any required superseding decisions, including broader identity enforcement than ADR 041 currently provides and interaction with ADR 038's immediate valid-token return. No ADR is amended or accepted in this phase.
+- Existing accepted constraints include [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) for identity association and credential sources, [ADR 044](../../adrs/044-service-specific-session-recovery-url.md) for direct recovery, [ADR 038](../../adrs/038-proactive-token-refresh.md) for refresh behavior, and [ADR 035](../../adrs/035-root-mounted-spa.md) for canonical browser routes. Planning must identify any required superseding decisions, including broader identity enforcement than ADR 041 currently provides and interaction with ADR 038's immediate valid-token return. The proposed superseding decision is the feature-local draft [ADR 045](adr-045-client-identity-revisions.md); no ADR is amended or accepted before maintainer approval.
