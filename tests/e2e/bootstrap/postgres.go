@@ -150,8 +150,8 @@ func (f *PostgresFixture) RecoverExternalIDMigration(ctx context.Context) error 
 	if err != nil {
 		return err
 	}
-	if version != 46 || !dirty {
-		return fmt.Errorf("expected dirty migration 46, got version %d dirty %t", version, dirty)
+	if version != 47 || !dirty {
+		return fmt.Errorf("expected dirty migration 47, got version %d dirty %t", version, dirty)
 	}
 	db, err := sql.Open("pgx", f.ConnectionURL)
 	if err != nil {
@@ -166,9 +166,9 @@ func (f *PostgresFixture) RecoverExternalIDMigration(ctx context.Context) error 
 		return err
 	}
 	if !oldIndex || newIndex || check {
-		return fmt.Errorf("migration 46 schema is not unchanged; refusing recovery")
+		return fmt.Errorf("migration 47 schema is not unchanged; refusing recovery")
 	}
-	return f.ForceVersion(45)
+	return f.ForceVersion(46)
 }
 
 func (f *PostgresFixture) ForceVersion(version int) error {

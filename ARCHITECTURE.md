@@ -540,7 +540,7 @@ origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
 
-**Agent external-ID reconciliation (feature 055, ADR 045)**:
+**Agent external-ID reconciliation (feature 055, ADR 047)**:
 A non-nil External ID is valid UTF-8 with 1–255 Unicode code points and no NUL,
 and identifies at most one Agent by exact, case-sensitive
 comparison; nil is allowed on any number of agents. UUIDs remain stable relationship keys, while
@@ -562,9 +562,9 @@ no-op performs only reads. `GetByExternalID` returns one Agent or not-found; onl
 `ErrExternalIDConflict` triggers one reread for a lost create race; different
 concurrent definitions remain last-writer-wins with coherent, atomic writes. Invalid selectors fail
 closed. The new route inherits the existing admin proxy, Host, cross-origin and JSON boundaries.
-Migration `046` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
+Migration `047` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
 blocks on duplicate/empty values without changing rows, and preserves UUIDs/grants through rollback.
-See [ADR 045](adrs/045-unique-agent-external-id-reconcile.md) and the
+See [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) and the
 [upgrade runbook](docs/operations/agent-external-id-uniqueness.md). PostgreSQL acceptance validation
 runs in the container test gate before release; approval alone does not establish delivery.
 
@@ -1431,8 +1431,8 @@ on the existing routes. Unique/non-empty external IDs introduce intentional `409
 `400 validation failed` outcomes on existing writes; filtered GET keeps its array shape with
 zero or one result. Shared URI ordering is also an approved contract change; timestamps keep
 the whole-second presentation of 2.1.0. No versioned compatibility route is added, and the end-user and ExtProc contracts are
-unchanged. Migration `046` and consumer adaptation precede deployment. The contract version is
-not a broker release announcement. [ADR 045](adrs/045-unique-agent-external-id-reconcile.md) cites the
+unchanged. Migration `047` and consumer adaptation precede deployment. The contract version is
+not a broker release announcement. [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) cites the
 maintainer approval.
 
 ## 6. Deployment & Infrastructure
@@ -1481,7 +1481,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
 - [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
 - [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
-- [ADR 045: Unique Agent External ID and Reconcile](adrs/045-unique-agent-external-id-reconcile.md) - Approved adapter-enforced uniqueness, domain reconciliation, safe migration 046, and Admin API 3.0.0
+- [ADR 047: Unique Agent External ID and Reconcile](adrs/047-unique-agent-external-id-reconcile.md) - Approved adapter-enforced uniqueness, domain reconciliation, safe migration 047, and Admin API 3.0.0
 
 ### Frontend & User Interface
 
@@ -1610,7 +1610,7 @@ Define any project-specific terms or acronyms.)
 
 **Canonical ID**: Optional case-sensitive administrative identifier for an Agent, ThirdpartyOAuth2Provider, or PermissionSet. It is a 1–128-character URL-safe, non-UUID token, unique only within its resource type. Canonical IDs are resolved at the administrative boundary and never replace UUID primary keys, foreign keys, JSONB references, or encryption contexts.
 
-**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 045 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. All Agent writes and Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior.
+**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 047 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. All Agent writes and Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior.
 
 **Agent Reconciliation**: Reconcile is the canonical term for applying the desired definition of an Agent selected by its External ID, creating it when absent or updating it while preserving UUID identity. Upsert and create-or-update are aliases for this Agent operation, distinct from UserGrant upsert. The `ReconcileUnchanged` outcome means no-op/replay: the effective definition already matches, so no write or mutation audit occurs and stored timestamps are preserved.
 

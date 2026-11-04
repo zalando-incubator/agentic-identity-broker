@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
-**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 047](../../adrs/047-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-047-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in
@@ -130,7 +130,7 @@ compare rendered JSON (depends on `Prefer`); always write then restore timestamp
 microsecond presentation with a `+1 microsecond` minimum advancement (the withdrawn API-TIMESTAMPS:
 changes every Admin Agent response and can lead wall time for a guarantee the issue does not
 require); whole-second presentation with a full-second minimum advancement (larger wall-clock
-drift); nanosecond persistence (PostgreSQL cannot round-trip it). The ordering change is covered by the maintainer approval recorded in ADR 045 because existing
+drift); nanosecond persistence (PostgreSQL cannot round-trip it). The ordering change is covered by the maintainer approval recorded in ADR 047 because existing
 response behavior is externally visible.
 
 ## R5 — HTTP adapter shape
@@ -185,9 +185,9 @@ major version on the existing route. Feature 051 followed the same path (`1.0.0`
 Main alternative: `2.2.0`, treating uniqueness as additive; rejected because existing clients that
 rely on shared external IDs would break silently.
 
-## R8 — Migration design (Approved, DB-046)
+## R8 — Migration design (Approved, DB-047)
 
-**Decision**: One guarded, atomic migration pair `046_unique_agent_external_id.{up,down}.sql`.
+**Decision**: One guarded, atomic migration pair `047_unique_agent_external_id.{up,down}.sql`.
 
 UP is one `DO $migration$` block, so it applies or fails as a single statement regardless of how
 the `golang-migrate` driver batches statements:
@@ -212,7 +212,7 @@ the unique index, and deletes no row.
 The agents table is an administrative registry with low cardinality, so a non-concurrent
 transactional index build is acceptable; ADR 039's non-atomic exception is not needed and not
 extended. `golang-migrate` marks the version dirty when UP fails; the runbook tells operators to
-`migrate force 45` only after confirming the schema is unchanged, then retry.
+`migrate force 46` only after confirming the schema is unchanged, then retry.
 
 **Rationale**: FR-004, DB-001 to DB-004, and US3 require a fail-safe, non-destructive upgrade with
 an actionable report. Value and agent IDs are governance identifiers, not credentials (SR-003).
@@ -236,7 +236,7 @@ remainder; the runbook's read-only queries list everything.
   to zero, while remediating and migrating;
 - deliberate remediation through the Admin API (`PUT /api/agents/{agent-id}` with a distinct
   external ID or with `external_id` omitted to clear it), never `DELETE`;
-- retry, including dirty-version inspection and `migrate force 45` after confirming the unchanged
+- retry, including dirty-version inspection and `migrate force 46` after confirming the unchanged
   schema;
 - verification queries for the index, the constraint, and unchanged agent and grant counts;
 - rollback with `migrate down 1` and reapply prerequisites.
@@ -264,7 +264,7 @@ requires the glossary to match.
   through the production bootstrap. US1.4 uses two broker instances on one PostgreSQL fixture
   (`Label("docker")`) to exercise the cross-process race, as
   `cimd_private_key_jwt_replay_test.go` does. US3 scenarios use a new bootstrap helper that
-  migrates a PostgreSQL fixture to version `45`, seeds legacy rows, attempts `46`, and then starts
+  migrates a PostgreSQL fixture to version `46`, seeds legacy rows, attempts `47`, and then starts
   the broker on the migrated database.
 - **Integration** (`tests/integration/migrations/agent_external_id_migration_test.go`): migration
   `046` blocking on duplicates, empties, and both; clean apply; rollback and reapply preserving

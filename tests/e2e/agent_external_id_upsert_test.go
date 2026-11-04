@@ -553,7 +553,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 		)
 		BeforeEach(func() {
 			var err error
-			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 45)
+			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 46)
 			Expect(err).To(Succeed())
 			Expect(postgres.RecoverExternalIDMigration(ctx)).NotTo(Succeed())
 			legacyStore = externalIDPostgresStorage(postgres)
@@ -613,7 +613,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(oldIndex).To(BeTrue())
 			version, dirty, err := postgres.MigrationVersion()
 			Expect(err).To(Succeed())
-			Expect(version).To(Equal(uint(46)))
+			Expect(version).To(Equal(uint(47)))
 			Expect(dirty).To(BeTrue())
 		}
 		// Scenario US3.1 from specs/055-agent-external-id-upsert/spec.md
@@ -667,7 +667,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			before := snapshot()
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
-			Expect(postgres.MigrateTo(45)).To(Succeed())
+			Expect(postgres.MigrateTo(46)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))

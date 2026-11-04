@@ -1,4 +1,4 @@
-# ADR 045: Unique Agent External ID and Reconcile by External ID
+# ADR 047: Unique Agent External ID and Reconcile by External ID
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767)
 **Date**: 2026-10-30 (revised 2026-11-04)
@@ -53,7 +53,7 @@ that creates or updates by an alternate key.
    reconciliation continues on the update branch. Other conflicts propagate without a reread.
    No advisory lock is added. Without `If-Match`, concurrent different
    definitions are last-writer-wins.
-4. **Safe migration.** Migration `046` locks `agents`, inventories duplicate and empty external IDs,
+4. **Safe migration.** Migration `047` locks `agents`, inventories duplicate and empty external IDs,
    and fails before changing anything with a report covering both duplicate groups and empty-value
    agent UUIDs. The report lists the first 100 of each category with remaining counts; the runbook
    provides the complete read-only inventory of every affected value and UUID. It never clears,

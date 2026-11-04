@@ -3,7 +3,7 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records the revised
+automated suites. [ADR 047](../../adrs/047-unique-agent-external-id-reconcile.md) records the revised
 decision approved by mjungsbluth on 2026-11-04:
 https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887.
 Current timestamp implementation and validation evidence is in [tasks.md](./tasks.md).
@@ -23,7 +23,7 @@ and remains a release gate.
 |---|---|
 | `just check` | Formatting, vet, lint |
 | `just test` | Domain reconcile policy, no-op equality, validation, memory uniqueness, handler parsing |
-| `just test-integration-infra` | Migration `046` block/apply/rollback/reapply and PostgreSQL conflict mapping (US3, DB-003) |
+| `just test-integration-infra` | Migration `047` block/apply/rollback/reapply and PostgreSQL conflict mapping (US3, DB-003) |
 | `just test-e2e-backend` | US1.1, US1.5–US1.7, US2.1–US2.8, US4.1–US4.3 on the in-memory broker |
 | `just test-e2e-docker` | US1.2–US1.3 single labeled scenarios each exercising memory and PostgreSQL multi-URI create/update replay with unchanged replay timestamps; US1.4 two-broker race; US3.1–US3.4 upgrade journeys |
 
@@ -108,7 +108,7 @@ Automated update tests assert the changed definition, preserved `id` and `create
 assignment and whole-second `updated_at` presentation; the next replay and GET return the identical
 representation, including `updated_at`, on both stores, with no replay write. They use no sleeps or
 production clock API. The timestamp is not an ETag or a concurrent total ordering. The approval
-cited in ADR 045 covers all eight current items, including API-ORDER and the timestamp revision.
+cited in ADR 047 covers all eight current items, including API-ORDER and the timestamp revision.
 
 Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.md#concrete-example-journeys-mandatory).
 
@@ -116,10 +116,10 @@ Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.
 
 Follow `docs/operations/agent-external-id-uniqueness.md` against a scratch database:
 
-1. Migrate to version `45`; insert two agents sharing one external ID and one agent with `''`.
+1. Migrate to version `46`; insert two agents sharing one external ID and one agent with `''`.
 2. Run `migrate up` → fails with `agent external_id uniqueness migration blocked`; `DETAIL` lists the
    duplicate value, both UUIDs, and the empty-value UUID. Agent and grant counts are unchanged.
-3. Run the runbook's inventory queries; remediate through the Admin API; `migrate force 45` after
+3. Run the runbook's inventory queries; remediate through the Admin API; `migrate force 46` after
    confirming the unchanged schema; `migrate up` → succeeds.
 4. Verify `uq_agents_external_id` and `chk_agents_external_id_not_empty` exist and counts match.
 5. `migrate down 1` then `migrate up` → succeeds with all agents and grants unchanged.

@@ -905,7 +905,7 @@ configuration. Update consumers to accept 400/409 uniqueness errors, zero-or-one
 byte-sorted client URIs. Timestamps retain whole-second presentation; do not assume each PUT
 advances the displayed `updated_at`.
 
-Migration 046 blocks the release if legacy duplicates or empty IDs remain. Use the
+Migration 047 blocks the release if legacy duplicates or empty IDs remain. Use the
 [runbook](../operations/agent-external-id-uniqueness.md) to inventory **every** affected UUID/value,
 coordinate writers, assign distinct IDs or deliberately clear them through complete ID-addressed
 PUTs, inspect dirty metadata, retry, and verify rollback/reapply. UUIDs, grants and all relationships

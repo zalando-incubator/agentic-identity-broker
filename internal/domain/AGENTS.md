@@ -45,7 +45,7 @@ Use constructor injection with port interfaces. Create services in `app/builder.
 
 ### Agent Reconciliation
 
-`agents.Service.ReconcileByExternalID` owns selector validation and effective-definition equality (ADR 045). It shares update-candidate policy/validation with `Service.Update`; Create and Update also enforce FR-019 service coverage in the domain. `GetByExternalID` returns one Agent or not-found, and only `ErrExternalIDConflict` triggers the bounded create-race reread. Agent writes and selectors share the full UTF-8/no-NUL/1–255-code-point format rule. Creation and real updates assign current UTC time; no logical minimum increment is used. No-op replay preserves exact stored timestamps and performs no write or mutation audit. Admin Agent presentation retains whole-second UTC RFC 3339 timestamps. Adapters enforce external-ID uniqueness atomically; handlers only parse presence and present responses.
+`agents.Service.ReconcileByExternalID` owns selector validation and effective-definition equality (ADR 047). It shares update-candidate policy/validation with `Service.Update`; Create and Update also enforce FR-019 service coverage in the domain. `GetByExternalID` returns one Agent or not-found, and only `ErrExternalIDConflict` triggers the bounded create-race reread. Agent writes and selectors share the full UTF-8/no-NUL/1–255-code-point format rule. Creation and real updates assign current UTC time; no logical minimum increment is used. No-op replay preserves exact stored timestamps and performs no write or mutation audit. Admin Agent presentation retains whole-second UTC RFC 3339 timestamps. Adapters enforce external-ID uniqueness atomically; handlers only parse presence and present responses.
 
 ### Cross-Domain Dependencies
 
@@ -71,7 +71,7 @@ Consumers: `internal/config/validator.go` (load-time rules), `internal/app/build
 
 | Type | Key Invariants |
 |---|---|
-| `Agent` | `ClientID` can be empty. `DisplayName` is required. URLs require HTTP(S). A set `ExternalID` is nonempty and globally unique (ADR 045). |
+| `Agent` | `ClientID` can be empty. `DisplayName` is required. URLs require HTTP(S). A set `ExternalID` is nonempty and globally unique (ADR 047). |
 | `UserGrant` | One per `(principal, agent)` pair. It records granted permission sets and optional validity. |
 | `UserSession` | One per `(principal, service_id)`. Tokens are encrypted. The context uses one approved subject key. |
 | `User` | ID + email, timestamps |

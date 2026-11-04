@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
-**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 047](../../adrs/047-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-047-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 No new entity, aggregate, table, typed ID, or configuration is introduced. The feature changes one
 invariant on the existing Agent aggregate, adds a domain operation, and adds one migration.
@@ -132,7 +132,7 @@ primary map; an absent entry returns not-found. The domain list-filter method co
 to `[]` for the unchanged HTTP list contract.
 It never scans the registry. Move/clear/delete/reuse tests verify lookup and index consistency.
 
-### PostgreSQL schema — migration `046_unique_agent_external_id` (Approved, DB-046)
+### PostgreSQL schema — migration `047_unique_agent_external_id` (Approved, DB-047)
 
 Before (migration `001`):
 

@@ -1,6 +1,6 @@
 ---
 title: Agent external-ID uniqueness upgrade
-description: Inventory and deliberately remediate legacy agents before migration 046, with guarded retry and non-destructive rollback.
+description: Inventory and deliberately remediate legacy agents before migration 047, with guarded retry and non-destructive rollback.
 ---
 
 # Upgrade to unique Agent external IDs
@@ -14,7 +14,7 @@ and unique by exact, case-sensitive equality. Multiple agents may have no extern
 Existing POST and ID-addressed PUT reject duplicates with `409 conflict` and empty strings with
 `400 validation failed`. Filtered GET returns zero or one Agent in an array. Consumers must also
 accept byte-sorted `client_uris`. Agent timestamps retain whole-second UTC RFC 3339
-presentation; two changes within one second may display the same `updated_at`. [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-unique-agent-external-id-reconcile.md) records approval.
+presentation; two changes within one second may display the same `updated_at`. [ADR 047](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/047-unique-agent-external-id-reconcile.md) records approval.
 
 ## 1. Prepare and coordinate writers
 
@@ -22,7 +22,7 @@ presentation; two changes within one second may display the same `updated_at`. [
 2. Pause governance sync jobs and administrative writes. Keep the existing authenticated admin
    proxy available for deliberate remediation; keep its Host, principal, cross-origin and JSON
    protections unchanged. Restrict writers operationally, not by weakening authentication.
-3. Use the existing broker at schema version 45 to perform remediation. It supports full
+3. Use the existing broker at schema version 46 to perform remediation. It supports full
    ID-addressed PUT and can read all legacy records before the new constraints apply.
 4. After remediation, stop all old writers, including old broker replicas, before migration.
    Do not resume mixed old/new writers. Migration obtains `ACCESS EXCLUSIVE MODE NOWAIT` on
@@ -136,22 +136,22 @@ FROM pg_constraint
 WHERE conrelid = 'agents'::regclass AND conname = 'chk_agents_external_id_not_empty';
 ```
 
-After an ordinary blocked UP, require **dirty version 46**, the valid old non-unique partial index
+After an ordinary blocked UP, require **dirty version 47**, the valid old non-unique partial index
 `idx_agents_external_id ON agents(external_id) WHERE external_id IS NOT NULL`, no
 `uq_agents_external_id`, and no `chk_agents_external_id_not_empty`. Verify all pre-attempt rows and
 relationships are intact and inspect the original error. Only when actual schema still matches
-version 45 may the operator run the migration image's `migrate ... force 45`, then `migrate ... up`.
+version 46 may the operator run the migration image's `migrate ... force 46`, then `migrate ... up`.
 `force` changes metadata only; it does not validate or apply SQL.
 
 If any expected object is missing, a new object is already present, the version is unexpected,
 or index identity/definition differs, stop the release for database review. Do not drop objects
 or clear metadata blindly. A completed SQL statement with a subsequent metadata failure needs
-review of actual version-46 state, not the blocked-UP `force 45` procedure.
+review of actual version-47 state, not the blocked-UP `force 46` procedure.
 
 ## 5. Apply and verify before resuming writers
 
-Apply migration 046 through the separate migration image/Helm Job. Clean UP must end at version
-46 (or the intended later clean version if later migrations are present). Reuse the inspection
+Apply migration 047 through the separate migration image/Helm Job. Clean UP must end at version
+47 (or the intended later clean version if later migrations are present). Reuse the inspection
 queries above and require:
 
 - Valid unique partial index `uq_agents_external_id` on `agents(external_id)` where non-null.
@@ -169,9 +169,9 @@ only after the mandatory migration and complete E2E suites pass.
 
 ## 6. Rollback and reapply
 
-Coordinate all writers and take a new baseline. From clean version 46 only, use the migration
-image's `migrate ... down 1` to return to clean version 45. If later versions are present, follow
-their reviewed downgrade procedures first; `down 1` is not necessarily migration 046.
+Coordinate all writers and take a new baseline. From clean version 47 only, use the migration
+image's `migrate ... down 1` to return to clean version 46. If later versions are present, follow
+their reviewed downgrade procedures first; `down 1` is not necessarily migration 047.
 
 DOWN restores the valid old non-unique partial index, removes the non-empty check and unique index,
 and changes no Agent or relationship row. Verify those objects and the baseline explicitly before
@@ -180,5 +180,5 @@ the complete inventory and deliberate repair before reapplication. Reapply UP th
 runner and verify version, schema, UUIDs and relationships again.
 
 An interrupted DOWN or an unexpected dirty version requires database review using actual object
-state; do not apply the blocked-UP `force 45` recipe. Rollback does not undo deliberate registry
+state; do not apply the blocked-UP `force 46` recipe. Rollback does not undo deliberate registry
 ID choices and does not remove grants.
