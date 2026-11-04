@@ -181,7 +181,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 							slog.String("event", "session.oauth2.refresh_failed"),
 							slog.String("session_id", candidate.ID.String()),
 							slog.String("service_id", candidate.ServiceID.String()),
-							slog.String("principal", candidate.Principal.String()),
+							slog.Any("principal", candidate.Principal),
 							slog.String("triggered_by", string(RefreshTriggerSweep)),
 							slog.Any("oauth2_session", metadata),
 						}

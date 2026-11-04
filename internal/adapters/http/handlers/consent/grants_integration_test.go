@@ -384,7 +384,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	require.NoError(t, marshalErr)
 
 	req := httptest.NewRequest("POST", "/api/consent/agent/"+agentID.String()+"/grants?session_token="+sessionToken, bytes.NewBuffer(jsonBody))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), principalValue.String()))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue.String())))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

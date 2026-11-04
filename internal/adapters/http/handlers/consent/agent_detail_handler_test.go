@@ -109,7 +109,7 @@ func TestGetAgentDetail_Success(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), principalID))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalID)))
 
 	rr := httptest.NewRecorder()
 	handler.GetAgentDetail(rr, req)
@@ -335,7 +335,7 @@ func TestResolveCIMDMetadata_SessionAgentMismatch(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentB.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), principalID))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalID)))
 
 	rr := httptest.NewRecorder()
 	handler.GetAgentDetail(rr, req)

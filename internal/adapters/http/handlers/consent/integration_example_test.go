@@ -131,7 +131,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewAgentDetailHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
-	reqCtx := principal.WithPrincipal(ctx, principalValue)
+	reqCtx := principal.WithPrincipal(ctx, id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", testAgentID.String())
 	reqCtx = context.WithValue(reqCtx, chi.RouteCtxKey, rctx)
@@ -208,7 +208,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewGrantsHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
-	reqCtx := principal.WithPrincipal(ctx, principalValue)
+	reqCtx := principal.WithPrincipal(ctx, id.NewPrincipal(principalValue))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", testAgentID.String())
 	reqCtx = context.WithValue(reqCtx, chi.RouteCtxKey, rctx)
@@ -343,7 +343,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 	t.Run("GetAgentDetail", func(t *testing.T) {
 		handler := consent.NewAgentDetailHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
-		reqCtx := principal.WithPrincipal(context.Background(), principalValue)
+		reqCtx := principal.WithPrincipal(context.Background(), id.NewPrincipal(principalValue))
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("agent-id", testAgentID.String())
 		reqCtx = context.WithValue(reqCtx, chi.RouteCtxKey, rctx)
@@ -378,7 +378,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 	t.Run("GetAgentGrants", func(t *testing.T) {
 		handler := consent.NewGrantsHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
-		reqCtx := principal.WithPrincipal(context.Background(), principalValue)
+		reqCtx := principal.WithPrincipal(context.Background(), id.NewPrincipal(principalValue))
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("agent-id", testAgentID.String())
 		reqCtx = context.WithValue(reqCtx, chi.RouteCtxKey, rctx)

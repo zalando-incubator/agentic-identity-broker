@@ -346,7 +346,7 @@ func (h *AgentDetailHandler) writeError(w http.ResponseWriter, statusCode int, e
 }
 
 // getPrincipalFromContext extracts the principal from the request context.
-func getPrincipalFromContext(ctx context.Context) (string, bool) {
+func getPrincipalFromContext(ctx context.Context) (id.Principal, bool) {
 	return principal.FromContext(ctx)
 }
 

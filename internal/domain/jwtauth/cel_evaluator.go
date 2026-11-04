@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 )
@@ -154,7 +155,7 @@ func (e *CELEvaluator) ExtractClaims(claims map[string]interface{}) (*AuthResult
 	if principal == "" {
 		return nil, fmt.Errorf("%w: principal expression returned empty value", ErrClaimExtraction)
 	}
-	result.Principal = principal
+	result.Principal = id.NewPrincipal(principal)
 
 	// Extract optional display name
 	if e.displayNameProgram != nil {

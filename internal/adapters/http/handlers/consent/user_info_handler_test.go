@@ -21,9 +21,9 @@ func TestGetUserInfo_Success(t *testing.T) {
 	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	// Set profile to test the enriched path (handler reads profile first, then falls back to principal)
-	profile := principal.NewProfile(principalValue)
+	profile := principal.NewProfile(id.NewPrincipal(principalValue))
 	ctx = principal.WithProfile(ctx, profile)
 	req = req.WithContext(ctx)
 
@@ -70,7 +70,7 @@ func TestGetUserInfo_DifferentPrincipals(t *testing.T) {
 			handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-			ctx := principal.WithPrincipal(req.Context(), tc.principal)
+			ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(tc.principal))
 			req = req.WithContext(ctx)
 
 			rec := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestGetUserInfo_ContentType(t *testing.T) {
 	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -150,8 +150,8 @@ func TestGetUserInfo_ResponseStructure(t *testing.T) {
 	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
-	profile := principal.NewProfile(principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
+	profile := principal.NewProfile(id.NewPrincipal(principalValue))
 	ctx = principal.WithProfile(ctx, profile)
 	req = req.WithContext(ctx)
 

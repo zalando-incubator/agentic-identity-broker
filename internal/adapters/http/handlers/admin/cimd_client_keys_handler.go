@@ -149,7 +149,7 @@ func (h *CIMDClientKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.Request) (id.Principal, bool) {
 	operator, ok := operatorPrincipalFromContext(r.Context(), h.logger)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for mutating CIMD key operations")
@@ -158,7 +158,7 @@ func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.R
 	return operator, true
 }
 
-func (h *CIMDClientKeysHandler) audit(operator string, kid id.KeyID, operation, outcome string) {
+func (h *CIMDClientKeysHandler) audit(operator id.Principal, kid id.KeyID, operation, outcome string) {
 	h.logger.Info("CIMD client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
