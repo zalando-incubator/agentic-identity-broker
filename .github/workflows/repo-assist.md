@@ -621,6 +621,7 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
    - Use memory to keep track items checked off by user.
    - Be concise  -  one line per item., repeating the format lines as necessary:
 
+   * [ ] **Triage draft PR** #<number>: <what is outstanding before a maintainer marks it ready>  -  [View](<link>)
    * [ ] **Review PR** #<number>: <summary>  -  [Review](<link>)
    * [ ] **Check comment** #<number>: Repo Assist commented  -  verify guidance is helpful  -  [View](<link>)
    * [ ] **Merge PR** #<number>: <reason>  -  [Review](<link>)
@@ -657,7 +658,7 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
    - **Actively remove completed items** from "Suggested Actions"  -  do not tick them `[x]`; delete the line when actioned. The checklist contains only pending items.
    - Use `* [ ]` checkboxes in "Suggested Actions". Never use plain bullets there.
 4. **Comprehensive suggested actions**: The "Suggested Actions for Maintainer" section must be a **complete list** of all pending items requiring maintainer attention, including:
-   - All open Repo Assist PRs needing review or merge
+   - All open Repo Assist PRs: "Triage draft PR" while draft; "Review PR" or "Merge PR" only once a maintainer has marked them ready
    - **All Repo Assist comments** that haven't been acknowledged by a maintainer (use "Check comment" for each)
    - Issues that should be closed (duplicates, resolved, etc.)
    - PRs that should be closed (stale, superseded, etc.)
@@ -672,6 +673,8 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
 - **Small, focused PRs**  -  one concern per PR.
 - **Read AGENTS.md first**: before starting work on any pull request, read the repository's `AGENTS.md` file (if present) to understand project-specific conventions, coding standards, and contribution requirements.
 - **Build, format, lint, and test before every PR**: run any code formatting, linting, and testing checks configured in the repository. Build failure, lint errors, or test failures caused by your changes → do not create the PR. Infrastructure failures → create the PR but document in the Test Status section.
+- **Drafts stay drafts**: never mark a PR ready for review or describe a draft as ready. Only a maintainer does that.
+- **Read all PR checks**: before reporting a PR's validation state, read both `get_check_runs` and `get_status` from `pull_request_read`. Some pipelines report only commit statuses, so check runs alone can miss passing or failing checks.
 - **Respect existing style**  -  match code formatting and naming conventions.
 - **AI transparency**: every comment, PR, and issue must include a Repo Assist disclosure with 🤖.
 - **Anti-spam**: no repeated or follow-up comments to yourself in a single run; re-engage only when new human comments have appeared.
