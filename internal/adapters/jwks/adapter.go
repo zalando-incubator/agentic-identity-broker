@@ -166,7 +166,6 @@ func NewJWKSAdapter(
 // function ends it and marks a failed retrieval without recording the error text.
 func startFetchSpan(ctx context.Context) (context.Context, func(err error)) {
 	ctx, span := otel.Tracer("jwks").Start(ctx, "jwks.fetch")
-	span.SetAttributes(attribute.String("dependency", "jwks"), attribute.String("operation", "fetch"))
 	return ctx, func(err error) {
 		if err != nil {
 			span.SetAttributes(attribute.String("error.type", "jwks_unavailable"))
