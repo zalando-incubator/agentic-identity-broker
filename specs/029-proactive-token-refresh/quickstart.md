@@ -39,7 +39,7 @@ ginkgo -v --label-filter="!performance" --focus="Proactive Token Refresh" ./test
 | US2-S2 | Both tokens expired | `400 invalid_grant` with recovery `error_uri`, zero upstream calls, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
 | US2-S3 | Provider answers `invalid_grant` | `400` re-auth error, stored ciphertext and expiry unchanged, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
 | US3-S1 | Seed: +2 min, expired-with-refresh, +2 h, `NULL` expiry; sweep `{"lookahead_duration":"PT10M","page_size":1}` | `200` `{refreshed:2, skipped:0, failed:0, total_evaluated:2, dry_run:false}`; the +2 h and `NULL` rows are unchanged; two upstream requests |
-| US3-S2 | One due session with an expired refresh token plus one refreshable, swept twice | First `200`: `{refreshed:1, failed:1, total_evaluated:2}`. Second `200`: `{failed:1, total_evaluated:1}`. The failed row's ciphertext and expiry do not change; there is only one upstream request. |
+| US3-S2 | One due session without a refresh token plus one refreshable, swept twice | First `200`: `{refreshed:1, failed:1, total_evaluated:2}`. Second `200`: `{failed:1, total_evaluated:1}`. The failed row's ciphertext and expiry do not change; there is only one upstream request. |
 | US3-S3 | Two `App`s on one storage; concurrent sweeps on both admin servers | Both `200`; `refreshed` summed across responses equals the seeded count; upstream requests equal the seeded count; a follow-up exchange returns the refreshed token |
 | US3-S4 | `{"dry_run":true}` | `refreshed` equals the due count, `dry_run:true`, zero upstream requests, rows unchanged |
 
@@ -68,7 +68,8 @@ Key assertions to look for in `-v` output:
 | `UserSession.AccessTokenExpiresBy` table | Boundary-inclusive, `nil` → `false`, equivalence with `!HasValidAccessToken()` |
 | `backgroundRefresher` | Saturation drops (`dropped` counter +1, WARN), in-flight dedup consumes no slot, `Close` is idempotent, drains before cancelling, and rejects submissions after close |
 | `App.Shutdown` with a gated token commit | Shutdown waits for an admitted rotated-token update without cancelling it, then rejects background refresh for another near-expiry session. Returning before the commit gate opens fails the test, including when the shutdown hook captures the original service before the test replaces it. |
-| Valid near-expiry token with an absent or expired refresh token | The stored access token returns unchanged, with zero provider lookups and zero background admissions. |
+| Valid near-expiry token with an absent refresh token | The stored access token returns unchanged, with zero provider lookups and zero background admissions. |
+| Valid near-expiry token with a provider-rejected refresh token | The exchange is refused with `refresh_rejected`, with zero provider lookups and zero background admissions (ADR 046). |
 | Background refresh: session deleted mid-flight | No error and no row re-created (L2) |
 | Background refresh: upstream 503 | The caller's token is unaffected; `proactive_refresh_failed_total` +1; the row is unchanged |
 | `SessionSweepService` | `refreshed+skipped+failed == total_evaluated` for unique IDs; a refreshed row that moves forward within the fixed threshold is not evaluated twice; nil or non-increasing cursor tuples abort; provider-unavailable → `failed`; repository-unavailable → abort; cancellation is checked between sessions |

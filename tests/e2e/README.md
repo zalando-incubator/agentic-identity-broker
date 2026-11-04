@@ -59,6 +59,8 @@ Credential-file bootstrap keeps both listeners open from configuration preparati
 
 The credential subprocess remains alive until `Close`; readiness retains a 10-second deadline and graceful shutdown retains a five-second deadline. US7-S2 checks both health endpoints for 36 seconds before rotating credentials and refreshing the same session, then verifies both ports are released.
 
+Token-exchange US5-S3 follows the returned recovery URL for both a missing session and an existing rejected session. It verifies callback return to `/sessions`, preservation of the existing session ID, clearing of the rejection marker, resumed exchange, and subsequent refresh with the replacement credential.
+
 ### Layer 2: Fixtures (`fixtures/`)
 
 **Purpose**: Generates stable test data (agents, grants, principals, configurations).

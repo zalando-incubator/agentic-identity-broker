@@ -885,7 +885,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 			}
 			if tc.expired {
 				past := time.Now().Add(-time.Hour)
-				session.RefreshTokenExpiresAt = &past
+				session.RefreshRejectedAt = &past
 			}
 			require.NoError(t, sessions.Create(ctx, session))
 			before, err := repo.Get(ctx, provider.ID)

@@ -8,30 +8,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestUserSession_Usability(t *testing.T) {
+func TestUserSession_RequiresReauthentication(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		now := time.Now()
 		past, future := now.Add(-time.Second), now.Add(time.Second)
 		for _, tc := range []struct {
-			name          string
-			accessExpiry  *time.Time
-			refreshExpiry *time.Time
-			refresh       []byte
-			wantExpired   bool
+			name         string
+			accessExpiry *time.Time
+			rejectedAt   *time.Time
+			refresh      []byte
+			wantRequired bool
 		}{
 			{name: "access-only valid", accessExpiry: &future},
-			{name: "access-only spent", accessExpiry: &past, wantExpired: true},
-			{name: "access expires now", accessExpiry: &now, wantExpired: true},
+			{name: "access-only spent", accessExpiry: &past, wantRequired: true},
+			{name: "access expires now", accessExpiry: &now, wantRequired: true},
 			{name: "unknown access expiry"},
-			{name: "unknown refresh expiry", accessExpiry: &past, refresh: []byte("refresh")},
-			{name: "refreshable", accessExpiry: &past, refreshExpiry: &future, refresh: []byte("refresh")},
-			{name: "both spent", accessExpiry: &past, refreshExpiry: &past, refresh: []byte("refresh"), wantExpired: true},
-			{name: "refresh expires now", accessExpiry: &past, refreshExpiry: &now, refresh: []byte("refresh"), wantExpired: true},
-			{name: "valid access despite spent refresh", accessExpiry: &future, refreshExpiry: &past, refresh: []byte("refresh")},
+			{name: "refreshable with spent access", accessExpiry: &past, refresh: []byte("refresh")},
+			{name: "refreshable with unknown access expiry", refresh: []byte("refresh")},
+			{name: "rejected with spent access", accessExpiry: &past, rejectedAt: &past, refresh: []byte("refresh"), wantRequired: true},
+			{name: "rejected with valid access", accessExpiry: &future, rejectedAt: &past, refresh: []byte("refresh"), wantRequired: true},
+			{name: "rejected with unknown access expiry", rejectedAt: &past, refresh: []byte("refresh"), wantRequired: true},
 		} {
-			session := &UserSession{AccessTokenExpiresAt: tc.accessExpiry, RefreshTokenExpiresAt: tc.refreshExpiry, EncryptedRefreshToken: tc.refresh}
-			assert.Equal(t, tc.wantExpired, session.IsExpired(), tc.name)
-			assert.Equal(t, tc.wantExpired, NewUserSessionSummary(session, "provider", 0).IsExpired, tc.name)
+			session := &UserSession{AccessTokenExpiresAt: tc.accessExpiry, RefreshRejectedAt: tc.rejectedAt, EncryptedRefreshToken: tc.refresh}
+			assert.Equal(t, tc.wantRequired, session.RequiresReauthentication(), tc.name)
+			assert.Equal(t, tc.rejectedAt == nil && len(tc.refresh) > 0, session.CanRefresh(), tc.name)
+			summary := NewUserSessionSummary(session, "provider", 0)
+			assert.Equal(t, tc.wantRequired, summary.RequiresReauthentication, tc.name)
+			assert.Equal(t, tc.wantRequired, summary.IsExpired, tc.name)
 		}
 	})
 }

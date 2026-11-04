@@ -107,20 +107,21 @@ var _ = Describe("Third-Party Sessions Rejected Refresh Token", func() {
 		session := fixtures.SessionForService(principal, serviceID.String())
 		expired := time.Now().Add(-time.Minute)
 		session.AccessTokenExpiresAt = &expired
-		session.RefreshTokenExpiresAt = nil
 		Expect(GetTestStorage().UserSessions().Create(ctx, session)).To(Succeed())
 
 		sessionsPage = pages.NewSessionsPage(GetTestPage(), GetFrontendURL())
 	})
 
 	// Scenario 1.6 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("shows the session as expired with Login after the provider rejects its refresh token", func() {
+	It("shows the session as requiring login after the provider rejects its refresh token", func() {
 		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
 		Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
 
-		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed(), "an expired session must offer Login")
+		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed(), "a rejected session must offer Login")
+		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
 		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
-		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0), "an expired session must not offer Refresh")
+		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0), "a rejected session must not offer Refresh")
+		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1), "a rejected session can still be terminated")
 		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_rejected_refresh_login")).To(Succeed())
 
 		page := sessionsPage.GetPlaywrightPage()
@@ -159,21 +160,22 @@ var _ = Describe("Third-Party Sessions Login Offer", func() {
 	})
 
 	// Scenario 1.7 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("offers Login next to Terminate when the refresh token has expired but the access token is valid", func() {
+	It("offers Login next to Terminate when the provider rejected the refresh token but the access token is valid", func() {
 		session := fixtures.SessionForService(principal, serviceID.String())
 		rejectedAt := time.Now().Add(-time.Minute)
-		session.RefreshTokenExpiresAt = &rejectedAt
+		session.RefreshRejectedAt = &rejectedAt
 		Expect(GetTestStorage().UserSessions().Create(ctx, session)).To(Succeed())
 
 		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
 		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
 
-		Expect(sessionsPage.IsTextVisible(ctx, "Expiring Soon")).To(BeTrue())
-		Expect(sessionsPage.IsTextVisible(ctx, "Log in to keep access")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Expiring Soon")).To(BeFalse())
 		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1))
 		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0))
 		Expect(sessionsPage.IsRefreshTokenExpiryVisible(ctx)).To(BeFalse())
-		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_expired_refresh_token_login")).To(Succeed())
+		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_rejected_refresh_token_login")).To(Succeed())
 	})
 
 	// Scenario 1.8 from specs/008-thirdparty-oauth2-sessions/spec.md

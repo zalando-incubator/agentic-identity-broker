@@ -1360,6 +1360,88 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 	assert.Contains(t, w.Body.String(), "refresh_unavailable")
 }
 
+func TestRefreshSession_ReturnsConflictWhenProviderRejectedRefreshToken(t *testing.T) {
+	ctx := context.Background()
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	grantRepo := memory.NewUserGrantRepository()
+	principal := "user@example.com"
+	serviceUUID := id.NewServiceID()
+	require.NoError(t, serviceRepo.Create(ctx, &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          serviceUUID,
+		DisplayName: "GitHub",
+		ClientID:    id.NewClientID("test-client-id"),
+		Secret:      model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
+		IssuerURI:   "https://github.com",
+		Discovery:   model.DiscoveryConfig{EnableDiscovery: false},
+		Endpoints: model.OAuth2Endpoints{
+			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:     "https://github.com/login/oauth/access_token",
+		},
+		Scopes:    []model.OAuthScope{{ScopeValue: "repo", Description: "Repository access"}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}))
+	expiry := time.Now().Add(time.Hour)
+	rejectedAt := time.Now().Add(-time.Minute)
+
+	session := &storage.UserSession{
+		ID:                    id.NewSessionID(),
+		Principal:             id.Principal(principal),
+		ServiceID:             serviceUUID,
+		EncryptedAccessToken:  encryptSecretForTest(t, serviceUUID.String(), "old-access-token"),
+		EncryptedRefreshToken: encryptSecretForTest(t, serviceUUID.String(), "rejected-refresh-token"),
+		TokenType:             "Bearer",
+		Scope:                 []string{"repo"},
+		InitiatedAt:           time.Now(),
+		CreatedAt:             time.Now(),
+		AccessTokenExpiresAt:  &expiry,
+		RefreshRejectedAt:     &rejectedAt,
+	}
+	require.NoError(t, sessionRepo.Create(ctx, session))
+
+	service := createOAuth2SessionService(t,
+		serviceRepo,
+		sessionRepo,
+		grantRepo,
+		nil,
+		createTestJWEKey(t),
+		oauth2session.DefaultConfig(),
+	)
+
+	handler := oauth2_sessions.NewHandler(service, slog.Default())
+	router := setupTestRouter(handler)
+	req := httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
+	req.Header.Set("X-Remote-User", principal)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "refresh_rejected", body["error"])
+	assert.Equal(t, "refresh token rejected by provider; reauthentication required", body["message"])
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/third-party/sessions", nil)
+	listReq.Header.Set("X-Remote-User", principal)
+	listW := httptest.NewRecorder()
+	router.ServeHTTP(listW, listReq)
+	require.Equal(t, http.StatusOK, listW.Code)
+	var listed struct {
+		Data struct {
+			Sessions []map[string]any `json:"sessions"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(listW.Body.Bytes(), &listed))
+	require.Len(t, listed.Data.Sessions, 1)
+	assert.Equal(t, true, listed.Data.Sessions[0]["requires_reauthentication"])
+	assert.Equal(t, true, listed.Data.Sessions[0]["is_expired"], "the deprecated alias mirrors requires_reauthentication")
+	assert.Equal(t, false, listed.Data.Sessions[0]["access_token_expired"])
+	assert.Equal(t, true, listed.Data.Sessions[0]["has_refresh_token"])
+	assert.NotContains(t, listed.Data.Sessions[0], "refresh_token_expires_at")
+}
+
 func TestRefreshSession_ReturnsNotFoundForCrossPrincipalRequest(t *testing.T) {
 	ctx := context.Background()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()

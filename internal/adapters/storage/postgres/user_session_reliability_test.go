@@ -34,13 +34,13 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 	}))
 
 	newAccessExpiry := time.Now().UTC().Add(time.Hour).Round(time.Millisecond)
-	newRefreshExpiry := time.Now().UTC().Add(14 * 24 * time.Hour).Round(time.Millisecond)
+	rejectedAt := time.Now().UTC().Round(time.Millisecond)
 	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
 		session.EncryptedAccessToken = []byte("new-access")
 		session.EncryptedRefreshToken = []byte("new-refresh")
 		session.TokenType = "DPoP"
 		session.AccessTokenExpiresAt = &newAccessExpiry
-		session.RefreshTokenExpiresAt = &newRefreshExpiry
+		session.RefreshRejectedAt = &rejectedAt
 		session.Scope = []string{"repo"}
 		session.UpdatedAt = time.Now().UTC()
 		return true, nil
@@ -52,8 +52,8 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 	require.NotNil(t, persisted)
 	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
 	assert.Equal(t, "DPoP", persisted.TokenType)
-	require.NotNil(t, persisted.RefreshTokenExpiresAt, "refresh_token_expires_at must be committed by the refresh transaction")
-	assert.WithinDuration(t, newRefreshExpiry, *persisted.RefreshTokenExpiresAt, time.Second)
+	require.NotNil(t, persisted.RefreshRejectedAt, "the rejection marker must be committed by the refresh transaction")
+	assert.WithinDuration(t, rejectedAt, *persisted.RefreshRejectedAt, time.Second)
 	assert.Equal(t, []string{"repo"}, persisted.Scope, "scope narrowed on refresh must be committed")
 }
 
@@ -73,8 +73,8 @@ func TestUserSessionReadsAfterSchemaExpansion(t *testing.T) {
 			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 			CallbackID: "original-callback", EncryptedAccessToken: []byte("old-access"),
 			EncryptedRefreshToken: []byte("old-refresh"), TokenType: "Bearer",
-			AccessTokenExpiresAt: &expires, RefreshTokenExpiresAt: &expires,
-			Scope: []string{"profile"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+			AccessTokenExpiresAt: &expires,
+			Scope:                []string{"profile"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
 			InitiatedAt: now, CreatedAt: now, UpdatedAt: now,
 		}
 		require.NoError(t, repo.Create(ctx, sessions[i]))

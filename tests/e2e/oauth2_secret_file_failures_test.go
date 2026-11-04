@@ -387,8 +387,8 @@ func expectCredentialProviderRejection(subject *credentialFailureSubject, operat
 				HaveKeyWithValue("token_exchange.outcome", "reauth_required"),
 			)))
 		} else {
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
-			Expect(body["error"]).To(Equal("refresh_failed"))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
+			Expect(body["error"]).To(Equal("refresh_rejected"))
 		}
 		encoded, err := json.Marshal(body)
 		Expect(err).NotTo(HaveOccurred())
@@ -618,12 +618,12 @@ var _ = Describe("OAuth2 mandatory credential file failures", Label("oauth2-secr
 				expectCredentialProviderRejection(subject, "refresh", func() (*http.Response, error) {
 					return credentialFailureRefresh(subject)
 				})
-				// The rejected refresh token is recorded as expired (spec 013 US5-S4).
+				// The rejected refresh token is recorded as rejected (spec 013 US5-S4).
 				// Clear the marker so the automatic refresh reaches the provider again.
 				session, err := subject.journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(subject.journey.Principal), subject.serviceID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(session.RefreshTokenExpiresAt).NotTo(BeNil())
-				session.RefreshTokenExpiresAt = nil
+				Expect(session.RefreshRejectedAt).NotTo(BeNil())
+				session.RefreshRejectedAt = nil
 				Expect(subject.journey.Storage.UserSessions().Create(context.Background(), session)).To(Succeed())
 				expectCredentialProviderRejection(subject, "automatic_refresh", postExchange)
 			}

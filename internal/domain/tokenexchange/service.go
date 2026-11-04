@@ -34,7 +34,7 @@ import (
 // 6. Lookup target service by resource URI
 // 7. Verify user has granted agent access to service
 // 8. Retrieve stored third-party tokens for user
-// 9. Check if tokens are fully expired
+// 9. Check whether the session requires reauthentication
 // 10. Refresh expired access token if refresh token available
 // 11. Return RFC 8693 compliant response
 //
@@ -142,7 +142,7 @@ func NewTokenExchangeService(
 // 8. Lookup service by resource URI
 // 9. Verify user has granted agent access to service (BEFORE session check per T078)
 // 10. Retrieve user's session and stored tokens for service
-// 11. Check if tokens are fully expired (T076)
+// 11. Check whether the session requires reauthentication (T076)
 // 12. Refresh expired tokens if refresh_token available
 // 13. Return RFC 8693 compliant response
 //
@@ -153,7 +153,7 @@ func NewTokenExchangeService(
 // Error handling:
 // - InvalidRequest: malformed request, missing required parameters
 // - InvalidClient: invalid/missing client_assertion
-// - InvalidGrant: invalid/expired subject_token, no session, or all tokens expired (T075, T076)
+// - InvalidGrant: invalid/expired subject_token, no session, or session requires reauthentication (T075, T076)
 // - InvalidTarget: no service matches resource URI
 // - AccessDenied: user has not granted agent access, or CEL authorization failed
 // - ServerError: configuration/system errors
@@ -166,7 +166,7 @@ func NewTokenExchangeService(
 //
 // PHASE 8 NOTES (T075-T078):
 // - T075: Return invalid_grant when no UserSession exists for principal+service
-// - T076: Return invalid_grant when both access_token and refresh_token expired
+// - T076: Return invalid_grant when the provider rejected the refresh token or access expired without one
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
@@ -341,7 +341,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - Decrypting and returning valid token along with session metadata
 	//
 	// Per T075: invalid_grant if session doesn't exist
-	// Per T076: invalid_grant if both tokens are expired
+	// Per T076: invalid_grant if the session requires reauthentication
 	stage = StageSessionLookup
 	sessionCtx, sessionSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.get_valid_access_token")
 	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(sessionCtx, principal, service.ID)

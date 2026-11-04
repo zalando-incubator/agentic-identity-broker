@@ -2146,8 +2146,9 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			switch {
 			case tt.wantRefreshMarked:
 				after := *sessionRepo.session
-				require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
-				after.RefreshTokenExpiresAt = before.RefreshTokenExpiresAt
+				require.NotNil(t, after.RefreshRejectedAt, "a rejected refresh token must be recorded as rejected")
+				after.RefreshRejectedAt = before.RefreshRejectedAt
+				after.UpdatedAt = before.UpdatedAt
 				assert.Equal(t, before, after, "a rejected refresh must not change stored tokens")
 			case tt.session != nil:
 				assert.Same(t, tt.session, sessionRepo.session, "a failed refresh must not persist session changes")

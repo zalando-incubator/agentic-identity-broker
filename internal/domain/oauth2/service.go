@@ -553,8 +553,8 @@ func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, 
 		}
 	}
 
-	// Use per-service lookup so we see expired sessions. ListActiveByPrincipal filters
-	// to usable sessions only; FindByPrincipalAndService returns expired ones too.
+	// Use per-service lookup so sessions that require reauthentication stay visible.
+	// ListActiveByPrincipal filters those out; FindByPrincipalAndService returns them.
 	for svcID := range relevantServices {
 		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
 		if err != nil {
@@ -563,8 +563,8 @@ func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, 
 		if session == nil {
 			return svcID, "session_missing", nil
 		}
-		if session.IsExpired() {
-			return svcID, "session_expired", nil
+		if session.RequiresReauthentication() {
+			return svcID, "reauthentication_required", nil
 		}
 	}
 	return id.ServiceID{}, "", nil
@@ -609,17 +609,16 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 			return fmt.Errorf("session_required: user does not have required session for service %s", req.ServiceID)
 		}
 
-		// Check if session is expired
-		if session.IsExpired() {
+		if session.RequiresReauthentication() {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
 					"MandatoryRequirementNotMet",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
-					"reason", "session_expired",
+					"reason", "reauthentication_required",
 				)
 			}
-			return fmt.Errorf("session_expired: user session has expired for service %s", req.ServiceID)
+			return fmt.Errorf("reauthentication_required: user session requires reauthentication for service %s", req.ServiceID)
 		}
 
 		// Check if session scopes include all required scopes (superset check)

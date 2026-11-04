@@ -227,7 +227,7 @@ US1 and US3 need only Phase 2. US2 needs Phase 2.5. All three can proceed in par
 
 **Test Data Strategy**:
 - Existing fixtures: `fixtures.AdminPrincipal()`, the third-party service and session fixtures used by `tests/e2e/proactive_token_refresh_test.go`.
-- New fixtures: `tests/e2e/fixtures/session_health.go` session builders with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshTokenExpiresAt` for each `(expiry, refreshable)` series.
+- New fixtures: `tests/e2e/fixtures/session_health.go` session builders with controlled `AccessTokenExpiresAt`, refresh-token presence, and `RefreshRejectedAt` for each `(expiry, refreshable)` series.
 
 **Bootstrap Strategy**:
 - Admin server via `bootstrap.NewServerFactory(config, logger).BuildApp(store)` and `bootstrap.NewAdminTestServer` (production builder).

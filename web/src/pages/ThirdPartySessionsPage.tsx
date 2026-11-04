@@ -24,10 +24,7 @@ import { Alert } from '@design-system/components/feedback/Alert';
 import { Button } from '@design-system/components/primitives/Button';
 import { PageTransition } from '@components/ui/PageTransition';
 import { useSessions } from '@hooks/useSessions';
-import {
-  SessionCard,
-  sessionNeedsLogin,
-} from '@components/sessions/SessionCard';
+import { SessionCard } from '@components/sessions/SessionCard';
 import { TerminationDialog } from '@components/sessions/TerminationDialog';
 import { sessionsApi } from '@services/api/sessions';
 import { extractApiError } from '@utils/api';
@@ -213,7 +210,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
       setAlert({
         type: 'error',
         message:
-          session && sessionNeedsLogin(session)
+          session?.requires_reauthentication
             ? `Your ${session.service_display_name} session can no longer be renewed. Log in to reconnect.`
             : extractApiError(
                 err,

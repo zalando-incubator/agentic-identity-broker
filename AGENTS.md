@@ -171,6 +171,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
+| 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 
 ## Domain Glossary
 
@@ -195,6 +196,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
 

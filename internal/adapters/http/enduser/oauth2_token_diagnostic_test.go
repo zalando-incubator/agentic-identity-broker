@@ -150,7 +150,6 @@ func TestTokenExchangeFailureTelemetryAndProtocol(t *testing.T) {
 		{"invalid client", tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid, tokenexchange.NewInvalidClientError, http.StatusUnauthorized, "invalid_client", false},
 		{"missing consent", tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing, tokenexchange.NewAccessDeniedError, http.StatusForbidden, "access_denied", true},
 		{"missing session", tokenexchange.StageSessionLookup, tokenexchange.DetailSessionMissing, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
-		{"local refresh expiry", tokenexchange.StageRefresh, tokenexchange.DetailRefreshTokenExpired, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
 		{"provider refresh rejected", tokenexchange.StageRefresh, tokenexchange.DetailRefreshRejected, tokenexchange.NewInvalidGrantError, http.StatusBadRequest, "invalid_grant", true},
 		{"provider client rejected", tokenexchange.StageRefresh, tokenexchange.DetailProviderClientRejected, tokenexchange.NewServerError, http.StatusInternalServerError, "server_error", false},
 		{"provider unavailable", tokenexchange.StageRefresh, tokenexchange.DetailProviderUnavailable, tokenexchange.NewServerError, http.StatusInternalServerError, "server_error", false},

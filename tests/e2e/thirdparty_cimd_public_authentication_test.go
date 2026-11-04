@@ -292,7 +292,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 			expireSession(j)
 			j.provider.WithTokenError("invalid_grant")
 			response = refresh(j)
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
 			Expect(response.Body.Close()).To(Succeed())
 			observations := j.provider.Observations()
 			Expect(observations.TokenRequests).To(HaveLen(3))

@@ -760,7 +760,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 			session.ExpectedResource = audienceA
 			if tc.expired {
 				past := time.Now().Add(-time.Hour)
-				session.RefreshTokenExpiresAt = &past
+				session.RefreshRejectedAt = &past
 			}
 			require.NoError(t, sessions.Create(ctx, session))
 			before, err := repo.Get(ctx, provider.ID)
