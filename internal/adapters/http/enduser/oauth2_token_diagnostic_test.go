@@ -364,7 +364,7 @@ func TestOAuth2TokenHandler_ImpersonationTelemetryAndResponseWrites(t *testing.T
 			var record tokenEndpointLogRecord
 			var found bool
 			for _, candidate := range *logs.records {
-				if candidate.message == "token exchange failed" || candidate.message == "token exchange succeeded" {
+				if isTokenExchangeOutcomeRecord(candidate) {
 					record, found = candidate, true
 				}
 			}
