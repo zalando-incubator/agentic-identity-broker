@@ -14,8 +14,9 @@ The demo uses mock providers, not real GitHub or Google accounts.
 
 ## Before you start
 
-You need Docker with Docker Compose v2, Git, and curl. The grant lookup also uses
-[jq](https://jqlang.org/download/).
+You need Docker with Docker Compose v2, Git, curl, and OpenSSL.
+The host-side key-generation script requires OpenSSL.
+The grant lookup also uses [jq](https://jqlang.org/download/).
 
 The project uses [just](https://github.com/casey/just) as a command runner.
 Install it with `brew install just` or `cargo install just`, or use the plain Compose commands in Step 1.
@@ -100,10 +101,11 @@ The interface shows **Local Research Agent** and its requested permission sets.
 
 ## Step 4: Review and grant consent
 
-Connect **Mock OAuth2 Service (Dev)** when the consent screen requests a provider session.
+Select the optional **Identity Access** permission set.
+Connect **Mock OAuth2 Service (Dev)** before you submit consent.
 Complete the mock provider authorization in the browser. This stores the provider token in the broker, not the agent.
 
-Review the mandatory and optional permission sets. Select the permissions to grant, then submit consent.
+Review your selection, then submit consent.
 The broker redirects you to the sample client. Its **Access Token Claims** table describes the broker-issued token.
 
 ## Step 5: View the stored delegation
@@ -117,8 +119,9 @@ AGENT_ID=$(curl --fail --silent http://localhost:14000/api/agents \
 curl --fail-with-body "http://localhost:3000/api/consent/agents/$AGENT_ID/grants"
 ```
 
-The response's `data` object contains the grant ID, `principal`, `agent_id`,
-`granted_permission_sets`, and timestamps. The principal is `dev@example.com`.
+The response's `data` array contains grant objects. Each grant contains its ID,
+`principal`, `agent_id`, `granted_permission_sets`, and timestamps.
+The principal is `dev@example.com`.
 A grant with an expiry also includes `valid_until`.
 The response does not contain provider credentials.
 
