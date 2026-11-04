@@ -260,7 +260,7 @@ func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse,
 		sc, finalized := observation.Holder.Finalized()
 		Expect(finalized).To(BeTrue())
 		Expect(sc.TraceID).To(Equal(traceID))
-		Expect(sc.Actor).To(Equal(actor))
+		Expect(sc.Actor).To(Equal(id.Principal(actor)))
 		Expect(sc.CallingPeer).To(Equal(peer))
 		second, changed := observation.Holder.Finalize("must-not-replace-actor", "must-not-replace-peer")
 		Expect(changed).To(BeFalse(), "the context must finalize exactly once")
