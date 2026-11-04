@@ -190,7 +190,7 @@ These data classes are prohibited at all levels, including `Debug`.
 - Put untrusted values only in attributes. Do not put them in the message.
 - Escape line breaks with `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`) and limit the length of raw header and path values.
 - Log a classification, not the value. For example, log `reason=invalid_redirect_uri`, not the rejected URI. If an operator needs the value for diagnosis, log the derived form from section 6.2.
-- The `log/slog` JSON and text handlers escape line breaks in the message and in every attribute value, so a record written through the injected logger cannot forge a log line. For this reason `.github/workflows/codeql.yml` excludes the CodeQL query `go/log-injection`, which does not model that escaping. The `forbidigo` linter (`.golangci.yml`) fails a call to `fmt.Print*` or the `log` package outside `cmd/` and `tools/`, so log output cannot bypass slog.
+- The `log/slog` JSON and text handlers escape line breaks in the message and in every attribute value, so a record written through the injected logger cannot forge a log line. For this reason `.github/workflows/codeql.yml` excludes the CodeQL query `go/log-injection`, which does not model that escaping. The `forbidigo` linter (`.golangci.yml`) fails a call to `fmt.Print*`, a `log` package function, or a `*log.Logger` method outside `cmd/` and `tools/`, so log output cannot bypass slog.
 
 ## 8. Audit Records
 

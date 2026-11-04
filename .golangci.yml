@@ -13,6 +13,12 @@ linters:
         - pattern: ^log\.(Print|Fatal|Panic)(f|ln)?$
           pkg: ^log$
           msg: Log through the injected *slog.Logger (coding-standards/LOGGING.md section 1).
+        - pattern: ^log\.Output$
+          pkg: ^log$
+          msg: Log through the injected *slog.Logger (coding-standards/LOGGING.md section 1).
+        - pattern: log\.Logger\)?\.(Print|Fatal|Panic|Output)(f|ln)?$
+          pkg: ^log$
+          msg: Log through the injected *slog.Logger (coding-standards/LOGGING.md section 1).
   exclusions:
     paths:
       - web/node_modules
