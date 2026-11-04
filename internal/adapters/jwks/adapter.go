@@ -122,11 +122,11 @@ func NewJWKSAdapter(
 	}
 
 	client := httprc.NewClient(
-		httprc.WithErrorSink(errsink.NewFunc(func(_ context.Context, err error) {
+		httprc.WithErrorSink(errsink.NewFunc(func(ctx context.Context, err error) {
 			// httprc only routes worker-scheduled background sync failures through the
 			// errsink. Caller-driven ctrl.Refresh failures are recorded in startRefresh.
 			adapter.recordFailure(err)
-			adapter.logger.Warn("JWKS refresh failed",
+			adapter.logger.WarnContext(ctx, "JWKS refresh failed",
 				"dependency", "jwks",
 				"operation", "refresh",
 				"error_kind", "dependency_failed",
@@ -214,7 +214,7 @@ func (a *Adapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 		return nil, fmt.Errorf("failed to fetch jwks from %s: %w", a.jwksURI, staleErr)
 	}
 	if a.markStaleServeLogged() {
-		a.logger.Warn("serving cached JWKS after refresh failure",
+		a.logger.WarnContext(ctx, "serving cached JWKS after refresh failure",
 			"dependency", "jwks",
 			"operation", "fetch",
 			"error_kind", "dependency_failed",

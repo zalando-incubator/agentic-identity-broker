@@ -184,7 +184,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			)
 		}
 
-		s.writeTokenResponse(w, resp)
+		s.writeTokenResponse(r.Context(), w, resp)
 
 	case "authorization_code":
 		rawClientID := formData.Get("client_id")
@@ -222,7 +222,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			)
 		}
 
-		s.writeTokenResponse(w, resp)
+		s.writeTokenResponse(r.Context(), w, resp)
 
 	case "refresh_token":
 		rawClientID := formData.Get("client_id")
@@ -256,7 +256,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 			)
 		}
 
-		s.writeTokenResponse(w, resp)
+		s.writeTokenResponse(r.Context(), w, resp)
 
 	default:
 		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "unsupported_grant_type",
@@ -311,7 +311,7 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 	}
 }
 
-func (s *localGrantStrategy) writeTokenResponse(w http.ResponseWriter, resp *ports.TokenResponse) {
+func (s *localGrantStrategy) writeTokenResponse(ctx context.Context, w http.ResponseWriter, resp *ports.TokenResponse) {
 	tokenResp := map[string]interface{}{
 		"access_token": resp.AccessToken,
 		"token_type":   resp.TokenType,
@@ -327,7 +327,7 @@ func (s *localGrantStrategy) writeTokenResponse(w http.ResponseWriter, resp *por
 	body, err := json.Marshal(tokenResp)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to encode token response", "error", err)
+			s.logger.ErrorContext(ctx, "failed to encode token response", "error", err)
 		}
 		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "internal server error")
 		return
