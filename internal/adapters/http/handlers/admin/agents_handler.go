@@ -42,7 +42,7 @@ type AgentsHandler struct {
 // NewAgentsHandler creates a new agents handler.
 func NewAgentsHandler(agentService *agents.Service, providerService *thirdparty.ThirdpartyOAuth2ProviderService, psService PermissionSetValidator, logger *slog.Logger) *AgentsHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewAgentsHandler: logger must not be nil")
 	}
 	return &AgentsHandler{
 		agentService:    agentService,

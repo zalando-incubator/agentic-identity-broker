@@ -18,7 +18,6 @@ import (
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/contrib/propagators/ot"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -417,7 +416,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	baseHandler := b.logger.Handler()
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Logs.Enabled {
 		otelHandler := otelslog.NewHandler(b.config.Telemetry.ServiceName,
-			otelslog.WithLoggerProvider(global.GetLoggerProvider()))
+			otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
 		baseHandler = telemetry.NewMultiHandler(baseHandler, otelHandler)
 	}
 	b.logger = slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler)))

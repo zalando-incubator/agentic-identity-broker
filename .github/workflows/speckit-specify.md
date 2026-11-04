@@ -60,6 +60,10 @@ Never force-add or commit that file. Include only the generated specification
 and checklists in the PR.
 Do not modify the previously selected feature's files.
 
+When calling `create_pull_request`, omit `stack_position` and `stack_root`.
+This is a standalone PR, not a stacked PR. Do not populate unused optional
+fields with zero or empty-string placeholders.
+
 Create a draft PR on `context.branch`. Its body must start with a short summary
 of the feature to be built, not a summary of the automation. Include:
 

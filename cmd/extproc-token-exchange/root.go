@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	otelslog "go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
@@ -161,7 +161,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		// entire service lifetime.
 		if cfg.Telemetry.Logs.Enabled {
 			otelHandler := otelslog.NewHandler(cfg.Telemetry.ServiceName,
-				otelslog.WithLoggerProvider(global.GetLoggerProvider()))
+				otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
 			logger = slog.New(telemetry.NewPrincipalPolicyHandler(telemetry.NewMultiHandler(stdoutHandler, otelHandler)))
 			slog.SetDefault(logger)
 		}

@@ -39,6 +39,8 @@ safe-outputs:
     continue-on-error: false
   push-to-pull-request-branch:
     github-token-for-extra-empty-commit: none
+    # Reading branch protection needs Administration, which the App does not hold; Spec Kit branches are unprotected.
+    check-branch-protection: false
     target: ${{ inputs.pr }}
     required-title-prefix: "[Spec Kit] "
     base-branch: ${{ github.event.repository.default_branch }}

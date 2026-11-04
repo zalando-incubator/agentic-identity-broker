@@ -219,7 +219,7 @@ func (h *SigningKeysHandler) writeError(w http.ResponseWriter, statusCode int, e
 	h.writeJSON(w, statusCode, resp)
 }
 
-func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx context.Context) (string, bool) {
+func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx context.Context) (id.Principal, bool) {
 	operatorPrincipal, ok := operatorPrincipalFromContext(ctx, h.logger)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, signingKeyOperatorPrincipalError, signingKeyOperatorPrincipalMessage)
@@ -228,7 +228,7 @@ func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx
 	return operatorPrincipal, true
 }
 
-func operatorPrincipalFromContext(ctx context.Context, logger *slog.Logger) (string, bool) {
+func operatorPrincipalFromContext(ctx context.Context, logger *slog.Logger) (id.Principal, bool) {
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		if logger != nil {

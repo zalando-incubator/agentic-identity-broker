@@ -86,7 +86,7 @@ func newCIMDClientKeyRequest(method, target, kid, body string) *http.Request {
 }
 
 func withCIMDKeyPrincipal(req *http.Request, value string) *http.Request {
-	return req.WithContext(principal.WithPrincipal(req.Context(), value))
+	return req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(value)))
 }
 
 func cimdClientKeyForTest(kid string, isCurrent bool, activatesAt, createdAt time.Time) *storage.SigningKey {

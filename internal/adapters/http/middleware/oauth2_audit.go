@@ -8,18 +8,19 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/google/uuid"
 )
 
 // OAuth2AuditMiddleware creates audit logging middleware for OAuth2 endpoints
 func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract request ID from header
 			requestID := r.Header.Get("X-Request-ID")
-			if requestID == "" {
-				requestID = generateRequestID()
+			if !validRequestID(requestID) {
+				requestID = uuid.NewString()
 			}
 
 			// Extract principal from context (set by RequirePrincipalMiddleware)
@@ -43,11 +44,12 @@ func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler 
 
 			// Log audit information
 			duration := time.Since(startTime).Milliseconds()
+			method, target := LoggedRequestLine(r.WithContext(ctx))
 			logAuditEvent(ctx, logger, &auditEvent{
 				RequestID:  requestID,
 				Principal:  principalValue,
-				Method:     r.Method,
-				Path:       r.URL.Path,
+				Method:     SanitizeLogValue(method),
+				Path:       SanitizeLogValue(target),
 				StatusCode: wrapped.statusCode,
 				Duration:   duration,
 				RemoteAddr: auditRemoteAddr(ctx, r.RemoteAddr),
@@ -75,7 +77,7 @@ func (w *responseWriterWrapper) Write(b []byte) (int, error) {
 // auditEvent contains audit information about a request
 type auditEvent struct {
 	RequestID  string
-	Principal  string
+	Principal  id.Principal
 	Method     string
 	Path       string
 	StatusCode int
@@ -105,7 +107,7 @@ func logAuditEvent(ctx context.Context, logger *slog.Logger, event *auditEvent) 
 		level,
 		"OAuth2 Authorization Request",
 		slog.String("request_id", event.RequestID),
-		slog.String("principal", event.Principal),
+		slog.Any("principal", event.Principal),
 		slog.String("method", event.Method),
 		slog.String("path", event.Path),
 		slog.Int("status", event.StatusCode),
@@ -131,8 +133,19 @@ func auditUserAgent(ctx context.Context, fallback string) string {
 	return security.TruncateUserAgent(fallback)
 }
 
-// generateRequestID generates a simple request ID
-// In production, this could use UUID or other ID generation
-func generateRequestID() string {
-	return time.Now().Format("20060102150405") + "-" + string(rune(time.Now().UnixNano()%10000))
+const maxRequestIDLength = 128
+
+// validRequestID accepts a caller-supplied X-Request-ID only when it is 1 to
+// maxRequestIDLength characters of [A-Za-z0-9._-]; anything else is replaced so it is never logged.
+func validRequestID(value string) bool {
+	if value == "" || len(value) > maxRequestIDLength {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return true
 }

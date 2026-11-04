@@ -286,7 +286,7 @@ func TestAgentClientResolver_ResolvesViaCIMDURINotClientID(t *testing.T) {
 
 func TestAgentClientResolver_Disabled_URLFormat_Rejected(t *testing.T) {
 	repo := NewMockAgentRepository()
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 
 	for _, clientID := range []string{
 		"https://agent.example.com/client",
@@ -303,7 +303,7 @@ func TestAgentClientResolver_Disabled_URLFormat_Rejected(t *testing.T) {
 
 func TestAgentClientResolver_Disabled_NonUUID_Rejected(t *testing.T) {
 	repo := NewMockAgentRepository()
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 
 	_, err := resolver.ResolveClient(context.Background(), "not-a-uuid")
 	require.Error(t, err)
@@ -322,7 +322,7 @@ func TestAgentClientResolver_Disabled_OpaqueUUID_Success(t *testing.T) {
 	}
 	repo := NewMockAgentRepository()
 	require.NoError(t, repo.Create(context.Background(), agent))
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 
 	resolution, err := resolver.ResolveClient(context.Background(), id.ClientID(agentID.String()))
 	require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestAgentClientResolver_Disabled_OpaqueUUID_Success(t *testing.T) {
 
 func TestAgentClientResolver_Disabled_AgentNotFound(t *testing.T) {
 	repo := NewMockAgentRepository()
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 
 	_, err := resolver.ResolveClient(context.Background(), id.ClientID("00000000-0000-0000-0000-000000000099"))
 	require.Error(t, err)
@@ -353,7 +353,7 @@ func TestOpaqueClientResolver_Success(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), agent))
 
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 	resolution, err := resolver.ResolveClient(context.Background(), id.ClientID(agentID.String()))
 
 	require.NoError(t, err)
@@ -374,7 +374,7 @@ func TestOpaqueClientResolver_UUID_ResolvesById(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), agent))
 
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 	resolution, err := resolver.ResolveClient(context.Background(), id.ClientID(agentID.String()))
 
 	require.NoError(t, err)
@@ -399,7 +399,7 @@ func TestOpaqueClientResolver_CIMDAgent_URLRejectedBefore_Lookup(t *testing.T) {
 
 	// Attempting to access the CIMD agent via its URL-form client_id must be rejected by
 	// OpaqueClientResolver before any lookup when CIMD is disabled (CIMD gate).
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 	_, err := resolver.ResolveClient(context.Background(), id.ClientID("https://agent.example.com/.well-known/openid-configuration"))
 
 	require.Error(t, err)
@@ -449,7 +449,7 @@ func TestOpaqueClientResolver_CIMDAgent_UUIDRejected(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), agent))
 
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 	_, err := resolver.ResolveClient(context.Background(), id.ClientID(agentID.String()))
 
 	require.Error(t, err)
@@ -474,7 +474,7 @@ func TestOpaqueClientResolver_AmbiguousAgent_UUIDRejected(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), agent))
 
-	resolver := NewAgentClientResolver(repo, nil)
+	resolver := NewAgentClientResolver(repo, slog.New(slog.DiscardHandler))
 	_, err := resolver.ResolveClient(context.Background(), id.ClientID(agentID.String()))
 
 	require.Error(t, err)

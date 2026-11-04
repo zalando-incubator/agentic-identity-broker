@@ -15,6 +15,7 @@ import (
 	"time"
 
 	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/go-chi/chi/v5"
@@ -38,7 +39,7 @@ func (f *fakeSessionSweeper) Sweep(ctx context.Context, request oauth2session.Sw
 func sweepRequest(body string, operator string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/sweep", strings.NewReader(body))
 	if operator != "" {
-		req = req.WithContext(principal.WithPrincipal(req.Context(), operator))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(operator)))
 	}
 	return req
 }

@@ -78,7 +78,7 @@ func RequireApprovalSubjectTokenAndClientAssertion(auth *ApprovalRequestAuthenti
 				return
 			}
 
-			ctx := principal.WithPrincipal(r.Context(), string(principalValue))
+			ctx := principal.WithPrincipal(r.Context(), principalValue)
 			ctx = withApprovalAuthContext(ctx, ApprovalAuthContext{
 				Principal:       principalValue,
 				AgentID:         agentID,
@@ -126,7 +126,7 @@ func RequireApprovalSubjectToken(auth *ApprovalRequestAuthenticator) func(next h
 				return
 			}
 
-			ctx := principal.WithPrincipal(r.Context(), string(principalValue))
+			ctx := principal.WithPrincipal(r.Context(), principalValue)
 			ctx = withApprovalAuthContext(ctx, ApprovalAuthContext{Principal: principalValue})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

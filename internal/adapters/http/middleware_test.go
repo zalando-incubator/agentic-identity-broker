@@ -4,6 +4,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +87,24 @@ func TestLoggingMiddlewareLogsAllPathsWhenNoPrefixesGiven(t *testing.T) {
 	if !strings.Contains(buf.String(), "HTTP request") {
 		t.Errorf("expected log output when no prefixes given, got: %s", buf.String())
 	}
+}
+
+func TestLoggingMiddlewareLogsSecurityContextRequestLine(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	handler := LoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/a%2Fb", nil)
+	capture := security.TransportCapture{RequestMethod: http.MethodGet, RequestTarget: "/api/a%2Fb"}
+	req = req.WithContext(security.WithSecurityContext(req.Context(), security.NewSecurityContext(capture, id.NewPrincipal(""), "")))
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record))
+	assert.Equal(t, http.MethodGet, record["method"])
+	assert.Equal(t, "/api/a%2Fb", record["path"])
 }
 
 func TestMiddlewareSanitizesLogValues(t *testing.T) {

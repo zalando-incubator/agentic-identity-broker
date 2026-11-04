@@ -1,7 +1,11 @@
 // Package principal provides domain types and functions for managing authenticated principals.
 package principal
 
-import "context"
+import (
+	"context"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+)
 
 // profileContextKey is an unexported type used as the context key for PrincipalProfile.
 // Separate from principalContextKey to maintain backward compatibility — both keys
@@ -21,7 +25,7 @@ type profileContextKey struct{}
 type PrincipalProfile struct {
 	// Principal is the unique user identifier (e.g., email, username, sub claim).
 	// Required, non-empty, max 200 chars.
-	principal string
+	principal id.Principal
 
 	// DisplayName is a human-readable display name. Falls back to Principal if not set.
 	displayName string
@@ -39,10 +43,10 @@ type PrincipalProfile struct {
 //
 // Preconditions:
 //   - principal must be non-empty and ≤ 200 characters
-func NewProfile(principal string) PrincipalProfile {
+func NewProfile(principal id.Principal) PrincipalProfile {
 	return PrincipalProfile{
 		principal:   principal,
-		displayName: principal, // Default: display name equals principal
+		displayName: principal.String(), // Default: display name equals principal
 	}
 }
 
@@ -70,7 +74,7 @@ func (p PrincipalProfile) WithPictureURL(pictureURL *string) PrincipalProfile {
 }
 
 // Principal returns the unique user identifier.
-func (p PrincipalProfile) Principal() string {
+func (p PrincipalProfile) Principal() id.Principal {
 	return p.principal
 }
 
@@ -92,7 +96,7 @@ func (p PrincipalProfile) PictureURL() *string {
 
 // WithProfile creates a new context derived from the parent with the PrincipalProfile embedded.
 // This is set alongside WithPrincipal for backward compatibility — downstream handlers
-// that only need the principal string can continue using FromContext.
+// that only need the principal can continue using FromContext.
 //
 // Parameters:
 //   - ctx: Parent context (typically from HTTP request)
@@ -105,7 +109,7 @@ func WithProfile(ctx context.Context, profile PrincipalProfile) context.Context 
 
 // ProfileFromContext retrieves the PrincipalProfile from the context.
 // Returns (profile, true) if present, (zero value, false) if not present.
-// This is the enriched profile retrieval — use FromContext for just the principal string.
+// This is the enriched profile retrieval — use FromContext for just the principal.
 //
 // Parameters:
 //   - ctx: Context potentially containing a PrincipalProfile

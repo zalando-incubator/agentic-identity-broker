@@ -1,5 +1,5 @@
 const fs = require("node:fs");
-const { managedPR, validateReviewState, parseReview, reviewDimensions } = require("./speckit-automation.cjs");
+const { managedPR, validateReviewState, parseReview, reviewDimensions, retryReads } = require("./speckit-automation.cjs");
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
@@ -50,6 +50,7 @@ function runURL(repo, id) {
 
 // Spec Kit's own pipeline reviews its managed draft PRs, so that it can remediate the findings afterwards.
 async function route({ github, context }) {
+  retryReads(github);
   const { payload, repo, eventName } = context;
   const source = eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
   const command = source?.user?.type === "User" && source.user.login === context.actor && parseCommand(source.body);
@@ -84,6 +85,7 @@ async function adrs(github, repo, ref) {
 }
 
 async function prepare({ github, context, inputs }) {
+  retryReads(github);
   const { repo } = context;
   if (!await maintainer(github, repo, context.actor)) throw new Error("Maintainer permission is required");
   const number = Number(inputs.pr);
@@ -197,6 +199,7 @@ function writeResult() {
 }
 
 async function verify({ github, context, comment }) {
+  retryReads(github);
   if (!Number.isSafeInteger(Number(comment)) || Number(comment) <= 0) throw new Error("Worker did not publish a review comment");
   const { data: posted } = await github.rest.issues.getComment({ ...context.repo, comment_id: Number(comment) });
   const review = parseReview(posted);
@@ -219,6 +222,7 @@ async function statusComments(github, repo, number) {
 
 // The review itself is the worker's comment. This job only replaces the status comment, and only on failure.
 async function report({ github, context, needs }) {
+  retryReads(github);
   const { repo } = context;
   const route = needs.route || {};
   if (route.result === "success" && route.outputs?.action === "noop") return null;

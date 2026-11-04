@@ -34,7 +34,9 @@ function unlabeled(name = "auto-resolve-conflicts") {
 function fixture(eventName = "pull_request_target", options = {}) {
   const prs = options.prs || { 42: pr() };
   const requests = [];
+  const hooks = [];
   const github = {
+    hook: { wrap: (name, wrapper) => hooks.push({ name, wrapper }) },
     graphql: async (query, args) => {
       requests.push({ query, args });
       if (options.graphqlError) throw options.graphqlError;
@@ -70,7 +72,7 @@ function fixture(eventName = "pull_request_target", options = {}) {
       ? { action: "labeled", label: { name: "auto-resolve-conflicts" }, pull_request: { number: 42 } }
       : eventName === "push" ? { ref: "refs/heads/main" } : {},
   };
-  return { github, context, requests, prs };
+  return { github, context, requests, prs, hooks };
 }
 
 function restError(status) {
@@ -247,5 +249,19 @@ test("prepare independently rechecks label, provenance, head, base, and conflict
   ]) {
     const result = await prepare({ ...fixture("schedule", options), inputs });
     assert.equal(result.eligible, false);
+  }
+});
+
+test("conflict entry points retry transient reads before the agent starts", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => {});
+  t.mock.method(fs, "writeFileSync", () => {});
+  for (const entry of [
+    (f) => selectConflicts(f),
+    (f) => prepare({ ...f, inputs: { pr: 42, head: sha, base: "main" } }),
+  ]) {
+    const f = fixture();
+    await entry(f).catch(() => {});
+    await entry(f).catch(() => {});
+    assert.deepEqual(f.hooks.map(({ name }) => name), ["request"]);
   }
 });
