@@ -1775,7 +1775,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **Actor Identity**: The non-empty identity extracted from the validated actor token via the selected rule's `actor` role `principal_expression`, represented with its validated issuer as the standardized `act.iss` and `act.sub` claims in a successful impersonated broker token.
 
-**Subject Category**: Per-rule classification: `agent` only when the raw string `sub` exactly equals the audience-selected target UUID and the subject is signed and verified or, if unverified, the rule's predicate binds `subject_token.sub`; otherwise `human`. Classification precedes and is independent of eligibility.
+**Subject Category**: Per-rule classification: `agent` only when the raw string `sub` exactly equals the audience-selected target UUID and the subject is signed and verified or, if unverified, the rule's predicate binds `subject_token.sub`; a `sub` that is another registered agent's UUID is a rejected cross-agent request (ADR 045 decision 2b); otherwise `human`. Classification precedes and is independent of eligibility.
 
 **Allowed Subject Categories**: Per-rule eligibility list containing one or two distinct values from `human` and `agent`; omitted means `[human]`. A classified ineligible request falls through; a human delegation denial remains terminal.
 

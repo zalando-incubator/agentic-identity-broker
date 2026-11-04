@@ -244,13 +244,16 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		}
 
 		It("issues an agent token only when the predicate binds subject_token.sub and the target is a registered agent", func() {
-			boot(unsignedRule("client_assertion.sub == 'gateway-prod' && subject_token.sub == request.agent_id"), false)
+			boot(unsignedRule("client_assertion.sub == 'gateway-prod' && subject_token.sub in ['"+target.ID.String()+"']"), false)
 			status, body := post(unsignedRequest(target.ID.String(), target.ID.String()))
 			Expect(status).To(Equal(http.StatusOK), "%v", body)
 			claims := decodeJWTClaims(body["access_token"].(string))
 			Expect(claims["sub"]).To(Equal(target.ID.String()))
 			Expect(claims["agent_id"]).To(Equal(target.ID.String()))
 			assertNoState(target.ID.String())
+
+			assertDenied(unsignedRequest(other.ID.String(), other.ID.String()), false)
+			assertNoState(other.ID.String())
 
 			unregistered := id.NewAgentID().String()
 			status, body = post(unsignedRequest(unregistered, unregistered))
