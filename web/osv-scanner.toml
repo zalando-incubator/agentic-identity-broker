@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "No compatible patched minimatch exists: the fix is only in 11.0.1, while eslint, @eslint/eslintrc, eslint-plugin-react, serve-handler, docusaurus-lunr-search and @redocly/openapi-core (latest) require 3.x, 5.x or 10.x. It is reached only by lint and documentation-build tooling with repository-controlled glob patterns; nothing ships in the broker or SPA bundle. Reassess when this exception expires."
