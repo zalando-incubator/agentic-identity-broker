@@ -17,6 +17,9 @@ on:
       validation:
         type: number
         default: 0
+  # A repair run is started by the Container tests run that the App dispatched, so the App's bot is its actor.
+  # speckit-assisted.yml routes a repair only for a base implementation that a maintainer started.
+  bots: ["zalando-incubator-agent-workflows[bot]"]
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
