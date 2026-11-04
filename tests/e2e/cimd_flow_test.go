@@ -93,6 +93,12 @@ var _ = Describe("CIMD Full Authorization Flow", func() {
 				CEL:  ports.CELAuthorizationConfig{Expression: "true", EvaluationTimeout: 2 * time.Second},
 			},
 		}
+		config.OAuth2AuthServer.Impersonation = &ports.ImpersonationConfig{
+			AudiencePrefix: imperAudience,
+			Rules: []ports.ImpersonationRuleConfig{
+				imperSignedRule("gateway", mockUpstream.Server.URL, "", "false"),
+			},
+		}
 		serverFactory = bootstrap.NewServerFactory(config, logger)
 
 		cimdFetcher, err := bootstrap.NewCIMDTestFetcher(cimdServer, fakeHost, 5120)
@@ -222,14 +228,26 @@ var _ = Describe("CIMD Full Authorization Flow", func() {
 			Expect(ok && subjectToken != "").To(BeTrue())
 
 			assertion := generateTokenFixtures(mockUpstream, principal, agent).ClientAssertion
-			exchangeResp, err := server.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(url.Values{
+			exchangeForm := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
-				"subject_token":         {subjectToken},
+				"subject_token":         {subjectToken, subjectToken},
 				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
 				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 				"client_assertion":      {assertion},
 				"resource":              {"https://api.github.com"},
-			}.Encode()))
+				"audience":              {"https://api.github.com"},
+			}
+			rejected, err := server.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(exchangeForm.Encode()))
+			Expect(err).To(Succeed())
+			Expect(rejected.StatusCode).To(Equal(http.StatusBadRequest))
+			var rejectedBody map[string]any
+			Expect(json.NewDecoder(rejected.Body).Decode(&rejectedBody)).To(Succeed())
+			_ = rejected.Body.Close()
+			Expect(rejectedBody["error"]).To(Equal("invalid_request"))
+			Expect(rejectedBody).NotTo(HaveKey("access_token"))
+
+			exchangeForm.Set("subject_token", subjectToken)
+			exchangeResp, err := server.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(exchangeForm.Encode()))
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = exchangeResp.Body.Close() }()
 			Expect(exchangeResp.StatusCode).To(Equal(http.StatusOK))
