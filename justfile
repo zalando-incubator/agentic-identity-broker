@@ -20,8 +20,7 @@ INTEGRATION_INFRA_GO_TEST_ARGS := "-count=1 -tags=integration -p " + INTEGRATION
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
 
-# Use Docker Compose v1 when installed, otherwise Docker Compose v2.
-COMPOSE_CMD := `if command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
+COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
 
 
@@ -740,8 +739,7 @@ compose-up: compose-env
 compose-up-detached: compose-env
     @echo "Generating JWE signing key..."
     @echo "Starting docker-compose services in background..."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build
-    @sleep 2
+    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600
     @just compose-health
     @echo ""
     @echo "Service URLs:"
@@ -749,7 +747,8 @@ compose-up-detached: compose-env
     @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
     @echo "  - Admin API: http://localhost:14000/api/agents"
     @echo "  - Admin health: http://localhost:14000/health"
-    @echo "  - Sample OAuth2 client: http://localhost:9002/oauth2/authorize"
+    @echo "  - Sample OAuth2 client: http://localhost:9002/"
+    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
     @echo ""
     @echo "View logs: just compose-logs"
     @echo "Stop services: just compose-down"
@@ -780,7 +779,7 @@ compose-logs-frontend:
 compose-logs-service SERVICE:
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f {{SERVICE}}
 
-# Restart backend service (after code changes)
+# Restart backend and its namespace-sharing sample agent (after code changes)
 compose-restart-backend:
     @echo "Restarting identity-broker service..."
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} restart identity-broker
