@@ -108,6 +108,11 @@ const (
 	ExchangeImpersonation ExchangeKind = "impersonation"
 )
 
+const (
+	DetailSubjectCategoryIneligible  FailureDetail = "subject_category_ineligible"
+	DetailSubjectCategoryUnsupported FailureDetail = "subject_category_unsupported"
+)
+
 func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 	d := Diagnostic{outcome: OutcomeInfrastructureError, stage: boundedStage(stage), detail: detail,
 		action: RecoveryRetry, target: TargetNone, kind: ExchangeThirdParty}
@@ -118,7 +123,9 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage, d.outcome, d.action, d.target = StageSubjectValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetSubjectIdentity
 	case DetailClientInvalid, DetailClientExpired:
 		d.stage, d.outcome, d.action, d.target = StageClientValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetCallingClient
-	case DetailClientPolicyDenied:
+	case DetailSubjectCategoryUnsupported:
+		d.stage, d.outcome, d.action = StageIdentityResolution, OutcomeAuthorizationDenied, RecoveryNone
+	case DetailClientPolicyDenied, DetailSubjectCategoryIneligible:
 		d.stage, d.outcome, d.action = StageClientAuthorization, OutcomeAuthorizationDenied, RecoveryNone
 	case DetailCELConfiguration, DetailJWTConfiguration:
 		d.outcome, d.action, d.target = OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration
