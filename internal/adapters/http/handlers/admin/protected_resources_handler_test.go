@@ -110,7 +110,6 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			},
 			wantStatus: http.StatusOK,
 			wantETag:   `"8"`,
-			wantAudit:  `"resource_uri":"` + resource + `"`,
 		},
 		{
 			name:       "rejects malformed JSON body",
@@ -154,7 +153,11 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 
 			require.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantETag, w.Header().Get("ETag"))
-			assert.Contains(t, audit.String(), tt.wantAudit)
+			if tt.wantAudit == "" {
+				assert.Empty(t, audit.String(), "an add that changed nothing must not emit a success audit")
+			} else {
+				assert.Contains(t, audit.String(), tt.wantAudit)
+			}
 			if tt.wantStatus == http.StatusBadRequest {
 				assert.NotContains(t, audit.String(), "raw-secret-input")
 				repo.AssertNotCalled(t, "AddProtectedResource", mock.Anything, mock.Anything, mock.Anything)
@@ -264,6 +267,16 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantTarget: `"target_resource_uri":"` + to + `"`,
 		},
 		{
+			name:    "unchanged rename emits no success audit",
+			escaped: url.PathEscape(to),
+			body:    `{"to":"https://api.example.com/renamed"}`,
+			configure: func(repo *MockProviderRepository) {
+				repo.On("RenameProtectedResource", mock.Anything, mock.Anything, to, to).Return(ports.ProtectedResourceMutationResult{Resource: to, ProtectedResources: []string{to}, Version: 12, Changed: false}, nil)
+			},
+			wantStatus: http.StatusOK,
+			wantETag:   `"12"`,
+		},
+		{
 			name:    "maps target conflict",
 			escaped: escaped,
 			body:    `{"to":"https://api.example.com/renamed"}`,
@@ -324,8 +337,12 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 
 			require.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantETag, w.Header().Get("ETag"))
-			assert.Contains(t, audit.String(), tt.wantSource)
-			assert.Contains(t, audit.String(), tt.wantTarget)
+			if tt.wantSource == "" && tt.wantTarget == "" {
+				assert.Empty(t, audit.String(), "a rename that changed nothing must not emit a success audit")
+			} else {
+				assert.Contains(t, audit.String(), tt.wantSource)
+				assert.Contains(t, audit.String(), tt.wantTarget)
+			}
 			if tt.wantStatus == http.StatusBadRequest {
 				assert.NotContains(t, audit.String(), "raw-target-input")
 				assert.NotContains(t, audit.String(), "%ZZ")
