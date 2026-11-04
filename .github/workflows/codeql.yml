@@ -63,7 +63,15 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
+          # go/log-injection is excluded because every log record goes through a
+          # log/slog JSON or text handler, which escapes line breaks in the message
+          # and in attribute values (coding-standards/LOGGING.md section 7). The
+          # query does not model that escaping and re-reports every touched log line.
+          # forbidigo in .golangci.yml blocks log output that bypasses slog.
           config: |
+            query-filters:
+              - exclude:
+                  id: go/log-injection
             paths-ignore:
               - web/node_modules
               - web/dist
