@@ -39,7 +39,7 @@ func TestExternalIDAtomicLifecycle(t *testing.T) {
 	require.NoError(t, r.Update(ctx, a))
 	a.ExternalID = nil
 	require.NoError(t, r.Update(ctx, a))
-	found, err := r.ListByExternalID(ctx, key)
+	found, err := r.externalIDMatches(ctx, key)
 	require.NoError(t, err)
 	require.Empty(t, found)
 	require.NoError(t, r.Create(ctx, duplicate))
@@ -50,11 +50,11 @@ func TestExternalIDAtomicLifecycle(t *testing.T) {
 	for _, value := range []*id.ExternalID{nil, nil, new(id.ExternalID("registry")), new(id.ExternalID(" Registry"))} {
 		require.NoError(t, r.Create(ctx, externalAgent(value)))
 	}
-	found, err = r.ListByExternalID(ctx, key)
+	found, err = r.externalIDMatches(ctx, key)
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 	*found[0].ExternalID = "changed"
-	found, err = r.ListByExternalID(ctx, key)
+	found, err = r.externalIDMatches(ctx, key)
 	require.NoError(t, err)
 	require.Equal(t, key, *found[0].ExternalID)
 	assert.Equal(t, replacement.ID, r.byExternalID[key])
@@ -80,7 +80,7 @@ func TestExternalIDConcurrentCreate(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, successes)
-	found, err := r.ListByExternalID(ctx, key)
+	found, err := r.externalIDMatches(ctx, key)
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 }

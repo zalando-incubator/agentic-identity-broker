@@ -18,9 +18,11 @@ Make a set Agent External ID globally unique and non-empty, and add an idempoten
   Both map violations to a conflict that wraps a new `ports.ErrExternalIDConflict` sentinel
   ([research R1](./research.md#r1--where-the-uniqueness-invariant-lives)).
 - **Reconcile in the domain.** `agents.Service.ReconcileByExternalID` validates the selector and
-  body, reads with the existing `ListByExternalID`, applies the FR-012 field policy, and skips the
-  write when the effective definition is unchanged. It creates through the existing `Create`, and
-  on any create conflict it re-reads once to fall through to update. No repository method is added
+  body, reads with `GetByExternalID` (one Agent or not-found), and uses the same candidate-building
+  and validation helper as `Service.Update` for FR-012, entity/service validation, FR-019 coverage
+  and client-ID uniqueness. It skips unchanged writes. Creation uses `Create`; only errors wrapping
+  `ErrExternalIDConflict` cause one reread to fall through to update. `GetByExternalID` replaces
+  `ListByExternalID` on the port; the domain list-filter method preserves HTTP arrays
   ([R2–R4](./research.md#r2--repository-port-shape)).
 - **Thin HTTP adapter.** A new `ReconcileAgent` handler on the existing `/api/agents` route group
   parses the selector and member presence, shares request validation with create and update, and
@@ -34,6 +36,20 @@ Make a set Agent External ID globally unique and non-empty, and add an idempoten
   shared Admin Agent presentation sorts client URIs by byte order. Timestamps keep the
   whole-second RFC 3339 presentation of Admin API `2.1.0` and the existing current-time assignment;
   a no-op replay returns the stored `updated_at` ([R4](./research.md#r4--no-op-detection)).
+
+## Approved architecture remediation (2026-11-04)
+
+The [maintainer-approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) selects P1–P5 (F1–F5).
+This revision centralizes update candidate policy and FR-019 coverage in the Agent domain service,
+injects the permission-set resolver in the builder, and shares `storage.ValidateExternalID` between
+all Agent writes and selectors. POST/ID-addressed PUT now reject invalid UTF-8, NUL and overlong
+External IDs as validation errors, in addition to empty strings. The unique-key port is
+`GetByExternalID`, with only external-ID conflicts eligible for a bounded reread.
+ADR 045 is renamed to `adrs/045-unique-agent-external-id-reconcile.md`; OpenAPI uses reconcile,
+and outcomes are `ReconcileCreated`, `ReconcileUpdated`, and `ReconcileUnchanged`.
+Errors carry no successful outcome. These decisions supersede contradictory historical planning
+text below, including ambiguity branches, any-conflict retry and selector-only format validation.
+No migration, configuration, timestamp, ordering or HTTP list-shape change is included.
 
 ## Technical Context
 
@@ -120,7 +136,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Hexagonal Architecture**: Selector rules, body/selector agreement, field policy, no-op
   detection, and race handling live in `internal/domain/agents`. The handler only parses input and
   maps errors. Adapters enforce the store invariant. No cross-adapter import.
-- [x] **Persistence Patterns**: No new repository method; both adapters implement the invariant;
+- [x] **Persistence Patterns**: The unique-key Get method replaces the list-shaped port; both adapters implement the invariant;
   errors wrap `StorageError` (ADR 004).
 
 **Post-design re-check (after Phase 1)**: All blocking design preconditions pass except the API
@@ -141,7 +157,7 @@ confirmation gate, which is the expected sign-off. No violation needs Complexity
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in ADR 045's Status line and moves
-the draft to `adrs/045-unique-agent-external-id-upsert.md`, replacing the earlier approved text.
+the draft to `adrs/045-unique-agent-external-id-reconcile.md`, replacing the earlier approved text.
 
 API-TIMESTAMPS (microsecond presentation and `+1 microsecond` advancement) was withdrawn on
 2026-11-04 by maintainer direction ([spec.md Clarifications](./spec.md#session-2026-11-04-planning-revision)).
@@ -171,7 +187,7 @@ specs/055-agent-external-id-upsert/
 
 ```text
 api/admin/openapi.yaml                               # merge contract delta; version 3.0.0
-adrs/045-unique-agent-external-id-upsert.md          # moved from the feature draft after approval
+adrs/045-unique-agent-external-id-reconcile.md          # moved from the feature draft after approval
 ARCHITECTURE.md                                      # glossary, API versioning, ADR index
 docs/guides/manage-agents-and-services.md            # uniqueness, collection PUT, migration notes
 docs/operations/agent-external-id-uniqueness.md      # new runbook
@@ -199,8 +215,8 @@ tests/
 ```
 
 **Structure Decision**: Existing Go monorepo layout. The domain change stays in the existing
-`internal/domain/agents` bounded context; no new package, port, or builder wiring. `builder.go`
-already wires `agents.Service` and `AgentsHandler`.
+`internal/domain/agents` bounded context; no new package or port interface. `builder.go`
+injects the existing permission-set service into `agents.Service` for domain coverage checks.
 
 ## Implementation Phase Overview
 
@@ -312,7 +328,7 @@ request helper in `tests/e2e/helpers/agent_external_id.go` if the existing helpe
 
 - `internal/domain/agents/service_test.go` / `reconcile_test.go`: table tests for selector and body
   validation, each FR-012 row on both branches, effective-definition equality (including client-URI
-  set comparison), conflict re-read, bounded retry, and >1 holder as an internal error. Timestamp
+  set comparison), external-ID-only conflict reread, bounded retry, not-found and lookup failure propagation. Timestamp
   tests cover current-time creation, preserved `CreatedAt` and current-time `UpdatedAt` on actual
   update; real memory/PostgreSQL read-back verifies actual change then exact no-op preservation.
 - `internal/domain/storage/agent_test.go`: empty external ID rejected; nil allowed.

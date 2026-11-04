@@ -16,9 +16,27 @@ Sign-off inventory: API-UPSERT, API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER
 
 **Validation ownership**: Never run container-backed or aggregate container-including recipes in the sandbox. Container tests own PostgreSQL/migration, backend Docker and ExtProc agentgateway evidence on the pushed commit; absence of local containers is not a blocker. Locally runnable tests must proceed independently. Historical checked tasks record earlier work/handoff, not current CI passage; T067–T069 require fresh validation for the revision.
 
+## Approved architecture remediation — F1–F5 (2026-11-04)
+
+Scope: [P1–P5 approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767). These tasks supersede contradictory historical port/validation/reread wording below; no migration or timestamp change is included.
+
+- [X] T074 [F1] Share one update-candidate builder/validator between `Service.Update` and reconcile, remove handler field policy, and retain update/no-op/audit tests (FR-012; Principle VI).
+- [X] T075 [F2] Move FR-019 permission-set service coverage into `agents.Service` for Create, Update and reconcile; inject the resolver in the builder and test direct-domain rejection without mutation (Principles VI, VIII, XII).
+- [X] T076 [F3] Share full External ID UTF-8/no-NUL/1–255-code-point validation across selectors and all Agent writes; test invalid values and the multibyte boundary, document the approved validation contract (FR-003; Principles IV, VIII).
+- [X] T077 [F4] Replace the list-shaped unique-key port with GetByExternalID on both adapters, preserve HTTP array filtering, retry only ErrExternalIDConflict and test not-found/clone/error/bounded reread behavior (ADR 004; Principles VI, IX).
+- [X] T078 [F5] Rename ADR 045 and update links/approval, use reconcile in OpenAPI and prefix outcome constants; align spec/plan/domain docs and run static, unit, self-contained integration and backend acceptance gates (Principles II, V, XIII).
+
+### Apply-review evidence
+
+- Semantic red before behavior changes: `TestWritesEnforceServiceCoverage` accepted uncovered requirements on Create/Update/reconcile/replay; `TestWriteExternalIDFormat` and `TestAgentExternalIDUnicodeBoundary` accepted invalid values; `TestReconcileDoesNotRereadUnrelatedConflict` observed two reads instead of one. All now pass.
+- Update/reconcile tests verify identity preservation and exactly one service-validation/client-uniqueness check. Existing no-op timestamp, mutation audit, field presence, coverage, conflict and HTTP presentation assertions remain enabled.
+- Passed: `just check`, `just test` (race-enabled package gate), `just test-integration`, `just test-e2e-backend` (928 passed, 0 failed, 18 excluded by existing performance/container label filters). All 15 non-container feature acceptance scenarios pass.
+- PostgreSQL integration test binary compiles with `go test -c -tags=integration -o /tmp/gh-aw/agent/postgres.test ./internal/adapters/storage/postgres`; this is compile-only evidence, not a PostgreSQL test pass.
+- Deferred to container tests on the pushed commit: `just test-integration-infra`, `just test-e2e-docker`, including US1.2–US1.4 and US3.1–US3.4. No container suite was run or claimed validated locally. No migration, workflow, hook, skill, constitution, configuration or feature-054 file changed.
+
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [X] T001 Record only the new approval supplied by `context.approval` for the revised `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` as `Accepted (approved by <login> on <date>: <url>)`; move the approved revision into `adrs/045-unique-agent-external-id-upsert.md`, replacing this PR’s earlier text, and retain a feature-local forwarding document for immutable spec/plan links. Verify coverage of all eight current Approval Items; the 2026-10-31 approval does not cover the revised ADR. Update decision-record links/status in `specs/055-agent-external-id-upsert/research.md`, `data-model.md`, and `quickstart.md` only after recording the actual new approval (Principle II; ADR-045).
+- [X] T001 Record only the new approval supplied by `context.approval` for the revised `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` as `Accepted (approved by <login> on <date>: <url>)`; move the approved revision into `adrs/045-unique-agent-external-id-reconcile.md`, replacing this PR’s earlier text, and retain a feature-local forwarding document for immutable spec/plan links. Verify coverage of all eight current Approval Items; the 2026-10-31 approval does not cover the revised ADR. Update decision-record links/status in `specs/055-agent-external-id-upsert/research.md`, `data-model.md`, and `quickstart.md` only after recording the actual new approval (Principle II; ADR-045).
 - [X] T002 Review the existing implementation and nearest instructions in `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/ports/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/e2e/AGENTS.md`, and `tests/integration/AGENTS.md`; confirm migration `migrations/046_unique_agent_external_id.up.sql` is this feature’s already implemented migration, not an unused number. Preserve completed invariant/migration work and record revision dependencies in `specs/055-agent-external-id-upsert/tasks.md`; do not recreate working code or renumber the approved migration (Principles II, VI, IX; DB-001).
 
 Phase 0 is omitted: no new structural refactor is needed. T036’s small behavior-preserving request-helper extraction was already committed separately before feature behavior; preserve it. Any newly required structural refactor must likewise be its own no-behavior-change commit with existing tests passing, not a separate PR. Phase 2.7 is omitted: no new entity, table, typed ID or repository.
@@ -175,7 +193,7 @@ No frontend, design-system component, Wireloom sequence, screenshot, or JWT outp
 **API & Documentation / Architecture & Documentation**
 
 - [X] T059 Verify response bodies/headers/errors/UUID references and all Admin Agent timestamp/URI presentations match confirmed `api/admin/openapi.yaml`; guide/runbook/deployment checklist retain upgrade guidance without obsolete microsecond/advancement promises. Record evidence in `specs/055-agent-external-id-upsert/tasks.md`; no end-user docs/api change is required (Principles IV, X, XIV).
-- [X] T060 Verify `adrs/045-unique-agent-external-id-upsert.md` contains the revised approved decision and actual new approval citation; `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` forwards to it and research/data-model/quickstart links and current status agree. Historical evidence may retain the former approval, not claim it covers this revision. Do not amend main-merged ADRs or implementation-phase spec/plan (Principle II).
+- [X] T060 Verify `adrs/045-unique-agent-external-id-reconcile.md` contains the revised approved decision and actual new approval citation; `specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md` forwards to it and research/data-model/quickstart links and current status agree. Historical evidence may retain the former approval, not claim it covers this revision. Do not amend main-merged ADRs or implementation-phase spec/plan (Principle II).
 
 **Configuration / Database & Persistence**
 

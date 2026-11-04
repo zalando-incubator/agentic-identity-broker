@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
-**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 No new entity, aggregate, table, typed ID, or configuration is introduced. The feature changes one
 invariant on the existing Agent aggregate, adds a domain operation, and adds one migration.
@@ -24,12 +24,13 @@ invariant on the existing Agent aggregate, adds a domain operation, and adds one
 | Rule | Where | Applies to | Failure |
 |---|---|---|---|
 | `ExternalID != nil` ⇒ `*ExternalID != ""` | `Agent.validateFields()` | create, update, reconcile, CIMD snapshot refresh | `ErrorKindValidation`, `external_id cannot be empty when provided` |
-| Selector: 1–255 code points, valid UTF-8, no NUL | `agents` service (shared with `ListByExternalID`) | reconcile, list filter | `ErrInvalidExternalID` |
+| External ID: 1–255 code points, valid UTF-8, no NUL | `storage.ValidateExternalID`, called by Agent validation and selector validation | all writes, reconcile, list filter | write `ErrorKindValidation`; selector `ErrInvalidExternalID` |
 | Body external ID equals selector when present; not `null`/empty | `agents` service | reconcile | `ErrInvalidExternalID`, `body external_id must equal the selector` / `external_id must not be null` / `external_id must be 1 to 255 characters` |
 | No other Agent holds the external ID | storage adapters | create, update, reconcile | `ErrorKindConflict` wrapping `ports.ErrExternalIDConflict`, `external_id is already held by another agent` |
 
-Nonempty external IDs on POST and ID-addressed PUT keep their existing length handling; only the
-empty string is newly rejected (spec Assumptions).
+All supplied External IDs use `storage.ValidateExternalID`: valid UTF-8, no NUL, 1–255 Unicode
+code points (approved remediation F3). Ordinary writes keep the `validation failed` envelope;
+selector errors use `ErrInvalidExternalID`.
 
 ## External ID (existing value object)
 
@@ -51,7 +52,12 @@ ID, Client ID, or Stable Identifier, and never selects an agent by those values.
 
 `client_id: null` never reaches the service; the handler rejects it as request-schema validation.
 
-`ReconcileOutcome`: `Created`, `Updated`, `Unchanged`.
+`ReconcileOutcome`: `ReconcileCreated`, `ReconcileUpdated`, `ReconcileUnchanged`.
+Errors return zero, not a successful no-op outcome.
+
+`Update` and existing-Agent reconciliation share one candidate-building and validation helper.
+Create and that helper enforce FR-019 permission-set service coverage in the domain, using the
+permission-set resolver injected by the builder (approved remediation F1/F2).
 
 ### Field policy (FR-012, Approved API-OMISSION)
 
@@ -99,10 +105,10 @@ whole-second `updated_at` that is not earlier than `created_at`.
 ```mermaid
 stateDiagram-v2
     [*] --> Absent
-    Absent --> Present: PUT (no holder) → Created, 201
-    Present --> Present: PUT equal definition → Unchanged, 200, no write
-    Present --> Present: PUT different definition → Updated, 200, updated_at = now
-    Absent --> Present: PUT loses create race → re-read → Unchanged/Updated, 200
+    Absent --> Present: PUT (no holder) → ReconcileCreated, 201
+    Present --> Present: PUT equal definition → ReconcileUnchanged, 200, no write
+    Present --> Present: PUT different definition → ReconcileUpdated, 200, updated_at = now
+    Absent --> Present: PUT loses external-ID create race → reread → ReconcileUnchanged/ReconcileUpdated, 200
 ```
 
 A rejected request (400/409) is not a transition and writes nothing.
@@ -111,7 +117,7 @@ A rejected request (400/409) is not a transition and writes nothing.
 
 | Port | Change |
 |---|---|
-| `ports.AgentRepository` | No new method. `ListByExternalID` returns zero or one agent after migration `046`. `Create`/`Update` document the external-ID conflict. |
+| `ports.AgentRepository` | `GetByExternalID` replaces `ListByExternalID`, returning one Agent or `ports.ErrNotFound`. `Create`/`Update` document the external-ID conflict. |
 | `ports.ErrExternalIDConflict` | New sentinel `errors.New("external_id already held by another agent")` in `internal/ports/storage.go`, wrapped by both adapters. |
 
 ## Persistence
@@ -121,8 +127,9 @@ A rejected request (400/409) is not a transition and writes nothing.
 `internal/adapters/storage/memory/agent_repository.go` adds `byExternalID map[id.ExternalID]id.AgentID`.
 `Create` and `Update` check it under the write lock before any mutation (external ID first, then
 canonical ID and client URIs); `Update` moves the entry when the value changes; `Delete` removes it.
-`ListByExternalID` uses this map under the read lock, then clones the selected agent from the
-primary map; an absent entry returns an empty array and a present entry a one-element array.
+`GetByExternalID` uses this map under the read lock, then clones the selected agent from the
+primary map; an absent entry returns not-found. The domain list-filter method converts not-found
+to `[]` for the unchanged HTTP list contract.
 It never scans the registry. Move/clear/delete/reuse tests verify lookup and index consistency.
 
 ### PostgreSQL schema — migration `046_unique_agent_external_id` (Approved, DB-046)

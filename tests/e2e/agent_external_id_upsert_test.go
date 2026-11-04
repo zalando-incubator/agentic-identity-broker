@@ -160,7 +160,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 						Expect(err).To(Succeed())
 						Expect(readObject(resp, http.StatusOK)).To(Equal(created))
 					}
-					found, err := st.Agents().ListByExternalID(ctx, selector)
+					found, err := externalIDMatches(ctx, st.Agents(), selector)
 					Expect(err).To(Succeed())
 					Expect(found).To(HaveLen(1))
 					Expect(found[0]).To(Equal(beforeReplay))
@@ -258,7 +258,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 						Expect(body["id"]).To(Equal(identity))
 					}
 					Expect(created).To(Equal(1))
-					found, err := st.Agents().ListByExternalID(ctx, key)
+					found, err := externalIDMatches(ctx, st.Agents(), key)
 					Expect(err).To(Succeed())
 					Expect(found).To(HaveLen(1))
 					Expect(found[0].ID.String()).To(Equal(identity))
@@ -280,7 +280,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 					})
 				}
 				wg.Wait()
-				found, err := st.Agents().ListByExternalID(ctx, key)
+				found, err := externalIDMatches(ctx, st.Agents(), key)
 				Expect(err).To(Succeed())
 				Expect(found).To(HaveLen(1))
 				Expect(found[0].Description).To(Equal(strings.Replace(found[0].DisplayName, "Definition", "Description", 1)))

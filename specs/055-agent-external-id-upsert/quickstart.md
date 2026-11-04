@@ -3,7 +3,7 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records the revised
+automated suites. [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records the revised
 decision approved by mjungsbluth on 2026-11-04:
 https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887.
 Current timestamp implementation and validation evidence is in [tasks.md](./tasks.md).

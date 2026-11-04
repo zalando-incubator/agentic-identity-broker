@@ -170,7 +170,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
-| 045 | `adrs/045-unique-agent-external-id-upsert.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 046, and Admin API 3.0.0 |
+| 045 | `adrs/045-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 046, and Admin API 3.0.0 |
 
 ## Domain Glossary
 
@@ -178,7 +178,7 @@ See Principle II in `.specify/memory/constitution.md`.
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
 | **External ID** | Optional nonempty, globally unique Agent governance identifier, matched literally; collection PUT reconciles by it without changing UUID identity. |
-| **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `Unchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
+| **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `ReconcileUnchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |

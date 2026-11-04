@@ -796,6 +796,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		app.ProviderService,
 		b.logger,
 		ov.multiAgentClient.Enabled,
+		app.PermissionSetService,
 	)
 
 	// Shared upstream JWKS adapter is required when token exchange, approval authentication,

@@ -71,9 +71,12 @@ func (m *MockAgentRepository) List(ctx context.Context) ([]*storage.Agent, error
 	return args.Get(0).([]*storage.Agent), args.Error(1)
 }
 
-func (m *MockAgentRepository) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+func (m *MockAgentRepository) GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error) {
 	args := m.Called(ctx, externalID)
-	return args.Get(0).([]*storage.Agent), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*storage.Agent), args.Error(1)
 }
 
 func (m *MockAgentRepository) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
@@ -103,18 +106,18 @@ func (m *MockAgentRepository) ExistsOtherWithClientID(ctx context.Context, clien
 //
 // MockProviderRepository and newTestEncryption are defined in services_handler_test.go
 // and are available here because both files share the same package admin.
-func newAgentsHandlerForTest(mockRepo *MockAgentRepository, mockServiceRepo *MockProviderRepository, logger *slog.Logger) *AgentsHandler {
+func newAgentsHandlerForTest(mockRepo *MockAgentRepository, mockServiceRepo *MockProviderRepository, logger *slog.Logger, coveredServices ...id.ServiceID) *AgentsHandler {
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
 	// Use multiAgentEnabled=true so existing CRUD tests don't need ExistsOtherWithClientID expectations.
 	// T033 tests use newAgentsHandlerForTestWithMultiAgent with explicit flags.
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true, handlerCoverage(coveredServices))
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
 // newAgentsHandlerForTestWithMultiAgent creates an AgentsHandler with the given multiAgentEnabled flag.
 func newAgentsHandlerForTestWithMultiAgent(mockRepo *MockAgentRepository, mockServiceRepo *MockProviderRepository, logger *slog.Logger, multiAgentEnabled bool) *AgentsHandler {
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled, nil)
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
@@ -315,8 +318,8 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 	t.Run("require_all_scopes round-trips in response", func(t *testing.T) {
 		mockRepo := new(MockAgentRepository)
 		mockServiceRepo := new(MockProviderRepository)
-		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 		serviceID := id.NewServiceID()
+		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger, serviceID)
 		service := &model.ThirdpartyOAuth2ProviderEntity{ID: serviceID, DisplayName: "Test Service"}
 
 		mockServiceRepo.On("Get", mock.Anything, serviceID).Return(service, nil)
@@ -1207,7 +1210,7 @@ func newAgentsHandlerForFR019Test(
 	logger *slog.Logger,
 ) *AgentsHandler {
 	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, svc, logger, true)
+	agentSvc := agents.NewService(mockRepo, svc, logger, true, mockPS)
 	return NewAgentsHandler(agentSvc, svc, mockPS, logger)
 }
 
@@ -1540,8 +1543,8 @@ func TestAgentsHandler_CanonicalCreateValidationAndReferenceResolution(t *testin
 	t.Run("creates with canonical metadata and a canonical service reference", func(t *testing.T) {
 		agentRepo := new(MockAgentRepository)
 		serviceRepo := new(MockProviderRepository)
-		handler := newAgentsHandlerForTest(agentRepo, serviceRepo, logger)
 		serviceID := id.NewServiceID()
+		handler := newAgentsHandlerForTest(agentRepo, serviceRepo, logger, serviceID)
 		canonicalID := "canonical-agent"
 		serviceCanonicalID := "canonical-service"
 		service := &model.ThirdpartyOAuth2ProviderEntity{ID: serviceID, DisplayName: "Service"}
@@ -1659,9 +1662,12 @@ func (v canonicalPermissionSetValidator) CanonicalIDs(_ context.Context, _ []id.
 	return v.canonicalIDs, nil
 }
 
-func newAgentsHandlerWithCanonicalPermissionSets(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, permissionSets PermissionSetValidator) *AgentsHandler {
+func newAgentsHandlerWithCanonicalPermissionSets(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, permissionSets interface {
+	PermissionSetValidator
+	agents.PermissionSetResolver
+}) *AgentsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
+	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true, permissionSets)
 	return NewAgentsHandler(agentService, providerService, permissionSets, slog.Default())
 }
 

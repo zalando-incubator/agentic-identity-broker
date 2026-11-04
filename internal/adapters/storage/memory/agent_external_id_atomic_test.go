@@ -67,11 +67,11 @@ func TestExternalIDOtherConflictsPreserveAllIndexes(t *testing.T) {
 				after, err := r.List(ctx)
 				require.NoError(t, err)
 				assert.ElementsMatch(t, before, after)
-				found, err := r.ListByExternalID(ctx, "unused")
+				found, err := r.externalIDMatches(ctx, "unused")
 				require.NoError(t, err)
 				assert.Empty(t, found)
 				for key, agentID := range external {
-					found, err = r.ListByExternalID(ctx, key)
+					found, err = r.externalIDMatches(ctx, key)
 					require.NoError(t, err)
 					require.Len(t, found, 1)
 					assert.Equal(t, agentID, found[0].ID)
@@ -98,7 +98,7 @@ func TestExternalIDConcurrentMixedWrites(t *testing.T) {
 				if !assert.NoError(t, r.Update(ctx, a)) {
 					return
 				}
-				found, err := r.ListByExternalID(ctx, moved)
+				found, err := r.externalIDMatches(ctx, moved)
 				if !assert.NoError(t, err) || !assert.Len(t, found, 1) {
 					return
 				}
@@ -122,7 +122,7 @@ func TestExternalIDConcurrentMixedWrites(t *testing.T) {
 	assert.Len(t, r.agents, 20)
 	assert.Len(t, r.byExternalID, 20)
 	for key, agentID := range r.byExternalID {
-		found, err := r.ListByExternalID(ctx, key)
+		found, err := r.externalIDMatches(ctx, key)
 		require.NoError(t, err)
 		require.Len(t, found, 1)
 		assert.Equal(t, agentID, found[0].ID)

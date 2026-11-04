@@ -1,6 +1,6 @@
-# ADR 045: Unique Agent External ID and Create-or-Update by External ID
+# ADR 045: Unique Agent External ID and Reconcile by External ID
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767)
 **Date**: 2026-10-30 (revised 2026-11-04)
 **Revision**: Withdraws the microsecond timestamp presentation and `+1 microsecond` advancement
 (API-TIMESTAMPS) on maintainer direction. Admin Agent timestamps keep the whole-second RFC 3339
@@ -28,12 +28,12 @@ that creates or updates by an alternate key.
 ## Decision
 
 1. **Invariant.** A set Agent External ID is globally unique by exact, case-sensitive equality and
-   is never the empty string. Any number of agents may have no external ID. Both storage adapters
+   is valid UTF-8 text with 1–255 Unicode code points and no NUL character. Any number of agents may have no external ID. Both storage adapters
    enforce the invariant atomically: PostgreSQL with the partial unique index
    `uq_agents_external_id` and check constraint `chk_agents_external_id_not_empty`, and the memory
    adapter with an index guarded by its write lock. Violations surface as
    `StorageError{Kind: Conflict}` wrapping `ports.ErrExternalIDConflict`.
-2. **Collection PUT as reconcile.** `PUT /api/agents?external_id={value}` is a create-or-update
+2. **Collection PUT as reconcile.** `PUT /api/agents?external_id={value}` reconciles the Agent definition
    keyed only by the external ID. It returns `201` with a UUID `Location` on creation, `200` on
    update, and `200` with no write when the effective definition is unchanged. It never selects by
    UUID, canonical ID, or client ID. The body is `AgentCreateRequest`. The update branch follows
@@ -47,10 +47,11 @@ that creates or updates by an alternate key.
    including `updated_at`. All Admin Agent timestamps keep the whole-second RFC 3339 presentation
    of Admin API 2.1.0. A change within the same second as the previous write may present an
    unchanged `updated_at`; it is not a revision or concurrent-write guarantee.
-3. **Race handling without locks.** The domain service reads by external ID, then calls the
-   existing repository `Create` or `Update`. If `Create` reports any conflict, the service re-reads
-   by external ID once and, when a holder now exists, continues on the update branch. No new
-   repository method or advisory lock is added. Without `If-Match`, concurrent different
+3. **Race handling without locks.** The domain service reads through `GetByExternalID`, which
+   returns one Agent or not-found, then calls repository `Create` or `Update`. Only a create
+   error wrapping `ports.ErrExternalIDConflict` triggers one reread; when a holder now exists,
+   reconciliation continues on the update branch. Other conflicts propagate without a reread.
+   No advisory lock is added. Without `If-Match`, concurrent different
    definitions are last-writer-wins.
 4. **Safe migration.** Migration `046` locks `agents`, inventories duplicate and empty external IDs,
    and fails before changing anything with a report covering both duplicate groups and empty-value
@@ -60,6 +61,17 @@ that creates or updates by an alternate key.
 5. **Versioning.** The new `409` and `400` outcomes on existing create and update operations are
    breaking. The Admin API moves from `2.1.0` to `3.0.0` on the existing routes, following
    ARCHITECTURE.md §5 and the feature 051 precedent.
+
+The Agent domain service uses one candidate-building and validation helper for ID-addressed
+updates and existing-Agent reconciliation. It owns keep-or-clear identity policy, entity validation,
+service reference validation, permission-set service coverage (FR-019), and client-ID uniqueness.
+Create enforces the same coverage rule. Handlers parse presence but do not decide field policy.
+All selectors and Agent writes share the full External ID format validator. Reconcile outcomes are
+`ReconcileCreated`, `ReconcileUpdated`, and `ReconcileUnchanged`; errors have no outcome.
+
+These F1–F5 revisions were approved in the [remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767);
+the [earlier approval](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887)
+continues to cover the unchanged API, migration, ordering, and timestamp decisions.
 
 ## Consequences
 

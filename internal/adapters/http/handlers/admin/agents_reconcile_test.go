@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -24,7 +26,7 @@ import (
 func TestReconcileHandlerCreate(t *testing.T) {
 	repo := new(MockAgentRepository)
 	handler := newAgentsHandlerForTest(repo, new(MockProviderRepository), slog.Default())
-	repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{}, nil).Once()
+	repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Once()
 	repo.On("Create", mock.Anything, mock.Anything).Return(nil).Once()
 	body := `{"display_name":"Research","description":"Definition","permission_sets":[{"permission_set_id":"` + id.NewPermissionSetID().String() + `","requirement_type":"optional"}],"client_uris":["https://agent.example/z.json","https://agent.example/a.json"]}`
 	w := httptest.NewRecorder()
@@ -104,10 +106,12 @@ func TestReconcileHandlerLogsValidationFailures(t *testing.T) {
 				ps.On("ValidateIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return(nil).Once()
 				ps.On("GetByIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return([]*storage.PermissionSet{{ID: permissionSetID}}, nil).Once()
 				handler.psService = ps
+				handler.agentService = agents.NewService(repo, handler.providerService, logger, true, ps)
+				repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Once()
 				t.Cleanup(func() { ps.AssertExpectations(t) })
 			}
 			if tc.lookup {
-				repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{}, nil).Once()
+				repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Once()
 			}
 			path := tc.path
 			if path == "" {

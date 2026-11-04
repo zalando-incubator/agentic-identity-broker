@@ -35,7 +35,7 @@ func TestReconcileLifecycle(t *testing.T) {
 		return result, nil
 	}
 	var logs bytes.Buffer
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
 	desired := desiredAgent()
 	desired.ClientURIs = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
 	original := desired.Copy()
@@ -44,7 +44,7 @@ func TestReconcileLifecycle(t *testing.T) {
 	finished := time.Now().UTC()
 	require.NoError(t, err)
 	require.NotNil(t, created)
-	assert.Equal(t, Created, outcome)
+	assert.Equal(t, ReconcileCreated, outcome)
 	assert.False(t, created.ID.IsZero())
 	assert.Equal(t, id.ExternalID("registry"), *created.ExternalID)
 	assert.Equal(t, created.CreatedAt, created.UpdatedAt)
@@ -60,7 +60,7 @@ func TestReconcileLifecycle(t *testing.T) {
 	for range 10 {
 		replay, result, err := svc.ReconcileByExternalID(ctx, "registry", desired, ReconcileInput{})
 		require.NoError(t, err)
-		assert.Equal(t, Unchanged, result)
+		assert.Equal(t, ReconcileUnchanged, result)
 		assert.Equal(t, created, replay)
 	}
 	assert.Zero(t, writes)
@@ -71,7 +71,7 @@ func TestReconcileLifecycle(t *testing.T) {
 	finished = time.Now().UTC()
 	require.NoError(t, err)
 	require.NotNil(t, changed)
-	assert.Equal(t, Updated, result)
+	assert.Equal(t, ReconcileUpdated, result)
 	assert.Equal(t, created.ID, changed.ID)
 	assert.Equal(t, created.CreatedAt, changed.CreatedAt)
 	assert.Equal(t, time.UTC, changed.UpdatedAt.Location())
@@ -108,7 +108,7 @@ func TestReconcileFieldPolicy(t *testing.T) {
 			finished := time.Now().UTC()
 			require.NoError(t, err)
 			require.NotNil(t, got)
-			assert.Equal(t, Updated, result)
+			assert.Equal(t, ReconcileUpdated, result)
 			if canonicalPresent {
 				assert.Nil(t, got.CanonicalID)
 			} else {
@@ -176,11 +176,11 @@ func TestReconcileReplayPreservesFractionalStoredTimes(t *testing.T) {
 				return nil
 			}
 			var logs bytes.Buffer
-			svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
 			for range 10 {
 				got, result, err := svc.ReconcileByExternalID(context.Background(), "registry", existing.Copy(), ReconcileInput{})
 				require.NoError(t, err)
-				assert.Equal(t, Unchanged, result)
+				assert.Equal(t, ReconcileUnchanged, result)
 				assert.Equal(t, original, got)
 			}
 			assert.Empty(t, logs.String())
@@ -347,11 +347,18 @@ func TestReconcileBoundedConflictReread(t *testing.T) {
 				repo.createFn = func(context.Context, *storage.Agent) error { creates++; return conflict }
 				repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return conflict }
 				got, result, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{})
+				if source != "external" {
+					require.ErrorIs(t, err, conflict)
+					require.Equal(t, 1, reads)
+					require.Equal(t, 1, creates)
+					require.Zero(t, updates)
+					return
+				}
 				if mode == "holder" {
 					require.NoError(t, err)
 					require.NotNil(t, got)
 					assert.Equal(t, holder.ID, got.ID)
-					assert.Equal(t, Unchanged, result)
+					assert.Equal(t, ReconcileUnchanged, result)
 				} else {
 					require.Error(t, err)
 				}

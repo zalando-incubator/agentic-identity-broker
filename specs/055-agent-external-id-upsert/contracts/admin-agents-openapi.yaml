@@ -14,7 +14,8 @@ info:
 
     - A set `external_id` identifies at most one agent. Comparison is exact and case-sensitive.
     - `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` when another
-      agent holds the resulting external ID, and `400 validation failed` for `""`.
+      agent holds the resulting external ID, and `400 validation failed` for empty, overlong,
+      invalid UTF-8 or NUL-containing values.
     - `PUT /api/agents?external_id=` creates or updates the agent holding that external ID.
     - `GET /api/agents?external_id=` returns `[]` or a one-element array.
     - Agents without an external ID remain unrestricted in number.
@@ -60,7 +61,8 @@ paths:
       x-change: |
         Adds to the existing description:
 
-        **external_id uniqueness**: When supplied, `external_id` must be non-empty and must not be
+        **external_id uniqueness**: When supplied, `external_id` must be valid UTF-8 text with
+        1–255 Unicode code points and no NUL character, and must not be
         held by another agent. An empty string returns `400 validation failed`. A held value
         returns `409 conflict` with message `external_id is already held by another agent`.
         Omit `external_id` or send `null` for agents without one; any number of agents may omit it.
@@ -80,7 +82,7 @@ paths:
           $ref: '#/components/responses/AgentConflictError'
 
     put:
-      summary: Create or update the agent holding an external ID
+      summary: Reconcile the agent holding an external ID
       description: |
         Idempotently reconcile the agent identified by an external governance ID.
 

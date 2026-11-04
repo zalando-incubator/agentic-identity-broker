@@ -281,15 +281,14 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	return result, nil
 }
 
-func (r *AgentRepository) ListByExternalID(_ context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+func (r *AgentRepository) GetByExternalID(_ context.Context, externalID id.ExternalID) (*storage.Agent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	agents := make([]*storage.Agent, 0, 1)
 	if agentID, ok := r.byExternalID[externalID]; ok {
-		agents = append(agents, r.agents[agentID].Copy())
+		return r.agents[agentID].Copy(), nil
 	}
-	return agents, nil
+	return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 }
 
 // GetByClientID retrieves an agent entity by client_id.

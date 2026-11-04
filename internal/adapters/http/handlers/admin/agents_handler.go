@@ -24,12 +24,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// PermissionSetValidator is an interface for validating permission set IDs
-// and resolving permission sets for coverage invariant checks.
-// Implemented by *permissionset.Service.
+// PermissionSetValidator resolves and validates permission-set references at the HTTP boundary.
 type PermissionSetValidator interface {
 	ValidateIDs(ctx context.Context, ids []id.PermissionSetID) error
-	GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error)
 	ResolveID(ctx context.Context, value string) (id.PermissionSetID, error)
 	CanonicalIDs(ctx context.Context, ids []id.PermissionSetID) (map[id.PermissionSetID]string, error)
 }
@@ -193,11 +190,6 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
-	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
-		h.logger.WarnContext(ctx, "service requirement coverage invariant violated", "error", errors.New("service requirements are not covered by permission sets"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-		return
-	}
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
 		h.logger.WarnContext(ctx, "client_uris validation failed", "error", errors.New("invalid client_uris"))
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
@@ -235,7 +227,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Preference-Applied", "reference-id=canonical")
 	}
 	status := http.StatusOK
-	if outcome == agents.Created {
+	if outcome == agents.ReconcileCreated {
 		status = http.StatusCreated
 		w.Header().Set("Location", "/api/agents/"+agent.ID.String())
 	}
@@ -265,13 +257,6 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Warn("invalid service requirements", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid service requirements", err.Error())
-		return
-	}
-
-	// FR-019: Validate that every SR service_id is covered by at least one PS ServiceScope
-	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
-		h.logger.Warn("FR-019 coverage invariant violated", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -394,13 +379,6 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FR-019: Validate that every SR service_id is covered by at least one PS ServiceScope
-	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
-		h.logger.Warn("FR-019 coverage invariant violated", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-		return
-	}
-
 	// Enforce client URI cardinality on admin writes. Validate() (called by the storage
 	// adapter on Update) skips cardinality to allow CIMD snapshot refreshes — so this
 	// explicit check is required for admin mutations.
@@ -411,20 +389,10 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent := req.toAgent(serviceReqs, permissionSets)
-	agent.ClearCanonicalID = canonicalIDPresent && bytes.Equal(rawFields["canonical_id"], []byte("null"))
 	agent.UpdatedAt = time.Now().UTC()
 
-	if !canonicalIDPresent {
-		existing, err := h.agentService.Get(ctx, parsedAgentID)
-		if err != nil {
-			h.handleDomainError(w, r, "GetAgent", err)
-			return
-		}
-		agent.CanonicalID = existing.CanonicalID
-	}
-
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
-	if err := h.agentService.Update(ctx, parsedAgentID, agent, clearClientID); err != nil {
+	if err := h.agentService.Update(ctx, parsedAgentID, agent, agents.UpdateInput{ClearClientID: clearClientID, CanonicalIDPresent: canonicalIDPresent}); err != nil {
 		h.handleDomainError(w, r, "UpdateAgent", err)
 		return
 	}
@@ -816,46 +784,4 @@ func clientIDToString(c *id.ClientID) *string {
 	}
 	s := c.String()
 	return &s
-}
-
-// validateServiceRequirementsCoverage enforces FR-019: every service_requirements[].service_id
-// must be covered by at least one permission set's ServiceScope.
-// Returns a descriptive error listing uncovered service IDs if the invariant is violated.
-func (h *AgentsHandler) validateServiceRequirementsCoverage(ctx context.Context, serviceReqs []storage.ServiceRequirement, psEntries []storage.AgentPermissionSetEntry) error {
-	if len(serviceReqs) == 0 || h.psService == nil {
-		return nil
-	}
-
-	// Resolve permission sets to get their ServiceScopes
-	psIDs := make([]id.PermissionSetID, len(psEntries))
-	for i, e := range psEntries {
-		psIDs[i] = e.PermissionSetID
-	}
-
-	resolvedSets, err := h.psService.GetByIDs(ctx, psIDs)
-	if err != nil {
-		return fmt.Errorf("failed to resolve permission sets for coverage check: %w", err)
-	}
-
-	// Collect all service IDs covered by any PS ServiceScope
-	coveredServiceIDs := make(map[id.ServiceID]bool)
-	for _, ps := range resolvedSets {
-		for _, ss := range ps.ServiceScopes {
-			coveredServiceIDs[ss.ServiceID] = true
-		}
-	}
-
-	// Check every SR service_id is covered
-	var uncoveredIDs []string
-	for _, sr := range serviceReqs {
-		if !coveredServiceIDs[sr.ServiceID] {
-			uncoveredIDs = append(uncoveredIDs, sr.ServiceID.String())
-		}
-	}
-
-	if len(uncoveredIDs) > 0 {
-		return fmt.Errorf("service_requirements reference services not covered by any permission set: %v", uncoveredIDs)
-	}
-
-	return nil
 }

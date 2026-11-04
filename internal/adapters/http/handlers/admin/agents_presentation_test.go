@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -52,7 +53,7 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 					path += "?external_id=registry"
 					call = h.ReconcileAgent
 					status = http.StatusCreated
-					repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{}, nil).Once()
+					repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Once()
 					repo.On("Create", mock.Anything, mock.Anything).Return(nil).Once()
 				case "PUT update", "PUT replay":
 					method = http.MethodPut
@@ -60,10 +61,9 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 					call = h.ReconcileAgent
 					if operation == "PUT update" {
 						body = strings.Replace(body, "Research", "Changed", 1)
-						repo.On("Get", mock.Anything, a.ID).Return(a.Copy(), nil)
 						repo.On("Update", mock.Anything, mock.Anything).Return(nil).Once()
 					}
-					repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{a.Copy()}, nil).Once()
+					repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(a.Copy(), nil).Once()
 				case "GET ID":
 					path += "/" + a.ID.String()
 					call = h.GetAgent
@@ -72,7 +72,7 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 					repo.On("List", mock.Anything).Return([]*storage.Agent{a.Copy()}, nil).Once()
 				case "GET filter":
 					path += "?external_id=registry"
-					repo.On("ListByExternalID", mock.Anything, id.ExternalID("registry")).Return([]*storage.Agent{a.Copy()}, nil).Once()
+					repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(a.Copy(), nil).Once()
 				}
 				req := httptest.NewRequest(method, path, strings.NewReader(body))
 				req.Header.Set("Prefer", prefer)

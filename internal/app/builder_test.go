@@ -894,7 +894,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 
 func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 	newService := func(repo ports.AgentRepository) *agentsservice.Service {
-		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false)
+		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false, nil)
 	}
 
 	t.Run("resolves upstream client ID before any UUID fallback", func(t *testing.T) {
@@ -982,7 +982,7 @@ func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false)
+			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false, nil)
 			resolve := newTokenExchangeAgentIDResolver(svc, time.Second)
 			assertFailure := func(err error) {
 				t.Helper()

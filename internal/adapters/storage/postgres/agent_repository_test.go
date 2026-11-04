@@ -5,11 +5,13 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -804,11 +806,39 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 }
 
-func TestAgentRepository_ListByExternalID(t *testing.T) {
+func TestAgentRepository_ExternalIDFormat(t *testing.T) {
 	adapter, cleanup := setupAgentTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
 	repo := NewAgentRepository(adapter)
+	valid := &storage.Agent{DisplayName: "Valid", Description: "Definition", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	attachTestPermissionSet(t, adapter, valid)
+	require.NoError(t, repo.Create(ctx, valid))
+	before, err := repo.Get(ctx, valid.ID)
+	require.NoError(t, err)
+	for _, value := range []id.ExternalID{"bad\x00id", "\xff", id.ExternalID(strings.Repeat("界", 256))} {
+		t.Run(string(value), func(t *testing.T) {
+			candidate := valid.Copy()
+			candidate.ID = id.NewAgentID()
+			candidate.ExternalID = &value
+			require.Error(t, repo.Create(ctx, candidate))
+			candidate.ID = valid.ID
+			require.Error(t, repo.Update(ctx, candidate))
+			actual, err := repo.Get(ctx, valid.ID)
+			require.NoError(t, err)
+			require.Equal(t, before, actual)
+		})
+	}
+}
+
+func TestAgentRepository_GetByExternalID(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewAgentRepository(adapter)
+	missing, err := repo.GetByExternalID(ctx, "missing-registry-entry")
+	require.Nil(t, missing)
+	require.ErrorIs(t, err, ports.ErrNotFound)
 
 	newAgent := func(t *testing.T, name string, externalID *id.ExternalID) *storage.Agent {
 		t.Helper()
@@ -822,7 +852,7 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 	}
 	check := func(t *testing.T, value id.ExternalID, expected ...id.AgentID) []*storage.Agent {
 		t.Helper()
-		found, err := repo.ListByExternalID(ctx, value)
+		found, err := repo.externalIDMatches(ctx, value)
 		require.NoError(t, err)
 		require.NotNil(t, found)
 		ids := make([]id.AgentID, 0, len(found))

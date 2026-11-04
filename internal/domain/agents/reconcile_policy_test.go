@@ -62,7 +62,9 @@ func TestReconcileSuppliedFieldsOnBothBranches(t *testing.T) {
 				desired := desiredAgent()
 				tc.set(desired)
 				before := desired.Copy()
-				got, outcome, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{CanonicalIDPresent: true})
+				svc := newTestService(repo, false)
+				svc.permissionSets = coveredPermissionSets(desired.ServiceRequirements)
+				got, outcome, err := svc.ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{CanonicalIDPresent: true})
 				require.NoError(t, err)
 				require.NotNil(t, got)
 				assert.Equal(t, before, desired)
@@ -81,11 +83,11 @@ func TestReconcileSuppliedFieldsOnBothBranches(t *testing.T) {
 				assert.Equal(t, desired.AllowedScopes, got.AllowedScopes)
 				assert.Equal(t, desired.ClientURIs, got.ClientURIs)
 				if exists {
-					assert.Equal(t, Updated, outcome)
+					assert.Equal(t, ReconcileUpdated, outcome)
 					assert.Equal(t, existing.ID, got.ID)
 					assert.Equal(t, existing.CreatedAt, got.CreatedAt)
 				} else {
-					assert.Equal(t, Created, outcome)
+					assert.Equal(t, ReconcileCreated, outcome)
 					assert.NotEqual(t, existing.ID, got.ID)
 				}
 			})
@@ -107,7 +109,7 @@ func TestReconcileLiteralSelectorBoundaries(t *testing.T) {
 			desired.ExternalID = ptr.To(key)
 			got, outcome, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), key, desired, ReconcileInput{ExternalIDPresent: true})
 			require.NoError(t, err)
-			assert.Equal(t, Created, outcome)
+			assert.Equal(t, ReconcileCreated, outcome)
 			assert.Equal(t, key, *got.ExternalID)
 			assert.Equal(t, 1, reads)
 		})

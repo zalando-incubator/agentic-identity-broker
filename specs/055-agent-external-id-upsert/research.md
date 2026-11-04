@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
-**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-reconcile.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in
@@ -38,12 +38,10 @@ client-ID, and client-URI conflicts without parsing messages (ADR 004 error wrap
 
 ## R2 — Repository port shape
 
-**Decision**: Add no repository method. The reconcile operation reads with the existing
-`AgentRepository.ListByExternalID`, then writes with the existing `Create` or `Update`. After the
-migration, `ListByExternalID` returns zero or one agent. Memory resolves `byExternalID` under the
-read lock and clones the selected primary-map agent instead of scanning the registry; PostgreSQL
-uses the unique external-ID index. More than one result is an invariant
-breach, which the service reports as an internal error and never resolves by choosing a survivor.
+**Decision (approved remediation F4)**: Replace the list-shaped port with
+`AgentRepository.GetByExternalID`, returning one Agent or not-found. Memory resolves `byExternalID`
+under the read lock and clones the selected Agent; PostgreSQL uses the unique external-ID index.
+The domain list-filter method retains the HTTP zero-or-one array contract.
 
 **Rationale**: ADR 004 and Principle IX cap repository interfaces. `AgentRepository` already
 exceeds the guideline, and a dedicated upsert method would duplicate the validated
@@ -55,8 +53,8 @@ retry (R3) gives the required race behavior on both adapters with the existing m
 - `UpsertByExternalID` repository method using `INSERT … ON CONFLICT (external_id) DO UPDATE`:
   cannot express the domain field policy (FR-012), the no-op rule (FR-008), or client-ID
   uniqueness, which lives in the service; it would also need a parallel memory implementation.
-- A new `AgentExternalIDRepository` port with `GetByExternalID`: unnecessary, because the list
-  method already returns the same data.
+- A separate `AgentExternalIDRepository` interface: not needed; replace the method on the
+  existing Agent repository without adding an interface or duplicating persistence transactions.
 
 ## R3 — Reconcile algorithm and race handling
 
@@ -64,10 +62,10 @@ retry (R3) gives the required race behavior on both adapters with the existing m
 
 1. Validate the selector with the feature 054 rules (1–255 code points, valid UTF-8, no NUL) and
    the body external ID (omitted → selector; `null`, empty, or different → `ErrInvalidExternalID`).
-2. `ListByExternalID(selector)`.
+2. `GetByExternalID(selector)`.
 3. **No match**: build the creation definition (FR-012 creation column), validate service
    requirements and client-ID uniqueness as `Create` does, and call `repo.Create`. On
-   `ErrorKindConflict` of any kind, re-read by selector once. If an agent now holds the selector,
+   an error wrapping `ports.ErrExternalIDConflict`, re-read by selector once. If an agent now holds the selector,
    continue with step 4 against it; otherwise return the original conflict.
 4. **One match**: apply the FR-012 update policy to obtain the effective definition. If it equals
    the stored definition (R4), return the stored agent with outcome `unchanged` and write nothing.
@@ -76,11 +74,9 @@ retry (R3) gives the required race behavior on both adapters with the existing m
 5. Return the agent and an outcome (`created`, `updated`, `unchanged`). The handler maps `created`
    to `201` + `Location` and the others to `200`.
 
-Step 3 retries on **any** conflict, not only the external-ID sentinel. Two identical first calls
-both carry the same `canonical_id`, and PostgreSQL may report the canonical index before the
-external-ID index. A single re-read makes the loser fall through to the update or no-op branch, so
-US1.4 yields exactly one `201` and one `200`. Retry is bounded to one attempt; a persistent
-conflict after re-read is a genuine `409` (FR-010).
+Step 3 retries only the external-ID sentinel under approved remediation F4. Canonical/client
+conflicts propagate directly instead of being treated as an external-ID race. Retry remains
+bounded to one reread; persistent conflicts return `409` (FR-010).
 
 **Rationale**: Satisfies FR-005, FR-008, FR-009, FR-013, and SC-003 on both adapters without
 locking or a new port. Each write is a single existing transaction, so a definition is never

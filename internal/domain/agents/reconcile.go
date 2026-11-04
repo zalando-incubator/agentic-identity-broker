@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // ReconcileInput carries JSON presence independently of nullable values.
@@ -20,30 +21,27 @@ type ReconcileInput struct {
 type ReconcileOutcome int
 
 const (
-	Created ReconcileOutcome = iota
-	Updated
-	Unchanged
+	ReconcileCreated ReconcileOutcome = iota + 1
+	ReconcileUpdated
+	ReconcileUnchanged
 )
 
 func (s *Service) ReconcileByExternalID(ctx context.Context, selector id.ExternalID, desired *storage.Agent, input ReconcileInput) (*storage.Agent, ReconcileOutcome, error) {
 	if err := validateExternalID(selector); err != nil {
-		return nil, Unchanged, err
+		return nil, 0, err
 	}
 	if input.ExternalIDNull {
-		return nil, Unchanged, invalidExternalID("external_id must not be null")
+		return nil, 0, invalidExternalID("external_id must not be null")
 	}
 	if input.ExternalIDPresent && (desired.ExternalID == nil || *desired.ExternalID != selector) {
-		return nil, Unchanged, invalidExternalID("body external_id must equal the selector")
+		return nil, 0, invalidExternalID("body external_id must equal the selector")
 	}
-	holders, err := s.repo.ListByExternalID(ctx, selector)
-	if err != nil {
-		return nil, Unchanged, err
+	existing, err := s.repo.GetByExternalID(ctx, selector)
+	if err == nil {
+		return s.reconcileExisting(ctx, existing, desired, selector, input)
 	}
-	if len(holders) > 1 {
-		return nil, Unchanged, ambiguousExternalID()
-	}
-	if len(holders) == 1 {
-		return s.reconcileExisting(ctx, holders[0], desired, selector, input)
+	if !errors.Is(err, ports.ErrNotFound) {
+		return nil, 0, err
 	}
 	candidate := desired.Copy()
 	candidate.ID = id.NewAgentID()
@@ -51,61 +49,37 @@ func (s *Service) ReconcileByExternalID(ctx context.Context, selector id.Externa
 	candidate.CreatedAt = time.Now().UTC()
 	candidate.UpdatedAt = candidate.CreatedAt
 	if err := s.Create(ctx, candidate); err == nil {
-		return candidate, Created, nil
+		return candidate, ReconcileCreated, nil
 	} else {
-		var conflict *storage.StorageError
-		if !errors.As(err, &conflict) || conflict.Kind != storage.ErrorKindConflict {
-			return nil, Unchanged, err
+		if !errors.Is(err, ports.ErrExternalIDConflict) {
+			return nil, 0, err
 		}
-		holders, lookupErr := s.repo.ListByExternalID(ctx, selector)
+		holder, lookupErr := s.repo.GetByExternalID(ctx, selector)
+		if errors.Is(lookupErr, ports.ErrNotFound) {
+			return nil, 0, err
+		}
 		if lookupErr != nil {
-			return nil, Unchanged, lookupErr
+			return nil, 0, lookupErr
 		}
-		if len(holders) > 1 {
-			return nil, Unchanged, ambiguousExternalID()
-		}
-		if len(holders) == 0 {
-			return nil, Unchanged, err
-		}
-		return s.reconcileExisting(ctx, holders[0], desired, selector, input)
+		return s.reconcileExisting(ctx, holder, desired, selector, input)
 	}
-}
-
-func ambiguousExternalID() error {
-	return storage.NewStorageError("ReconcileAgent", storage.ErrorKindUnknown, nil, "external_id resolves to multiple agents")
 }
 
 func (s *Service) reconcileExisting(ctx context.Context, existing, desired *storage.Agent, selector id.ExternalID, input ReconcileInput) (*storage.Agent, ReconcileOutcome, error) {
 	candidate := desired.Copy()
-	candidate.ID = existing.ID
 	candidate.ExternalID = &selector
-	candidate.CreatedAt = existing.CreatedAt
-	if !input.CanonicalIDPresent {
-		candidate.CanonicalID = existing.Copy().CanonicalID
-	}
-	candidate.ClearCanonicalID = input.CanonicalIDPresent && desired.CanonicalID == nil
-	if candidate.ClientID == nil {
-		candidate.ClientID = existing.Copy().ClientID
-	}
-	if err := candidate.Validate(); err != nil {
-		return nil, Unchanged, storage.NewStorageError("ReconcileAgent", storage.ErrorKindValidation, err, err.Error())
-	}
-	if err := s.providerService.ValidateServiceRequirements(ctx, candidate.ServiceRequirements); err != nil {
-		return nil, Unchanged, err
-	}
-	if !s.multiAgentEnabled && candidate.ClientID != nil {
-		if err := s.checkClientIDUniqueness(ctx, *candidate.ClientID, &existing.ID); err != nil {
-			return nil, Unchanged, err
-		}
+	candidate, err := s.updateCandidate(ctx, existing, candidate, UpdateInput{CanonicalIDPresent: input.CanonicalIDPresent})
+	if err != nil {
+		return nil, 0, err
 	}
 	if sameDefinition(existing, candidate) {
-		return existing.Copy(), Unchanged, nil
+		return existing.Copy(), ReconcileUnchanged, nil
 	}
 	candidate.UpdatedAt = time.Now().UTC()
-	if err := s.Update(ctx, existing.ID, candidate, false); err != nil {
-		return nil, Unchanged, err
+	if err := s.persistUpdate(ctx, existing, candidate); err != nil {
+		return nil, 0, err
 	}
-	return candidate, Updated, nil
+	return candidate, ReconcileUpdated, nil
 }
 
 func samePointer[T comparable](a, b *T) bool {

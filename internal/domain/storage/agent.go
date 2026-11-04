@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
@@ -67,8 +68,13 @@ func (a *Agent) validateFields() error {
 		return err
 	}
 
-	if a.ExternalID != nil && *a.ExternalID == "" {
-		return errors.New("external_id cannot be empty when provided")
+	if a.ExternalID != nil {
+		if *a.ExternalID == "" {
+			return errors.New("external_id cannot be empty when provided")
+		}
+		if err := ValidateExternalID(*a.ExternalID); err != nil {
+			return err
+		}
 	}
 
 	if a.ClientID != nil && strings.TrimSpace(string(*a.ClientID)) == "" {
@@ -120,6 +126,30 @@ func (a *Agent) validateFields() error {
 		return fmt.Errorf("permission_sets validation failed: %w", err)
 	}
 
+	return nil
+}
+
+// ValidateExternalID defines the format shared by Agent writes and exact-match selectors.
+func ValidateExternalID(externalID id.ExternalID) error {
+	value := string(externalID)
+	count := 0
+	for len(value) > 0 {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 1 {
+			return errors.New("external_id must be valid UTF-8 text")
+		}
+		if r == 0 {
+			return errors.New("external_id must not contain a NUL character")
+		}
+		count++
+		if count > 255 {
+			return errors.New("external_id must be 1 to 255 characters")
+		}
+		value = value[size:]
+	}
+	if count == 0 {
+		return errors.New("external_id must be 1 to 255 characters")
+	}
 	return nil
 }
 

@@ -548,7 +548,7 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 }
 
-func TestAgentRepository_ListByExternalID(t *testing.T) {
+func TestAgentRepository_externalIDMatches(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("exact matches only, including literal identifiers", func(t *testing.T) {
@@ -568,7 +568,7 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 
 		check := func(value id.ExternalID, expected ...id.AgentID) {
 			t.Helper()
-			found, err := repo.ListByExternalID(ctx, value)
+			found, err := repo.externalIDMatches(ctx, value)
 			require.NoError(t, err)
 			require.NotNil(t, found)
 			ids := make([]id.AgentID, 0, len(found))
@@ -600,7 +600,7 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
 			agent := &storage.Agent{ExternalID: &value, DisplayName: string(value), Description: "Literal identifier", PermissionSets: testPermissionSets()}
 			require.NoError(t, repo.Create(ctx, agent))
-			found, err := repo.ListByExternalID(ctx, value)
+			found, err := repo.externalIDMatches(ctx, value)
 			require.NoError(t, err)
 			require.Len(t, found, 1)
 			assert.Equal(t, agent.ID, found[0].ID)
@@ -617,11 +617,11 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 			ExternalID: &oldID, CanonicalID: &canonical, DisplayName: "Original", Description: "Lookup copy",
 			ClientURIs: []string{uri}, PermissionSets: testPermissionSets(),
 		}
-		before, err := repo.ListByExternalID(ctx, oldID)
+		before, err := repo.externalIDMatches(ctx, oldID)
 		require.NoError(t, err)
 		assert.Empty(t, before)
 		require.NoError(t, repo.Create(ctx, agent))
-		found, err := repo.ListByExternalID(ctx, oldID)
+		found, err := repo.externalIDMatches(ctx, oldID)
 		require.NoError(t, err)
 		require.Len(t, found, 1)
 		require.NotNil(t, found[0].ExternalID)
@@ -636,7 +636,7 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		found[0].ClientURIs[0] = "https://example.com/changed.json"
 		found[0].PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
 
-		again, err := repo.ListByExternalID(ctx, oldID)
+		again, err := repo.externalIDMatches(ctx, oldID)
 		require.NoError(t, err)
 		require.Len(t, again, 1)
 		require.NotNil(t, again[0].ExternalID)
@@ -650,10 +650,10 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 
 		agent.ExternalID = &newID
 		require.NoError(t, repo.Update(ctx, agent))
-		oldMatches, err := repo.ListByExternalID(ctx, oldID)
+		oldMatches, err := repo.externalIDMatches(ctx, oldID)
 		require.NoError(t, err)
 		assert.Empty(t, oldMatches)
-		newMatches, err := repo.ListByExternalID(ctx, newID)
+		newMatches, err := repo.externalIDMatches(ctx, newID)
 		require.NoError(t, err)
 		require.Len(t, newMatches, 1)
 		assert.Equal(t, agent.ID, newMatches[0].ID)
@@ -661,7 +661,7 @@ func TestAgentRepository_ListByExternalID(t *testing.T) {
 		deleted, err := repo.Delete(ctx, agent.ID)
 		require.NoError(t, err)
 		require.True(t, deleted)
-		newMatches, err = repo.ListByExternalID(ctx, newID)
+		newMatches, err = repo.externalIDMatches(ctx, newID)
 		require.NoError(t, err)
 		assert.Empty(t, newMatches)
 	})

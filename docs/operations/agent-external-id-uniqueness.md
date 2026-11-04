@@ -14,7 +14,7 @@ and unique by exact, case-sensitive equality. Multiple agents may have no extern
 Existing POST and ID-addressed PUT reject duplicates with `409 conflict` and empty strings with
 `400 validation failed`. Filtered GET returns zero or one Agent in an array. Consumers must also
 accept byte-sorted `client_uris`. Agent timestamps retain whole-second UTC RFC 3339
-presentation; two changes within one second may display the same `updated_at`. [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-unique-agent-external-id-upsert.md) records approval.
+presentation; two changes within one second may display the same `updated_at`. [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-unique-agent-external-id-reconcile.md) records approval.
 
 ## 1. Prepare and coordinate writers
 
