@@ -320,6 +320,115 @@ func TestHelmTemplate_DCRClientName(t *testing.T) {
 	})
 }
 
+func agentSubjectHelmRule() map[string]any {
+	return map[string]any{
+		"name": "self-agent",
+		"roles": map[string]any{
+			"client_assertion": map[string]any{"expected_audience": "https://broker.example.com/impersonation", "principal_expression": "client_assertion.sub"},
+			"actor":            map[string]any{"expected_audience": "https://broker.example.com/impersonation", "principal_expression": "actor_token.sub"},
+			"subject":          map[string]any{"verification": "jwks", "expected_audience": "https://broker.example.com/impersonation", "principal_expression": "subject_token.sub"},
+		},
+		"trusted_issuers": []any{map[string]any{
+			"issuer_uri": "https://idp.example.com", "jwks_uri": "https://idp.example.com/jwks.json",
+			"allowed_algorithms": []string{"ES256"}, "signs_roles": []string{"client_assertion", "actor", "subject"},
+		}},
+		"authorization": map[string]any{"type": "cel", "cel": map[string]any{"expression": "subject_token.sub == request.agent_id"}},
+	}
+}
+
+func TestHelmAgentSubjectCategories(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   any
+		omitted bool
+		valid   bool
+	}{
+		{"omitted", nil, true, true},
+		{"human", []string{"human"}, false, true},
+		{"agent", []string{"agent"}, false, true},
+		{"dual", []string{"human", "agent"}, false, true},
+		{"reversed dual", []string{"agent", "human"}, false, true},
+		{"empty", []string{}, false, false},
+		{"unknown", []string{"machine"}, false, false},
+		{"case", []string{"Human"}, false, false},
+		{"null", nil, false, false},
+		{"scalar", "human", false, false},
+		{"mapping", map[string]any{"human": true}, false, false},
+		{"non-string", []any{"agent", 1}, false, false},
+		{"null entry", []any{nil}, false, false},
+		{"duplicate", []string{"human", "human"}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := agentSubjectHelmRule()
+			if !tc.omitted {
+				rule["allowed_subject_categories"] = tc.value
+			}
+			values := map[string]any{"broker": map[string]any{"oauth2AuthorizationServer": map[string]any{
+				"impersonation": map[string]any{"audience_prefix": "https://broker.example.com/impersonation", "rules": []any{rule}},
+			}}}
+			output, err := runHelmTemplate(t, "-f", credentialHelmValuesFile(t, values))
+			if !tc.valid {
+				require.Error(t, err, output)
+				require.Contains(t, output, "allowed_subject_categories")
+				return
+			}
+			require.NoError(t, err, output)
+			configuration, _, _ := credentialHelmConfiguration(t, output)
+			oauth := configuration["oauth2_authorization_server"].(map[string]any)
+			impersonation := oauth["impersonation"].(map[string]any)
+			rendered := impersonation["rules"].([]any)[0].(map[string]any)
+			encoded, err := yaml.Marshal(rule)
+			require.NoError(t, err)
+			var expected map[string]any
+			require.NoError(t, yaml.Unmarshal(encoded, &expected))
+			require.Equal(t, expected, rendered, "the impersonation subtree must render verbatim")
+		})
+	}
+}
+
+func TestHelmAgentSubjectExpression(t *testing.T) {
+	const expression = "has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id"
+	cases := []struct {
+		name    string
+		value   any
+		omitted bool
+		valid   bool
+	}{
+		{"omitted", nil, true, true},
+		{"empty", "", false, true},
+		{"guarded expression", expression, false, true},
+		{"replacing expression", "false", false, true},
+		{"boolean", false, false, false},
+		{"number", 1, false, false},
+		{"array", []string{"false"}, false, false},
+		{"mapping", map[string]any{"expression": "false"}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			claimExtraction := map[string]any{}
+			if !tc.omitted {
+				claimExtraction["agentSubjectExpression"] = tc.value
+			}
+			values := map[string]any{"broker": map[string]any{"tokenExchange": map[string]any{"claimExtraction": claimExtraction}}}
+			output, err := runHelmTemplate(t, "-f", credentialHelmValuesFile(t, values))
+			if !tc.valid {
+				require.Error(t, err, output)
+				require.Contains(t, output, "agentSubjectExpression")
+				return
+			}
+			require.NoError(t, err, output)
+			configuration, _, _ := credentialHelmConfiguration(t, output)
+			extraction := configuration["token_exchange"].(map[string]any)["claim_extraction"].(map[string]any)
+			if tc.omitted || tc.value == "" {
+				require.NotContains(t, extraction, "agent_subject_expression")
+			} else {
+				require.Equal(t, tc.value, extraction["agent_subject_expression"])
+			}
+		})
+	}
+}
+
 // sessionSweepArgs enables the chart-managed sweep with a literal operator header, the
 // minimum identity the chart accepts, in the "identity" namespace with an admin public URL.
 func sessionSweepArgs(extra ...string) []string {

@@ -847,6 +847,17 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("detector-only configuration requires an external trust anchor", func(t *testing.T) {
+		cfg := baseConfig(jweKey)
+		cfg.OAuth2AuthServer = ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}}
+		cfg.TokenExchange.ClaimExtraction.AgentSubjectExpression = "subject_token.sub"
+		built, err := NewBuilder().WithConfig(cfg).WithStorage(newStorage(t)).WithLogger(logger).Build()
+		if built != nil {
+			t.Cleanup(func() { assert.NoError(t, built.Shutdown(context.Background())) })
+		}
+		require.ErrorContains(t, err, "no client-assertion trust anchor is set")
+	})
+
 	t.Run("local mode with token exchange requires an external trust anchor", func(t *testing.T) {
 		cfg := baseConfig(jweKey)
 		cfg.OAuth2AuthServer = ports.OAuth2AuthServerConfig{

@@ -35,6 +35,34 @@ func validImpersonationConfig() *ports.ImpersonationConfig {
 	}
 }
 
+func TestValidateImpersonationSubjectCategories(t *testing.T) {
+	for _, tc := range []struct {
+		categories []string
+		valid      bool
+	}{
+		{nil, true}, {[]string{"human"}, true}, {[]string{"agent"}, true},
+		{[]string{"human", "agent"}, true}, {[]string{"agent", "human"}, true},
+		{[]string{}, false}, {[]string{"machine"}, false}, {[]string{"Human"}, false},
+		{[]string{"agent", "agent"}, false}, {[]string{"human", "agent", "human"}, false},
+	} {
+		t.Run(strings.Join(tc.categories, ","), func(t *testing.T) {
+			cfg := validImpersonationConfig()
+			cfg.Rules[0].AllowedSubjectCategories = tc.categories
+			err := validateImpersonationConfig(cfg, servermode.Local, &ports.SecurityConfig{})
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "oauth2_authorization_server.impersonation.rules[0].allowed_subject_categories")
+			}
+		})
+	}
+	cfg := validUnverifiedImpersonationConfig()
+	cfg.Rules[0].AllowedSubjectCategories = []string{"agent"}
+	cfg.Rules[0].Authorization.CEL.Expression = "subject_token.sub != ''"
+	require.NoError(t, validateImpersonationConfig(cfg, servermode.Local, &ports.SecurityConfig{}))
+}
+
 func TestValidateImpersonationConfig_Valid(t *testing.T) {
 	err := validateImpersonationConfig(validImpersonationConfig(), servermode.Local, &ports.SecurityConfig{})
 	require.NoError(t, err)

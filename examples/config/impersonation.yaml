@@ -94,6 +94,9 @@ oauth2_authorization_server:
 
       # -------- Rule 1: production gateway impersonation --------
       - name: "internal-gateway-prod" # CR-003: unique, operator-facing name.
+        allowed_subject_categories: [human] # Omission also means human-only.
+        # Signed exact-target sub is agent-category and is ineligible here even
+        # with active same-text delegation. See impersonation-agent-subject.yaml.
 
         # CR-003: role semantics keyed by role name (a role cannot be declared
         # twice); client_assertion, actor, and subject are all required. Field
