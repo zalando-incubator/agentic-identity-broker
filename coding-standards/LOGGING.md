@@ -167,7 +167,7 @@ These data classes are prohibited at all levels, including `Debug`.
 | URL (CIMD `client_id`, `redirect_uri`, resource URI) | Scheme, host, and path only. If a registered ID exists, log the ID (`service_id`, `agent_id`), not the URL. |
 | Error from an external system | Typed metadata (`slog.LogValuer`), an enumerated `error_kind`, or an allowlisted code (section 4) |
 | User-Agent | `SecurityContext.UserAgent` or `security.TruncateUserAgent` |
-| Request method, path, client IP | `sanitizeLogValue`. Take values from `SecurityContext`. |
+| Request method, path, client IP | `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`). Take values from `SecurityContext`. |
 | Caller-supplied header (for example `X-Request-ID`) | Validate the format and limit the length before you log it. If it is not valid, generate a new value. |
 | JWT | Header and claim metadata only: `kid`, `alg`, `iss`, `aud`, `jti`, `exp`, validation failure reason |
 | JWK Set | `kid` list or diff (`DiffKeyIDs()`), not the set |
@@ -188,8 +188,9 @@ These data classes are prohibited at all levels, including `Debug`.
 ## 7. Untrusted Input
 
 - Put untrusted values only in attributes. Do not put them in the message.
-- Escape line breaks with `sanitizeLogValue` and limit the length of raw header and path values.
+- Escape line breaks with `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`) and limit the length of raw header and path values.
 - Log a classification, not the value. For example, log `reason=invalid_redirect_uri`, not the rejected URI. If an operator needs the value for diagnosis, log the derived form from section 6.2.
+- The `log/slog` JSON and text handlers escape line breaks in the message and in every attribute value, so a record written through the injected logger cannot forge a log line. For this reason `.github/workflows/codeql.yml` excludes the CodeQL query `go/log-injection`, which does not model that escaping. The `forbidigo` linter (`.golangci.yml`) fails a call to `fmt.Print*`, a `log` package function, or a `*log.Logger` method outside `cmd/` and `tools/`, so log output cannot bypass slog.
 
 ## 8. Audit Records
 
@@ -206,6 +207,7 @@ Audit records are structured operational logs. They are not a durable ledger.
 - Inject a `slog.NewJSONHandler(&buf, ...)` logger through the production constructor. Do not add test-only APIs.
 - For each path that handles a credential, assert that the buffer does not contain the credential under test. Examples: `internal/extproc/server/exchange_safety_test.go`, `internal/extproc/authorization/authorizer_safety_test.go`.
 - For each path that logs a principal, assert that the attribute value is the policy output.
+- `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal`. It checks key-value arguments, key-value pairs in `[]any` literals and in `append` calls on a `[]any` (lists spread with `args...`), and `slog.Attr` literals, where the value must be `slog.AnyValue` of an `id.Principal` (section 5.1, rules 2 and 5).
 - Assert `event` and the key attributes. Do not assert message text.
 
 ## 10. Review Checklist

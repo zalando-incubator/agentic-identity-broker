@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -81,7 +82,7 @@ func TestJWXAuthenticator_InjectedKeySetMakesNoRequest(t *testing.T) {
 	result, err := auth.Authenticate(context.Background(), "Bearer "+token)
 
 	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
+	assert.Equal(t, id.Principal("alice@example.com"), result.Principal)
 	assert.Zero(t, requests.Load())
 }
 

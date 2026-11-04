@@ -38,6 +38,18 @@ request under RFC 8693. The same endpoint also supports `authorization_code` and
 `client_credentials`. See [API overview](/docs/reference/api) and
 [OAuth2 server modes](/docs/concepts/oauth2-server-modes).
 
+Requests require exactly one `Content-Type` field. Per RFC 6749 Section 3.2, a parameter sent
+without a value is treated as omitted. A singleton form parameter with more than one non-empty
+value returns `400 invalid_request`. The singleton parameters are `grant_type`, `client_id`,
+`client_secret`, `code`, `redirect_uri`, `refresh_token`, `code_verifier`, `scope`,
+`subject_token`, `subject_token_type`, `client_assertion`, `client_assertion_type`,
+`actor_token`, `actor_token_type`, and `requested_token_type`.
+
+The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2.1. Repeated
+`resource` values that normalize to the same URI are accepted. Because the broker returns one
+service token, distinct `resource` values return `400 invalid_target` per RFC 8693 Section
+2.2.2.
+
 ## Key concepts
 
 ### Tokens
@@ -93,6 +105,9 @@ applies only when the request does not activate user impersonation.
 | `client_assertion` | JWT string | The gateway's authentication token, validated against upstream JWKS. |
 | `client_assertion_type` | `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` | The client authentication method. |
 | `resource` | URI string | Target service resource URI (for example `https://api.github.com`). |
+
+Both type identifiers must match exactly. Missing identifiers, empty values, case changes,
+and surrounding whitespace return `400 invalid_request`. The broker does not supply defaults.
 
 ### Optional parameters
 
@@ -180,7 +195,7 @@ Descriptions are credential-free summaries, not stable diagnostic identifiers. C
 | HTTP status | `error` | When it occurs |
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
-| 400 | `invalid_target` | The `resource` matches no configured service. |
+| 400 | `invalid_target` | The `resource` matches no configured service, or repeated resource values identify distinct targets. |
 | 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
 | 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
@@ -278,6 +293,7 @@ Successful logs and spans omit failure-only stage/detail fields. Successful metr
 Recovery values are diagnostic recommendations, not instructions for automatic retries.
 
 Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+Conflicting resource values use `request_validation` / `request_malformed` diagnostics while returning `invalid_target`; no registration lookup has occurred. `resource_unregistered` means a lookup found no configured service.
 CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
 Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
 
@@ -334,6 +350,18 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+When the exchange call fails, ExtProc `extproc.token_exchange` spans also carry the attributes below.
+All `extproc.client_assertion.refresh` spans carry them.
+Other `extproc.token_exchange` failures, such as rejected token-exchange metadata, carry only the error status and the diagnostic attributes above.
+
+| Attribute | Values |
+|---|---|
+| `token_exchange.operation` | `exchange`, `assertion_refresh`, `configuration` |
+| `token_exchange.dependency` | `local`, `broker`, `oauth_provider` |
+| `error.type` | Failures only: `configuration`, `unavailable`, `rejected`, `invalid_response`, `caller_canceled`, `assertion_expired`, `circuit_open`, `internal` |
+| `token_exchange.oauth_error_code` | Allowlisted OAuth error code from the broker or OAuth provider; `unknown` otherwise. On `extproc.token_exchange`, only for broker errors. |
+| `token_exchange.broker_status_code` | Broker HTTP status on `extproc.token_exchange` broker errors. |
+
 OPA audit data retains action, result code, protocol, allowlisted MCP method, duration, policy reasons, tool name, and target server name.
 
 Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.
@@ -462,6 +490,8 @@ rejected scopes.
 
 Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
 The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`. After classification it also contains `subject_category` (`human` or `agent`); `subject_identity` is the represented/minted subject. It contains no wholesale claims.
+When one token-exchange grant and its audience identify an impersonation request, repeated nonempty parameters also produce this event before credential authentication.
+The event records `invalid_request` and the resolved target, without unvalidated identities or credential values.
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 

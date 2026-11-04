@@ -117,7 +117,7 @@ telemetryShutdown = shutdown
 // Register slog-to-OTel bridge when telemetry AND logs are both enabled
 if cfg.Telemetry.Logs.Enabled {
     otelHandler := otelslog.NewHandler(cfg.Telemetry.ServiceName,
-        otelslog.WithLoggerProvider(global.GetLoggerProvider()))
+        otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
     logger = slog.New(telemetry.NewMultiHandler(logger.Handler(), otelHandler))
     slog.SetDefault(logger)
 }

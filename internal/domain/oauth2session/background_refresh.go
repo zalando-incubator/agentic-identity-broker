@@ -138,7 +138,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	attrs := []slog.Attr{
 		slog.String("event", "session.oauth2.refresh_failed"),
 		slog.String("session_id", sessionID.String()),
-		slog.String("principal", principal.String()),
+		slog.Any("principal", principal),
 		slog.String("service_id", serviceID.String()),
 		slog.String("triggered_by", string(RefreshTriggerBackground)),
 		slog.Any("oauth2_session", metadata),

@@ -46,11 +46,11 @@ type ClientKeySetService struct {
 
 // NewClientKeySetService creates a key-set service with an injectable clock.
 func NewClientKeySetService(fetcher ports.CIMDFetcher, config ports.CIMDClientAuthenticationConfig, clock func() time.Time, logger *slog.Logger) *ClientKeySetService {
+	if logger == nil {
+		panic("cimd.NewClientKeySetService: logger must not be nil")
+	}
 	if clock == nil {
 		clock = time.Now
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &ClientKeySetService{
 		fetcher: fetcher,
@@ -108,21 +108,21 @@ func (s *ClientKeySetService) KeysFor(ctx context.Context, document *ports.CIMDM
 
 		fetched, fetchErr := s.fetcher.Fetch(ctx, document.JWKSURI)
 		if fetchErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: fetch key set: %v", ErrKeySetUnavailable, fetchErr)
 		}
 		if fetched == nil || len(fetched.Body) == 0 || len(fetched.Body) > s.config.KeySetMaxBytes {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: key set response is empty or exceeds %d bytes", ErrKeySetUnavailable, s.config.KeySetMaxBytes)
 		}
 		parsed, parseErr := jwk.Parse(fetched.Body)
 		if parseErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
 		}
 		eligible, filterErr := eligibleClientKeys(parsed, "")
 		if filterErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
 		}
 
@@ -132,7 +132,7 @@ func (s *ClientKeySetService) KeysFor(ctx context.Context, document *ports.CIMDM
 		if filterErr != nil {
 			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
 		}
-		s.auditRefresh(document, currentKeys.Len(), "success")
+		s.auditRefresh(ctx, document, currentKeys.Len(), "success")
 		return cloneJWKSet(currentKeys)
 	})
 	if err != nil {
@@ -183,21 +183,21 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 
 		fetched, fetchErr := s.fetcher.Fetch(ctx, document.JWKSURI)
 		if fetchErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: fetch key set: %v", ErrKeySetUnavailable, fetchErr)
 		}
 		if fetched == nil || len(fetched.Body) == 0 || len(fetched.Body) > s.config.KeySetMaxBytes {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: key set response is empty or exceeds %d bytes", ErrKeySetUnavailable, s.config.KeySetMaxBytes)
 		}
 		parsed, parseErr := jwk.Parse(fetched.Body)
 		if parseErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
 		}
 		eligible, filterErr := eligibleClientKeys(parsed, "")
 		if filterErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
 		}
 
@@ -207,7 +207,7 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 		if filterErr != nil {
 			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
 		}
-		s.auditRefresh(document, currentKeys.Len(), "success")
+		s.auditRefresh(ctx, document, currentKeys.Len(), "success")
 		return cloneJWKSet(currentKeys)
 	})
 	if err != nil {
@@ -324,7 +324,7 @@ func cloneJWKSet(set jwk.Set) (jwk.Set, error) {
 	return set.Clone()
 }
 
-func (s *ClientKeySetService) auditRefresh(document *ports.CIMDMetadataDTO, keyCount int, outcome string) {
+func (s *ClientKeySetService) auditRefresh(ctx context.Context, document *ports.CIMDMetadataDTO, keyCount int, outcome string) {
 	sourceHost := "inline"
 	if document != nil && document.JWKSURI != "" {
 		if parsed, err := url.Parse(document.JWKSURI); err == nil {
@@ -335,5 +335,5 @@ func (s *ClientKeySetService) auditRefresh(document *ports.CIMDMetadataDTO, keyC
 	if document != nil {
 		clientID = document.ClientID
 	}
-	s.logger.Info("client_key_set_refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
+	s.logger.InfoContext(ctx, "client_key_set_refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
 }

@@ -35,7 +35,7 @@ type ServicesHandler struct {
 // NewServicesHandler creates a new services handler.
 func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderService, config *ports.Config, logger *slog.Logger) *ServicesHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewServicesHandler: logger must not be nil")
 	}
 	return &ServicesHandler{
 		providerService: providerService,
@@ -232,14 +232,14 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	var req ServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
-		h.logger.Warn("service validation failed", "error", err)
+		h.logger.WarnContext(ctx, "service validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -304,7 +304,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
-		h.logger.Warn("service validation failed",
+		h.logger.WarnContext(ctx, "service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
@@ -314,7 +314,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
-			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
+			h.logger.WarnContext(ctx, "OAuth2 endpoint discovery failed, falling back to manual endpoints",
 				"issuer_uri", req.IssuerURI,
 				"error", err)
 			if req.Endpoints != nil {
@@ -331,7 +331,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
-			h.logger.Warn("service validation failed",
+			h.logger.WarnContext(ctx, "service validation failed",
 				"client_id", entity.ClientID,
 				"error", err)
 			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
@@ -342,7 +342,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	entity.NormalizeProtectedResources()
 	if req.Discovery.ResourceURL == nil {
 		if err := entity.ValidateProtectedResources(); err != nil {
-			h.logger.Warn("protected_resources validation failed",
+			h.logger.WarnContext(ctx, "protected_resources validation failed",
 				"service_id", entity.ID,
 				"error", err)
 			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
@@ -449,14 +449,14 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 	var req ServiceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
-		h.logger.Warn("service validation failed", "error", err)
+		h.logger.WarnContext(ctx, "service validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -533,7 +533,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			}
 			return
 		}
-		h.logger.Warn("service validation failed",
+		h.logger.WarnContext(ctx, "service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
 		var storageErr *storage.StorageError
@@ -548,7 +548,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
-			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
+			h.logger.WarnContext(ctx, "OAuth2 endpoint discovery failed, falling back to manual endpoints",
 				"issuer_uri", req.IssuerURI,
 				"error", err)
 			if req.Endpoints != nil {
@@ -565,7 +565,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if err := h.providerService.ValidateUpdate(ctx, entity); err != nil {
-			h.logger.Warn("service validation failed",
+			h.logger.WarnContext(ctx, "service validation failed",
 				"client_id", entity.ClientID,
 				"error", err)
 			var storageErr *storage.StorageError
@@ -589,7 +589,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		entity.NormalizeProtectedResources()
 		if req.Discovery.ResourceURL == nil {
 			if err := entity.ValidateProtectedResources(); err != nil {
-				h.logger.Warn("protected_resources validation failed", "service_id", entity.ID, "error", err)
+				h.logger.WarnContext(ctx, "protected_resources validation failed", "service_id", entity.ID, "error", err)
 				h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 				return
 			}
@@ -607,7 +607,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.Discovery.ResourceURL == nil {
-		h.logger.Info("OAuth2 service updated",
+		h.logger.InfoContext(ctx, "OAuth2 service updated",
 			"service_id", entity.ID,
 			"client_id", entity.ClientID)
 	}
@@ -658,7 +658,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 		var conflictErr *storage.StorageError
 		if errors.As(err, &conflictErr) && conflictErr.Kind == storage.ErrorKindConflict {
 			message := conflictErr.Message
-			h.logger.Warn("service deletion blocked due to existing grants",
+			h.logger.WarnContext(ctx, "service deletion blocked due to existing grants",
 				"service_id", serviceID,
 				"error", message)
 			h.writeError(w, http.StatusConflict, "conflict", message)
@@ -669,7 +669,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.logger.Info("OAuth2 service deleted", "service_id", serviceID)
+	h.logger.InfoContext(ctx, "OAuth2 service deleted", "service_id", serviceID)
 
 	// Return 204 No Content
 	w.WriteHeader(http.StatusNoContent)
@@ -812,7 +812,7 @@ func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *h
 	if storageErr != nil {
 		failureClass = "storage_" + string(storageErr.Kind)
 	}
-	h.logger.Error("discovery service mutation failed", "operation", operation, "failure_class", failureClass)
+	h.logger.ErrorContext(r.Context(), "discovery service mutation failed", "operation", operation, "failure_class", failureClass)
 	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 }
 
@@ -825,7 +825,7 @@ func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Requ
 	}
 	var storageErr *storage.StorageError
 	if !errors.As(err, &storageErr) {
-		h.logger.Error("unexpected error type", "operation", operation, "error", err)
+		h.logger.ErrorContext(r.Context(), "unexpected error type", "operation", operation, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -853,7 +853,7 @@ func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Requ
 	case storage.ErrorKindTimeout:
 		h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 	default:
-		h.logger.Error("storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
+		h.logger.ErrorContext(r.Context(), "storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 	}
 }

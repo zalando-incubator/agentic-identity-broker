@@ -123,7 +123,7 @@ func actorFromContext(ctx context.Context) string {
 		return security.AnonymousActor
 	}
 
-	return security.NormalizeActor(actor)
+	return security.NormalizeActor(actor.String())
 }
 
 func shouldDeferSecurityContextFinalization(r *http.Request) bool {
@@ -149,7 +149,7 @@ func FinalizeRequestSecurityContext(ctx context.Context) {
 	if !ok {
 		actor = security.AnonymousActor
 	}
-	_, _ = security.FinalizeCaptureHolder(ctx, id.NewPrincipal(actor), "")
+	_, _ = security.FinalizeCaptureHolder(ctx, actor, "")
 }
 
 func hexPair(value byte) (byte, byte) {

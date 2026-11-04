@@ -32,17 +32,16 @@ type AssertionSigner struct {
 
 // NewAssertionSigner constructs an assertion signer over the CIMD key service.
 func NewAssertionSigner(keyService *KeyService) *AssertionSigner {
-	logger := slog.Default()
-	if keyService != nil && keyService.logger != nil {
-		logger = keyService.logger
+	if keyService == nil {
+		panic("cimdclient.NewAssertionSigner: keyService must not be nil")
 	}
-	return &AssertionSigner{keyService: keyService, logger: logger}
+	return &AssertionSigner{keyService: keyService, logger: keyService.logger}
 }
 
 // SignClientAssertion creates a short-lived ES256 assertion for one outbound token request.
 func (s *AssertionSigner) SignClientAssertion(ctx context.Context, clientID id.ClientID, tokenEndpoint string) (string, error) {
 	if s.keyService == nil || clientID.IsZero() || tokenEndpoint == "" {
-		s.audit(id.KeyID(""), "rejected")
+		s.audit(ctx, id.KeyID(""), "rejected")
 		return "", ports.ErrCIMDKeyUnavailable
 	}
 
@@ -52,13 +51,13 @@ func (s *AssertionSigner) SignClientAssertion(ctx context.Context, clientID id.C
 		if key != nil {
 			keyID = key.KID
 		}
-		s.audit(keyID, "rejected")
+		s.audit(ctx, keyID, "rejected")
 		return "", ports.ErrCIMDKeyUnavailable
 	}
 
 	assertionID, err := uuid.NewRandomFromReader(crand.Reader)
 	if err != nil {
-		s.audit(key.KID, "rejected")
+		s.audit(ctx, key.KID, "rejected")
 		return "", ports.ErrCIMDKeyUnavailable
 	}
 	now := time.Now().UTC()
@@ -71,16 +70,16 @@ func (s *AssertionSigner) SignClientAssertion(ctx context.Context, clientID id.C
 		JwtID(assertionID.String()).
 		Build()
 	if err != nil {
-		s.audit(key.KID, "rejected")
+		s.audit(ctx, key.KID, "rejected")
 		return "", ports.ErrCIMDKeyUnavailable
 	}
 
 	assertion, err := s.keyService.signCIMDClientAssertion(ctx, key.KID, token)
 	if err != nil {
-		s.audit(key.KID, "rejected")
+		s.audit(ctx, key.KID, "rejected")
 		return "", ports.ErrCIMDKeyUnavailable
 	}
-	s.audit(key.KID, "success")
+	s.audit(ctx, key.KID, "success")
 	return assertion, nil
 }
 
@@ -154,8 +153,8 @@ func cimdES256PrivateKeyFromPEM(privatePEM []byte) (*ecdsa.PrivateKey, error) {
 	return privateKey, nil
 }
 
-func (s *AssertionSigner) audit(keyID id.KeyID, outcome string) {
-	s.logger.Info("CIMD client assertion signing", "key_id", keyID, "operation", "sign", "outcome", outcome)
+func (s *AssertionSigner) audit(ctx context.Context, keyID id.KeyID, outcome string) {
+	s.logger.InfoContext(ctx, "CIMD client assertion signing", "key_id", keyID, "operation", "sign", "outcome", outcome)
 }
 
 var _ ports.CIMDClientAssertionSigner = (*AssertionSigner)(nil)

@@ -2152,18 +2152,19 @@ func TestServer_OPA_AmbiguousMCPMembers_DeniedBeforePolicy(t *testing.T) {
 		name                string
 		body                []byte
 		downstreamArguments map[string]any
+		checkDownstream     bool
 	}{
 		{name: "standalone case-folded method", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
 		{name: "batch case-folded method", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
-		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: nil, checkDownstream: true},
 		{name: "batch repeated params", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}]`)},
 		{name: "case-folded tool name", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"read","Name":"delete"}}`)},
-		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}, checkDownstream: true},
 		{name: "repeated arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"arguments":{"env":"prod"}}}`)},
 		{name: "batch case-folded arguments", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.downstreamArguments != nil {
+			if tc.checkDownstream {
 				var downstream mcp.CallToolRequest
 				require.NoError(t, json.Unmarshal(tc.body, &downstream))
 				assert.Equal(t, tc.downstreamArguments, downstream.GetArguments(), "downstream would execute these arguments")
@@ -3768,11 +3769,21 @@ func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCo
 	assert.Equal(t, "exchange_routing", attrs["token_exchange.failure_stage"].AsString(), "broker origin stages are unknown to ExtProc")
 	assert.Equal(t, "unknown", attrs["token_exchange.exchange_kind"].AsString())
 	assert.NotContains(t, attrs, "outcome")
+	wantErrorType := "rejected"
+	if statusCode >= 500 {
+		wantErrorType = "unavailable"
+	}
+	assert.Equal(t, "exchange", attrs["token_exchange.operation"].AsString())
+	assert.Equal(t, "broker", attrs["token_exchange.dependency"].AsString())
+	assert.Equal(t, wantErrorType, attrs["error.type"].AsString())
+	for _, legacy := range []string{"operation", "dependency", "error.kind", "token_exchange.broker_error_code"} {
+		assert.NotContains(t, attrs, legacy)
+	}
 	status, ok := attrs["token_exchange.broker_status_code"]
 	require.True(t, ok, "broker status must be present")
 	assert.Equal(t, attribute.INT64, status.Type())
 	assert.Equal(t, int64(statusCode), status.AsInt64())
-	code, ok := attrs["token_exchange.broker_error_code"]
+	code, ok := attrs["token_exchange.oauth_error_code"]
 	require.True(t, ok, "broker code must be present")
 	assert.Equal(t, attribute.STRING, code.Type())
 	assert.Equal(t, errorCode, code.AsString())

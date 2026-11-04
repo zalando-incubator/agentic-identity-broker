@@ -168,7 +168,7 @@ func TestRequireApprovalSubjectTokenAndClientAssertion(t *testing.T) {
 		subjectToken := signApprovalJWT(t, privateKey, subjectClaims)
 		clientAssertion := signApprovalJWT(t, privateKey, validApprovalJWTClaims("gateway-client"))
 
-		var capturedPrincipal string
+		var capturedPrincipal id.Principal
 		var capturedAuth ApprovalAuthContext
 		var authContextOK bool
 		handler := RequireApprovalSubjectTokenAndClientAssertion(auth)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +185,7 @@ func TestRequireApprovalSubjectTokenAndClientAssertion(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusNoContent, rec.Code)
-		assert.Equal(t, "alice@example.com", capturedPrincipal)
+		assert.Equal(t, id.Principal("alice@example.com"), capturedPrincipal)
 		assert.True(t, authContextOK)
 		assert.Equal(t, id.Principal("alice@example.com"), capturedAuth.Principal)
 		assert.Equal(t, agentID, capturedAuth.AgentID)
@@ -296,7 +296,7 @@ func TestRequireApprovalSubjectToken(t *testing.T) {
 		subjectClaims["azp"] = agentID.String()
 		subjectToken := signApprovalJWT(t, privateKey, subjectClaims)
 
-		var capturedPrincipal string
+		var capturedPrincipal id.Principal
 		var capturedAuth ApprovalAuthContext
 		var authContextOK bool
 		handler := RequireApprovalSubjectToken(auth)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +312,7 @@ func TestRequireApprovalSubjectToken(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusNoContent, rec.Code)
-		assert.Equal(t, "alice@example.com", capturedPrincipal)
+		assert.Equal(t, id.Principal("alice@example.com"), capturedPrincipal)
 		assert.True(t, authContextOK)
 		assert.Equal(t, id.Principal("alice@example.com"), capturedAuth.Principal)
 		assert.True(t, capturedAuth.AgentID.IsZero())

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,7 +25,7 @@ type CIMDClientKeysHandler struct {
 // NewCIMDClientKeysHandler constructs the CIMD key handler.
 func NewCIMDClientKeysHandler(keys ports.CIMDClientKeyLifecycle, logger *slog.Logger) *CIMDClientKeysHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewCIMDClientKeysHandler: logger must not be nil")
 	}
 	return &CIMDClientKeysHandler{keys: keys, logger: logger}
 }
@@ -57,14 +58,14 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var request cimdKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
 		h.writeError(w, http.StatusBadRequest, "invalid request body", "")
-		h.audit(operator, "", "generate", "rejected")
+		h.audit(r.Context(), operator, "", "generate", "rejected")
 		return
 	}
 	if len(request.Algorithm) > 0 {
 		var supplied string
 		if err := json.Unmarshal(request.Algorithm, &supplied); err != nil || supplied != "ES256" {
 			h.writeError(w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
-			h.audit(operator, "", "generate", "rejected")
+			h.audit(r.Context(), operator, "", "generate", "rejected")
 			return
 		}
 	}
@@ -72,10 +73,10 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	key, err := h.keys.GenerateKey(r.Context(), "ES256")
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
-		h.audit(operator, "", "generate", "rejected")
+		h.audit(r.Context(), operator, "", "generate", "rejected")
 		return
 	}
-	h.audit(operator, key.KID, "generate", "success")
+	h.audit(r.Context(), operator, key.KID, "generate", "success")
 	h.writeJSON(w, http.StatusCreated, cimdKeyResponse(key))
 }
 
@@ -102,7 +103,7 @@ func (h *CIMDClientKeysHandler) Promote(w http.ResponseWriter, r *http.Request) 
 	kid := id.NewKeyID(chi.URLParam(r, "kid"))
 	if kid.IsZero() {
 		h.writeError(w, http.StatusBadRequest, "kid is required", "")
-		h.audit(operator, kid, "promote", "rejected")
+		h.audit(r.Context(), operator, kid, "promote", "rejected")
 		return
 	}
 	key, err := h.keys.PromoteKey(r.Context(), kid)
@@ -112,10 +113,10 @@ func (h *CIMDClientKeysHandler) Promote(w http.ResponseWriter, r *http.Request) 
 		} else {
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		}
-		h.audit(operator, kid, "promote", "rejected")
+		h.audit(r.Context(), operator, kid, "promote", "rejected")
 		return
 	}
-	h.audit(operator, key.KID, "promote", "success")
+	h.audit(r.Context(), operator, key.KID, "promote", "success")
 	h.writeJSON(w, http.StatusOK, cimdKeyResponse(key))
 }
 
@@ -128,7 +129,7 @@ func (h *CIMDClientKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	kid := id.NewKeyID(chi.URLParam(r, "kid"))
 	if kid.IsZero() {
 		h.writeError(w, http.StatusBadRequest, "kid is required", "")
-		h.audit(operator, kid, "remove", "rejected")
+		h.audit(r.Context(), operator, kid, "remove", "rejected")
 		return
 	}
 	if err := h.keys.DeleteKey(r.Context(), kid); err != nil {
@@ -142,14 +143,14 @@ func (h *CIMDClientKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 		default:
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		}
-		h.audit(operator, kid, "remove", "rejected")
+		h.audit(r.Context(), operator, kid, "remove", "rejected")
 		return
 	}
-	h.audit(operator, kid, "remove", "success")
+	h.audit(r.Context(), operator, kid, "remove", "success")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.Request) (id.Principal, bool) {
 	operator, ok := operatorPrincipalFromContext(r.Context(), h.logger)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for mutating CIMD key operations")
@@ -158,8 +159,8 @@ func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.R
 	return operator, true
 }
 
-func (h *CIMDClientKeysHandler) audit(operator string, kid id.KeyID, operation, outcome string) {
-	h.logger.Info("CIMD client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
+func (h *CIMDClientKeysHandler) audit(ctx context.Context, operator id.Principal, kid id.KeyID, operation, outcome string) {
+	h.logger.InfoContext(ctx, "CIMD client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
 func (h *CIMDClientKeysHandler) writeJSON(w http.ResponseWriter, status int, value any) {

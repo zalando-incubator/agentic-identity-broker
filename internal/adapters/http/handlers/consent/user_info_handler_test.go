@@ -2,6 +2,7 @@ package consent
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,12 +18,12 @@ func TestGetUserInfo_Success(t *testing.T) {
 	t.Parallel()
 	principalValue := "user@example.com"
 
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	// Set profile to test the enriched path (handler reads profile first, then falls back to principal)
-	profile := principal.NewProfile(principalValue)
+	profile := principal.NewProfile(id.NewPrincipal(principalValue))
 	ctx = principal.WithProfile(ctx, profile)
 	req = req.WithContext(ctx)
 
@@ -66,10 +67,10 @@ func TestGetUserInfo_DifferentPrincipals(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			handler := NewUserInfoHandler(nil)
+			handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-			ctx := principal.WithPrincipal(req.Context(), tc.principal)
+			ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(tc.principal))
 			req = req.WithContext(ctx)
 
 			rec := httptest.NewRecorder()
@@ -90,7 +91,7 @@ func TestGetUserInfo_DifferentPrincipals(t *testing.T) {
 // TestGetUserInfo_MissingPrincipal tests error when principal is not in context.
 func TestGetUserInfo_MissingPrincipal(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	// Request without principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
@@ -110,7 +111,7 @@ func TestGetUserInfo_MissingPrincipal(t *testing.T) {
 // TestGetUserInfo_EmptyPrincipal tests error when principal is empty string.
 func TestGetUserInfo_EmptyPrincipal(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	// Add empty principal to context (simulating a bug or misconfiguration)
@@ -129,10 +130,10 @@ func TestGetUserInfo_ContentType(t *testing.T) {
 	t.Parallel()
 	principalValue := "user@example.com"
 
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -146,11 +147,11 @@ func TestGetUserInfo_ResponseStructure(t *testing.T) {
 	t.Parallel()
 	principalValue := "test@example.com"
 
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	ctx := principal.WithPrincipal(req.Context(), principalValue)
-	profile := principal.NewProfile(principalValue)
+	ctx := principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue))
+	profile := principal.NewProfile(id.NewPrincipal(principalValue))
 	ctx = principal.WithProfile(ctx, profile)
 	req = req.WithContext(ctx)
 
@@ -178,7 +179,7 @@ func TestGetUserInfo_ResponseStructure(t *testing.T) {
 // TestGetUserInfo_EnrichedProfile tests that enriched profile from JWT is returned.
 func TestGetUserInfo_EnrichedProfile(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	email := "alice@corp.com"
 	pictureURL := "https://cdn.example.com/alice.jpg"
@@ -212,7 +213,7 @@ func TestGetUserInfo_EnrichedProfile(t *testing.T) {
 // TestGetUserInfo_PartialProfile tests enriched profile with only some fields.
 func TestGetUserInfo_PartialProfile(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	email := "alice@corp.com"
 
@@ -244,7 +245,7 @@ func TestGetUserInfo_PartialProfile(t *testing.T) {
 // TestGetUserInfo_PlainHeaderProfile tests that plain header mode returns principal-only profile.
 func TestGetUserInfo_PlainHeaderProfile(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	ctx := principal.WithPrincipal(req.Context(), "user@example.com")
@@ -271,7 +272,7 @@ func TestGetUserInfo_PlainHeaderProfile(t *testing.T) {
 // TestGetUserInfo_EmailOmittedInJSON tests that email field is omitted from JSON when nil.
 func TestGetUserInfo_EmailOmittedInJSON(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	ctx := principal.WithPrincipal(req.Context(), "user@example.com")
@@ -290,7 +291,7 @@ func TestGetUserInfo_EmailOmittedInJSON(t *testing.T) {
 // TestGetUserInfo_EmailPresentInJSON tests that email field is present in JSON when set.
 func TestGetUserInfo_EmailPresentInJSON(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	email := "alice@corp.com"
 
@@ -312,7 +313,7 @@ func TestGetUserInfo_EmailPresentInJSON(t *testing.T) {
 // the principal string is in context (no profile).
 func TestGetUserInfo_BackwardCompatWithPrincipalOnly(t *testing.T) {
 	t.Parallel()
-	handler := NewUserInfoHandler(nil)
+	handler := NewUserInfoHandler(slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	// Only set principal, no profile (simulates old middleware)

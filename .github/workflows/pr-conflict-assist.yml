@@ -60,6 +60,7 @@ jobs:
       queue: max
     permissions:
       actions: read
+      checks: read
       contents: write
       issues: write
       pull-requests: write

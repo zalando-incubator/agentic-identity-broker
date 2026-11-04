@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -696,12 +697,13 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 
 	// Validate CEL claim extraction expressions by attempting compilation.
 	// This catches syntax/type errors at startup rather than at request time.
+	// The evaluator is discarded, so it never logs.
 	_, err := jwtauth.NewCELEvaluator(jwtauth.CELEvaluatorConfig{
 		PrincipalExpression:   jwt.ClaimExtraction.PrincipalExpression,
 		DisplayNameExpression: jwt.ClaimExtraction.DisplayNameExpression,
 		EmailExpression:       jwt.ClaimExtraction.EmailExpression,
 		PictureURLExpression:  jwt.ClaimExtraction.PictureURLExpression,
-	}, nil)
+	}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		return formatValidationError(
 			prefix+".claim_extraction",

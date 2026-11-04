@@ -3,6 +3,7 @@ package integration
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +21,7 @@ func TestOAuth2MetadataEndpoint_ReturnsValidJSON(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",
@@ -53,7 +54,7 @@ func TestOAuth2MetadataEndpoint_RFC8414Schema(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",
@@ -95,7 +96,7 @@ func TestOAuth2MetadataEndpoint_HTTPStatus(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",
@@ -119,7 +120,7 @@ func TestOAuth2MetadataEndpoint_ContentType(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",
@@ -144,7 +145,7 @@ func TestOAuth2MetadataEndpoint_IsPublic(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",
@@ -170,7 +171,7 @@ func TestOAuth2MetadataEndpoint_MultipleRequests(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		UpstreamTokenEndpoint:     "https://auth.example.com/token",

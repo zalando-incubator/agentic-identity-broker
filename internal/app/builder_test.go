@@ -324,13 +324,13 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		authenticated, err := app.AdminJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		require.NoError(t, err)
 		require.NotNil(t, authenticated)
-		assert.Equal(t, "operator@example.com", authenticated.Principal)
+		assert.Equal(t, id.Principal("operator@example.com"), authenticated.Principal)
 
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
 		require.NotNil(t, enduser)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 		_, err = app.EnduserJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		assert.Error(t, err, "end-user authenticator must not trust the admin issuer")
 		_, err = app.AdminJWTAuthenticator.Authenticate(context.Background(), enduserToken)
@@ -343,7 +343,7 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 	})
 
 }
@@ -1436,7 +1436,7 @@ func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
 
 	baseline := countHTTPRCGoroutines(t)
 	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if built != nil {

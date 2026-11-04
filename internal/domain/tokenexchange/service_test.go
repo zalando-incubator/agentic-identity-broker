@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +44,7 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 // newTestProviderService wraps a repository in a ThirdpartyOAuth2ProviderService
 // with passthrough encryption for use in domain-layer tests.
 func newTestProviderService(repo ports.ThirdpartyOAuth2ProviderRepository) *thirdparty.ThirdpartyOAuth2ProviderService {
-	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, nil)
+	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler))
 }
 
 // newMockPermissionSetService creates a PermissionSetService with mock for testing
@@ -682,25 +681,25 @@ func TestExchange_InvalidRequest(t *testing.T) {
 	}{
 		{
 			name:        "empty grant_type",
-			request:     NewTokenExchangeRequest("", "token", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest("", "token", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing subject_token",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing client_assertion",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing resource",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "assertion", "", "", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "assertion", JWTBearerType, "", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
@@ -2273,7 +2272,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		&http.Client{Timeout: 5 * time.Second},
 		nil,
 		sessionConfig,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)

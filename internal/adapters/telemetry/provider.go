@@ -20,7 +20,6 @@ import (
 	otlpmetrichttp "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	otlptracegrpc "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	otlptracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -77,13 +76,13 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 	if cfg.Exporter.Insecure {
 		switch cfg.Exporter.Protocol {
 		case ports.OTLPProtocolHTTPS:
-			logger.Warn("telemetry: insecure=true is contradictory with protocol=https and will be ignored",
+			logger.WarnContext(ctx, "telemetry: insecure=true is contradictory with protocol=https and will be ignored",
 				"endpoint", cfg.Exporter.Endpoint)
 		case ports.OTLPProtocolHTTP:
-			logger.Warn("telemetry: insecure=true has no effect for protocol=http — TLS is controlled by the URL scheme",
+			logger.WarnContext(ctx, "telemetry: insecure=true has no effect for protocol=http — TLS is controlled by the URL scheme",
 				"endpoint", cfg.Exporter.Endpoint)
 		case ports.OTLPProtocolGRPC:
-			logger.Warn("telemetry: TLS disabled for OTLP gRPC exporter (insecure=true) — do not use in production",
+			logger.WarnContext(ctx, "telemetry: TLS disabled for OTLP gRPC exporter (insecure=true) — do not use in production",
 				"endpoint", cfg.Exporter.Endpoint)
 		}
 	}
@@ -129,14 +128,14 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 		// goroutine leaks when NewProvider is called multiple times (e.g. in tests).
 		runtimeMetricsOnce.Do(func() {
 			if err := runtimemetrics.Start(runtimemetrics.WithMinimumReadMemStatsInterval(15 * time.Second)); err != nil {
-				logger.Warn("telemetry: failed to start runtime metrics", "error", err)
+				logger.WarnContext(ctx, "telemetry: failed to start runtime metrics", "error", err)
 			}
 		})
 	}
 
 	// Register log provider only when successfully initialised (log pipeline is beta).
 	if lp != nil {
-		global.SetLoggerProvider(lp)
+		otel.SetLoggerProvider(lp)
 	}
 
 	return buildShutdown(tp, mp, lp), nil
@@ -246,7 +245,7 @@ func buildGRPCProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 		}
 		logExp, logErr := otlploggrpc.New(ctx, logOpts...)
 		if logErr != nil {
-			logger.Warn("telemetry: log gRPC exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
+			logger.WarnContext(ctx, "telemetry: log gRPC exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
 		} else {
 			lp = buildLoggerProvider(logExp, res)
 		}
@@ -318,7 +317,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 		}
 		logExp, logErr := otlploghttp.New(ctx, logOpts...)
 		if logErr != nil {
-			logger.Warn("telemetry: log HTTP exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
+			logger.WarnContext(ctx, "telemetry: log HTTP exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
 		} else {
 			lp = buildLoggerProvider(logExp, res)
 		}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -37,7 +38,7 @@ func TestRequirePrincipalMiddleware_ValidPrincipal(t *testing.T) {
 		name               string
 		headerName         string
 		headerValue        string
-		expectedPrincipal  string
+		expectedPrincipal  id.Principal
 		expectedStatusCode int
 	}{
 		{
@@ -93,7 +94,7 @@ func TestRequirePrincipalMiddleware_ValidPrincipal(t *testing.T) {
 			name:               "200 character principal (at max)",
 			headerName:         "X-Remote-User",
 			headerValue:        strings.Repeat("a", 200),
-			expectedPrincipal:  strings.Repeat("a", 200),
+			expectedPrincipal:  id.NewPrincipal(strings.Repeat("a", 200)),
 			expectedStatusCode: http.StatusOK,
 		},
 	}
@@ -270,7 +271,7 @@ func TestOptionalPrincipalMiddleware_ValidPrincipal(t *testing.T) {
 		name                string
 		headerName          string
 		headerValue         string
-		expectedPrincipal   string
+		expectedPrincipal   id.Principal
 		shouldHavePrincipal bool
 	}{
 		{
@@ -301,7 +302,7 @@ func TestOptionalPrincipalMiddleware_ValidPrincipal(t *testing.T) {
 			logger := createTestLogger()
 			authConfig := testAuthConfig(tt.headerName)
 
-			var capturedPrincipal string
+			var capturedPrincipal id.Principal
 			var capturedOk bool
 
 			handler := OptionalPrincipalMiddleware(authConfig, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +357,7 @@ func TestOptionalPrincipalMiddleware_MissingPrincipal(t *testing.T) {
 			authConfig := testAuthConfig(tt.headerName)
 
 			handlerCalled := false
-			var capturedPrincipal string
+			var capturedPrincipal id.Principal
 			var capturedOk bool
 
 			handler := OptionalPrincipalMiddleware(authConfig, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -388,7 +389,7 @@ func TestOptionalPrincipalMiddleware_PrincipalTooLong(t *testing.T) {
 	authConfig := testAuthConfig("X-Remote-User")
 
 	handlerCalled := false
-	var capturedPrincipal string
+	var capturedPrincipal id.Principal
 	var capturedOk bool
 
 	handler := OptionalPrincipalMiddleware(authConfig, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -527,7 +528,7 @@ func TestRequirePrincipalMiddleware_PlainHeaderOnlyConfig(t *testing.T) {
 	// No JWT config — plain-header only
 	authConfig := testAuthConfig("X-Remote-User")
 
-	var capturedPrincipal string
+	var capturedPrincipal id.Principal
 	handler := RequirePrincipalMiddleware(authConfig, nil, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPrincipal, _ = principal.FromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
@@ -540,7 +541,7 @@ func TestRequirePrincipalMiddleware_PlainHeaderOnlyConfig(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "alice@example.com", capturedPrincipal)
+	assert.Equal(t, id.Principal("alice@example.com"), capturedPrincipal)
 }
 
 // TestRequirePrincipalMiddleware_JWTPrefersOverPlainHeader tests that JWT is preferred
@@ -563,7 +564,7 @@ func TestRequirePrincipalMiddleware_JWTPrefersOverPlainHeader(t *testing.T) {
 		},
 	}
 
-	var capturedPrincipal string
+	var capturedPrincipal id.Principal
 	handler := RequirePrincipalMiddleware(authConfig, mockAuth, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPrincipal, _ = principal.FromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
@@ -577,7 +578,7 @@ func TestRequirePrincipalMiddleware_JWTPrefersOverPlainHeader(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "jwt-user@example.com", capturedPrincipal, "JWT should be preferred over plain header")
+	assert.Equal(t, id.Principal("jwt-user@example.com"), capturedPrincipal, "JWT should be preferred over plain header")
 }
 
 // TestRequirePrincipalMiddleware_RejectsWhenJWTConfiguredAndJWTHeaderAbsent tests that middleware
@@ -600,7 +601,7 @@ func TestRequirePrincipalMiddleware_RejectsWhenJWTConfiguredAndJWTHeaderAbsent(t
 		},
 	}
 
-	var capturedPrincipal string
+	var capturedPrincipal id.Principal
 	handler := RequirePrincipalMiddleware(authConfig, mockAuth, logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPrincipal, _ = principal.FromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
@@ -614,7 +615,7 @@ func TestRequirePrincipalMiddleware_RejectsWhenJWTConfiguredAndJWTHeaderAbsent(t
 	handler.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code, "should reject with 401 when JWT is configured but JWT header is absent")
-	assert.Equal(t, "", capturedPrincipal, "handler should not set a principal when JWT is absent")
+	assert.Equal(t, id.Principal(""), capturedPrincipal, "handler should not set a principal when JWT is absent")
 }
 
 // TestRequirePrincipalMiddleware_PanicsWhenJWTConfiguredButAuthenticatorNil ensures the middleware
@@ -725,7 +726,7 @@ func TestRequirePrincipalMiddleware_JWTSetsProfile(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, profileOk, "profile should be in context")
-	assert.Equal(t, "alice@example.com", capturedProfile.Principal())
+	assert.Equal(t, id.Principal("alice@example.com"), capturedProfile.Principal())
 	assert.Equal(t, "Alice Smith", capturedProfile.DisplayName())
 	assert.NotNil(t, capturedProfile.Email())
 	assert.Equal(t, "alice@corp.com", *capturedProfile.Email())
@@ -754,7 +755,7 @@ func TestRequirePrincipalMiddleware_PlainHeaderSetsBasicProfile(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, profileOk, "profile should be in context for plain header")
-	assert.Equal(t, "alice@example.com", capturedProfile.Principal())
+	assert.Equal(t, id.Principal("alice@example.com"), capturedProfile.Principal())
 	assert.Equal(t, "alice@example.com", capturedProfile.DisplayName(), "display name should default to principal")
 	assert.Nil(t, capturedProfile.Email(), "email should be nil for plain header")
 	assert.Nil(t, capturedProfile.PictureURL(), "picture URL should be nil for plain header")

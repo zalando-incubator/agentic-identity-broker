@@ -1,5 +1,7 @@
 package jwtauth
 
+import "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+
 // AuthResult is a value object representing the result of successful JWT authentication.
 // Produced by the JWTAuthenticator adapter, consumed by the principal middleware to
 // construct a PrincipalProfile and set context values.
@@ -12,7 +14,7 @@ type AuthResult struct {
 	// Principal is the extracted user identifier from the JWT claims.
 	// Extracted via the configured principal CEL expression (default: claims.sub).
 	// Must be non-empty — authentication fails if extraction produces empty string.
-	Principal string
+	Principal id.Principal
 
 	// DisplayName is the extracted display name from JWT claims.
 	// Nil if no display_name_expression is configured or if the expression

@@ -29,11 +29,11 @@ type GrantsHandler struct {
 
 // NewGrantsHandler creates a new grants handler.
 func NewGrantsHandler(consentService ConsentService, logger *slog.Logger, sessionTokenValidator ports.SessionTokenValidator) *GrantsHandler {
+	if logger == nil {
+		panic("consent.NewGrantsHandler: logger must not be nil")
+	}
 	if sessionTokenValidator == nil {
 		panic("GrantsHandler requires a non-nil SessionTokenValidator")
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &GrantsHandler{
 		consentService:        consentService,
@@ -75,12 +75,12 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 	grants, err := h.consentService.GetUserGrants(r.Context(), principalValue, agentID)
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentNotFound) {
-			h.logger.Warn("agent not found", "agent_id", agentID, "principal", principalValue)
+			h.logger.WarnContext(r.Context(), "agent not found", "agent_id", agentID, "principal", principalValue)
 			h.writeError(w, http.StatusNotFound, "not found", "agent not found")
 			return
 		}
 
-		h.logger.Error("failed to get user grants", "agent_id", agentID, "principal", principalValue, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to get user grants", "agent_id", agentID, "principal", principalValue, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -91,7 +91,7 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 		response = &grantResponse
 	}
 
-	h.logger.Info("user grant retrieved", "agent_id", agentID, "principal", principalValue, "has_grant", response != nil)
+	h.logger.InfoContext(r.Context(), "user grant retrieved", "agent_id", agentID, "principal", principalValue, "has_grant", response != nil)
 	h.writeJSON(w, http.StatusOK, map[string]*GrantResponse{"data": response})
 }
 
@@ -115,7 +115,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	// Parse request
 	var req GrantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("invalid request body",
+		h.logger.WarnContext(r.Context(), "invalid request body",
 			"error", err,
 			"principal", principalValue,
 			"agent_id", agentID)
@@ -131,28 +131,28 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			switch {
 			case errors.Is(err, ports.ErrSessionExpired):
-				h.logger.Warn("authorization session token expired", "agent_id", agentID, "principal", principalValue)
+				h.logger.WarnContext(r.Context(), "authorization session token expired", "agent_id", agentID, "principal", principalValue)
 				h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			case errors.Is(err, ports.ErrSessionAgentMismatch):
-				h.logger.Warn("authorization session agent mismatch",
+				h.logger.WarnContext(r.Context(), "authorization session agent mismatch",
 					"expected_agent", parsedAgentID,
 					"principal", principalValue)
 				h.writeError(w, http.StatusBadRequest, "bad request", "authorization session does not match requested agent")
 			case errors.Is(err, ports.ErrSessionPrincipalMismatch):
-				h.logger.Warn("authorization session principal mismatch", "principal", principalValue)
+				h.logger.WarnContext(r.Context(), "authorization session principal mismatch", "principal", principalValue)
 				h.writeError(w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
 			case errors.Is(err, ports.ErrSessionInvalidToken):
-				h.logger.Warn("authorization session token invalid", "agent_id", agentID, "principal", principalValue)
+				h.logger.WarnContext(r.Context(), "authorization session token invalid", "agent_id", agentID, "principal", principalValue)
 				h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			default:
-				h.logger.Error("unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)
+				h.logger.ErrorContext(r.Context(), "unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)
 				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 			}
 			return
 		}
 		sessionRedirectURI = claims.OriginalURL
 		if sessionRedirectURI == "" {
-			h.logger.Error("authorization session token contains empty original_url",
+			h.logger.ErrorContext(r.Context(), "authorization session token contains empty original_url",
 				"agent_id", agentID, "principal", principalValue)
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 			return
@@ -161,7 +161,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 
 	// Validate valid_until is in future
 	if req.ValidUntil != nil && req.ValidUntil.Before(time.Now()) {
-		h.logger.Warn("valid_until is in the past",
+		h.logger.WarnContext(r.Context(), "valid_until is in the past",
 			"valid_until", req.ValidUntil,
 			"principal", principalValue,
 			"agent_id", agentID)
@@ -174,7 +174,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	for psStr, svcStrs := range req.GrantedPermissionSets {
 		psID, err := id.ParsePermissionSetID(psStr)
 		if err != nil {
-			h.logger.Warn("invalid permission set ID format",
+			h.logger.WarnContext(r.Context(), "invalid permission set ID format",
 				"permission_set_id", psStr,
 				"principal", principalValue,
 				"agent_id", agentID)
@@ -185,7 +185,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		for i, svcStr := range svcStrs {
 			svcID, err := id.ParseServiceID(svcStr)
 			if err != nil {
-				h.logger.Warn("invalid service ID format",
+				h.logger.WarnContext(r.Context(), "invalid service ID format",
 					"service_id", svcStr,
 					"principal", principalValue,
 					"agent_id", agentID)
@@ -214,7 +214,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	handleGrantError := func(err error) {
 		// Check for specific error types
 		if errors.Is(err, consent.ErrAgentNotFound) {
-			h.logger.Warn("agent not found",
+			h.logger.WarnContext(r.Context(), "agent not found",
 				"agent_id", agentID,
 				"principal", principalValue)
 			h.writeError(w, http.StatusNotFound, "agent not found", "")
@@ -222,7 +222,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, consent.ErrInvalidScopes) {
-			h.logger.Warn("invalid scopes requested",
+			h.logger.WarnContext(r.Context(), "invalid scopes requested",
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
@@ -231,7 +231,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, consent.ErrServiceNotFound) {
-			h.logger.Warn("service not found",
+			h.logger.WarnContext(r.Context(), "service not found",
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
@@ -240,7 +240,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, consent.ErrMissingMandatoryPS) {
-			h.logger.Warn("missing mandatory permission set",
+			h.logger.WarnContext(r.Context(), "missing mandatory permission set",
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
@@ -249,7 +249,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, consent.ErrInvalidServiceInclusion) {
-			h.logger.Warn("invalid service inclusion in grant",
+			h.logger.WarnContext(r.Context(), "invalid service inclusion in grant",
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
@@ -325,7 +325,7 @@ func (h *GrantsHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 func (h *GrantsHandler) extractPrincipalAndAgent(w http.ResponseWriter, r *http.Request) (id.Principal, id.AgentID, bool) {
 	principalValue, ok := principal.FromContext(r.Context())
 	if !ok || principalValue == "" {
-		h.logger.Warn("principal not found in context")
+		h.logger.WarnContext(r.Context(), "principal not found in context")
 		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return "", id.AgentID{}, false
 	}
@@ -333,7 +333,7 @@ func (h *GrantsHandler) extractPrincipalAndAgent(w http.ResponseWriter, r *http.
 	rawAgentID := chi.URLParam(r, "agent-id")
 	agentID, err := id.ParseAgentID(rawAgentID)
 	if err != nil {
-		h.logger.Warn("invalid agent ID format", "agent_id", rawAgentID)
+		h.logger.WarnContext(r.Context(), "invalid agent ID format", "agent_id", rawAgentID)
 		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID must be a valid UUID")
 		return "", id.AgentID{}, false
 	}

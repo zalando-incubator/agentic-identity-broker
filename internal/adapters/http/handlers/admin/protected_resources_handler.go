@@ -24,7 +24,7 @@ type ProtectedResourcesHandler struct {
 
 func NewProtectedResourcesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderService, logger *slog.Logger) *ProtectedResourcesHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewProtectedResourcesHandler: logger must not be nil")
 	}
 	return &ProtectedResourcesHandler{providerService: providerService, logger: logger}
 }
@@ -210,7 +210,7 @@ func (h *ProtectedResourcesHandler) error(w http.ResponseWriter, status int, cod
 }
 func (h *ProtectedResourcesHandler) audit(r *http.Request, action, serviceID, outcome string, status int, resource, source, target string) {
 	principalValue, _ := principal.FromContext(r.Context())
-	h.logger.Info("protected_resource_audit", "principal", principalValue, "action", action, "service_id", serviceID, "outcome", outcome, "status", status, "request_id", r.Header.Get("X-Request-ID"), "resource_uri", nullable(resource), "source_resource_uri", nullable(source), "target_resource_uri", nullable(target))
+	h.logger.InfoContext(r.Context(), "protected_resource_audit", "principal", principalValue, "action", action, "service_id", serviceID, "outcome", outcome, "status", status, "request_id", r.Header.Get("X-Request-ID"), "resource_uri", nullable(resource), "source_resource_uri", nullable(source), "target_resource_uri", nullable(target))
 }
 func nullable(value string) any {
 	if value == "" {

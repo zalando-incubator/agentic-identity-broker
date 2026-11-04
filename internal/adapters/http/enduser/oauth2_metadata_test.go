@@ -3,6 +3,7 @@ package enduser
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,7 +19,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -60,7 +61,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -103,7 +104,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -133,7 +134,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -165,7 +166,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
