@@ -1588,7 +1588,7 @@ func TestLocalGrantStrategy_MintingFailureLogCarriesRequestContext(t *testing.T)
 		"client_secret": {"secret"},
 	}, nil)
 
-	record, ok := findTokenEndpointLogRecord(*base.records, "token request failed")
+	record, ok := findTokenEndpointEventRecord(*base.records, "oauth2_server.token.request_failed")
 	require.True(t, ok)
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"])
 	assert.Equal(t, want.Actor.String(), record.attrs["actor"])
@@ -2206,6 +2206,20 @@ func findTokenEndpointLogRecord(records []tokenEndpointLogRecord, message string
 	return tokenEndpointLogRecord{}, false
 }
 
+func findTokenEndpointEventRecord(records []tokenEndpointLogRecord, event string) (tokenEndpointLogRecord, bool) {
+	for _, record := range records {
+		if record.attrs["event"] == event {
+			return record, true
+		}
+	}
+	return tokenEndpointLogRecord{}, false
+}
+
+func isTokenExchangeOutcomeRecord(record tokenEndpointLogRecord) bool {
+	event := record.attrs["event"]
+	return event == "token_exchange.token.exchanged" || event == "token_exchange.token.exchange_failed"
+}
+
 type oauth2TokenJWKSProvider struct {
 	keySet jwk.Set
 }
@@ -2434,7 +2448,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	assert.Equal(t, want.Actor, providerRepo.seenSC.Actor)
 	assert.Equal(t, want.CallingPeer, providerRepo.seenSC.CallingPeer)
 
-	record, ok := findTokenEndpointLogRecord(*logCapture.records, "token exchange failed")
+	record, ok := findTokenEndpointEventRecord(*logCapture.records, "token_exchange.token.exchange_failed")
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"], "handler logs must remain bound to the request trace")
 	assert.Equal(t, want.Actor.String(), record.attrs["actor"], "handler logs must include the finalized actor")
@@ -2536,7 +2550,7 @@ func TestOAuth2TokenHandler_TokenExchangeResourceOmittedFromLogsAndSpan(t *testi
 	req.Header.Set("Authorization", "HEADER_SECRET_SENTINEL")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
-	record, ok := findTokenEndpointLogRecord(*logCapture.records, "token exchange failed")
+	record, ok := findTokenEndpointEventRecord(*logCapture.records, "token_exchange.token.exchange_failed")
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.NotContains(t, record.attrs, "resource")
 	assert.NotContains(t, record.attrs, "service_name")
@@ -2613,7 +2627,7 @@ func TestOAuth2TokenHandler_TokenExchangeSpanRecordsDiagnosticAndService(t *test
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
-	logRecord, ok := findTokenEndpointLogRecord(*logCapture.records, "token exchange failed")
+	logRecord, ok := findTokenEndpointEventRecord(*logCapture.records, "token_exchange.token.exchange_failed")
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, slog.LevelError, logRecord.level)
 	assert.Equal(t, string(tokenexchange.DetailAgentMissing), logRecord.attrs["token_exchange.failure_detail"])
@@ -2900,7 +2914,7 @@ func TestTokenExchangeEarlyAndImpersonationObservationsHaveNoAuthorization(t *te
 			require.Len(t, spans.Ended(), 1)
 			var observed bool
 			for _, record := range *logs.records {
-				if record.message != "token exchange failed" && record.message != "token exchange succeeded" {
+				if !isTokenExchangeOutcomeRecord(record) {
 					continue
 				}
 				observed = true
