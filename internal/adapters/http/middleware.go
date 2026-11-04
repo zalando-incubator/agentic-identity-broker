@@ -53,7 +53,7 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 			if r.URL.Path == "/oauth2/token" {
 				method = telemetryhttp.MethodName(method)
 			}
-			logger.InfoContext(r.Context(), "HTTP request",
+			logger.InfoContext(r.Context(), "http request",
 				"method", httpmiddleware.SanitizeLogValue(method),
 				"path", httpmiddleware.SanitizeLogValue(target),
 				"status", wrapped.statusCode,
@@ -76,10 +76,10 @@ func RecoveryMiddleware(logger *slog.Logger, traceResponseEnabled bool) func(nex
 				if err := recover(); err != nil {
 					writeTraceResponseHeaderIfPresent(w, r.Context(), traceResponseEnabled)
 					if r.URL.Path == "/oauth2/token" {
-						logger.ErrorContext(r.Context(), "Panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
+						logger.ErrorContext(r.Context(), "panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
 					} else {
 						clientIP := httpmiddleware.SanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
-						logger.ErrorContext(r.Context(), "Panic recovered",
+						logger.ErrorContext(r.Context(), "panic recovered",
 							"error", httpmiddleware.SanitizeLogValue(fmt.Sprint(err)),
 							"method", httpmiddleware.SanitizeLogValue(r.Method),
 							"path", httpmiddleware.SanitizeLogValue(r.URL.Path),

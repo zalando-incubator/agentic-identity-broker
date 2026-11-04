@@ -554,7 +554,7 @@ func TestCreateAuditContainsOnlyDefensiveTypedDefinitions(t *testing.T) {
 	agent.ServiceRequirements[1].RequireAllScopes = false
 	fields := agentAuditFields(t, capture.records[0])
 	require.Len(t, fields, 4)
-	assert.Equal(t, "agent_created", fields["action"])
+	assert.Equal(t, "agents.agent.created", fields["event"])
 	assert.Equal(t, want.ID, fields["agent_id"])
 	assert.Equal(t, want.PermissionSets, fields["permission_sets"])
 	assert.Equal(t, want.ServiceRequirements, fields["service_requirements"])
@@ -603,7 +603,7 @@ func TestUpdateAuditPreservesObservedBeforeAndNewDefinitions(t *testing.T) {
 	agent.ServiceRequirements[0].RequiredScopes[0] = "mutated"
 	fields := agentAuditFields(t, capture.records[0])
 	require.Len(t, fields, 7)
-	assert.Equal(t, "agent_updated", fields["action"])
+	assert.Equal(t, "agents.agent.updated", fields["event"])
 	assert.Equal(t, previous.ID, fields["agent_id"])
 	assert.Equal(t, wantNew.PermissionSets, fields["permission_sets"])
 	assert.Equal(t, wantNew.ServiceRequirements, fields["service_requirements"])
@@ -623,7 +623,7 @@ func TestUpdateAuditsSuccessfulUnchangedDefinition(t *testing.T) {
 	require.NoError(t, svc.Update(context.Background(), agent.ID, agent, UpdateInput{}))
 	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
-	assert.Equal(t, "agent_updated", agentAuditFields(t, capture.records[0])["action"])
+	assert.Equal(t, "agents.agent.updated", agentAuditFields(t, capture.records[0])["event"])
 }
 
 func TestFailedAgentMutationsEmitNoSuccessfulAudit(t *testing.T) {
@@ -691,6 +691,6 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	assert.Equal(t, "operation-context", capture.contexts[0].Value(agentAuditContextKey{}))
 	fields := agentAuditFields(t, capture.records[0])
 	require.Len(t, fields, 2)
-	assert.Equal(t, "agent_deleted", fields["action"])
+	assert.Equal(t, "agents.agent.deleted", fields["event"])
 	assert.Equal(t, agentID, fields["agent_id"])
 }

@@ -49,15 +49,15 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 
 	// RFC §3 SHOULD NOT: warn when client_id URL contains a query string
 	if parsed, parseErr := url.Parse(rawURL); parseErr == nil && (parsed.RawQuery != "" || parsed.ForceQuery) {
-		s.logger.WarnContext(ctx, "client_id URL contains query string (discouraged by RFC)",
+		s.logger.WarnContext(ctx, "cimd client_id url contains query string",
 			"url", rawURL)
 	}
 
 	// Cache hit
 	if entry := s.cache.Get(rawURL); entry != nil {
-		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "url", rawURL)
+		s.logger.DebugContext(ctx, "cimd document cache hit", "event", "cimd.document.cache_hit", "url", rawURL)
 		if err := entry.Document.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-			s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+			s.logger.WarnContext(ctx, "cimd document invalid", "event", "cimd.document.rejected", "url", rawURL, "error", err)
 			return nil, err
 		}
 		return entry.Document, nil
@@ -68,9 +68,9 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	if err != nil {
 		var ssrfErr *ports.SSRFBlockedError
 		if errors.As(err, &ssrfErr) {
-			s.logger.WarnContext(ctx, "cimd_fetch_blocked", "url", rawURL, "error", err)
+			s.logger.WarnContext(ctx, "cimd document fetch blocked", "event", "cimd.document.fetch_blocked", "url", rawURL, "error", err)
 		} else {
-			s.logger.WarnContext(ctx, "cimd_fetch_failed", "url", rawURL, "error", err)
+			s.logger.WarnContext(ctx, "cimd document fetch failed", "event", "cimd.document.fetch_failed", "url", rawURL, "error", err)
 		}
 		return nil, err
 	}
@@ -78,17 +78,18 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Parse and validate the raw response body
 	doc, err := ParseDocument(result.Body, rawURL, s.nameBlocklist)
 	if err != nil {
-		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+		s.logger.WarnContext(ctx, "cimd document invalid", "event", "cimd.document.rejected", "url", rawURL, "error", err)
 		return nil, err
 	}
 	if err := doc.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+		s.logger.WarnContext(ctx, "cimd document invalid", "event", "cimd.document.rejected", "url", rawURL, "error", err)
 		return nil, err
 	}
 
 	// Brand pin check (informational — flow continues)
 	if doc.ClientName != "" && agent.DisplayName != "" && doc.ClientName != agent.DisplayName {
-		s.logger.WarnContext(ctx, "cimd_brand_pin_mismatch",
+		s.logger.WarnContext(ctx, "cimd brand pin mismatch",
+			"event", "cimd.document.brand_pin_mismatched",
 			"agent_id", agent.ID,
 			"agent_display_name", agent.DisplayName,
 			"cimd_client_name", doc.ClientName,
@@ -97,7 +98,8 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 
 	s.cache.Set(rawURL, doc, CacheHeaders{CacheControl: result.CacheControl, Expires: result.Expires}, time.Now())
 
-	s.logger.InfoContext(ctx, "cimd_document_fetched",
+	s.logger.InfoContext(ctx, "cimd document fetched",
+		"event", "cimd.document.fetched",
 		"url", rawURL,
 		"client_name", doc.ClientName,
 		"redirect_uris_count", len(doc.RedirectURIs),

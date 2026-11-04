@@ -104,7 +104,7 @@ func TestShutdownControllerWithWarning_LogsCleanupFailure(t *testing.T) {
 	shutdownControllerWithWarning(ctrl, logger, "resource registration failure")
 
 	assert.Equal(t, 1, ctrl.calls)
-	assert.Contains(t, logs.String(), "failed to shut down JWKS controller during constructor cleanup")
+	assert.Contains(t, logs.String(), "failed to shut down jwks controller during constructor cleanup")
 	assert.Contains(t, logs.String(), "resource registration failure")
 }
 
@@ -669,7 +669,7 @@ func TestBackgroundRefreshFailure_LogsWarn(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return logs.String() != ""
 	}, 5*time.Second, 100*time.Millisecond)
-	assert.Contains(t, logs.String(), "JWKS refresh failed")
+	assert.Contains(t, logs.String(), "jwks refresh failed")
 }
 
 func TestGetKeySet_LogsOnceWhenServingCachedKeysAfterRefreshFailure(t *testing.T) {
@@ -712,7 +712,7 @@ func TestGetKeySet_LogsOnceWhenServingCachedKeysAfterRefreshFailure(t *testing.T
 	require.NoError(t, err)
 
 	assert.Equal(t, ports.ComponentHealthHealthy, adapter.HealthState())
-	assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte("serving cached JWKS after refresh failure")))
+	assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte("serving cached jwks after refresh failure")))
 }
 
 func TestMarkStaleServeLogged_RelogsEveryTenthServe(t *testing.T) {

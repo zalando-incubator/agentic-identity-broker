@@ -3533,7 +3533,7 @@ func TestServer_RequestContext_OPABodyBearingPath_LogsGeneratedTraceIDAndAnonymo
 	require.NotNil(t, headersResp)
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA: token exchanged in headers phase, buffering body for OPA evaluation")
+	record := requireLogRecord(t, capture, "opa: token exchanged in headers phase, buffering body for opa evaluation")
 	traceID, ok := record["trace_id"].(string)
 	require.True(t, ok, "expected trace_id field in log record: %#v", record)
 	assert.Regexp(t, regexp.MustCompile("^[0-9a-f]{32}$"), traceID)
@@ -3573,7 +3573,7 @@ func TestServer_RequestContext_OPAHeadersOnlyPath_LogsPropagatedTraceIDAndAnonym
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	record := requireLogRecord(t, capture, "OPA allowed header-only request, token exchanged successfully")
+	record := requireLogRecord(t, capture, "opa allowed header-only request, token exchanged successfully")
 	traceID, ok := record["trace_id"].(string)
 	require.True(t, ok, "expected trace_id field in log record: %#v", record)
 	assert.Equal(t, expectedTraceID, traceID)
@@ -3644,7 +3644,7 @@ func TestServer_RequestContext_OPADeny_LogsTraceID(t *testing.T) {
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA denied request")
+	record := requireLogRecord(t, capture, "opa denied request")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "OPA-deny log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }
@@ -3678,7 +3678,7 @@ func TestServer_RequestContext_OPAEvaluationError_LogsTraceID(t *testing.T) {
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA evaluation error — denying")
+	record := requireLogRecord(t, capture, "opa evaluation error — denying")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "OPA-evaluation-error log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }
@@ -3712,7 +3712,7 @@ func TestServer_RequestContext_OPAInvalidInput_LogsTraceID(t *testing.T) {
 	}, []byte(`this is not valid json-rpc`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA: failed to parse request body — denying")
+	record := requireLogRecord(t, capture, "opa: failed to parse request body — denying")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "invalid-input deny log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }

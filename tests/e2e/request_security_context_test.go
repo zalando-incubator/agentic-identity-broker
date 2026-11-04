@@ -44,7 +44,7 @@ func requestSecurityTraceID(resp *http.Response) string {
 func requestSecurityAccessLogs(records []map[string]any, path string) []map[string]any {
 	filtered := make([]map[string]any, 0, len(records))
 	for _, record := range records {
-		if record["msg"] != "HTTP request" {
+		if record["msg"] != "http request" {
 			continue
 		}
 		if pathValue, ok := record["path"].(string); ok && pathValue == path {
@@ -62,7 +62,7 @@ func requestSecurityAccessLog(records []map[string]any, path string) map[string]
 
 func requestSecurityOAuth2AuditLog(records []map[string]any, path string) map[string]any {
 	for _, record := range records {
-		if record["msg"] != "OAuth2 Authorization Request" {
+		if record["msg"] != "oauth2 authorization request" {
 			continue
 		}
 		if requestSecurityString(record, "path") == path {

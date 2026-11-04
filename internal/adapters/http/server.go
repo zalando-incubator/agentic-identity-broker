@@ -114,7 +114,7 @@ func (s *Server) Listen() (net.Listener, error) {
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			// IPv6 not available, fallback to IPv4
-			s.logger.Warn("IPv6 bind failed, falling back to IPv4",
+			s.logger.Warn("ipv6 bind failed, falling back to ipv4",
 				"address", addr,
 				"error", err)
 
@@ -124,13 +124,13 @@ func (s *Server) Listen() (net.Listener, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to bind to %s: %w", addr, err)
 			}
-			s.logger.Info("Server bound to IPv4",
+			s.logger.Info("server bound to ipv4",
 				"address", addr,
 				"port", s.config.Port)
 			return listener, nil
 		}
 
-		s.logger.Info("Server bound to dual-stack (IPv6/IPv4)",
+		s.logger.Info("server bound to dual-stack ipv6 and ipv4",
 			"address", addr,
 			"port", s.config.Port)
 		return listener, nil
@@ -143,7 +143,7 @@ func (s *Server) Listen() (net.Listener, error) {
 		return nil, fmt.Errorf("failed to bind to %s: %w", addr, err)
 	}
 
-	s.logger.Info("Server bound",
+	s.logger.Info("server bound",
 		"address", addr,
 		"port", s.config.Port,
 		"bind", s.config.Bind)
@@ -199,7 +199,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	atomic.StoreInt32(&s.healthState, int32(HealthStateHealthy))
 	s.startTime = time.Now()
 
-	s.logger.InfoContext(ctx, "Server started serving requests",
+	s.logger.InfoContext(ctx, "server started serving requests",
 		"address", listener.Addr().String())
 
 	// Start serving (blocking call)
@@ -214,7 +214,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 // Shutdown initiates graceful shutdown of the server.
 // Sets health state to shutting down, then calls http.Server.Shutdown with timeout.
 func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) error {
-	s.logger.InfoContext(parentCtx, "Initiating graceful shutdown",
+	s.logger.InfoContext(parentCtx, "initiating graceful shutdown",
 		"timeout", timeout)
 
 	// Set health state to shutting down
@@ -226,11 +226,11 @@ func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) erro
 
 	// Shutdown with timeout
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		s.logger.ErrorContext(parentCtx, "Shutdown error", "error", err)
+		s.logger.ErrorContext(parentCtx, "shutdown error", "error", err)
 		return fmt.Errorf("shutdown failed: %w", err)
 	}
 
-	s.logger.InfoContext(parentCtx, "Server shut down successfully")
+	s.logger.InfoContext(parentCtx, "server shut down successfully")
 	return nil
 }
 

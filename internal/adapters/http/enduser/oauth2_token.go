@@ -141,7 +141,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if h.OAuth2Service == nil || h.GrantHandler == nil {
 		if h.Logger != nil {
-			h.Logger.ErrorContext(r.Context(), "OAuth2 token handler invoked with nil OAuth2Service or GrantHandler — check builder wiring")
+			h.Logger.ErrorContext(r.Context(), "oauth2 token handler has no service or grant handler")
 		}
 		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "OAuth2 authorization server not configured")
 		return
@@ -313,14 +313,14 @@ func (h *OAuth2TokenHandler) impersonationParseAudit(err error) impersonation.Au
 	return record
 }
 
-// logImpersonationDecision emits the credential-free impersonation_decision audit event. Only
+// logImpersonationDecision emits the credential-free impersonation.decision.recorded audit event. Only
 // whitelisted, non-secret fields are recorded (FR-012, SC-005).
 func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, record impersonation.AuditRecord) {
 	if h.Logger == nil {
 		return
 	}
 	attrs := []any{
-		"event", "impersonation_decision",
+		"event", "impersonation.decision.recorded",
 		"outcome", record.Outcome,
 	}
 	if record.TargetAgentID != "" {
@@ -350,7 +350,7 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 	if requestID := httpctx.RequestIDFromContext(ctx); requestID != "" {
 		attrs = append(attrs, "request_id", requestID)
 	}
-	h.Logger.InfoContext(ctx, "impersonation_decision", attrs...)
+	h.Logger.InfoContext(ctx, "impersonation decision recorded", attrs...)
 }
 
 func (h *OAuth2TokenHandler) writeTokenExchangeFailure(ctx context.Context, span trace.Span, w http.ResponseWriter, err error, fallback tokenexchange.Diagnostic) {
@@ -408,13 +408,12 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 		attribute.String("token_exchange.recovery_target", string(diagnostic.RecoveryTarget())),
 		attribute.String("token_exchange.exchange_kind", string(diagnostic.ExchangeKind())),
 	}
-	level, message := slog.LevelInfo, "token_exchange_succeeded"
-	if diagnostic.Outcome() != tokenexchange.OutcomeSuccess {
+	succeeded := diagnostic.Outcome() == tokenexchange.OutcomeSuccess
+	if !succeeded {
 		attrs = append(attrs,
 			attribute.String("token_exchange.failure_stage", string(diagnostic.Stage())),
 			attribute.String("token_exchange.failure_detail", string(diagnostic.Detail())),
 		)
-		level, message = slog.LevelError, "Token exchange failed"
 		span.SetStatus(codes.Error, "token exchange failed")
 	}
 	if !service.ID.IsZero() {
@@ -450,11 +449,20 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 	}
 	span.SetAttributes(attrs...)
 	if h.Logger != nil {
-		logAttrs := make([]slog.Attr, 0, len(attrs))
+		logAttrs := make([]slog.Attr, 0, len(attrs)+1)
+		if succeeded {
+			logAttrs = append(logAttrs, slog.String("event", "token_exchange.token.exchanged"))
+		} else {
+			logAttrs = append(logAttrs, slog.String("event", "token_exchange.token.exchange_failed"))
+		}
 		for _, attr := range attrs {
 			logAttrs = append(logAttrs, slog.Any(string(attr.Key), attr.Value.AsInterface()))
 		}
-		h.Logger.LogAttrs(ctx, level, message, logAttrs...)
+		if succeeded {
+			h.Logger.LogAttrs(ctx, slog.LevelInfo, "token exchange succeeded", logAttrs...)
+		} else {
+			h.Logger.LogAttrs(ctx, slog.LevelError, "token exchange failed", logAttrs...)
+		}
 	}
 }
 

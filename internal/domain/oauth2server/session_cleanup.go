@@ -60,7 +60,7 @@ func (s *SessionCleanup) sweep(ctx context.Context) {
 		}
 		if _, err := repository.deleteExpired(ctx); err != nil && ctx.Err() == nil {
 			// Repository errors can contain credentials; log only the affected store.
-			s.logger.WarnContext(ctx, "expired OAuth2 record cleanup failed", "repository", repository.name)
+			s.logger.WarnContext(ctx, "expired oauth2 record cleanup failed", "repository", repository.name)
 		}
 	}
 }

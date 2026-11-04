@@ -149,7 +149,7 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	agentID := chi.URLParam(r, "agent-id")
 
 	if agentID == "" {
-		h.logger.WarnContext(ctx, "agent ID is missing in request")
+		h.logger.WarnContext(ctx, "agent id is missing in request")
 		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID is required")
 		return
 	}
@@ -163,7 +163,7 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 
 	parsedAgentID, parseErr := id.ParseAgentID(agentID)
 	if parseErr != nil {
-		h.logger.WarnContext(ctx, "invalid agent ID format", "agent_id", agentID, "error", parseErr)
+		h.logger.WarnContext(ctx, "invalid agent id format", "agent_id", agentID, "error", parseErr)
 		h.writeError(w, http.StatusBadRequest, "bad request", "invalid agent ID format")
 		return
 	}
@@ -246,7 +246,7 @@ func (h *AgentDetailHandler) buildResponse(ctx context.Context, detail *consent.
 	permissionSets := make([]PermissionSetWithRequirement, 0, len(detail.ResolvedPermissionSets))
 	for _, entry := range detail.ResolvedPermissionSets {
 		if entry.PermissionSet == nil {
-			h.logger.WarnContext(ctx, "resolved permission set entry has nil PermissionSet, omitting")
+			h.logger.WarnContext(ctx, "resolved permission set entry has no permission set, omitting")
 			continue
 		}
 		serviceScopes := make([]ServiceScopeInfo, 0, len(entry.PermissionSet.ServiceScopes))

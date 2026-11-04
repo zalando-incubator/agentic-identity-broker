@@ -108,7 +108,7 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 		PermissionSets: agent.PermissionSets, ServiceRequirements: agent.ServiceRequirements,
 	}).Copy()
 	s.logger.InfoContext(ctx, "agent created",
-		"action", "agent_created",
+		"event", "agents.agent.created",
 		"agent_id", agent.ID,
 		"permission_sets", definition.PermissionSets,
 		"service_requirements", definition.ServiceRequirements)
@@ -180,7 +180,7 @@ func (s *Service) persistUpdate(ctx context.Context, existing, agent *storage.Ag
 		PermissionSets: agent.PermissionSets, ServiceRequirements: agent.ServiceRequirements,
 	}).Copy()
 	s.logger.InfoContext(ctx, "agent updated",
-		"action", "agent_updated",
+		"event", "agents.agent.updated",
 		"agent_id", agent.ID,
 		"permission_sets", definition.PermissionSets,
 		"service_requirements", definition.ServiceRequirements,
@@ -222,7 +222,7 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 		return err
 	}
 	if deleted {
-		s.logger.InfoContext(ctx, "agent deleted", "action", "agent_deleted", "agent_id", agentID)
+		s.logger.InfoContext(ctx, "agent deleted", "event", "agents.agent.deleted", "agent_id", agentID)
 	}
 	return nil
 }

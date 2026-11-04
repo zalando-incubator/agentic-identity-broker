@@ -357,7 +357,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			request:    protectedResourceCollectionRequest(http.MethodPost, unresolvedServiceID, `{"resource_uri":`),
 			wantStatus: http.StatusBadRequest,
 			wantAudit: []string{
-				`"action":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"outcome":"rejected"`, `"resource_uri":null`,
+				`"operation":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"outcome":"rejected"`, `"resource_uri":null`,
 			},
 		},
 		{
@@ -367,7 +367,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
+				`"operation":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
 			},
 		},
 		{
@@ -377,7 +377,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"remove"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
+				`"operation":"remove"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
 			},
 		},
 		{
@@ -387,7 +387,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"rename"`, `"service_id":"` + unresolvedServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":"https://api.example.com/renamed"`,
+				`"operation":"rename"`, `"service_id":"` + unresolvedServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":"https://api.example.com/renamed"`,
 			},
 		},
 		{
@@ -396,7 +396,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			request:    protectedResourceRequest(http.MethodPatch, validServiceID, escaped, `{"to":"://raw-secret-target"}`),
 			wantStatus: http.StatusBadRequest,
 			wantAudit: []string{
-				`"action":"rename"`, `"service_id":"` + validServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":null`,
+				`"operation":"rename"`, `"service_id":"` + validServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":null`,
 			},
 			mustNotLog: []string{"raw-secret-target"},
 		},

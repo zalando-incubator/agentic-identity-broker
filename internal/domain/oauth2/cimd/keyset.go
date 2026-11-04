@@ -335,5 +335,5 @@ func (s *ClientKeySetService) auditRefresh(ctx context.Context, document *ports.
 	if document != nil {
 		clientID = document.ClientID
 	}
-	s.logger.InfoContext(ctx, "client_key_set_refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
+	s.logger.InfoContext(ctx, "cimd client key set refreshed", "event", "cimd.client_key_set.refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
 }

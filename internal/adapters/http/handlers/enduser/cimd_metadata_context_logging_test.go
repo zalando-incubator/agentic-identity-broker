@@ -34,7 +34,7 @@ func TestCIMDMetadataHandler_AuditRecordCarriesRequestSecurityContext(t *testing
 	require.Equal(t, http.StatusOK, rec.Code)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
-	assert.Equal(t, "CIMD metadata access", entry["msg"])
+	assert.Equal(t, "cimd metadata access", entry["msg"])
 	assert.Equal(t, "success", entry["outcome"])
 	assert.Equal(t, "fedcba9876543210fedcba9876543210", entry["trace_id"])
 	assert.Equal(t, security.AnonymousActor, entry["actor"])

@@ -472,7 +472,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	input, rejection := extractTokenExchangeInput(req)
 	if rejection != nil {
 		diagnostic = rejection.Diagnostic()
-		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc OPA: token-exchange metadata rejected", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc opa: token-exchange metadata rejected", diagnostic)
 		return inputRejectionResponse(rejection), nil
 	}
 	resourceURI := input.resourceURI
@@ -480,7 +480,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	protocol, ok := extractProtocolFromMetadata(req)
 	if !ok {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: protocol metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: protocol metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"protocol metadata is required when authorization is enabled"}`), nil
 	}
@@ -499,7 +499,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	targetServerName, mcpServerOK := extractMCPServerFromMetadata(req)
 	if protocol == "mcp" && !mcpServerOK {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: mcp_server metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: mcp_server metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"mcp_server metadata is required when authorization is enabled for MCP requests"}`), nil
 	}
@@ -529,7 +529,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa: token exchanged in headers phase, buffering body for opa evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
 
@@ -553,7 +553,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 
 	maxSize := s.cfg.Authorization.MaxBodySize
 	if maxSize > 0 && len(bodyBytes) > maxSize {
-		logDiagnostic(ctx, logger.With("body_size", len(bodyBytes), "max_body_size", maxSize), slog.LevelWarn, "OPA: request body exceeds max_body_size — rejecting", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger.With("body_size", len(bodyBytes), "max_body_size", maxSize), slog.LevelWarn, "opa: request body exceeds max_body_size — rejecting", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"request_too_large","error_description":"request body exceeds maximum allowed size"}`)
 	}
@@ -566,32 +566,32 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 
 	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 	if buildErr != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes, state.protocol == "mcp"))
 	if buildErr != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse request body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to parse request body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
+		logDiagnostic(ctx, logger, slog.LevelError, "opa evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action == authorization.ActionApprovalRequired && s.approvalGate != nil {
 		if state.protocol != "mcp" {
-			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required action is not an MCP tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+			logDiagnostic(ctx, logger, slog.LevelWarn, "opa approval-required action is not an mcp tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		invocation, rawID, invocationErr := approvalInvocation(opaInput["parsed_body"].(map[string]any), state, decision)
 		if invocationErr != nil {
-			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger, slog.LevelWarn, "opa approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
@@ -607,10 +607,10 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		return accessDeniedResponse([]string{"approval_required is not yet supported"})
 	}
 	if decision.Action != authorization.ActionAllow {
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return echoRequestBody(body)
 }
 
@@ -630,7 +630,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers, state.targetServerName)
 	if buildErr != nil {
 		diagnostic = NewDiagnostic(StageRequestValidation, DetailRequestMalformed)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for header-only request — denying", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build input for header-only request — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
@@ -642,14 +642,14 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed)
-		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelError, "opa evaluation error — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action != "allow" {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyDenied)
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied header-only request", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied header-only request", diagnostic)
 		return accessDeniedResponse(decision.Reasons)
 	}
 
@@ -659,7 +659,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		diagnostic = failure
 		return response
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed header-only request, token exchanged successfully", diagnostic)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed header-only request, token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
@@ -669,18 +669,18 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	ctx, logger := s.withRequestLogger(ctx)
 	messages, err := decodeJSONBatch(bodyBytes)
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse batch body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to parse batch body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
 	if len(messages) == 0 {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: empty batch body — rejecting as malformed", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: empty batch body — rejecting as malformed", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
 	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
@@ -691,21 +691,21 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	)
 	for i, message := range messages {
 		if _, err := authorization.ParseMCPMessage(message.parsed); err != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "opa: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
 		opaInput, buildErr := builder.Build(message.raw, message.parsed)
 		if buildErr != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "opa: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "failed to parse batch element")
 			continue
 		}
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "OPA evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "opa evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 			denied = true
 			denyReasons = append(denyReasons, "authorization evaluation failed")
 			continue
@@ -725,11 +725,11 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	}
 
 	if denied {
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied batch request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied batch request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return echoRequestBody(body)
 }
 

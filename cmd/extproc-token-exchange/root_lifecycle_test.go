@@ -264,7 +264,7 @@ func TestRun_ServesExtProcAndGracefullyStopsOnSIGTERM(t *testing.T) {
 		}
 		var entry map[string]any
 		require.NoError(t, json.Unmarshal(line, &entry), "invalid structured command log: %s", line)
-		if entry["msg"] == "ExtProc Token Exchange Service starting" {
+		if entry["msg"] == "extproc token exchange service starting" {
 			startupLogged = true
 		}
 		for _, field := range []string{"client_secret", "client_id", "token_endpoint", "issuer", "endpoint"} {

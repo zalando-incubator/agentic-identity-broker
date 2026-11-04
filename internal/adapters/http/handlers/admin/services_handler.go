@@ -314,7 +314,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
-			h.logger.WarnContext(ctx, "OAuth2 endpoint discovery failed, falling back to manual endpoints",
+			h.logger.WarnContext(ctx, "oauth2 endpoint discovery failed, falling back to manual endpoints",
 				"issuer_uri", req.IssuerURI,
 				"error", err)
 			if req.Endpoints != nil {
@@ -548,7 +548,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
-			h.logger.WarnContext(ctx, "OAuth2 endpoint discovery failed, falling back to manual endpoints",
+			h.logger.WarnContext(ctx, "oauth2 endpoint discovery failed, falling back to manual endpoints",
 				"issuer_uri", req.IssuerURI,
 				"error", err)
 			if req.Endpoints != nil {
@@ -607,7 +607,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.Discovery.ResourceURL == nil {
-		h.logger.InfoContext(ctx, "OAuth2 service updated",
+		h.logger.InfoContext(ctx, "oauth2 service updated",
 			"service_id", entity.ID,
 			"client_id", entity.ClientID)
 	}
@@ -669,7 +669,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.logger.InfoContext(ctx, "OAuth2 service deleted", "service_id", serviceID)
+	h.logger.InfoContext(ctx, "oauth2 service deleted", "service_id", serviceID)
 
 	// Return 204 No Content
 	w.WriteHeader(http.StatusNoContent)

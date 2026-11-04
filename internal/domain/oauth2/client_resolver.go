@@ -63,10 +63,10 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 		}
 		var storageErr *storage.StorageError
 		if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict {
-			r.logger.WarnContext(ctx, "cimd_client_uri_ambiguous", "client_uri", rawURL)
+			r.logger.WarnContext(ctx, "cimd client uri ambiguous", "event", "cimd.client_uri.match_ambiguous", "client_uri", rawURL)
 			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "Client not registered"}
 		}
-		r.logger.ErrorContext(ctx, "failed to look up agent by client URI", "error", err, "client_uri", rawURL)
+		r.logger.ErrorContext(ctx, "failed to look up agent by client uri", "error", err, "client_uri", rawURL)
 		return nil, &ports.ClientIDError{Code: "server_error", Desc: "Failed to validate client"}
 	}
 
@@ -75,10 +75,10 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 	if err != nil {
 		var unavailable *ports.CIMDUnavailableError
 		if errors.As(err, &unavailable) {
-			r.logger.ErrorContext(ctx, "CIMD document temporarily unavailable")
+			r.logger.ErrorContext(ctx, "cimd document temporarily unavailable")
 			return nil, &ports.ClientIDError{Code: "server_error", Desc: "CIMD document unavailable"}
 		}
-		r.logger.WarnContext(ctx, "CIMD document validation failed", "error", err, "client_uri", rawURL)
+		r.logger.WarnContext(ctx, "cimd document validation failed", "error", err, "client_uri", rawURL)
 		return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "CIMD document validation failed"}
 	}
 
@@ -96,7 +96,7 @@ func (r *AgentClientResolver) resolveOpaque(ctx context.Context, clientID id.Cli
 		if ports.IsNotFoundErr(err) {
 			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "Client not registered"}
 		}
-		r.logger.ErrorContext(ctx, "failed to look up agent by ID", "error", err, "agent_id", agentUUID)
+		r.logger.ErrorContext(ctx, "failed to look up agent by id", "error", err, "agent_id", agentUUID)
 		return nil, &ports.ClientIDError{Code: "server_error", Desc: "Failed to validate client"}
 	}
 

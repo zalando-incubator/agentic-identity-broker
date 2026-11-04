@@ -79,10 +79,10 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 			logger.WarnContext(ctx, "telemetry: insecure=true is contradictory with protocol=https and will be ignored",
 				"endpoint", cfg.Exporter.Endpoint)
 		case ports.OTLPProtocolHTTP:
-			logger.WarnContext(ctx, "telemetry: insecure=true has no effect for protocol=http — TLS is controlled by the URL scheme",
+			logger.WarnContext(ctx, "telemetry: insecure=true has no effect for protocol=http; the url scheme controls tls",
 				"endpoint", cfg.Exporter.Endpoint)
 		case ports.OTLPProtocolGRPC:
-			logger.WarnContext(ctx, "telemetry: TLS disabled for OTLP gRPC exporter (insecure=true) — do not use in production",
+			logger.WarnContext(ctx, "telemetry: tls disabled for otlp grpc exporter; do not use in production",
 				"endpoint", cfg.Exporter.Endpoint)
 		}
 	}
@@ -245,7 +245,7 @@ func buildGRPCProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 		}
 		logExp, logErr := otlploggrpc.New(ctx, logOpts...)
 		if logErr != nil {
-			logger.WarnContext(ctx, "telemetry: log gRPC exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
+			logger.WarnContext(ctx, "telemetry: log grpc exporter failed to initialize, otlp log pipeline disabled", "error", logErr)
 		} else {
 			lp = buildLoggerProvider(logExp, res)
 		}
@@ -317,7 +317,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 		}
 		logExp, logErr := otlploghttp.New(ctx, logOpts...)
 		if logErr != nil {
-			logger.WarnContext(ctx, "telemetry: log HTTP exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
+			logger.WarnContext(ctx, "telemetry: log http exporter failed to initialize, otlp log pipeline disabled", "error", logErr)
 		} else {
 			lp = buildLoggerProvider(logExp, res)
 		}
