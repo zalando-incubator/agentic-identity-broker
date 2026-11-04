@@ -1,16 +1,10 @@
 {
   "version": 1,
   "cursors": {
-    "labelling_after": null,
-    "investigation_after": 27
+    "labelling_after": 59,
+    "investigation_after": 56
   },
   "issues": [
-    {
-      "number": 21,
-      "state": "resolution_recommended",
-      "updated_at": "2026-11-04",
-      "note": "Posted source/test evidence that Feature 050 implements all requested discovery capabilities; recommend closure pending maintainer confirmation."
-    },
     {
       "number": 27,
       "state": "awaiting_clarification",
@@ -18,10 +12,22 @@
       "note": "Asked for Agentgateway/extMCP proto revision and authorization-only vs token-exchange scope. Reuse Authorizer; preserve ADR 036 trusted-input boundary."
     },
     {
+      "number": 37,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-04",
+      "note": "Confirmed config CR-006 and builder enforce local-only impersonation. Asked whether hybrid/proxy should mint broker-signed tokens or obtain upstream-issued tokens before a mode/issuance proposal."
+    },
+    {
+      "number": 56,
+      "state": "deferred",
+      "updated_at": "2026-11-04",
+      "note": "Agent.ValidatePermissionSets and TestAgent_ValidatePermissionSets_RejectsEmpty deliberately reject identity-only agents. Scope a contract/domain/UI change with a client-credentials journey, rather than only relaxing HTTP parsing."
+    },
+    {
       "number": 212,
       "state": "deferred",
       "updated_at": "2026-11-04",
-      "note": "InitiateFlow still rejects empty redirect_uri. Candidate: configured-public-origin /sessions default, retaining origin validation and consent state. Defer implementation until required TDD/checks can run."
+      "note": "Missing redirect_uri still rejected by InitiateFlow. Go 1.27.3 and just now work. Ready for OpenAPI-first implementation with configured-origin /sessions default and callback/consent-state coverage."
     }
   ],
   "fixes": [
@@ -36,36 +42,63 @@
   ],
   "checks": [
     {
-      "area": "tests",
-      "checked_at": "2026-11-03",
-      "result": "#367: gofmt and whitespace checks passed. Added readiness, challenge, terminal-denial and E2E reconnect coverage; execution blocked by missing just and Go toolchain TLS failure.",
-      "follow_up": "Run just check, just build, affected package tests and focused impersonation E2E in CI before approval."
-    },
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-04",
-      "result": "just check blocked: just missing. go version blocked: required Go 1.27.3 download fails TLS certificate validation. No bypass attempted.",
-      "follow_up": "Provision supported runner tools; run just check and affected tests before implementation of #212."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-04",
-      "result": "One live Repo Assist PR: #403 for #367; memory updated to actual PR and generated branch. No duplicate fix opened.",
-      "follow_up": "Run required Go static/build/package/E2E validation before approval."
-    },
-    {
       "area": "code",
       "checked_at": "2026-11-04",
       "result": "#21 implementation and E2E assertions cover discovery, CIMD/DCR choice, status and failed-create rejection. #27 lacks extMCP registration and needs protocol/scope decisions.",
       "follow_up": "Await #21 closure confirmation and #27 contract clarification; resume oldest-first investigation after #27."
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-04",
+      "result": "Go 1.27.3 and just available. just check passed, including golangci-lint (0 issues). rg absent; standard grep/find available.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-04",
+      "result": "Approval characterization tests passed before optimization; approval/server race tests passed after. Added global/targeted one-time reservation and consumption, cloning, empty-ID, duplicate-ID regressions.",
+      "follow_up": "No E2E run for behavior-preserving snapshot optimization; CI remains required for unrelated PR #403."
+    },
+    {
+      "area": "performance",
+      "checked_at": "2026-11-04",
+      "result": "Committed 4ca72b68 on repo-assist/perf-approval-snapshot-2026-11-04; submitting draft #420. Index replaces quadratic scan: 10k records 269-320ms to 4.3-4.5ms; 9-11% extra bytes and small-snapshot overhead.",
+      "follow_up": "Review draft snapshot-reconciliation PR; preserve first-ID match, consumption, reservations and deep cloning. Query live PR by branch before duplicate work."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-04",
+      "result": "just build and just extproc-build both passed for approval-cache optimization.",
+      "follow_up": null
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-04",
+      "result": "Verified #367 has existing draft #403; no duplicate fix. One new performance draft submission planned, below new_pr_limit=4. Existing author chart fixes #61/#62 cover #55/#57.",
+      "follow_up": "Review performance draft and existing #403; do not treat draft status as merge readiness."
+    },
+    {
+      "area": "release",
+      "checked_at": "2026-11-04",
+      "result": "Latest release v0.1.133 (Nov 2). Main includes agent-subject issuance and observed refresh rejection. Release workflow is tag-triggered; no separate version-bump PR justified by this performance change.",
+      "follow_up": "Maintainers can assess release timing for the unreleased feature set after normal gates."
     }
   ],
-  "completed_actions": [],
+  "completed_actions": [
+    {
+      "key": "check_comment:21",
+      "completed_at": "2026-11-04"
+    },
+    {
+      "key": "close_issue:21",
+      "completed_at": "2026-11-04"
+    }
+  ],
   "priorities": [
     {
       "task": 3,
       "item": "#212 default service authorization return URI",
-      "note": "Implement only once Go/just validation works: update OpenAPI first, add missing/explicit/foreign-origin redirect coverage and full callback-to-sessions journey."
+      "note": "Tooling blocker cleared. Update OpenAPI first, add missing/explicit/foreign-origin redirect coverage and full callback-to-sessions journey; preserve POST consent state and accepted ADR boundaries."
     }
   ]
 }
