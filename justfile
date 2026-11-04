@@ -20,8 +20,7 @@ INTEGRATION_INFRA_GO_TEST_ARGS := "-count=1 -tags=integration -p " + INTEGRATION
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
 
-# Use Docker Compose v1 when installed, otherwise Docker Compose v2.
-COMPOSE_CMD := `if command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
+COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
 
 

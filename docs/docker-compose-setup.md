@@ -8,6 +8,7 @@ Compose. It includes hot reload for the backend and frontend.
 ### Prerequisites
 
 - Docker installed and running, with Docker Compose v2 (`docker compose`)
+- OpenSSL for host-side key generation
 - [just](https://github.com/casey/just), installed with `brew install just` or `cargo install just`
 
 For plain Docker Compose commands and a complete consent-to-tool journey,
@@ -28,6 +29,9 @@ This command does the following:
 
 The command shows service startup messages and container logs. Seed-data scripts finish after
 the broker health check.
+
+The sample-agent health check allows a 60-second startup grace period.
+Slow or stalled seeding can still cause startup to fail.
 
 ### Step 2: Access Services
 
