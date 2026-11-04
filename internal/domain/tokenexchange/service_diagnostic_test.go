@@ -38,7 +38,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 		{name: "expired grant", code: "access_denied", detail: DetailGrantExpired},
 		{name: "no session", code: "invalid_grant", detail: DetailSessionMissing},
 		{name: "access token expired, no refresh token", code: "invalid_grant", detail: DetailAccessTokenExpired},
-		{name: "stored refresh token expired", code: "invalid_grant", detail: DetailRefreshTokenExpired},
+		{name: "stored refresh token rejected", code: "invalid_grant", detail: DetailRefreshRejected},
 		{name: "service invalid_grant", code: "invalid_grant", detail: DetailRefreshRejected, status: 400, body: `{"error":"invalid_grant"}`},
 		{name: "service rejects otherwise", code: "server_error", detail: DetailProviderUnavailable, status: 502, body: "unavailable"},
 		{name: "service unreachable", code: "server_error", detail: DetailProviderUnavailable},
@@ -101,11 +101,11 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 				sessionRepo.session = nil
 			case "access token expired, no refresh token":
 				sessionRepo.session.AccessTokenExpiresAt = &past
-			case "stored refresh token expired", "service invalid_grant", "service rejects otherwise", "service unreachable":
+			case "stored refresh token rejected", "service invalid_grant", "service rejects otherwise", "service unreachable":
 				sessionRepo.session.AccessTokenExpiresAt = &past
 				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
-				if tc.name == "stored refresh token expired" {
-					sessionRepo.session.RefreshTokenExpiresAt = &past
+				if tc.name == "stored refresh token rejected" {
+					sessionRepo.session.RefreshRejectedAt = &past
 				}
 			case "insufficient scope":
 				sessionRepo.session.Scope = []string{}

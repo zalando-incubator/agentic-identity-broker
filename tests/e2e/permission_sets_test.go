@@ -1361,7 +1361,7 @@ var _ = Describe("Permission Sets (019)", func() {
 				now := time.Now()
 				rejected := fixtures.ExpiredRefreshableSession(userPrincipal, id.MustParseServiceID(googleServiceID), now)
 				rejectedAt := now.Add(-time.Minute)
-				rejected.RefreshTokenExpiresAt = &rejectedAt
+				rejected.RefreshRejectedAt = &rejectedAt
 				Expect(testStorage.UserSessions().Create(context.Background(), rejected)).To(Succeed())
 
 				expectConsent(authorize())

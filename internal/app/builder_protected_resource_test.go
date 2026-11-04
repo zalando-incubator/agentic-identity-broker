@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -84,7 +83,7 @@ func TestBuilder_DiscoveryUsesInjectedClientWithoutChangingManualServices(t *tes
 
 	client := &builderProtectedResourceClient{}
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithOAuthDiscoveryClient(client).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
@@ -202,7 +201,7 @@ func TestBuilder_ShutdownClosesSharedAndDiscoveryTokenIdleConnections(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithDiscoveryTokenHTTPClient(injectedTokenClient).Build()
 	require.NoError(t, err)
 	stopped := false
@@ -243,7 +242,7 @@ func TestBuilder_ShutdownClosesProductionSharedAndGuardedPools(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
 	require.NoError(t, err)
 	stopped := false
 	t.Cleanup(func() {
@@ -325,7 +324,7 @@ func TestBuilder_GuardedDiscoveryTracingDoesNotExportURLQueries(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	application, err := NewBuilder().WithConfig(config).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).WithTracerProvider(tracer).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).WithTracerProvider(tracer).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, application.Shutdown(context.Background())) })
 

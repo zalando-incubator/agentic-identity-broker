@@ -11,7 +11,6 @@ import (
 func GitHubSessionForPrincipal(principal string) *storage.UserSession {
 	now := time.Now()
 	accessTokenExpires := now.Add(1 * time.Hour)
-	refreshTokenExpires := now.Add(30 * 24 * time.Hour)
 	ghServiceID := id.MustParseServiceID("a0000000-0000-0000-0000-000000000001")
 
 	return &storage.UserSession{
@@ -22,7 +21,6 @@ func GitHubSessionForPrincipal(principal string) *storage.UserSession {
 		EncryptedRefreshToken: EncryptedToken(ghServiceID.String(), "github-refresh-xyz"),
 		TokenType:             "Bearer",
 		AccessTokenExpiresAt:  &accessTokenExpires,
-		RefreshTokenExpiresAt: &refreshTokenExpires,
 		Scope:                 []string{"repo", "user"},
 		EncryptionContext: storage.EncryptionContext{
 			ServiceID: ghServiceID,
@@ -37,7 +35,6 @@ func GitHubSessionForPrincipal(principal string) *storage.UserSession {
 func ExpiredGitHubSessionForPrincipal(principal string) *storage.UserSession {
 	now := time.Now()
 	accessTokenExpired := now.Add(-1 * time.Hour)
-	refreshTokenValid := now.Add(7 * 24 * time.Hour)
 	ghServiceID := id.MustParseServiceID("a0000000-0000-0000-0000-000000000001")
 
 	return &storage.UserSession{
@@ -48,7 +45,6 @@ func ExpiredGitHubSessionForPrincipal(principal string) *storage.UserSession {
 		EncryptedRefreshToken: EncryptedToken(ghServiceID.String(), "github-refresh-xyz"),
 		TokenType:             "Bearer",
 		AccessTokenExpiresAt:  &accessTokenExpired,
-		RefreshTokenExpiresAt: &refreshTokenValid,
 		Scope:                 []string{"repo", "user"},
 		EncryptionContext: storage.EncryptionContext{
 			ServiceID: ghServiceID,
@@ -59,11 +55,12 @@ func ExpiredGitHubSessionForPrincipal(principal string) *storage.UserSession {
 	}
 }
 
-// FullyExpiredSessionForPrincipal returns a session where both tokens are expired.
+// FullyExpiredSessionForPrincipal returns a session whose access token is expired and whose
+// refresh token the provider has rejected, so it requires reauthentication.
 func FullyExpiredSessionForPrincipal(principal, serviceID string) *storage.UserSession {
 	now := time.Now()
 	accessTokenExpired := now.Add(-2 * time.Hour)
-	refreshTokenExpired := now.Add(-1 * time.Hour)
+	refreshTokenRejected := now.Add(-1 * time.Hour)
 	svcID := id.MustParseServiceID(serviceID)
 
 	return &storage.UserSession{
@@ -74,7 +71,7 @@ func FullyExpiredSessionForPrincipal(principal, serviceID string) *storage.UserS
 		EncryptedRefreshToken: EncryptedToken(serviceID, "fully-expired-refresh-token"),
 		TokenType:             "Bearer",
 		AccessTokenExpiresAt:  &accessTokenExpired,
-		RefreshTokenExpiresAt: &refreshTokenExpired,
+		RefreshRejectedAt:     &refreshTokenRejected,
 		Scope:                 []string{"read", "write"},
 		EncryptionContext: storage.EncryptionContext{
 			ServiceID: svcID,
@@ -89,7 +86,6 @@ func FullyExpiredSessionForPrincipal(principal, serviceID string) *storage.UserS
 func SessionForService(principal, serviceID string) *storage.UserSession {
 	now := time.Now()
 	accessTokenExpires := now.Add(1 * time.Hour)
-	refreshTokenExpires := now.Add(30 * 24 * time.Hour)
 	svcID := id.MustParseServiceID(serviceID)
 
 	return &storage.UserSession{
@@ -100,7 +96,6 @@ func SessionForService(principal, serviceID string) *storage.UserSession {
 		EncryptedRefreshToken: EncryptedToken(serviceID, "refresh-"+serviceID),
 		TokenType:             "Bearer",
 		AccessTokenExpiresAt:  &accessTokenExpires,
-		RefreshTokenExpiresAt: &refreshTokenExpires,
 		Scope:                 []string{"read", "write"},
 		EncryptionContext: storage.EncryptionContext{
 			ServiceID: svcID,
@@ -133,7 +128,6 @@ func SessionWithoutRefreshToken(principal, serviceID string) *storage.UserSessio
 		EncryptedRefreshToken: nil,
 		TokenType:             "Bearer",
 		AccessTokenExpiresAt:  &accessTokenExpires,
-		RefreshTokenExpiresAt: nil,
 		Scope:                 []string{"read"},
 		EncryptionContext: storage.EncryptionContext{
 			ServiceID: svcID,

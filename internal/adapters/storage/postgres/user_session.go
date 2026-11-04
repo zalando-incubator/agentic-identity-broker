@@ -19,33 +19,36 @@ refresh_token_expires_at, scope, encryption_context, initiated_at, created_at, u
 const listExpiringSessionsFirstPageQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND refresh_token_expires_at IS NULL
 ORDER BY access_token_expires_at, id
 LIMIT $2`
 
 const listExpiringSessionsAfterCursorQuery = `SELECT ` + userSessionColumns + ` FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
   AND access_token_expires_at <= $1
+  AND refresh_token_expires_at IS NULL
   AND (access_token_expires_at, id) > ($2, $3)
 ORDER BY access_token_expires_at, id
 LIMIT $4`
 
 // countSessionsByExpiryQuery mirrors storage.UserSession.AccessTokenExpiresBy ($1 is the
-// inclusive threshold), SessionIsUsable ($2 is now) and CanRefresh without reading token material.
+// inclusive threshold, $2 is now) and CanRefresh without reading token material.
 const countSessionsByExpiryQuery = `SELECT service_id,
        CASE WHEN access_token_expires_at IS NULL THEN 'unknown'
             WHEN access_token_expires_at > $1 THEN 'after_threshold'
             WHEN access_token_expires_at > $2 THEN 'due'
             ELSE 'expired' END AS access_expiry,
        (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
-        AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > $2)) AS refresh_usable,
+        AND refresh_token_expires_at IS NULL) AS refresh_usable,
        COUNT(*) AS session_count
 FROM user_sessions
 GROUP BY 1, 2, 3`
 
-// SQL projection of storage.SessionIsUsable; both active-session reads share this predicate.
-const usableSessionPredicate = `(access_token_expires_at IS NULL OR access_token_expires_at > NOW()
-	OR (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
-		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW())))`
+// SQL projection of NOT storage.RequiresReauthentication; both active-session reads share this
+// predicate. refresh_token_expires_at holds the provider rejection time, never a predicted expiry.
+const usableSessionPredicate = `(refresh_token_expires_at IS NULL
+	AND (access_token_expires_at IS NULL OR access_token_expires_at > NOW()
+		OR COALESCE(octet_length(encrypted_refresh_token), 0) > 0))`
 
 // userSessionRecord is an adapter-local database record struct for user_sessions.
 // It maps directly to the table schema. The Scope field uses pq.StringArray to
@@ -61,7 +64,7 @@ type userSessionRecord struct {
 	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
 	TokenType             string                    `db:"token_type"`
 	AccessTokenExpiresAt  *time.Time                `db:"access_token_expires_at"`
-	RefreshTokenExpiresAt *time.Time                `db:"refresh_token_expires_at"`
+	RefreshRejectedAt     *time.Time                `db:"refresh_token_expires_at"`
 	Scope                 pq.StringArray            `db:"scope"`
 	EncryptionContext     storage.EncryptionContext `db:"encryption_context"`
 	InitiatedAt           time.Time                 `db:"initiated_at"`
@@ -70,14 +73,14 @@ type userSessionRecord struct {
 }
 
 type userSessionSummaryRecord struct {
-	ID                    id.SessionID   `db:"id"`
-	ServiceID             id.ServiceID   `db:"service_id"`
-	TokenType             string         `db:"token_type"`
-	Scope                 pq.StringArray `db:"scope"`
-	InitiatedAt           time.Time      `db:"initiated_at"`
-	AccessTokenExpiresAt  *time.Time     `db:"access_token_expires_at"`
-	RefreshTokenExpiresAt *time.Time     `db:"refresh_token_expires_at"`
-	HasRefreshToken       bool           `db:"has_refresh_token"`
+	ID                   id.SessionID   `db:"id"`
+	ServiceID            id.ServiceID   `db:"service_id"`
+	TokenType            string         `db:"token_type"`
+	Scope                pq.StringArray `db:"scope"`
+	InitiatedAt          time.Time      `db:"initiated_at"`
+	AccessTokenExpiresAt *time.Time     `db:"access_token_expires_at"`
+	RefreshRejectedAt    *time.Time     `db:"refresh_token_expires_at"`
+	HasRefreshToken      bool           `db:"has_refresh_token"`
 }
 
 func recordToSession(r *userSessionRecord) *storage.UserSession {
@@ -90,7 +93,7 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 		EncryptedRefreshToken: r.EncryptedRefreshToken,
 		TokenType:             r.TokenType,
 		AccessTokenExpiresAt:  r.AccessTokenExpiresAt,
-		RefreshTokenExpiresAt: r.RefreshTokenExpiresAt,
+		RefreshRejectedAt:     r.RefreshRejectedAt,
 		Scope:                 []string(r.Scope),
 		EncryptionContext:     r.EncryptionContext,
 		InitiatedAt:           r.InitiatedAt,
@@ -185,7 +188,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 	result, err := r.adapter.db.ExecContext(execCtx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
-		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
+		session.TokenType, session.AccessTokenExpiresAt, session.RefreshRejectedAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
 		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource,
@@ -344,7 +347,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
 			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10 WHERE id = $11`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
-			session.RefreshTokenExpiresAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
+			session.RefreshRejectedAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
 			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID)
 		cancel()
 		if err != nil {
@@ -357,7 +360,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	return session, nil
 }
 
-// ListByPrincipal retrieves all sessions for a principal, including expired ones.
+// ListByPrincipal retrieves all sessions for a principal, including those that require reauthentication.
 // Used for user-visible session lists.
 func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
@@ -399,14 +402,14 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 		session := storage.UserSession{
 			ID: record.ID, ServiceID: record.ServiceID, TokenType: record.TokenType,
 			Scope: []string(record.Scope), InitiatedAt: record.InitiatedAt,
-			AccessTokenExpiresAt: record.AccessTokenExpiresAt, RefreshTokenExpiresAt: record.RefreshTokenExpiresAt,
+			AccessTokenExpiresAt: record.AccessTokenExpiresAt, RefreshRejectedAt: record.RefreshRejectedAt,
 		}
 		if session.Scope == nil {
 			session.Scope = []string{}
 		}
 		summary := storage.NewUserSessionSummary(&session, "", 0)
 		summary.HasRefreshToken = record.HasRefreshToken
-		summary.IsExpired = !storage.SessionIsUsable(record.AccessTokenExpiresAt, record.RefreshTokenExpiresAt, record.HasRefreshToken)
+		summary.SetRequiresReauthentication(storage.RequiresReauthentication(record.AccessTokenExpiresAt, record.RefreshRejectedAt != nil, record.HasRefreshToken))
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
@@ -427,7 +430,7 @@ func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx cont
 	return ids, nil
 }
 
-// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
+// ListActiveByPrincipal retrieves only sessions that do not require reauthentication.
 // Used for FR-020 consent submission validation.
 func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {

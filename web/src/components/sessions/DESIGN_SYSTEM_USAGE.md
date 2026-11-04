@@ -85,9 +85,9 @@ import { Badge } from '@design-system/components/primitives/Badge';
   Active
 </Badge>
 
-// Expiring soon
+// Access token expired, refresh token stored
 <Badge variant="warning" size="sm" shape="pill" showDot>
-  Expiring Soon
+  Access Token Expired
 </Badge>
 
 // Expired session

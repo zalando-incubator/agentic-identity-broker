@@ -204,7 +204,7 @@ func TestSessionSweepHandlerRequiresOperator(t *testing.T) {
 		t.Fatal("unauthenticated request reached session sweep")
 		return oauth2session.SweepResult{}, nil
 	}}
-	handler := NewSessionSweepHandler(fake, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewSessionSweepHandler(fake, slog.New(slog.DiscardHandler))
 	w := httptest.NewRecorder()
 	handler.Sweep(w, sweepRequest(`{"lookahead_duration":"PT5M"}`, ""))
 
@@ -264,7 +264,7 @@ func TestSessionSweepHandlerAcceptsBodyAtLimit(t *testing.T) {
 		return oauth2session.SweepResult{}, nil
 	}}
 	w := httptest.NewRecorder()
-	NewSessionSweepHandler(fake, slog.New(slog.NewTextHandler(io.Discard, nil))).Sweep(w, sweepRequest(`{}`+strings.Repeat(" ", 4094), "operator@example.test"))
+	NewSessionSweepHandler(fake, slog.New(slog.DiscardHandler)).Sweep(w, sweepRequest(`{}`+strings.Repeat(" ", 4094), "operator@example.test"))
 
 	require.Equal(t, http.StatusOK, w.Code, "exactly 4 KiB of valid JSON must not be rejected as oversized")
 	assert.Len(t, fake.calls, 1)
@@ -336,7 +336,7 @@ func TestSessionSweepHandlerLiftsRealServerWriteDeadline(t *testing.T) {
 		<-release
 		return oauth2session.SweepResult{Refreshed: 1, TotalEvaluated: 1}, nil
 	}}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	handler := NewSessionSweepHandler(fake, logger)
 	router := chi.NewRouter()
 	router.Use(brokerhttp.LoggingMiddleware(logger))

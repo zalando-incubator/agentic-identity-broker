@@ -132,7 +132,7 @@ func sweepSessionID(n int) id.SessionID {
 	return id.MustParseSessionID(fmt.Sprintf("00000000-0000-4000-8000-%012x", n))
 }
 
-func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRefresh bool) *storage.UserSession {
+func (f *sweepFixture) seed(n int, accessExpiry, refreshRejectedAt *time.Time, hasRefresh bool) *storage.UserSession {
 	f.t.Helper()
 	ctx := context.Background()
 	encryptionContext := domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext()
@@ -146,7 +146,7 @@ func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRe
 	session := &storage.UserSession{
 		ID: sweepSessionID(n), Principal: id.Principal(fmt.Sprintf("user-%d@example.com", n)), ServiceID: f.serviceID,
 		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
-		AccessTokenExpiresAt: accessExpiry, RefreshTokenExpiresAt: refreshExpiry,
+		AccessTokenExpiresAt: accessExpiry, RefreshRejectedAt: refreshRejectedAt,
 		EncryptionContext: storage.EncryptionContext{ServiceID: f.serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now(),
 	}
 	require.NoError(f.t, f.repo.Create(ctx, session))
@@ -280,7 +280,7 @@ func TestSessionSweepDryRunClassifiesSnapshotsWithoutSideEffects(t *testing.T) {
 	f.seed(5, nil, nil, true)
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: true})
 	require.NoError(t, err)
-	assertSweepCounts(t, result, 1, 0, 2, true)
+	assertSweepCounts(t, result, 1, 0, 1, true)
 	assert.Zero(t, f.refresh.locks, "dry run must not acquire any session locks")
 	assert.Zero(t, upstreamCalls.Load(), "dry run must not contact the upstream provider")
 	assert.NotContains(t, f.logs.String(), "token_refreshed")
@@ -570,7 +570,6 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 		wantDependency   oauth2session.Dependency
 	}{
 		{name: "no refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshUnavailable, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
-		{name: "expired refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshTokenExpired, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
 		{name: "deleted after listing", modify: func(f *sweepFixture, s *storage.UserSession) {
 			f.expiry.afterList = func(_ int, _ []*storage.UserSession) { require.NoError(f.t, f.repo.Delete(context.Background(), s.ID)) }
 		}, wantSkip: 1},
@@ -608,16 +607,8 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				}
 				sweepSuccess(w)
 			})
-			soon, past := time.Now().Add(time.Minute), time.Now().Add(-time.Minute)
-			var refreshExpiry *time.Time
-			hasRefresh := true
-			switch tc.name {
-			case "no refresh token":
-				hasRefresh = false
-			case "expired refresh token":
-				refreshExpiry = &past
-			}
-			first := f.seed(1, &soon, refreshExpiry, hasRefresh)
+			soon := time.Now().Add(time.Minute)
+			first := f.seed(1, &soon, nil, tc.name != "no refresh token")
 			f.seed(2, &soon, nil, true)
 			if tc.modify != nil {
 				tc.modify(f, first)
@@ -648,6 +639,29 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 	}
 }
 
+func TestSessionSweepExcludesRejectedSessions(t *testing.T) {
+	f := newSweepFixture(t)
+	var calls atomic.Int32
+	f.provider(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		sweepSuccess(w)
+	})
+	soon, rejectedAt := time.Now().Add(time.Minute), time.Now().Add(-time.Hour)
+	rejected := f.seed(1, &soon, &rejectedAt, true)
+	f.seed(2, &soon, nil, true)
+
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 1, 0, 0, false)
+	assert.EqualValues(t, 1, calls.Load(), "a rejected session is not a sweep candidate")
+	assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.refresh_failed"`)
+	persisted, err := f.repo.Get(context.Background(), rejected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, rejected.EncryptedAccessToken, persisted.EncryptedAccessToken)
+	assert.Equal(t, rejected.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+	assert.Equal(t, &rejectedAt, persisted.RefreshRejectedAt)
+}
+
 func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderLookup(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -665,8 +679,8 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
 	failedServiceID := id.NewServiceID()
 	f.serviceID = failedServiceID
-	accessExpiry, refreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	failed := f.seed(1, &accessExpiry, &refreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	failed := f.seed(1, &accessExpiry, nil, false)
 	failedAccess := bytes.Clone(failed.EncryptedAccessToken)
 	failedRefresh := bytes.Clone(failed.EncryptedRefreshToken)
 	f.serviceID = validServiceID
@@ -682,7 +696,7 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 		assert.Equal(t, failedRefresh, persisted.EncryptedRefreshToken)
 		require.NotNil(t, persisted.AccessTokenExpiresAt)
 		assert.True(t, accessExpiry.Equal(*persisted.AccessTokenExpiresAt))
-		assert.Zero(t, providerRepo.gets[failedServiceID], "expired refresh tokens must not load provider credentials")
+		assert.Zero(t, providerRepo.gets[failedServiceID], "sessions without a refresh token must not load provider credentials")
 	}
 	assert.Equal(t, 1, providerRepo.gets[validServiceID])
 	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.refresh_failed"`))
@@ -690,7 +704,7 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	require.Len(t, refreshed, 1)
 	service, _ := refreshed[0].Attributes.Value("service_id")
 	assert.Equal(t, validServiceID.String(), service.AsString())
-	assert.Equal(t, map[string]int64{failedServiceID.String() + "/" + string(oauth2session.DetailRefreshTokenExpired): 2}, sweepFailures(t, reader),
+	assert.Equal(t, map[string]int64{failedServiceID.String() + "/" + string(oauth2session.DetailAccessTokenExpired): 2}, sweepFailures(t, reader),
 		"failures without a provider lookup still name their service")
 }
 
@@ -703,7 +717,7 @@ func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
 	f := newSweepFixture(t)
 	refreshedServiceID := f.serviceID
 	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
-	accessExpiry, refreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
+	accessExpiry := time.Now().Add(-time.Minute)
 	f.seed(1, &accessExpiry, nil, true)
 	f.serviceID = id.NewServiceID()
 	tickets := createTestService(f.serviceID)
@@ -711,7 +725,7 @@ func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
 	canonicalID := "tickets"
 	tickets.CanonicalID = &canonicalID
 	require.NoError(t, f.providers.Create(context.Background(), tickets))
-	f.seed(2, &accessExpiry, &refreshExpiry, true)
+	f.seed(2, &accessExpiry, nil, false)
 
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 	require.NoError(t, err)
@@ -720,7 +734,7 @@ func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
 	require.Len(t, refreshed, 1)
 	service, _ := refreshed[0].Attributes.Value("service_id")
 	assert.Equal(t, refreshedServiceID.String(), service.AsString(), "a service without a canonical ID keeps its UUID")
-	assert.Equal(t, map[string]int64{"tickets/" + string(oauth2session.DetailRefreshTokenExpired): 1}, sweepFailures(t, reader),
+	assert.Equal(t, map[string]int64{"tickets/" + string(oauth2session.DetailAccessTokenExpired): 1}, sweepFailures(t, reader),
 		"a failure without a provider lookup still uses the canonical ID")
 }
 
@@ -733,15 +747,14 @@ func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
 		assert.Equal(t, "reauthorized-refresh", r.Form.Get("refresh_token"))
 		sweepSuccess(w)
 	})
-	accessExpiry, oldRefreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	current := f.seed(1, &accessExpiry, &oldRefreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	current := f.seed(1, &accessExpiry, nil, false)
 	refresh, err := f.seedEncryption.Encrypt(context.Background(), []byte("reauthorized-refresh"), domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext())
 	require.NoError(t, err)
 	f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
-		validUntil := time.Now().Add(time.Hour)
 		_, err := f.repo.WithLockedSession(context.Background(), current.Principal, current.ServiceID, func(_ context.Context, latest *storage.UserSession) (bool, error) {
 			latest.EncryptedRefreshToken = refresh
-			latest.RefreshTokenExpiresAt = &validUntil
+			latest.RefreshRejectedAt = nil
 			return true, nil
 		})
 		require.NoError(t, err)

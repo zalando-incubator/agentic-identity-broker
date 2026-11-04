@@ -431,7 +431,7 @@ func (m *mockUserSessionRepo) ListActiveByPrincipal(ctx context.Context, princip
 	}
 	result := make([]*storage.UserSession, 0)
 	for _, session := range m.sessions {
-		if session.Principal == principal && !session.IsExpired() {
+		if session.Principal == principal && !session.RequiresReauthentication() {
 			result = append(result, session)
 		}
 	}
@@ -489,7 +489,7 @@ func (m *mockUserSessionRepo) CountByService(ctx context.Context, serviceID id.S
 	}
 	count := 0
 	for _, session := range m.sessions {
-		if session.ServiceID == serviceID && !session.IsExpired() {
+		if session.ServiceID == serviceID && !session.RequiresReauthentication() {
 			count++
 		}
 	}
@@ -1020,7 +1020,7 @@ func TestService_GrantConsent(t *testing.T) {
 				ID:                    sessionID,
 				Principal:             id.Principal("user@example.com"),
 				ServiceID:             includedServiceID,
-				RefreshTokenExpiresAt: &future,
+				EncryptedRefreshToken: []byte("refresh"),
 			},
 		}}
 		svc := NewService(
@@ -1102,7 +1102,7 @@ func TestService_GrantConsent(t *testing.T) {
 			ID:                    sessionID,
 			Principal:             req.Principal,
 			ServiceID:             serviceID1,
-			RefreshTokenExpiresAt: ptr.To(time.Now().Add(time.Hour)),
+			EncryptedRefreshToken: []byte("refresh"),
 		}}).GrantConsent(ctx, req)
 		require.NoError(t, err)
 		require.NotNil(t, grant)
@@ -1237,7 +1237,7 @@ func TestService_GrantConsent(t *testing.T) {
 			&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: agent}},
 			newTestProviderService(&mockServiceRepo{services: map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity{serviceID1: service1}}),
 			grantRepo,
-			&mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{id.NewSessionID(): {ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID1, RefreshTokenExpiresAt: &validUntil}}},
+			&mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{id.NewSessionID(): {ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), ServiceID: serviceID1, EncryptedRefreshToken: []byte("refresh")}}},
 			&mockConsentRefreshRepo{},
 			&mockPermissionSetService{permissionSets: map[id.PermissionSetID]*storage.PermissionSet{permissionSetID: {ID: permissionSetID, Name: "Test Permission Set", Description: "Covers the existing grant", ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID1, RequirementType: storage.RequirementTypeOptional}}}}},
 			slog.Default(),
@@ -1909,7 +1909,6 @@ func TestService_GetAgentConsentDetail_WithPermissionSets(t *testing.T) {
 	sessionID1 := id.NewSessionID()
 
 	now := time.Now()
-	future := now.Add(24 * time.Hour)
 	permissionSetID := id.NewPermissionSetID()
 	permissionSetService := &mockPermissionSetService{permissionSets: map[id.PermissionSetID]*storage.PermissionSet{
 		permissionSetID: {ID: permissionSetID, Name: "Test Permission Set", Description: "Used by detail tests"},
@@ -1919,7 +1918,7 @@ func TestService_GetAgentConsentDetail_WithPermissionSets(t *testing.T) {
 		ID:                    sessionID1,
 		Principal:             id.Principal("user@example.com"),
 		ServiceID:             serviceID1,
-		RefreshTokenExpiresAt: &future,
+		EncryptedRefreshToken: []byte("refresh"),
 		TokenType:             "Bearer",
 		EncryptedAccessToken:  []byte("test-token"),
 		EncryptionContext:     storage.EncryptionContext{ServiceID: serviceID1},
@@ -2447,7 +2446,7 @@ func TestService_GrantConsentReturnsWinningUpsertMetadata(t *testing.T) {
 	}}
 	sessionID := id.NewSessionID()
 	sessionRepo := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
-		sessionID: {ID: sessionID, Principal: principal, ServiceID: serviceID, RefreshTokenExpiresAt: &validUntil},
+		sessionID: {ID: sessionID, Principal: principal, ServiceID: serviceID, EncryptedRefreshToken: []byte("refresh")},
 	}}
 	agentRepo := &mockAgentRepo{agents: map[id.AgentID]*storage.Agent{
 		agentID: {ID: agentID, PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: psID, RequirementType: storage.RequirementTypeOptional}}},
@@ -2568,8 +2567,8 @@ func newGrantAuditFixture(t *testing.T, repo ports.UserGrantRepository, logger *
 		secondPS: {ID: secondPS, ServiceScopes: []storage.ServiceScope{{ServiceID: firstService, RequirementType: storage.RequirementTypeOptional}}},
 	}}
 	sessions := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
-		id.NewSessionID(): {Principal: principal, ServiceID: firstService, RefreshTokenExpiresAt: &future, EncryptedAccessToken: []byte("PRIVATE_TOKEN_SENTINEL")},
-		id.NewSessionID(): {Principal: principal, ServiceID: secondService, RefreshTokenExpiresAt: &future},
+		id.NewSessionID(): {Principal: principal, ServiceID: firstService, EncryptedRefreshToken: []byte("refresh"), EncryptedAccessToken: []byte("PRIVATE_TOKEN_SENTINEL")},
+		id.NewSessionID(): {Principal: principal, ServiceID: secondService, EncryptedRefreshToken: []byte("refresh")},
 	}}
 	request := &GrantRequest{
 		Principal: principal, AgentID: agentID, ValidUntil: &future,

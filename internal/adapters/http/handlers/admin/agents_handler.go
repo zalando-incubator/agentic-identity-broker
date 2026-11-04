@@ -240,7 +240,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var req AgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -248,20 +248,20 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// Convert and validate permission sets (FR-006: fail fast before any repository calls)
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
-		h.logger.Warn("permission set validation failed", "error", err)
+		h.logger.WarnContext(ctx, "permission set validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
-		h.logger.Warn("invalid service requirements", "error", err)
+		h.logger.WarnContext(ctx, "invalid service requirements", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid service requirements", err.Error())
 		return
 	}
 
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
-		h.logger.Warn("client_uris validation failed", "error", err)
+		h.logger.WarnContext(ctx, "client_uris validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -280,7 +280,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	serviceMap := h.batchLoadServices(ctx, []*storage.Agent{agent})
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
-		h.logger.Error("failed to convert agent to response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -313,7 +313,7 @@ func (h *AgentsHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	serviceMap := h.batchLoadServices(ctx, []*storage.Agent{agent})
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
-		h.logger.Error("failed to convert agent to response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -352,7 +352,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var req AgentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -366,7 +366,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
-		h.logger.Warn("invalid service requirements", "error", err)
+		h.logger.WarnContext(ctx, "invalid service requirements", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid service requirements", err.Error())
 		return
 	}
@@ -374,7 +374,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// Convert and validate permission sets
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
-		h.logger.Warn("permission set validation failed", "error", err)
+		h.logger.WarnContext(ctx, "permission set validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -383,7 +383,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// adapter on Update) skips cardinality to allow CIMD snapshot refreshes — so this
 	// explicit check is required for admin mutations.
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
-		h.logger.Warn("client_uris validation failed", "error", err)
+		h.logger.WarnContext(ctx, "client_uris validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -400,7 +400,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	serviceMap := h.batchLoadServices(ctx, []*storage.Agent{agent})
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
-		h.logger.Error("failed to convert agent to response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -466,7 +466,7 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	for i, agent := range listedAgents {
 		resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 		if err != nil {
-			h.logger.Error("failed to convert agent to response", "agent_id", agent.ID, "error", err)
+			h.logger.ErrorContext(ctx, "failed to convert agent to response", "agent_id", agent.ID, "error", err)
 			resp = AgentResponse{
 				ID:          agent.ID.String(),
 				CanonicalID: agent.CanonicalID,
@@ -531,7 +531,7 @@ func (h *AgentsHandler) batchLoadServices(ctx context.Context, agents []*storage
 	for serviceID := range serviceIDs {
 		service, err := h.providerService.Get(ctx, serviceID)
 		if err != nil {
-			h.logger.Warn("failed to load service for batch", "service_id", serviceID, "error", err)
+			h.logger.WarnContext(ctx, "failed to load service for batch", "service_id", serviceID, "error", err)
 			continue
 		}
 		serviceMap[serviceID] = service
@@ -723,14 +723,14 @@ func (h *AgentsHandler) handleDomainError(w http.ResponseWriter, r *http.Request
 		case storage.ErrorKindTimeout:
 			h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 		default:
-			h.logger.Error("storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
+			h.logger.ErrorContext(r.Context(), "storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		}
 		return
 	}
 
 	// Domain validation errors (fmt.Errorf wrapping validation)
-	h.logger.Error("operation failed", "operation", operation, "error", err)
+	h.logger.ErrorContext(r.Context(), "operation failed", "operation", operation, "error", err)
 	h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
 }
 

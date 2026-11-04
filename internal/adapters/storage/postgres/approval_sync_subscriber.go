@@ -48,7 +48,7 @@ func (s *ApprovalSyncSubscriber) Listen(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		s.logger.Warn("approval sync LISTEN connection lost, reconnecting",
+		s.logger.WarnContext(ctx, "approval sync LISTEN connection lost, reconnecting",
 			"error", err,
 			"retry_delay", delay,
 		)
@@ -80,7 +80,7 @@ func (s *ApprovalSyncSubscriber) listenOnce(ctx context.Context) error {
 		return fmt.Errorf("LISTEN: %w", err)
 	}
 
-	s.logger.Info("approval sync LISTEN connection established",
+	s.logger.InfoContext(ctx, "approval sync LISTEN connection established",
 		"channel", approvalSyncChannel,
 	)
 

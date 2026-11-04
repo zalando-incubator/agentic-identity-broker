@@ -267,15 +267,16 @@ func submitBackground(t *testing.T, pool *backgroundRefresher, ctx context.Conte
 }
 
 func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *testing.T) {
-	for _, name := range []string{"absent refresh token", "expired refresh token"} {
+	for _, name := range []string{"absent refresh token", "rejected refresh token"} {
 		t.Run(name, func(t *testing.T) {
 			reader := backgroundMetrics(t)
 			session := backgroundSession(id.NewServiceID(), "unrefreshable-user")
-			if name == "absent refresh token" {
-				session.EncryptedRefreshToken = nil
+			rejected := name == "rejected refresh token"
+			if rejected {
+				rejectedAt := time.Now().Add(-time.Minute)
+				session.RefreshRejectedAt = &rejectedAt
 			} else {
-				expired := time.Now().Add(-time.Minute)
-				session.RefreshTokenExpiresAt = &expired
+				session.EncryptedRefreshToken = nil
 			}
 			service, store, _ := newBackgroundFixture(t, session)
 			var providerLookups atomic.Int32
@@ -289,9 +290,16 @@ func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *t
 			defer func() { assert.NoError(t, service.Close(context.Background())) }()
 
 			got, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
-			require.NoError(t, err)
-			assert.Equal(t, session.ID, got.ID)
-			assert.Equal(t, "old-unrefreshable-user", token)
+			if rejected {
+				require.ErrorIs(t, err, ErrRefreshRejected, "a recorded rejection refuses issuance even while the access token is valid")
+				assert.ErrorIs(t, err, ErrReauthenticationRequired)
+				assert.Nil(t, got)
+				assert.Empty(t, token)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, session.ID, got.ID)
+				assert.Equal(t, "old-unrefreshable-user", token)
+			}
 			require.NoError(t, service.Close(context.Background()))
 			assert.Zero(t, providerLookups.Load())
 			assertBackgroundMetrics(t, reader, map[string]int64{
@@ -738,6 +746,73 @@ type joinedFlightContext struct {
 func (c *joinedFlightContext) Done() <-chan struct{} {
 	c.once.Do(func() { close(c.joined) })
 	return c.Context.Done()
+}
+
+func TestBackgroundRefresh_OnDemandJoinRefusesRejectionFoundUnderLock(t *testing.T) {
+	session := backgroundSession(id.NewServiceID(), "joined-rejected-user")
+	stale := *session
+	expired := time.Now().Add(-time.Minute)
+	stale.AccessTokenExpiresAt = &expired
+	service, store, _ := newBackgroundFixture(t, session)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return store.withLocked(ctx, principal, serviceID, refresh)
+	})
+	var requests atomic.Int32
+	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return operationTokenResponse(http.StatusOK, `{"access_token":"unexpected-renewal","expires_in":3600}`), nil
+	})
+	pool := newBackgroundRefresher(service, 1)
+	submitBackground(t, pool, context.Background(), session)
+	receiveBackground(t, started)
+	rejectedAt := time.Now()
+	record := store.record(session.Principal, session.ServiceID)
+	record.mu.Lock()
+	record.session.RefreshRejectedAt = &rejectedAt
+	record.mu.Unlock()
+	service.sessionRepo = operationSessionRepository{find: func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
+		return &stale, nil
+	}}
+	caller := &joinedFlightContext{Context: context.Background(), joined: make(chan struct{})}
+	type result struct {
+		session *storage.UserSession
+		token   string
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		current, token, err := service.GetValidAccessToken(caller, session.Principal, session.ServiceID)
+		done <- result{current, token, err}
+	}()
+	receiveBackground(t, caller.joined)
+	close(release)
+	joined := receiveBackground(t, done)
+	require.ErrorIs(t, joined.err, ErrRefreshRejected)
+	assert.ErrorIs(t, joined.err, ErrReauthenticationRequired)
+	assert.Nil(t, joined.session)
+	assert.Empty(t, joined.token)
+	require.NoError(t, pool.Close(context.Background()))
+	assert.Zero(t, requests.Load())
+	stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, &rejectedAt, stored.RefreshRejectedAt)
+	assert.Equal(t, stale.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, stale.EncryptedRefreshToken, stored.EncryptedRefreshToken)
 }
 
 func TestBackgroundRefresh_OnDemandJoinReportsSynchronousFailure(t *testing.T) {

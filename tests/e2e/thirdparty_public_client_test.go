@@ -516,7 +516,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			upstream.WithErrorResponse("invalid_grant")
 
 			response := refresh(serviceID)
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
 			Expect(response.Body.Close()).To(Succeed())
 			credentialFreeTokenRequests(upstream)
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), serviceID)

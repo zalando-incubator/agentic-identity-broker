@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/google/cel-go/cel"
-	celast "github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/types"
 )
 
@@ -110,7 +110,7 @@ func compileAuthorization(expression string, timeout time.Duration) (*authorizat
 	return &authorizationProgram{
 		program:    program,
 		references: referencedVariables(ast),
-		binds:      fieldSelections(ast),
+		binds:      tokenexchange.FieldSelections(ast),
 		timeout:    timeout,
 	}, nil
 }
@@ -246,28 +246,6 @@ func referencedVariables(ast *cel.Ast) map[string]struct{} {
 		}
 	}
 	return refs
-}
-
-// fieldSelections returns the set of "identifier.field" selections in a type-checked AST, e.g.
-// "subject_token.email". It walks the navigable AST for field-selection nodes whose operand is a
-// bare identifier so the service can enforce the FR-006a unverified-subject email-binding control.
-func fieldSelections(a *cel.Ast) map[string]struct{} {
-	sels := make(map[string]struct{})
-	collect := func(e celast.Expr) {
-		if e.Kind() != celast.SelectKind {
-			return
-		}
-		sel := e.AsSelect()
-		if operand := sel.Operand(); operand.Kind() == celast.IdentKind {
-			sels[operand.AsIdent()+"."+sel.FieldName()] = struct{}{}
-		}
-	}
-	nav := celast.NavigateAST(a.NativeRep())
-	collect(nav)
-	for _, e := range celast.MatchDescendants(nav, celast.KindMatcher(celast.SelectKind)) {
-		collect(e)
-	}
-	return sels
 }
 
 func orEmptyMap(m map[string]interface{}) map[string]interface{} {

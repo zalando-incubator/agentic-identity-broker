@@ -170,6 +170,8 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
+| 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 045 | `adrs/045-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 046, and Admin API 3.0.0 |
 
 ## Domain Glossary
@@ -179,6 +181,9 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
 | **External ID** | Optional nonempty, globally unique Agent governance identifier, matched literally; collection PUT reconciles by it without changing UUID identity. |
 | **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `ReconcileUnchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
+| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified with a predicate binding `subject_token.sub`; another registered agent's UUID is a rejected cross-agent request; otherwise `human`. |
+| **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |
@@ -194,6 +199,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
 

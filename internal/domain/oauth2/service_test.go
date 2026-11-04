@@ -647,12 +647,11 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 				expiredAt := time.Now().Add(-1 * time.Hour)
 				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
 					return &storage.UserSession{
-						ID:                    id.NewSessionID(),
-						Principal:             id.Principal("user@example.com"),
-						ServiceID:             serviceID,
-						TokenType:             "Bearer",
-						RefreshTokenExpiresAt: &expiredAt,
-						AccessTokenExpiresAt:  &expiredAt,
+						ID:                   id.NewSessionID(),
+						Principal:            id.Principal("user@example.com"),
+						ServiceID:            serviceID,
+						TokenType:            "Bearer",
+						AccessTokenExpiresAt: &expiredAt,
 					}, nil
 				}
 			},
@@ -677,7 +676,7 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 						ServiceID:             serviceID,
 						TokenType:             "Bearer",
 						EncryptedRefreshToken: []byte("encrypted-refresh-token"),
-						RefreshTokenExpiresAt: &rejectedAt,
+						RefreshRejectedAt:     &rejectedAt,
 						AccessTokenExpiresAt:  &expiredAt,
 					}, nil
 				}
@@ -685,7 +684,7 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 			wantAction: "redirect_to_consent",
 		},
 		{
-			name: "active grant with provider-rejected refresh token and valid access token redirects to upstream",
+			name: "active grant with provider-rejected refresh token and valid access token redirects to consent",
 			setupSession: func(r *MockSessionRepository) {
 				validUntil := time.Now().Add(1 * time.Hour)
 				rejectedAt := time.Now().Add(-1 * time.Minute)
@@ -696,12 +695,12 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 						ServiceID:             serviceID,
 						TokenType:             "Bearer",
 						EncryptedRefreshToken: []byte("encrypted-refresh-token"),
-						RefreshTokenExpiresAt: &rejectedAt,
+						RefreshRejectedAt:     &rejectedAt,
 						AccessTokenExpiresAt:  &validUntil,
 					}, nil
 				}
 			},
-			wantAction: "proceed",
+			wantAction: "redirect_to_consent",
 		},
 		{
 			name: "missing session for a service outside the grant does not require consent",
@@ -1555,12 +1554,11 @@ func TestService_HandleAuthorization_MandatoryRequirements(t *testing.T) {
 				expiredAt := time.Now().Add(-1 * time.Hour)
 				r.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
 					return &storage.UserSession{
-						ID:                    id.NewSessionID(),
-						Principal:             id.Principal("user@example.com"),
-						ServiceID:             serviceID,
-						Scope:                 []string{"repo", "user:email"},
-						RefreshTokenExpiresAt: &expiredAt,
-						AccessTokenExpiresAt:  &expiredAt,
+						ID:                   id.NewSessionID(),
+						Principal:            id.Principal("user@example.com"),
+						ServiceID:            serviceID,
+						Scope:                []string{"repo", "user:email"},
+						AccessTokenExpiresAt: &expiredAt,
 					}, nil
 				}
 			},

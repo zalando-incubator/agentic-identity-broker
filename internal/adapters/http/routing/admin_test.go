@@ -3,7 +3,6 @@ package routing_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +98,7 @@ func TestCollectionAgentPutSecurity(t *testing.T) {
 		{"non JSON", "admin.example.com:14000", "", "text/plain", "operator", http.StatusUnsupportedMediaType},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			logger := slog.New(slog.DiscardHandler)
 			router := middleware.RequirePrincipalMiddleware(fixtures.DefaultOAuth2Config().Server.Admin.Authentication, nil, logger)(newAdminRouter(t, "https://admin.example.com:14000"))
 			body := `{"display_name":"Security test agent","description":"Admin request security regression","permission_sets":[{"permission_set_id":"` + fixtures.PlaceholderPermissionSetID.String() + `","requirement_type":"optional"}]}`
 			req := httptest.NewRequest(http.MethodPut, "/api/agents?external_id=registry", strings.NewReader(body))
@@ -379,7 +378,7 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 		ServiceScopes: []domainstorage.ServiceScope{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: domainstorage.RequirementTypeOptional}},
 	}))
 	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(storage).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {

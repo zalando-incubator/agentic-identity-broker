@@ -18,7 +18,7 @@ func TestNewHandlerAllowsWriteDeadlineLiftThroughAdminMiddleware(t *testing.T) {
 	const writeTimeout = 100 * time.Millisecond
 
 	deadlineResult := make(chan error, 1)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	handler := NewHandler(ServerConfig{
 		Name:      "admin",
 		Telemetry: ports.TelemetryConfig{Enabled: true},

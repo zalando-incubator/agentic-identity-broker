@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -32,7 +34,7 @@ import (
 // 6. Lookup target service by resource URI
 // 7. Verify user has granted agent access to service
 // 8. Retrieve stored third-party tokens for user
-// 9. Check if tokens are fully expired
+// 9. Check whether the session requires reauthentication
 // 10. Refresh expired access token if refresh token available
 // 11. Return RFC 8693 compliant response
 //
@@ -140,7 +142,7 @@ func NewTokenExchangeService(
 // 8. Lookup service by resource URI
 // 9. Verify user has granted agent access to service (BEFORE session check per T078)
 // 10. Retrieve user's session and stored tokens for service
-// 11. Check if tokens are fully expired (T076)
+// 11. Check whether the session requires reauthentication (T076)
 // 12. Refresh expired tokens if refresh_token available
 // 13. Return RFC 8693 compliant response
 //
@@ -151,7 +153,7 @@ func NewTokenExchangeService(
 // Error handling:
 // - InvalidRequest: malformed request, missing required parameters
 // - InvalidClient: invalid/missing client_assertion
-// - InvalidGrant: invalid/expired subject_token, no session, or all tokens expired (T075, T076)
+// - InvalidGrant: invalid/expired subject_token, no session, or session requires reauthentication (T075, T076)
 // - InvalidTarget: no service matches resource URI
 // - AccessDenied: user has not granted agent access, or CEL authorization failed
 // - ServerError: configuration/system errors
@@ -164,7 +166,7 @@ func NewTokenExchangeService(
 //
 // PHASE 8 NOTES (T075-T078):
 // - T075: Return invalid_grant when no UserSession exists for principal+service
-// - T076: Return invalid_grant when both access_token and refresh_token expired
+// - T076: Return invalid_grant when the provider rejected the refresh token or access expired without one
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
@@ -213,24 +215,21 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 
-	// Step 4: Extract principal from subject_token via CEL
+	// Steps 4–5: resolve the human principal and agent_id; agent-subject tokens are denied
+	// before agent extraction and any grant or session lookup (ADR 045 decision 6).
 	stage = StageIdentityResolution
 	subjectTokenClaims := jwtclaims.FromToken(subjectTokenJWT)
-	principal, err := s.celEvaluator.ExtractPrincipal(subjectTokenClaims)
-	if err != nil {
-		return nil, err
-	}
+	principal, agentID, err := s.celEvaluator.ResolveHumanSubject(subjectTokenClaims)
 
 	// ADR 033 §3: finalize the request security context at the post-validation
 	// token-exchange seam. The subject-token principal (Actor) and the validated
 	// client_assertion subject (CallingPeer) are both known here. Finalizing before
 	// the authorization decision guarantees a denied exchange still carries
 	// actor/calling_peer on the security-sensitive failure audit path.
-	callingPeer, _ := clientAssertionJWT.Subject()
-	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
-
-	// Step 5: Extract agent_id from subject_token via CEL
-	agentID, err := s.celEvaluator.ExtractAgentID(subjectTokenClaims)
+	if principal != "" {
+		callingPeer, _ := clientAssertionJWT.Subject()
+		_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +296,9 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
-	grant, err = s.consentService.VerifyAgentAccess(ctx, principal, agent.ID)
+	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access")
+	grant, err = s.consentService.VerifyAgentAccess(grantCtx, principal, agent.ID)
+	grantSpan.End()
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
@@ -340,9 +341,11 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - Decrypting and returning valid token along with session metadata
 	//
 	// Per T075: invalid_grant if session doesn't exist
-	// Per T076: invalid_grant if both tokens are expired
+	// Per T076: invalid_grant if the session requires reauthentication
 	stage = StageSessionLookup
-	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, principal, service.ID)
+	sessionCtx, sessionSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.get_valid_access_token")
+	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(sessionCtx, principal, service.ID)
+	sessionSpan.End()
 	if err != nil {
 		diagnostic := sessionDiagnostic(err)
 		if diagnostic.Outcome() == OutcomeReauthRequired {

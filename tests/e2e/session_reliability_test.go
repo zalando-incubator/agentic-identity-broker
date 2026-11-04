@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -38,7 +37,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 	)
 
 	BeforeEach(func() {
-		logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		logger := slog.New(slog.DiscardHandler)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse()
 		config = fixtures.OAuth2ConfigWithTokenExchange(mockUpstream.URL())
 
@@ -150,8 +149,8 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(completeConnect().Query().Get("success")).To(Equal("true"))
 		before, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
 		Expect(err).NotTo(HaveOccurred())
-		refreshExpiry := time.Now().Add(time.Hour)
-		before.RefreshTokenExpiresAt = &refreshExpiry
+		rejectedAt := time.Now().Add(-time.Minute)
+		before.RefreshRejectedAt = &rejectedAt
 		Expect(testStorage.UserSessions().Create(ctx, before)).To(Succeed())
 
 		mockUpstream.WithAccessToken("account-b-access").WithOmittedRefreshToken()
@@ -160,7 +159,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(session.ID).To(Equal(before.ID))
 		Expect(session.EncryptedRefreshToken).To(BeEmpty())
-		Expect(session.RefreshTokenExpiresAt).To(BeNil())
+		Expect(session.RefreshRejectedAt).To(BeNil())
 		resp, body := exchange()
 		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 		connectedToken, ok := body["access_token"].(string)

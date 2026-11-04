@@ -287,7 +287,7 @@ type UserSessionRepository interface {
 // UserSessionRefreshRepository serializes a read-modify-write of one session's tokens, used by
 // refresh and by re-connect. The callback sees the latest session under a lock; it returns true
 // only when it has changed the session and the adapter must atomically persist the encrypted
-// tokens, both expiries, token type, scope, encryption context and callback generation.
+// tokens, access expiry, refresh rejection, token type, scope, encryption context and callback generation.
 // Only a new callback generation may replace the established upstream client identity.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
@@ -313,7 +313,7 @@ type UserSessionHealthRepository interface {
 	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
 	// relative to now and threshold (after threshold; due when after now and at or before
 	// threshold; expired when at or before now; unknown when not recorded), and by whether the
-	// refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// refresh token is present and not rejected by the provider. Groups with no sessions are omitted.
 	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
 	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }

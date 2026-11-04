@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -24,7 +23,7 @@ var _ = Describe("US032: Discovery and JWKS", func() {
 	)
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		config := fixtures.LocalConfig()
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		var err error
