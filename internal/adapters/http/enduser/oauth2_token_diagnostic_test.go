@@ -288,7 +288,7 @@ func TestOAuth2TokenHandler_RepeatedImpersonationParametersAreAudited(t *testing
 			assert.Zero(t, service.impersonateCalls, "ambiguous credentials must not reach authentication")
 			require.Len(t, *logs.records, 2)
 			audit := (*logs.records)[0]
-			assert.Equal(t, "impersonation_decision", audit.message)
+			assert.Equal(t, "impersonation.decision.recorded", audit.attrs["event"])
 			assert.Equal(t, "invalid_request", audit.attrs["outcome"])
 			assert.Equal(t, "invalid_request", audit.attrs["oauth_error_code"])
 			assert.Equal(t, service.target.Agent.ID.String(), audit.attrs["target_agent_id"])

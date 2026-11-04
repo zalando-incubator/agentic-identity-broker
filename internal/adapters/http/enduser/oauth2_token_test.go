@@ -2445,7 +2445,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 // guard for architecture-review Finding 4: on POST /oauth2/token with a non-RFC8693
 // grant, the request SecurityContext MUST be finalized at the handler seam before
 // control reaches the downstream grant handler. That grant handler emits
-// context-aware TokenIssued audit logs (slog InfoContext) that must carry actor and
+// context-aware oauth2_server.token.issued audit logs (slog InfoContext) that must carry actor and
 // trace_id, and the LoggingMiddleware perimeter safety net only finalizes AFTER
 // ServeHTTP returns — too late for in-handler logs. SecurityContextMiddleware defers
 // finalization for every POST /oauth2/token, so the handler must finalize the still-open
@@ -2476,7 +2476,7 @@ func TestOAuth2TokenHandler_FinalizesSecurityContextBeforeGrantHandler(t *testin
 
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
-	require.True(t, stub.observedOK, "grant handler must observe a finalized SecurityContext — non-exchange grants finalize at the /oauth2/token seam before dispatch so in-handler TokenIssued audit logs carry actor/trace_id")
+	require.True(t, stub.observedOK, "grant handler must observe a finalized SecurityContext — non-exchange grants finalize at the /oauth2/token seam before dispatch so in-handler oauth2_server.token.issued audit logs carry actor/trace_id")
 	assert.Equal(t, id.NewPrincipal("svc-account@example.com"), stub.observedSC.Actor)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", stub.observedSC.TraceID)
 	assert.Empty(t, stub.observedSC.CallingPeer, "non-delegated grants carry no calling peer")

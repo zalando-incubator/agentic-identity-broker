@@ -127,7 +127,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// delegating to the grant handler. SecurityContextMiddleware defers finalization
 	// for every POST /oauth2/token (it cannot read grant_type without consuming the
 	// one-shot request body), so non-RFC8693 grants must finalize here — the
-	// downstream grant handler emits context-aware TokenIssued audit logs that must
+	// downstream grant handler emits context-aware oauth2_server.token.issued audit logs that must
 	// carry actor and trace_id, and the perimeter safety net only finalizes after
 	// ServeHTTP returns. Delegated token exchange finalizes later at its own seam
 	// with the calling peer (see tokenexchange.Exchange).
