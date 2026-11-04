@@ -3751,7 +3751,7 @@ func TestThirdpartyOAuth2ProviderService_AuditFinalIssuerConflictUsesSafeCode(t 
 	provider := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
 	err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 		storage.ErrIssuerChangeHasSessions, "provider has user sessions")
-	service.auditDiscovery(provider, "update", err, provider)
+	service.auditDiscovery(t.Context(), provider, "update", err, provider)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
 	assert.Equal(t, "rejected", entry["outcome"])
@@ -3774,7 +3774,7 @@ func TestThirdpartyOAuth2ProviderService_AuditLocalFailureUsesSafeCode(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
 			service := &ThirdpartyOAuth2ProviderService{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
-			service.auditDiscovery(provider, "update", tc.failure, provider)
+			service.auditDiscovery(t.Context(), provider, "update", tc.failure, provider)
 			var entry map[string]any
 			require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
 			assert.Equal(t, "rejected", entry["outcome"])
