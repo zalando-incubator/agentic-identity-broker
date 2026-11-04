@@ -71,7 +71,7 @@ paths:
                       session_id: "660e8400-e29b-41d4-a716-446655440001"
                       initiated_at: "2025-12-20T10:30:00Z"
                       access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
+                      requires_reauthentication: false
                       is_expired: false
                       has_refresh_token: true
                       scope:
@@ -312,7 +312,7 @@ paths:
                     session_id: "660e8400-e29b-41d4-a716-446655440001"
                     initiated_at: "2025-12-20T10:30:00Z"
                     access_token_expires_at: "2025-12-20T11:30:00Z"
-                    refresh_token_expires_at: "2026-01-20T10:30:00Z"
+                    requires_reauthentication: false
                     is_expired: false
                     has_refresh_token: true
                     scope: ["repo", "user:email"]
@@ -540,17 +540,16 @@ components:
           format: date-time
           nullable: true
           description: When the access token expires (null if unknown)
-        refresh_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
-        is_expired:
+        requires_reauthentication:
           type: boolean
           description: |
-            True when neither the access token nor a stored refresh token is usable.
-            A session remains usable while its access token is valid or a stored refresh
-            token has no recorded expiry or expires in the future.
+            True when the provider rejected the stored refresh token, or the access token
+            expired and no refresh token is stored. A recorded rejection applies even while
+            the stored access token has not expired (ADR 046).
+        is_expired:
+          type: boolean
+          deprecated: true
+          description: Deprecated alias of requires_reauthentication with the same value.
         has_refresh_token:
           type: boolean
           description: Whether a refresh token is stored for this session

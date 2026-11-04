@@ -135,7 +135,7 @@ func NewInvalidClientError(description string) *TokenExchangeError {
 // Used when:
 // - subject_token is invalid, expired, or fails signature verification
 // - User has no session with target service (both access and refresh tokens missing)
-// - All stored tokens (access and refresh) have fully expired
+// - The provider rejected the stored refresh token, or the access token expired without one
 // Per spec US5-S1 and US5-S2, this error enables agents to trigger re-authentication flows.
 func NewInvalidGrantError(description string) *TokenExchangeError {
 	return &TokenExchangeError{

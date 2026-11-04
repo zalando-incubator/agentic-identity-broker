@@ -384,7 +384,7 @@ type AgentInfo struct {
 
 // SessionWithAgents represents a session with information about dependent agents.
 type SessionWithAgents struct {
-	Session         *storage.UserSession
+	Session         *storage.UserSessionDetails
 	DependentAgents []AgentInfo // Agents that use this session with display names
 }
 
@@ -873,7 +873,7 @@ func (s *OAuth2SessionService) createSession(
 		current.CallbackID = uuid.NewString()
 		current.UpstreamClientID = claims.UpstreamClientID
 		current.EncryptedRefreshToken = encryptedRefresh
-		current.RefreshTokenExpiresAt = nil
+		current.RefreshRejectedAt = nil
 		current.EncryptedAccessToken = encryptedAccess
 		current.AccessTokenExpiresAt = accessTokenExpiresAt
 		current.TokenType = tokenType
@@ -1357,7 +1357,7 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 			return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 		}
 		session.EncryptedRefreshToken = encryptedRefresh
-		session.RefreshTokenExpiresAt = nil
+		session.RefreshRejectedAt = nil
 	}
 	if newToken.TokenType != "" {
 		session.TokenType = newToken.TokenType
@@ -1617,8 +1617,15 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 		"service_id", serviceID,
 		"dependent_agent_count", len(dependentAgents))
 
+	serviceDisplayName := ""
+	if service, err := s.providerService.Get(ctx, serviceID); err != nil {
+		s.logger.WarnContext(ctx, "failed to load session service", "service_id", serviceID, "error", err)
+	} else {
+		serviceDisplayName = service.DisplayName
+	}
+
 	return &SessionWithAgents{
-		Session:         session,
+		Session:         storage.NewUserSessionDetails(session, serviceDisplayName, len(dependentAgents)),
 		DependentAgents: dependentAgents,
 	}, nil
 }
@@ -1645,7 +1652,7 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 //
 // Error cases:
 //   - ErrSessionNotFound: No session exists for principal+service (T075)
-//   - ErrSessionExpired: Both tokens expired, user must re-authenticate (T076)
+//   - ErrReauthenticationRequired: Provider rejected the refresh token, or access expired without one (T076)
 //   - ErrRefreshFailed: Upstream provider rejected refresh request
 //   - OperationError preserves retrieval, decryption, and persistence causes with bounded metadata
 //
@@ -1673,6 +1680,9 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 	}
 	if session == nil {
 		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
+	}
+	if session.RefreshRejected() {
+		return nil, "", refreshUnavailableError(ctx, session, nil)
 	}
 	if session.HasValidAccessToken() {
 		accessToken, err := s.DecryptAccessToken(ctx, session)
@@ -1717,6 +1727,9 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 			return nil, "", outcome.Err
 		}
 		current := flight.session
+		if current.RefreshRejected() {
+			return nil, "", refreshUnavailableError(ctx, current, nil)
+		}
 		token, err := s.DecryptAccessToken(ctx, current)
 		if err != nil {
 			return nil, "", sessionOperationError(ctx, OperationRefresh, DetailDecryptionFailed, err)
@@ -1751,6 +1764,12 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		if current == nil {
 			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 		}
+		if current.RefreshRejected() {
+			if trigger == RefreshTriggerBackground || trigger == RefreshTriggerSweep {
+				return false, nil
+			}
+			return false, refreshUnavailableError(ctx, current, nil)
+		}
 		var threshold *time.Time
 		if dueBy != nil {
 			due := dueBy()
@@ -1770,9 +1789,10 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 				return false, err
 			}
 			// invalid_grant means the stored refresh token can never succeed again (RFC 6749 §5.2).
-			// Recording it as expired stops further upstream attempts until the user reconnects.
+			// Recording the rejection stops further issuance and upstream attempts until the user reconnects.
 			rejectedAt := time.Now()
-			current.RefreshTokenExpiresAt = &rejectedAt
+			current.RefreshRejectedAt = &rejectedAt
+			current.UpdatedAt = rejectedAt
 			rejected = err
 			return true, nil
 		}
@@ -1799,14 +1819,8 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 }
 
 func refreshUnavailableError(ctx context.Context, current *storage.UserSession, threshold *time.Time) error {
-	if len(current.EncryptedRefreshToken) > 0 {
-		cause := error(ErrRefreshTokenExpired)
-		if threshold == nil {
-			cause = errors.Join(ErrRefreshNotAvailable, cause)
-		} else {
-			cause = errors.Join(ErrSessionExpired, cause)
-		}
-		return sessionOperationError(ctx, OperationRefresh, DetailRefreshTokenExpired, cause)
+	if current.RefreshRejected() {
+		return sessionOperationError(ctx, OperationRefresh, DetailRefreshRejected, errors.Join(ErrRefreshRejected, ErrReauthenticationRequired))
 	}
 	if threshold == nil {
 		return sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
@@ -1815,13 +1829,13 @@ func refreshUnavailableError(ctx context.Context, current *storage.UserSession, 
 	if current.AccessTokenExpiresAt != nil && !current.AccessTokenExpiresAt.After(time.Now()) {
 		detail = DetailAccessTokenExpired
 	}
-	return sessionOperationError(ctx, OperationRefresh, detail, errors.Join(ErrSessionExpired, ErrRefreshNotAvailable))
+	return sessionOperationError(ctx, OperationRefresh, detail, errors.Join(ErrReauthenticationRequired, ErrRefreshNotAvailable))
 }
 
 func (s *OAuth2SessionService) checkUnrefreshableSweepCandidate(ctx context.Context, principal id.Principal, serviceID id.ServiceID, threshold time.Time) (bool, error) {
 	needsRefresh := false
 	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
-		if current == nil || !current.AccessTokenExpiresBy(threshold) {
+		if current == nil || current.RefreshRejected() || !current.AccessTokenExpiresBy(threshold) {
 			return false, nil
 		}
 		if !current.CanRefresh() {

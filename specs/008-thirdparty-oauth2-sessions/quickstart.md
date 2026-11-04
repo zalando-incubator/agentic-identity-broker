@@ -148,7 +148,7 @@ type UserSession struct {
     EncryptedRefreshToken  []byte            `json:"-" db:"encrypted_refresh_token"`
     TokenType              string            `json:"token_type" db:"token_type"`
     AccessTokenExpiresAt   *time.Time        `json:"access_token_expires_at,omitempty" db:"access_token_expires_at"`
-    RefreshTokenExpiresAt  *time.Time        `json:"refresh_token_expires_at,omitempty" db:"refresh_token_expires_at"`
+    RefreshRejectedAt      *time.Time        `json:"-" db:"refresh_token_expires_at"` // observed provider rejection, never a predicted expiry (ADR 046)
     Scope                  StringSlice       `json:"scope" db:"scope"`
     EncryptionContext      EncryptionContext `json:"encryption_context" db:"encryption_context"`
     InitiatedAt            time.Time         `json:"initiated_at" db:"initiated_at"`
@@ -201,12 +201,10 @@ func (s *UserSession) Validate() error {
     return nil
 }
 
-// IsExpired returns true if refresh token has expired.
-func (s *UserSession) IsExpired() bool {
-    if s.RefreshTokenExpiresAt == nil {
-        return false
-    }
-    return time.Now().After(*s.RefreshTokenExpiresAt)
+// RequiresReauthentication reports a recorded provider rejection, or an expired
+// access token without a stored refresh token (ADR 046).
+func (s *UserSession) RequiresReauthentication() bool {
+    return s.RefreshRejectedAt != nil || (!s.HasValidAccessToken() && len(s.EncryptedRefreshToken) == 0)
 }
 
 // HasValidAccessToken returns true if access token has not expired.
@@ -419,7 +417,7 @@ func (r *userSessionRepository) Create(ctx context.Context, session *storage.Use
         session.EncryptedRefreshToken,
         session.TokenType,
         session.AccessTokenExpiresAt,
-        session.RefreshTokenExpiresAt,
+        session.RefreshRejectedAt,
         session.Scope,
         session.EncryptionContext,
         session.InitiatedAt,
@@ -819,8 +817,8 @@ func (s *Service) createSession(
     if !token.Expiry.IsZero() {
         accessExpires = &token.Expiry
     }
-    // Note: OAuth2 library doesn't expose refresh token expiry; may need service-specific handling
-    
+    // The broker never records refresh-token expiry; RefreshRejectedAt stays nil until the provider rejects a refresh (ADR 046).
+
     session := &storage.UserSession{
         ID:                    sessionID,
         Principal:             principal,
@@ -829,7 +827,6 @@ func (s *Service) createSession(
         EncryptedRefreshToken: encryptedRefresh,
         TokenType:             token.TokenType,
         AccessTokenExpiresAt:  accessExpires,
-        RefreshTokenExpiresAt: refreshExpires,
         Scope:                 extractScopes(token),
         EncryptionContext: storage.EncryptionContext{
             Principal: principal,
@@ -1127,9 +1124,10 @@ export interface SessionSummary {
   token_type: string;
   scope: string[];
   initiated_at: string;
-  is_expired: boolean;
+  requires_reauthentication: boolean;
+  is_expired: boolean; // deprecated alias of requires_reauthentication
   access_token_expired: boolean;
-  refresh_token_expires_at?: string;
+  has_refresh_token: boolean;
   dependent_agent_count: number;
   is_encrypted: boolean;
 }

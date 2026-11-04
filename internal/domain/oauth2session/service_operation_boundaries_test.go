@@ -84,7 +84,6 @@ func TestRefreshProviderRejectionKeepsCallerCancellationPrecedence(t *testing.T)
 			assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
 			assert.Equal(t, "invalid_grant", metadata.OAuthCode())
 			assert.ErrorIs(t, err, ErrRefreshRejected)
-			assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
 		})
 	}
 }

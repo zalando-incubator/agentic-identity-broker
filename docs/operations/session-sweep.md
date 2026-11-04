@@ -2,9 +2,9 @@
 
 ## How refresh works
 
-If the access token is still valid, the broker returns it without waiting for a provider response. If that token is close to expiry, the broker attempts a background refresh without delaying the exchange.
+If the access token is still valid, the broker returns it without waiting for a provider response, unless the provider has already rejected the session's refresh token. A recorded rejection refuses the exchange with `invalid_grant` even before the access token expires. If the access token is close to expiry, the broker attempts a background refresh without delaying the exchange.
 
-If the access token has expired, the exchange waits for an on-demand refresh before responding. If the refresh succeeds, the broker updates the existing session and returns the new token. An absent or expired refresh token requires the user to reconnect. A provider response with 4xx `invalid_grant` (other than `429`) also requires reconnection. Other provider errors, including `429` and `5xx`, return `server_error` without requiring user reconnection. The broker does not return the expired access token as a fallback.
+If the access token has expired, the exchange waits for an on-demand refresh before responding. If the refresh succeeds, the broker updates the existing session and returns the new token. An absent refresh token, or one the provider has already rejected, requires the user to reconnect. A provider response with 4xx `invalid_grant` (other than `429`) also requires reconnection, and the broker records it as a rejection. Other provider errors, including `429` and `5xx`, return `server_error` without requiring user reconnection. The broker does not return the expired access token as a fallback.
 
 A sweep selects all sessions due within the lookahead window, including sessions with active exchanges. It also reaches inactive sessions that do not trigger background refresh. Sessions without a recorded access-token expiry are not included. The broker itself does not schedule sweeps. Run them on demand, enable the [chart-managed schedule](#use-the-chart-managed-schedule), or schedule them with another external job.
 
@@ -223,7 +223,7 @@ time() - kube_cronjob_status_last_successful_time{cronjob=~".*-session-sweep"} >
 kube_job_status_failed{job_name=~".*-session-sweep-.*"} > 0
 ```
 
-If `failed` persists across sweeps, examine the refresh failure logs and provider health. An absent or expired refresh token cannot recover through another sweep. A 4xx provider `invalid_grant` response (other than `429`) also requires user reconnection. Provider rate limits and outages can cause failures without requiring reconnection. Resolve those provider errors before you ask users to reconnect.
+If `failed` persists across sweeps, examine the refresh failure logs and provider health. A session without a refresh token cannot recover through another sweep. A 4xx provider `invalid_grant` response (other than `429`) also requires user reconnection; the broker records the rejection, and later sweeps skip that session instead of counting it again. Provider rate limits and outages can cause failures without requiring reconnection. Resolve those provider errors before you ask users to reconnect.
 
 Users can reconnect through `GET /api/third-party/{serviceId}/oauth2/authorize`. They can end their own session through `DELETE /api/third-party/{serviceId}/session`. Ending a session removes the stored tokens and can interrupt agents. It does not revoke the tokens at the provider.
 

@@ -14,11 +14,10 @@ A card component that displays a single OAuth2 session with comprehensive metada
 
 **Features:**
 
-- Status badge with 4 states:
+- Status badge with 3 states:
   - **Active**: Session is valid and operational
-  - **Expiring Soon**: Refresh token expires within 7 days
-  - **Access Token Expired**: Access token expired but refresh token valid
-  - **Expired**: Entire session expired
+  - **Access Token Expired**: Access token expired but a refresh token is stored
+  - **Login required**: The provider rejected the refresh token, or the access token expired without one
 - Encryption indicator (lock icon)
 - Dependent agent count (shows how many agents use this session)
 - Session initiation timestamp
@@ -125,8 +124,8 @@ All components follow the **Refined Trust Architecture** design system:
 ### Colors
 
 - Success (Active): `success-primary` (green)
-- Warning (Expiring Soon, Access Token Expired): `warning-primary` (amber)
-- Error (Expired): `error-primary` (red)
+- Warning (Access Token Expired): `warning-primary` (amber)
+- Error (Login required): `error-primary` (red)
 - Neutral: `neutral-300` to `neutral-900`
 
 ### Components Used
@@ -270,9 +269,10 @@ The frontend expects the following API response format:
         "token_type": "Bearer",
         "scope": ["read:email", "write:files"],
         "initiated_at": "2024-01-01T12:00:00Z",
+        "requires_reauthentication": false,
         "is_expired": false,
         "access_token_expired": false,
-        "refresh_token_expires_at": "2024-12-31T23:59:59Z",
+        "has_refresh_token": true,
         "dependent_agent_count": 2,
         "is_encrypted": true
       }

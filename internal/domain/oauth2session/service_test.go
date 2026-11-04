@@ -2088,7 +2088,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 		require.NoError(t, sessions.Create(ctx, &storage.UserSession{
 			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
-			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+			TokenType: "Bearer", Scope: []string{"read"}, RefreshRejectedAt: &past,
 			AccessTokenExpiresAt: &past,
 		}))
 	}
@@ -2100,6 +2100,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 	assert.Equal(t, provider.ID, summaries[0].ServiceID)
 	assert.Equal(t, provider.DisplayName, summaries[0].ServiceDisplayName)
 	assert.True(t, summaries[0].HasRefreshToken)
+	assert.True(t, summaries[0].RequiresReauthentication)
 	assert.True(t, summaries[0].IsExpired)
 }
 
@@ -2795,14 +2796,16 @@ func TestForceRefreshSession(t *testing.T) {
 		assert.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
 		assert.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
 		assert.Equal(t, before.AccessTokenExpiresAt, after.AccessTokenExpiresAt)
-		require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
-		assert.False(t, after.RefreshTokenExpiresAt.Before(rejectedAt))
-		assert.False(t, after.RefreshTokenExpiresAt.After(time.Now()))
+		require.NotNil(t, after.RefreshRejectedAt, "a rejected refresh token must be recorded as rejected")
+		assert.False(t, after.RefreshRejectedAt.Before(rejectedAt))
+		assert.False(t, after.RefreshRejectedAt.After(time.Now()))
 		assert.False(t, after.CanRefresh())
+		assert.True(t, after.RequiresReauthentication())
 
 		_, err = service.ForceRefreshSession(ctx, principal, serviceID)
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, oauth2session.ErrRefreshNotAvailable))
+		assert.True(t, errors.Is(err, oauth2session.ErrRefreshRejected))
+		assert.True(t, errors.Is(err, oauth2session.ErrReauthenticationRequired))
 		assert.Equal(t, 1, rejectRequests, "a rejected refresh token must not be sent to the provider again")
 	})
 }

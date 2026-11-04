@@ -15,7 +15,7 @@ requirements are already partly satisfied. The plan builds on that code and does
 | US2 (expired token → synchronous refresh) | **Implemented.** `GetValidAccessToken` refreshes expired access tokens synchronously. | `internal/domain/oauth2session/service.go:1294-1355` |
 | FR-003 per-replica dedup | **Implemented for the expired path only.** `refreshGroup singleflight.Group` is keyed by `principal|serviceID`. | `service.go:65`, `:1329-1341` |
 | DB-002 "no resurrection" | **Implemented.** `UserSessionRefreshRepository.WithLockedSession` re-reads under `SELECT … FOR UPDATE`, returns `nil` for a missing row, and persists with `UPDATE … WHERE id` only. | `internal/ports/storage.go:255-261`; `internal/adapters/storage/postgres/user_session.go:150-205`; memory per-key lock `internal/adapters/storage/memory/user_session.go:97-134` |
-| FR-005 refresh token absent/expired → re-auth error | **Implemented.** Returns `ErrSessionExpired` joined with `ErrRefreshTokenExpired` or `ErrRefreshNotAvailable`. The exchange maps it to `invalid_grant` with a recovery URI. | `service.go:1367-1377`; `internal/domain/tokenexchange/service.go:342-350` |
+| FR-005 refresh token absent/expired → re-auth error | **Implemented.** Returns `ErrReauthenticationRequired` joined with `ErrRefreshRejected` or `ErrRefreshNotAvailable`. The exchange maps it to `invalid_grant` with a recovery URI. | `service.go:1367-1377`; `internal/domain/tokenexchange/service.go:342-350` |
 | SR-001 / SR-004 | **Implemented.** `setSessionTokens` encrypts with `{"service_id"}`. `GetForTokenAcquisition` decrypts a static confidential client's secret at call time; public and CIMD confidential clients have no secret. | `service.go:988-1023`; `internal/domain/thirdparty/service.go:271-286` |
 | FR-001/FR-002 lookahead + background refresh | **Missing.** `HasValidAccessToken()` has no lookahead. | `internal/domain/storage/user_session.go:106-111` |
 | FR-006..FR-011 admin sweep | **Missing.** There is no admin `/api/sessions` route. | `internal/adapters/http/routing/admin.go:36-112` |
@@ -370,7 +370,7 @@ The rows are evaluated in order, and the first match wins:
 | `KindInfrastructure` ∧ dependency ∈ {`session_repository`, `provider_repository`} | `repository_unavailable`, `persistence_failed` | **abort → 500** | ERROR | ERROR |
 | `KindInfrastructure` ∧ dependency = `encryption` | `decryption_failed`, `encryption_failed` | `failed++`, continue | ERROR | ERROR |
 | `KindInfrastructure` ∧ dependency = `provider` | `provider_unavailable` | `failed++`, continue | WARN | WARN |
-| `KindSession` | `refresh_token_expired`, `refresh_unavailable` | `failed++`, continue | WARN | WARN |
+| `KindSession` | `access_token_expired`, `refresh_unavailable` | `failed++`, continue | WARN | WARN |
 | `KindProvider` | `refresh_rejected`, `provider_rejected`, `provider_response_invalid` | `failed++`, continue | WARN | WARN |
 | `KindConfiguration` | `provider_client_rejected`, `configuration` | `failed++`, continue | WARN | WARN |
 | `KindInternal` | `internal_unclassified` | `failed++`, continue | ERROR | ERROR |

@@ -143,7 +143,7 @@ The adapter translates OS errors into safe file reasons. Selection and identity 
 
 Source errors bypass `ErrRefreshFailed` wrapping and misleading provider/PKCE classification. Callback and explicit refresh retain their generic errors. RFC 8693 file-availability failures retain `500 server_error` without `error_uri`.
 
-Missing or mismatched required identities instead use diagnostic `credential_identity_changed`, outcome `reauth_required`, and `invalid_grant` with the sessions recovery URI. This review correction implements FR-025. Provider `invalid_grant` retains `refresh_rejected`, distinct from local `refresh_token_expired`. All source failures stop before provider authentication.
+Missing or mismatched required identities instead use diagnostic `credential_identity_changed`, outcome `reauth_required`, and `invalid_grant` with the sessions recovery URI. This review correction implements FR-025. Provider `invalid_grant` retains `refresh_rejected`, which a previously recorded rejection also reports without a provider call. All source failures stop before provider authentication.
 
 **Rationale:** The baseline refresh wrapper classified all provider-access errors as upstream failures. A file error precedes an upstream request and must not use that category. The implemented path preserves the distinct source-error category.
 
