@@ -341,7 +341,7 @@ func assertionSignerAuditRecords(t *testing.T, logs string) []map[string]any {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "CIMD client assertion signing" {
+		if record["msg"] == "cimd client assertion signing" {
 			records = append(records, record)
 		}
 	}

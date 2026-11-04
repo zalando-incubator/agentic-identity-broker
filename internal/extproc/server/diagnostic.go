@@ -167,7 +167,7 @@ func logDiagnostic(ctx context.Context, logger *slog.Logger, level slog.Level, m
 	if d.Outcome() == OutcomeSuccess {
 		n = 4
 	}
-	logger.LogAttrs(ctx, level, message, attrs[:n]...)
+	logger.LogAttrs(ctx, level, message, attrs[:n]...) //nolint:sloglint // Each caller passes a constant message.
 }
 
 func diagnosticForMetadata(metadata ErrorMetadata, cause error) Diagnostic {

@@ -158,7 +158,7 @@ func assertionErrorMetadata(err error) ErrorMetadata {
 }
 
 func logOperationError(ctx context.Context, logger *slog.Logger, level slog.Level, message string, metadata ErrorMetadata, diagnostic Diagnostic) {
-	logger.LogAttrs(ctx, level, message,
+	logger.LogAttrs(ctx, level, message, //nolint:sloglint // Each caller passes a constant message.
 		slog.String("operation", string(metadata.Operation())),
 		slog.String("error_kind", string(metadata.Kind())),
 		slog.String("dependency", string(metadata.Dependency())),

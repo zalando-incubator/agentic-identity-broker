@@ -197,10 +197,11 @@ type slogOPALogger struct {
 	fields map[string]any
 }
 
-func (l *slogOPALogger) Debug(fmt string, a ...any) { l.logger.Debug(fmt, toSlogAttrs(l.fields, a)...) }
-func (l *slogOPALogger) Info(fmt string, a ...any)  { l.logger.Info(fmt, toSlogAttrs(l.fields, a)...) }
-func (l *slogOPALogger) Warn(fmt string, a ...any)  { l.logger.Warn(fmt, toSlogAttrs(l.fields, a)...) }
-func (l *slogOPALogger) Error(fmt string, a ...any) { l.logger.Error(fmt, toSlogAttrs(l.fields, a)...) }
+// The OPA SDK supplies the message, so these forwarders cannot use a constant.
+func (l *slogOPALogger) Debug(fmt string, a ...any) { l.logger.Debug(fmt, toSlogAttrs(l.fields, a)...) } //nolint:sloglint
+func (l *slogOPALogger) Info(fmt string, a ...any)  { l.logger.Info(fmt, toSlogAttrs(l.fields, a)...) }  //nolint:sloglint
+func (l *slogOPALogger) Warn(fmt string, a ...any)  { l.logger.Warn(fmt, toSlogAttrs(l.fields, a)...) }  //nolint:sloglint
+func (l *slogOPALogger) Error(fmt string, a ...any) { l.logger.Error(fmt, toSlogAttrs(l.fields, a)...) } //nolint:sloglint
 func (l *slogOPALogger) WithFields(fields map[string]any) logging.Logger {
 	merged := make(map[string]any, len(l.fields)+len(fields))
 	for k, v := range l.fields {

@@ -126,11 +126,11 @@ func (s *ThirdpartyOAuth2ProviderService) WithDiscoveryStatusWriter(writer ports
 var errDiscoveryInfrastructure = errors.New("discovery infrastructure unavailable")
 
 func (s *ThirdpartyOAuth2ProviderService) auditCIMD(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, operation, outcome string) {
-	message := "CIMD confidential service"
 	if entity.IsCIMDPublicClient() {
-		message = "CIMD public service"
+		s.logger.InfoContext(ctx, "cimd public service", "service_id", entity.ID, "operation", operation, "outcome", outcome)
+		return
 	}
-	s.logger.InfoContext(ctx, message, "service_id", entity.ID, "operation", operation, "outcome", outcome)
+	s.logger.InfoContext(ctx, "cimd confidential service", "service_id", entity.ID, "operation", operation, "outcome", outcome)
 }
 
 // auditDiscovery uses validated metadata or persisted state for issuer and method.
@@ -480,7 +480,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
 		if err != nil {
 			if !discovered {
-				s.logger.ErrorContext(ctx, "encryption_failed", "operation", "create_provider", "service_id", entity.ID, "reason", err)
+				s.logger.ErrorContext(ctx, "service secret encryption failed", "event", "service.thirdparty.secret_encrypt_failed", "operation", "create_provider", "service_id", entity.ID, "reason", err)
 			}
 			if discovered && errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
@@ -492,7 +492,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		}
 		entity.Secret = model.NewEncryptedSecret(ciphertext)
 		if !discovered {
-			s.logger.InfoContext(ctx, "service_secret_encrypted", "operation", "create", "service_id", entity.ID)
+			s.logger.InfoContext(ctx, "service secret encrypted", "event", "service.thirdparty.secret_encrypted", "operation", "create", "service_id", entity.ID)
 		}
 	}
 
@@ -513,7 +513,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		s.auditCIMD(ctx, entity, "create", "success")
 		return nil
 	}
-	s.logger.InfoContext(ctx, "provider_created", "event", "service.thirdparty.provider_created", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
+	s.logger.InfoContext(ctx, "provider created", "event", "service.thirdparty.provider_created", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
 	return nil
 }
 
@@ -536,7 +536,8 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 
 	// Guard: verify ID consistency for data integrity
 	if entity.ID != serviceID {
-		s.logger.ErrorContext(ctx, "service_id_mismatch",
+		s.logger.ErrorContext(ctx, "service id mismatch",
+			"event", "service.thirdparty.service_id_mismatched",
 			"expected_id", serviceID,
 			"actual_id", entity.ID)
 		return nil, fmt.Errorf("provider ID mismatch: expected %s, got %s", serviceID, entity.ID)
@@ -548,7 +549,8 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 
 	dec, decErr := s.decryptSecret(ctx, entity)
 	if decErr != nil {
-		s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
+		s.logger.WarnContext(ctx, "secret decryption failed, returning encrypted secret",
+			"event", "service.thirdparty.secret_decrypt_failed",
 			"operation", "get",
 			"service_id", entity.ID,
 			"error_kind", "decryption_failed",
@@ -644,7 +646,8 @@ func (s *ThirdpartyOAuth2ProviderService) GetByIDs(ctx context.Context, ids []id
 		}
 		dec, decErr := s.decryptSecret(ctx, entity)
 		if decErr != nil {
-			s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
+			s.logger.WarnContext(ctx, "secret decryption failed, returning encrypted secret",
+				"event", "service.thirdparty.secret_decrypt_failed",
 				"operation", "get_by_ids", "service_id", entity.ID, "reason", decErr)
 			continue
 		}
@@ -831,7 +834,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
 		if err != nil {
 			if !discovered {
-				s.logger.ErrorContext(ctx, "encryption_failed", "operation", "update_provider", "service_id", entity.ID, "reason", err)
+				s.logger.ErrorContext(ctx, "service secret encryption failed", "event", "service.thirdparty.secret_encrypt_failed", "operation", "update_provider", "service_id", entity.ID, "reason", err)
 			}
 			if discovered && errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
@@ -843,7 +846,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		}
 		entity.Secret = model.NewEncryptedSecret(ciphertext)
 		if !discovered {
-			s.logger.InfoContext(ctx, "service_secret_encrypted", "operation", "update", "service_id", entity.ID)
+			s.logger.InfoContext(ctx, "service secret encrypted", "event", "service.thirdparty.secret_encrypted", "operation", "update", "service_id", entity.ID)
 		}
 	}
 
@@ -872,7 +875,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		s.auditCIMD(ctx, entity, "update", "success")
 		return nil
 	}
-	s.logger.InfoContext(ctx, "provider_updated", "event", "service.thirdparty.provider_updated", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
+	s.logger.InfoContext(ctx, "provider updated", "event", "service.thirdparty.provider_updated", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
 	return nil
 }
 
@@ -898,7 +901,8 @@ func (s *ThirdpartyOAuth2ProviderService) List(
 		}
 		dec, err := s.decryptSecret(ctx, entity)
 		if err != nil {
-			s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
+			s.logger.WarnContext(ctx, "secret decryption failed, returning encrypted secret",
+				"event", "service.thirdparty.secret_decrypt_failed",
 				"operation", "list",
 				"service_id", entity.ID,
 				"reason", err)
@@ -938,7 +942,7 @@ func (s *ThirdpartyOAuth2ProviderService) Delete(
 		return fmt.Errorf("failed to delete provider: %w", err)
 	}
 
-	s.logger.InfoContext(ctx, "provider_deleted", "service_id", serviceID)
+	s.logger.InfoContext(ctx, "provider deleted", "event", "service.thirdparty.provider_deleted", "service_id", serviceID)
 	return nil
 }
 
@@ -1066,7 +1070,8 @@ func (s *ThirdpartyOAuth2ProviderService) decryptSecret(
 	result := entity.Copy()
 	result.Secret = model.NewPlaintextSecret(string(plaintext))
 
-	s.logger.InfoContext(ctx, "service_secret_decrypted",
+	s.logger.InfoContext(ctx, "service secret decrypted",
+		"event", "service.thirdparty.secret_decrypted",
 		"service_id", entity.ID)
 
 	return result, nil

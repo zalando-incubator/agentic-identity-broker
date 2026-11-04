@@ -160,14 +160,14 @@ func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.R
 }
 
 func (h *CIMDClientKeysHandler) audit(ctx context.Context, operator id.Principal, kid id.KeyID, operation, outcome string) {
-	h.logger.InfoContext(ctx, "CIMD client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
+	h.logger.InfoContext(ctx, "cimd client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
 func (h *CIMDClientKeysHandler) writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Warn("failed to encode CIMD client key response")
+		h.logger.Warn("failed to encode cimd client key response")
 	}
 }
 

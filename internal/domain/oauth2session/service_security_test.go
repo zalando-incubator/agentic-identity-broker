@@ -676,7 +676,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 					if client == "CIMD" {
 						assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
 					} else {
-						assert.NotContains(t, logs.String(), "CIMD client token acquisition")
+						assert.NotContains(t, logs.String(), "cimd client token acquisition")
 					}
 				})
 			}
@@ -1125,7 +1125,7 @@ func TestRefreshLogsCarryOperationContext(t *testing.T) {
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed", "oauth2_refresh_failed"} {
+	for _, message := range []string{"access token refreshed", "oauth2 session refreshed", "oauth2 session refresh failed"} {
 		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
@@ -1167,7 +1167,7 @@ func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed"} {
+	for _, message := range []string{"access token refreshed", "oauth2 session refreshed"} {
 		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
@@ -1575,7 +1575,7 @@ func assertCIMDTokenAcquisitionAudit(t *testing.T, logs string, serviceID id.Ser
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] != "CIMD client token acquisition" {
+		if record["msg"] != "cimd client token acquisition" {
 			continue
 		}
 		if record["service_id"] != serviceID.String() || record["operation"] != operation || record["outcome"] != outcome {

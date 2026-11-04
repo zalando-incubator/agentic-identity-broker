@@ -180,7 +180,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 		Expect(err).ToNot(HaveOccurred())
 		found := false
 		for _, record := range records {
-			if record["msg"] == "cimd_client_uri_ambiguous" && record["client_uri"] == clientURL {
+			if record["event"] == "cimd.client_uri.match_ambiguous" && record["client_uri"] == clientURL {
 				found = true
 				break
 			}

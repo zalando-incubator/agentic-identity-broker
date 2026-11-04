@@ -438,7 +438,7 @@ func TestKeyService_LifecycleAuditRecordsAreCredentialFree(t *testing.T) {
 		"outcome":   {},
 	}
 	for _, record := range records {
-		assert.Equal(t, "CIMD client-authentication key lifecycle", record["msg"])
+		assert.Equal(t, "cimd client-authentication key lifecycle", record["msg"])
 		for field := range record {
 			_, allowed := allowedFields[field]
 			assert.Truef(t, allowed, "audit field %q must not be recorded", field)
@@ -506,7 +506,7 @@ func cimdLifecycleAuditRecords(t *testing.T, logs string) []map[string]any {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "CIMD client-authentication key lifecycle" {
+		if record["msg"] == "cimd client-authentication key lifecycle" {
 			records = append(records, record)
 		}
 	}

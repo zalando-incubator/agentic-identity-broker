@@ -221,7 +221,11 @@ func TestTokenExchangeTelemetryUsesSessionMetadataOnly(t *testing.T) {
 			for _, attr := range spans.Ended()[0].Attributes() {
 				spanAttrs[string(attr.Key)] = attr.Value.AsInterface()
 			}
+			assert.Equal(t, "token_exchange.token.exchange_failed", attrs["event"])
 			for key, value := range attrs {
+				if key == "event" {
+					continue
+				}
 				assert.Equal(t, value, spanAttrs[key], key)
 			}
 			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "RAW_SESSION_CAUSE_SENTINEL", "RAW_SESSION_DESCRIPTION_SENTINEL", "PROVIDER_CODE_SENTINEL")
@@ -360,7 +364,7 @@ func TestOAuth2TokenHandler_ImpersonationTelemetryAndResponseWrites(t *testing.T
 			var record tokenEndpointLogRecord
 			var found bool
 			for _, candidate := range *logs.records {
-				if candidate.message == "Token exchange failed" || candidate.message == "token_exchange_succeeded" {
+				if candidate.message == "token exchange failed" || candidate.message == "token exchange succeeded" {
 					record, found = candidate, true
 				}
 			}

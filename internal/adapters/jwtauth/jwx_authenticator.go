@@ -160,7 +160,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 
 	// Reject empty tokens early
 	if strings.TrimSpace(tokenStr) == "" {
-		a.logger.WarnContext(ctx, "JWT authentication failed: malformed token",
+		a.logger.WarnContext(ctx, "jwt authentication failed: malformed token",
 			"reason", "empty_token",
 			"jwt_header", a.config.HeaderName,
 		)
@@ -183,7 +183,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Extract claims map for CEL evaluation
 	claimsMap, err := a.extractClaimsMap(token)
 	if err != nil {
-		a.logger.WarnContext(ctx, "JWT authentication failed: claim extraction error",
+		a.logger.WarnContext(ctx, "jwt authentication failed: claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, fmt.Errorf("%w: %v", jwtauth.ErrClaimExtraction, err)
@@ -192,13 +192,13 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Use CEL evaluator to extract principal and profile attributes
 	result, err := a.celEvaluator.ExtractClaims(claimsMap)
 	if err != nil {
-		a.logger.WarnContext(ctx, "JWT authentication failed: CEL claim extraction error",
+		a.logger.WarnContext(ctx, "jwt authentication failed: cel claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, err
 	}
 
-	a.logger.InfoContext(ctx, "JWT authentication successful",
+	a.logger.InfoContext(ctx, "jwt authentication successful",
 		"principal", result.Principal,
 		"has_display_name", result.DisplayName != nil,
 		"has_email", result.Email != nil,
@@ -225,7 +225,7 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 // logJWKSFetchFailure logs the fetch failure once. The jwx cause names the full JWKS URL,
 // so it is neither logged nor returned.
 func (a *JWXAuthenticator) logJWKSFetchFailure(ctx context.Context, err error) {
-	a.logger.ErrorContext(ctx, "failed to fetch JWKS",
+	a.logger.ErrorContext(ctx, "failed to fetch jwks",
 		"url", security.RedactURL(a.jwksURL),
 		"error_kind", security.ClassifyOutboundError(err))
 }
@@ -235,7 +235,7 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 	if a.keySet != nil {
 		keySet, err := a.keySet.GetKeySet(ctx)
 		if err != nil {
-			a.logger.ErrorContext(ctx, "local JWT pre-authentication key set unavailable", "error", err)
+			a.logger.ErrorContext(ctx, "local jwt pre-authentication key set unavailable", "error", err)
 			return nil, fmt.Errorf("%w: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 		return a.verifyWithKeySet(tokenStr, keySet)
@@ -397,7 +397,7 @@ func (a *JWXAuthenticator) logValidationFailure(ctx context.Context, err error) 
 		reason = "claim_extraction"
 	}
 
-	a.logger.WarnContext(ctx, "JWT authentication failed",
+	a.logger.WarnContext(ctx, "jwt authentication failed",
 		"reason", reason,
 		"error", err.Error(),
 		"jwt_header", a.config.HeaderName,

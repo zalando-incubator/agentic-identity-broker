@@ -244,7 +244,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 			}
 			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
@@ -272,7 +272,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if unusableReason != "" {
 		if s.logger != nil {
 			s.logger.WarnContext(ctx,
-				"DelegatedSessionUnusable",
+				"delegated session unusable",
+				"event", "oauth2.delegated_session.unusable",
 				"agent_id", agent.ID,
 				"principal", principal,
 				"service_id", unusableServiceID,
@@ -282,7 +283,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 			}
 			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
@@ -303,7 +304,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			if errors.As(err, &storageErr) {
 				if s.logger != nil {
 					s.logger.ErrorContext(ctx,
-						"MandatoryRequirementStorageFailure",
+						"mandatory requirement check failed",
+						"event", "oauth2.mandatory_requirement.check_failed",
 						"agent_id", agent.ID,
 						"error", err.Error(),
 					)
@@ -318,7 +320,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			}
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"error", err.Error(),
 				)
@@ -326,7 +329,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 			if buildErr != nil {
 				if s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+					s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 				}
 				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 				return &ports.AuthorizationDecision{
@@ -382,7 +385,7 @@ func (s *AuthorizationService) errorRedirectURL(ctx context.Context, req *ports.
 	redirect, err := BuildErrorRedirectURL(req.RedirectURI, req.State, errorCode, errorDescription)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "failed to build error redirect URL",
+			s.logger.ErrorContext(ctx, "failed to build error redirect url",
 				"agent_id", agentID,
 				"reason", "invalid_redirect_uri")
 		}
@@ -425,7 +428,8 @@ func (s *AuthorizationService) buildUpstreamAuthorizeURL(ctx context.Context, re
 	if s.config.MultiAgentClient.Enabled {
 		q.Set(s.config.MultiAgentClient.AgentIDParamName, agent.ID.String())
 		if s.logger != nil {
-			s.logger.InfoContext(ctx, "AgentIDParamInjected",
+			s.logger.InfoContext(ctx, "agent id parameter injected",
+				"event", "oauth2.agent_id_param.injected",
 				"agent_id", agent.ID.String(),
 				"param_name", s.config.MultiAgentClient.AgentIDParamName,
 				"upstream_url", security.RedactURL(s.config.UpstreamAuthorizeEndpoint),
@@ -589,7 +593,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if session == nil {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "session_not_found",
@@ -601,7 +606,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if session.RequiresReauthentication() {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "reauthentication_required",
@@ -614,7 +620,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if !s.hasRequiredScopes(session.Scope, req.RequiredScopes) {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "scope_mismatch",

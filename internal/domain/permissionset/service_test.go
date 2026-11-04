@@ -409,8 +409,8 @@ func TestDeleteEmitsAuditLog(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
-	assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"msg":"PermissionSetDeleted"`)))
-	assert.Contains(t, logs.String(), `"action":"permission_set_deleted"`)
+	assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"msg":"permission set deleted"`)))
+	assert.Contains(t, logs.String(), `"event":"permissionset.permission_set.deleted"`)
 	assert.Contains(t, logs.String(), psID.String())
 }
 
@@ -513,7 +513,7 @@ func TestDeleteLogsOnlyActualDeletionAndInvalidatesCache(t *testing.T) {
 			_, cached := svc.cache[psID]
 			svc.mu.RUnlock()
 			assert.Equal(t, tc.wantCache, cached)
-			assert.Equal(t, tc.wantRecords, bytes.Count(logs.Bytes(), []byte(`"msg":"PermissionSetDeleted"`)))
+			assert.Equal(t, tc.wantRecords, bytes.Count(logs.Bytes(), []byte(`"msg":"permission set deleted"`)))
 		})
 	}
 }
@@ -564,13 +564,13 @@ func TestCreateAuditContainsOnlyDefensiveTypedScopes(t *testing.T) {
 	ctx := context.WithValue(context.Background(), permissionSetAuditContextKey{}, "operation-context")
 	require.NoError(t, svc.Create(ctx, ps))
 	require.Len(t, capture.records, 1)
-	assert.Equal(t, "PermissionSetCreated", capture.records[0].Message)
+	assert.Equal(t, "permission set created", capture.records[0].Message)
 	assert.Equal(t, "operation-context", capture.contexts[0].Value(permissionSetAuditContextKey{}))
 	ps.ServiceScopes[0].Scopes[0] = "mutated"
 	ps.ServiceScopes[1].ServiceID = id.NewServiceID()
 	fields := permissionSetAuditFields(t, capture.records[0])
 	require.Len(t, fields, 3)
-	assert.Equal(t, "permission_set_created", fields["action"])
+	assert.Equal(t, "permissionset.permission_set.created", fields["event"])
 	assert.Equal(t, want.ID, fields["permission_set_id"])
 	assert.Equal(t, want.ServiceScopes, fields["service_scopes"])
 }
@@ -618,13 +618,13 @@ func TestUpdateAuditReadsRepositoryInsteadOfStaleTTLAndPreservesSnapshots(t *tes
 	assert.Equal(t, 2, reads, "Update must bypass the unexpired stale cache")
 	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
-	assert.Equal(t, "PermissionSetUpdated", capture.records[0].Message)
+	assert.Equal(t, "permission set updated", capture.records[0].Message)
 	assert.Equal(t, "operation-context", capture.contexts[0].Value(permissionSetAuditContextKey{}))
 	ps.ServiceScopes[0].Scopes[0] = "mutated"
 	ps.ServiceScopes[1].ServiceID = id.NewServiceID()
 	fields := permissionSetAuditFields(t, capture.records[0])
 	require.Len(t, fields, 5)
-	assert.Equal(t, "permission_set_updated", fields["action"])
+	assert.Equal(t, "permissionset.permission_set.updated", fields["event"])
 	assert.Equal(t, ps.ID, fields["permission_set_id"])
 	assert.Equal(t, wantNew.ServiceScopes, fields["service_scopes"])
 	assert.Equal(t, wantPrevious.ServiceScopes, fields["previous_observed_service_scopes"])
@@ -651,7 +651,7 @@ func TestUpdateAuditsSuccessfulUnchangedDefinition(t *testing.T) {
 	require.NoError(t, svc.Update(context.Background(), ps))
 	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
-	assert.Equal(t, "permission_set_updated", permissionSetAuditFields(t, capture.records[0])["action"])
+	assert.Equal(t, "permissionset.permission_set.updated", permissionSetAuditFields(t, capture.records[0])["event"])
 }
 
 func TestFailedPermissionSetMutationsEmitNoSuccessfulAudit(t *testing.T) {
@@ -733,6 +733,6 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	assert.Equal(t, "operation-context", capture.contexts[0].Value(permissionSetAuditContextKey{}))
 	fields := permissionSetAuditFields(t, capture.records[0])
 	require.Len(t, fields, 2)
-	assert.Equal(t, "permission_set_deleted", fields["action"])
+	assert.Equal(t, "permissionset.permission_set.deleted", fields["event"])
 	assert.Equal(t, psID, fields["permission_set_id"])
 }

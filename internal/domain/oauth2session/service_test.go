@@ -975,7 +975,7 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 		assert.Equal(t, tokenEndpoint.URL, signedRequest.tokenEndpoint)
 	}
 	assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
-	assert.Equal(t, 2, strings.Count(logs.String(), `"msg":"CIMD client token acquisition"`))
+	assert.Equal(t, 2, strings.Count(logs.String(), `"msg":"cimd client token acquisition"`))
 }
 
 // T057: A missing or rejected CIMD signer must prevent refresh token-endpoint traffic.

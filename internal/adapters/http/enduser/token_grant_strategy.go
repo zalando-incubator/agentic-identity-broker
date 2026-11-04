@@ -90,7 +90,8 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	if err != nil {
 		if failure == ports.TokenProxyResponseReadFailed {
 			if s.logger != nil {
-				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
+				s.logger.ErrorContext(r.Context(), "upstream token response read failed",
+					"event", "oauth2.token_proxy.response_read_failed",
 					"agent_id", agentID.String(),
 					"reason", "failed to read upstream response body",
 					"error_kind", security.ClassifyOutboundError(err),
@@ -104,13 +105,15 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 
 		if s.logger != nil {
 			if mismatch, ok := err.(*oauth2.AgentIDMismatchError); ok {
-				s.logger.ErrorContext(r.Context(), "AgentIDClaimMismatch",
+				s.logger.ErrorContext(r.Context(), "agent id claim mismatch",
+					"event", "oauth2.agent_id_claim.mismatched",
 					"expected_agent_id", mismatch.Expected,
 					"received_agent_id", mismatch.Received,
 					"claim_name", mismatch.ClaimName,
 				)
 			} else {
-				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
+				s.logger.ErrorContext(r.Context(), "agent id claim missing",
+					"event", "oauth2.agent_id_claim.missing",
 					"agent_id", agentID.String(),
 					"error", err.Error(),
 				)
@@ -124,7 +127,8 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 
 	if completion.Verified {
 		if s.logger != nil {
-			s.logger.InfoContext(r.Context(), "AgentIDClaimVerified",
+			s.logger.InfoContext(r.Context(), "agent id claim verified",
+				"event", "oauth2.agent_id_claim.verified",
 				"agent_id", agentID.String(),
 			)
 		}
@@ -177,8 +181,8 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		}
 
 		if s.logger != nil {
-			s.logger.InfoContext(r.Context(), "TokenIssued",
-				"event", "TokenIssued",
+			s.logger.InfoContext(r.Context(), "token issued",
+				"event", "oauth2_server.token.issued",
 				"grant_type", "client_credentials",
 				"client_id", rawClientID,
 				"scope", scope,
@@ -216,8 +220,8 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		}
 
 		if s.logger != nil {
-			s.logger.InfoContext(r.Context(), "TokenIssued",
-				"event", "TokenIssued",
+			s.logger.InfoContext(r.Context(), "token issued",
+				"event", "oauth2_server.token.issued",
 				"grant_type", "authorization_code",
 				"client_id", rawClientID,
 			)
@@ -249,8 +253,8 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		}
 
 		if s.logger != nil {
-			s.logger.InfoContext(r.Context(), "TokenIssued",
-				"event", "TokenIssued",
+			s.logger.InfoContext(r.Context(), "token issued",
+				"event", "oauth2_server.token.issued",
 				"grant_type", "refresh_token",
 				"client_id", rawClientID,
 				"scope", scope,
@@ -299,15 +303,15 @@ func (s *localGrantStrategy) handleMintingError(w http.ResponseWriter, ctx conte
 
 	if s.logger != nil {
 		attrs := []any{
-			"event", "TokenRequestFailed",
+			"event", "oauth2_server.token.request_failed",
 			"grant_type", grantType,
 			"error_code", errorCode,
 			"error_description", errorDesc,
 		}
 		if statusCode >= http.StatusInternalServerError {
-			s.logger.ErrorContext(ctx, "TokenRequestFailed", attrs...)
+			s.logger.ErrorContext(ctx, "token request failed", attrs...)
 		} else {
-			s.logger.WarnContext(ctx, "TokenRequestFailed", attrs...)
+			s.logger.WarnContext(ctx, "token request failed", attrs...)
 		}
 	}
 }
