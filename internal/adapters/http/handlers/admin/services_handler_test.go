@@ -3796,7 +3796,7 @@ func TestServicesHandler_DiscoveryStatusReturnsNotFoundAfterDeletion(t *testing.
 }
 
 func TestServicesHandler_ConcurrentIssuerChangeConflictUsesSafeCode(t *testing.T) {
-	handler := NewServicesHandler(nil, nil, nil)
+	handler := NewServicesHandler(nil, nil, slog.New(slog.DiscardHandler))
 	response := httptest.NewRecorder()
 	err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 		storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
@@ -3812,7 +3812,7 @@ func TestServicesHandler_ConcurrentAudienceChangeConflictUsesSafeCode(t *testing
 			name = "discovered"
 		}
 		t.Run(name, func(t *testing.T) {
-			handler := NewServicesHandler(nil, nil, nil)
+			handler := NewServicesHandler(nil, nil, slog.New(slog.DiscardHandler))
 			response := httptest.NewRecorder()
 			err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 				storage.ErrResourceChangeHasSessions, "unsafe provider details must not leak")

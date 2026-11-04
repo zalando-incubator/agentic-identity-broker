@@ -23,10 +23,9 @@ type AgentClientResolver struct {
 
 // NewAgentClientResolver creates a resolver for opaque (UUID-based) client IDs.
 // URL-format client_id values are rejected with invalid_client.
-// When logger is nil, slog.Default() is used.
 func NewAgentClientResolver(agentRepo ports.AgentRepository, logger *slog.Logger) *AgentClientResolver {
 	if logger == nil {
-		logger = slog.Default()
+		panic("oauth2.NewAgentClientResolver: logger must not be nil")
 	}
 	return &AgentClientResolver{agentRepo: agentRepo, logger: logger}
 }
@@ -34,10 +33,9 @@ func NewAgentClientResolver(agentRepo ports.AgentRepository, logger *slog.Logger
 // NewAgentClientResolverWithCIMD creates a CIMD-enabled resolver.
 // URL-format client_id values are resolved via CIMD fetch/validate/cache;
 // non-URL client_id values fall through to opaque UUID lookup.
-// When logger is nil, slog.Default() is used.
 func NewAgentClientResolverWithCIMD(agentRepo ports.AgentRepository, cimdService *cimd.Service, logger *slog.Logger) *AgentClientResolver {
 	if logger == nil {
-		logger = slog.Default()
+		panic("oauth2.NewAgentClientResolverWithCIMD: logger must not be nil")
 	}
 	return &AgentClientResolver{agentRepo: agentRepo, cimdService: cimdService, logger: logger}
 }

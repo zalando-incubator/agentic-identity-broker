@@ -271,6 +271,9 @@ func NewOAuth2SessionService(
 	config Config,
 	logger *slog.Logger,
 ) *OAuth2SessionService {
+	if logger == nil {
+		panic("oauth2session.NewOAuth2SessionService: logger must not be nil")
+	}
 	if config.StateTokenTTL == 0 {
 		config.StateTokenTTL = 10 * time.Minute
 	}
@@ -291,9 +294,6 @@ func NewOAuth2SessionService(
 	}
 	if config.SweepDefaultPageSize == 0 {
 		config.SweepDefaultPageSize = 100
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	config.CredentialFiles = maps.Clone(config.CredentialFiles)
 

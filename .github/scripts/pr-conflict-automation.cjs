@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { retryReads } = require("./speckit-automation.cjs");
 
 const label = "auto-resolve-conflicts";
 const root = "/tmp/gh-aw";
@@ -98,6 +99,7 @@ async function eligibility(github, repo, number) {
 }
 
 async function selectConflicts({ github, context }) {
+  retryReads(github);
   const { eventName, payload, repo } = context;
   let numbers;
   if (eventName === "pull_request_target") {
@@ -157,6 +159,7 @@ function writeContext(data) {
 }
 
 async function prepare({ github, context, inputs }) {
+  retryReads(github);
   const number = Number(inputs.pr);
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Invalid selected PR number");
   if (typeof inputs.base !== "string" || unsafeBaseRef.test(inputs.base)) {

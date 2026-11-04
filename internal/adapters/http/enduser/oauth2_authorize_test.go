@@ -51,7 +51,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MissingPrincipal(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -87,7 +87,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MissingParameters(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -164,7 +164,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MalformedClientID(t *testing.T) {
 		Service: oauth2.NewAuthorizationService(
 			newMockGrantRepo(),
 			&noopSessionRepository{},
-			oauth2.NewAgentClientResolver(mockAgentRepo, nil),
+			oauth2.NewAgentClientResolver(mockAgentRepo, slog.New(slog.DiscardHandler)),
 			&oauth2.OAuth2Config{
 				ModeStrategy:              oauth2.NewProxyModeStrategy(),
 				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -199,7 +199,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_UnknownAgent(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -250,7 +250,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_NoGrantRedirectsToConsent(t *testing.T
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -308,7 +308,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 	svc := oauth2.NewAuthorizationService(
 		grantRepo,
 		&connectedSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -372,7 +372,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 	svc := oauth2.NewAuthorizationService(
 		grantRepo,
 		&connectedSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -421,7 +421,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_JSONResponseFormat(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
@@ -826,7 +826,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_StorageErrorReturns500(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
 		newMockGrantRepo(),
 		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
+		oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
 			ModeStrategy:              oauth2.NewProxyModeStrategy(),
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",

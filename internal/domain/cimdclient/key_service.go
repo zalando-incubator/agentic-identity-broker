@@ -52,7 +52,7 @@ func NewKeyService(
 	logger *slog.Logger,
 ) *KeyService {
 	if logger == nil {
-		logger = slog.Default()
+		panic("cimdclient.NewKeyService: logger must not be nil")
 	}
 	return &KeyService{
 		repository: repository,

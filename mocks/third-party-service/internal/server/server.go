@@ -112,6 +112,13 @@ func New(cfg *config.Config) (*Server, error) {
 	oauth2Srv.SetAllowedResponseType(oauth2.Code)
 	oauth2Srv.SetAllowGetAccessRequest(false)
 	oauth2Srv.SetAllowedGrantType(oauth2.AuthorizationCode, oauth2.Refreshing)
+	// Accept client_secret_basic and client_secret_post; the broker refreshes with form credentials
+	oauth2Srv.SetClientInfoHandler(func(r *http.Request) (string, string, error) {
+		if clientID, clientSecret, err := server.ClientBasicHandler(r); err == nil {
+			return clientID, clientSecret, nil
+		}
+		return server.ClientFormHandler(r)
+	})
 
 	// PKCE is enabled by default in v4
 

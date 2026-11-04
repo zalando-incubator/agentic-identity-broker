@@ -39,6 +39,30 @@ const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
 const maxRepairs = 3;
 const testsWorkflow = ".github/workflows/container-tests.yml";
+const readRetryDelays = [1000, 4000, 9000];
+const retryingReads = Symbol.for("agentic-identity-broker.retryReads");
+
+function readRequest(options) {
+  if (options.method === "GET") return true;
+  return options.method === "POST" && options.url === "/graphql" && !/^\s*mutation\b/.test(options.query || "");
+}
+
+// One transient GitHub outage would otherwise fail a run, and after an agent phase it discards paid-for work.
+// Writes are never retried: a 5xx does not prove that GitHub did not apply them.
+function retryReads(github) {
+  if (github[retryingReads]) return;
+  github[retryingReads] = true;
+  github.hook.wrap("request", async (request, options) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await request(options);
+      } catch (error) {
+        if (!readRequest(options) || !(error.status >= 500) || attempt >= readRetryDelays.length) throw error;
+        await new Promise((resolve) => setTimeout(resolve, readRetryDelays[attempt]));
+      }
+    }
+  });
+}
 
 function artifactHashes(files) {
   return Object.fromEntries(Object.entries(files).map(([name, content]) => [
@@ -132,11 +156,12 @@ function actionsBot(user) {
 }
 
 // Workers that push publish through the Agentic Workflows App so the push starts CI, which makes that App's
-// bot the author of their comments. Any other App's bot stays untrusted.
+// bot the author of their comments. Only an App's own bot has a [bot] login, so any other App stays untrusted.
+// The login identifies it because the single-comment endpoint omits performed_via_github_app.
+const workerApp = "zalando-incubator-agent-workflows[bot]";
+
 function workerBot(comment) {
-  const app = process.env.AGENTIC_WORKFLOWS_APP_CLIENT_ID;
-  return actionsBot(comment.user) || Boolean(app) && comment.user?.type === "Bot" &&
-    comment.performed_via_github_app?.client_id === app;
+  return actionsBot(comment.user) || comment.user?.login === workerApp && comment.user?.type === "Bot";
 }
 
 function parseCommand(body) {
@@ -361,6 +386,7 @@ async function repairs(github, repo, pr, entries, comments) {
 
 // The container tests validate exactly the commits a repair could answer, so they start under the same rule.
 async function testTarget({ github, context, pr: number }) {
+  retryReads(github);
   const state = await pullRequestState(github, context.repo, Number(number));
   if (!state || !await repairs(github, context.repo, state.pr, state.entries, state.comments)) return null;
   return { pr: state.pr.number, branch: state.pr.head.ref, head: state.pr.head.sha };
@@ -368,6 +394,7 @@ async function testTarget({ github, context, pr: number }) {
 
 // The dispatched run uses the PR branch's copy of the workflow, so a branch created before it existed cannot run it.
 async function dispatchTests({ github, context, target }) {
+  retryReads(github);
   try {
     await github.rest.actions.createWorkflowDispatch({
       ...context.repo, workflow_id: path.posix.basename(testsWorkflow), ref: target.branch, inputs: { pr: String(target.pr) },
@@ -440,6 +467,7 @@ async function routeIssue(github, repo, issue, comment) {
 }
 
 async function route({ github, context }) {
+  retryReads(github);
   const { payload, repo, eventName } = context;
   // The test run's actor is the App that dispatched it; a repair acts for the maintainer who started the implementation.
   if (eventName === "workflow_run") return routeRepair(github, repo, payload);
@@ -499,6 +527,7 @@ async function route({ github, context }) {
 }
 
 async function prepare({ github, context, inputs }) {
+  retryReads(github);
   const repairing = Number(inputs.validation) > 0;
   if (repairing && inputs.phase !== "implement") throw new Error("Only implementation repairs container test failures");
   // A repair is re-authorized below from the maintainer's implementation run, not from the test run's actor.
@@ -598,6 +627,7 @@ async function publishedResult(github, context, comment, phase) {
 }
 
 async function verify({ github, context, comment, phase }) {
+  retryReads(github);
   const { result, current } = await publishedResult(github, context, comment, phase);
   if (phase === "clarify" && result.status === "waiting") {
     for (const name of ["spec.md"]) {
@@ -629,6 +659,7 @@ async function botComments(github, repo, number, matches) {
 }
 
 async function publishApprovals({ github, context, comment }) {
+  retryReads(github);
   const { repo } = context;
   const { posted, result, pr, current } = await publishedResult(github, context, comment, "reanalyze");
   requireResult(result, documents, current.hashes);
@@ -869,6 +900,7 @@ async function reviewContext(github, context, pr, inputs) {
 
 // Remediation changes code, so it needs a completed implementation, remediation, or apply phase on the PR.
 async function remediable({ github, context, pr }) {
+  retryReads(github);
   const entries = await reports(github, context.repo, Number(pr));
   return latest(entries, codePhases)?.result.status === "complete";
 }
@@ -876,6 +908,7 @@ async function remediable({ github, context, pr }) {
 // The proposal lists what the latest review leaves to the maintainer; a later review replaces it.
 // Before implementation there is nothing to apply yet, so the review's findings wait for the next review.
 async function publishProposals({ github, context, review, remediable = true }) {
+  retryReads(github);
   const { repo } = context;
   if (!Number.isSafeInteger(Number(review)) || Number(review) <= 0) throw new Error("Worker did not publish a review comment");
   const { data: posted } = await github.rest.issues.getComment({ ...repo, comment_id: Number(review) });
@@ -1072,6 +1105,7 @@ function reviewIcon(state) {
 
 // The status comment replaces itself on every run, so the PR always ends with one summary of the phase and the next step.
 async function announce({ github, context, needs }) {
+  retryReads(github);
   const { repo } = context;
   const created = Number(needs.specify?.outputs?.created_pr_number);
   const number = created || Number(needs.route?.outputs?.pr);
@@ -1117,6 +1151,7 @@ async function readiness(github, repo, state, stage) {
 }
 
 async function report({ github, context, needs }) {
+  retryReads(github);
   const { repo } = context;
   const route = needs.route || {};
   if (route.result === "success" && route.outputs?.action === "noop") return null;
@@ -1323,7 +1358,7 @@ function selectFeature() {
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
-  remediable, reviewDimensions, testTarget, dispatchTests,
+  remediable, reviewDimensions, testTarget, dispatchTests, retryReads,
 };
 
 if (require.main === module) {

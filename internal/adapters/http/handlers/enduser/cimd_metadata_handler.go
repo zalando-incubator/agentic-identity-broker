@@ -30,7 +30,7 @@ type CIMDMetadataHandler struct {
 // NewCIMDMetadataHandler constructs the public CIMD metadata handler.
 func NewCIMDMetadataHandler(metadata ports.CIMDClientMetadataProvider, logger *slog.Logger) *CIMDMetadataHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("enduser.NewCIMDMetadataHandler: logger must not be nil")
 	}
 	return &CIMDMetadataHandler{metadata: metadata, logger: logger}
 }

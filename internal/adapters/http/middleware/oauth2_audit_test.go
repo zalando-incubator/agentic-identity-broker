@@ -13,6 +13,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/google/uuid"
@@ -63,7 +64,7 @@ func TestOAuth2AuditMiddleware_ExtractsPrincipal(t *testing.T) {
 
 	middleware := OAuth2AuditMiddleware(logger)
 
-	principalFromContext := ""
+	var principalFromContext id.Principal
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Extract principal from request context using typed context key
 		principalValue, _ := principal.FromContext(r.Context())
@@ -83,7 +84,7 @@ func TestOAuth2AuditMiddleware_ExtractsPrincipal(t *testing.T) {
 	wrappedHandler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "user@example.com", principalFromContext)
+	assert.Equal(t, id.Principal("user@example.com"), principalFromContext)
 }
 
 // TestOAuth2AuditMiddleware_LogsRequestDetails tests that middleware logs request method, path, status

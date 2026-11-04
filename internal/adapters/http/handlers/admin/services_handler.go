@@ -35,7 +35,7 @@ type ServicesHandler struct {
 // NewServicesHandler creates a new services handler.
 func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderService, config *ports.Config, logger *slog.Logger) *ServicesHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewServicesHandler: logger must not be nil")
 	}
 	return &ServicesHandler{
 		providerService: providerService,

@@ -34,7 +34,7 @@ type PermissionSetsHandler struct {
 // NewPermissionSetsHandler creates a new permission sets handler.
 func NewPermissionSetsHandler(svc *permissionset.Service, providerScopeValidator ProviderScopeValidator, logger *slog.Logger) *PermissionSetsHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewPermissionSetsHandler: logger must not be nil")
 	}
 	return &PermissionSetsHandler{
 		svc:                    svc,

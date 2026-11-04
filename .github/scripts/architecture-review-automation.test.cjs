@@ -66,7 +66,9 @@ function fixture(eventName, payload, options = {}) {
     base: { ref: "main", sha: base, repo: { full_name: "example/broker" } },
     ...options.pr,
   };
+  const hooks = [];
   const github = {
+    hook: { wrap: (name, wrapper) => hooks.push({ name, wrapper }) },
     rest: {
       repos: {
         getCollaboratorPermissionLevel: async (args) => {
@@ -108,7 +110,7 @@ function fixture(eventName, payload, options = {}) {
     },
     paginate: async (method, args) => (await method(args)).data,
   };
-  return { github, calls, created, deleted, context: { repo, eventName, payload, actor: "maintainer", runId: 100 } };
+  return { github, calls, created, deleted, hooks, context: { repo, eventName, payload, actor: "maintainer", runId: 100 } };
 }
 
 function withDirectory(t, files) {
@@ -409,4 +411,22 @@ test("a failed run replaces the status comment with the reason; a successful run
   const outsider = fixture("issue_comment", commandEvent(command("/architecture-review")), { permission: "read" });
   assert.equal(await report({ ...outsider, needs: { route: { result: "failure", outputs: { error: "x" } } } }), null);
   assert.equal(outsider.created.length, 0);
+});
+
+test("architecture review entry points retry transient reads once per shared client", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => {});
+  t.mock.method(fs, "writeFileSync", () => {});
+  const { remediable } = require("./speckit-automation.cjs");
+  const entries = {
+    route: (f) => route(f),
+    prepare: (f) => prepare({ ...f, inputs: { pr: 42 } }),
+    verify: (f) => verify({ ...f, comment: 11 }),
+    report: (f) => report({ ...f, needs: {} }),
+  };
+  for (const [name, entry] of Object.entries(entries)) {
+    const f = fixture("issue_comment", commandEvent(command("/architecture-review")));
+    await entry(f).catch(() => {});
+    await remediable({ ...f, pr: 42 }).catch(() => {});
+    assert.deepEqual(f.hooks.map(({ name: hook }) => hook), ["request"], name);
+  }
 });

@@ -2313,7 +2313,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		&oauth2TokenNoopBranchKeyManager{},
 		nil,
 		false,
-		nil,
+		slog.New(slog.DiscardHandler),
 	)
 	permissionSetService := permissionset.NewPermissionSetService(nil, nil, slog.Default())
 	t.Cleanup(permissionSetService.Close)

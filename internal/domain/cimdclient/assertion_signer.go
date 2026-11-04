@@ -32,11 +32,10 @@ type AssertionSigner struct {
 
 // NewAssertionSigner constructs an assertion signer over the CIMD key service.
 func NewAssertionSigner(keyService *KeyService) *AssertionSigner {
-	logger := slog.Default()
-	if keyService != nil && keyService.logger != nil {
-		logger = keyService.logger
+	if keyService == nil {
+		panic("cimdclient.NewAssertionSigner: keyService must not be nil")
 	}
-	return &AssertionSigner{keyService: keyService, logger: logger}
+	return &AssertionSigner{keyService: keyService, logger: keyService.logger}
 }
 
 // SignClientAssertion creates a short-lived ES256 assertion for one outbound token request.

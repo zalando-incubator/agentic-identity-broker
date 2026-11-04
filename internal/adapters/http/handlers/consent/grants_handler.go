@@ -29,11 +29,11 @@ type GrantsHandler struct {
 
 // NewGrantsHandler creates a new grants handler.
 func NewGrantsHandler(consentService ConsentService, logger *slog.Logger, sessionTokenValidator ports.SessionTokenValidator) *GrantsHandler {
+	if logger == nil {
+		panic("consent.NewGrantsHandler: logger must not be nil")
+	}
 	if sessionTokenValidator == nil {
 		panic("GrantsHandler requires a non-nil SessionTokenValidator")
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &GrantsHandler{
 		consentService:        consentService,

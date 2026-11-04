@@ -480,11 +480,6 @@ func TestKeyService_InternalLifecycleFailuresAreAudited(t *testing.T) {
 		require.Error(t, err)
 		assertCIMDKeyLifecycleAuditRecord(t, cimdLifecycleAuditRecords(t, logs.String()), "", "bootstrap", "rejected")
 	})
-
-	t.Run("default logger", func(t *testing.T) {
-		service := NewKeyService(newCIMDKeyServiceRepository(), newCIMDKeyServiceRepository(), &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{}, nil)
-		assert.NotNil(t, service.logger)
-	})
 }
 
 func cimdJWKSetKIDs(t *testing.T, set jwk.Set) []string {

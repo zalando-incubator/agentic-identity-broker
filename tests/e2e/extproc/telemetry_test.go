@@ -251,7 +251,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(attrs["token_exchange.exchange_kind"].AsString()).To(Equal("unknown"))
 			Expect(attrs["token_exchange.broker_status_code"].Type()).To(Equal(attribute.INT64))
 			Expect(attrs["token_exchange.broker_status_code"].AsInt64()).To(Equal(int64(400)))
-			Expect(attrs["token_exchange.broker_error_code"].AsString()).To(Equal("invalid_grant"))
+			Expect(attrs["token_exchange.oauth_error_code"].AsString()).To(Equal("invalid_grant"))
 		})
 
 		// Scenario 1.5 from specs/027-extproc-otel/spec.md

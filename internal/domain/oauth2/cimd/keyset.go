@@ -46,11 +46,11 @@ type ClientKeySetService struct {
 
 // NewClientKeySetService creates a key-set service with an injectable clock.
 func NewClientKeySetService(fetcher ports.CIMDFetcher, config ports.CIMDClientAuthenticationConfig, clock func() time.Time, logger *slog.Logger) *ClientKeySetService {
+	if logger == nil {
+		panic("cimd.NewClientKeySetService: logger must not be nil")
+	}
 	if clock == nil {
 		clock = time.Now
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &ClientKeySetService{
 		fetcher: fetcher,

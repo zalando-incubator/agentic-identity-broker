@@ -350,6 +350,18 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+When the exchange call fails, ExtProc `extproc.token_exchange` spans also carry the attributes below.
+All `extproc.client_assertion.refresh` spans carry them.
+Other `extproc.token_exchange` failures, such as rejected token-exchange metadata, carry only the error status and the diagnostic attributes above.
+
+| Attribute | Values |
+|---|---|
+| `token_exchange.operation` | `exchange`, `assertion_refresh`, `configuration` |
+| `token_exchange.dependency` | `local`, `broker`, `oauth_provider` |
+| `error.type` | Failures only: `configuration`, `unavailable`, `rejected`, `invalid_response`, `caller_canceled`, `assertion_expired`, `circuit_open`, `internal` |
+| `token_exchange.oauth_error_code` | Allowlisted OAuth error code from the broker or OAuth provider; `unknown` otherwise. On `extproc.token_exchange`, only for broker errors. |
+| `token_exchange.broker_status_code` | Broker HTTP status on `extproc.token_exchange` broker errors. |
+
 OPA audit data retains action, result code, protocol, allowlisted MCP method, duration, policy reasons, tool name, and target server name.
 
 Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.

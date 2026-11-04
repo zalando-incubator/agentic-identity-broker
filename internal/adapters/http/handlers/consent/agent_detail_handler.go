@@ -58,11 +58,11 @@ type AgentDetailHandler struct {
 
 // NewAgentDetailHandler creates a new agent detail handler.
 func NewAgentDetailHandler(consentService ConsentService, logger *slog.Logger, sessionTokenValidator ports.SessionTokenValidator) *AgentDetailHandler {
+	if logger == nil {
+		panic("consent.NewAgentDetailHandler: logger must not be nil")
+	}
 	if sessionTokenValidator == nil {
 		panic("AgentDetailHandler requires a non-nil SessionTokenValidator")
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &AgentDetailHandler{
 		consentService:        consentService,
@@ -346,7 +346,7 @@ func (h *AgentDetailHandler) writeError(w http.ResponseWriter, statusCode int, e
 }
 
 // getPrincipalFromContext extracts the principal from the request context.
-func getPrincipalFromContext(ctx context.Context) (string, bool) {
+func getPrincipalFromContext(ctx context.Context) (id.Principal, bool) {
 	return principal.FromContext(ctx)
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -322,10 +323,10 @@ func TestBuilderJWTLocalKeySetsPerServer(t *testing.T) {
 	ctx := context.Background()
 	user, err := app.EnduserJWTAuthenticator.Authenticate(ctx, enduserKey.bearer(t, "mesh", "broker", "alice"))
 	require.NoError(t, err)
-	assert.Equal(t, "alice", user.Principal)
+	assert.Equal(t, id.Principal("alice"), user.Principal)
 	operator, err := app.AdminJWTAuthenticator.Authenticate(ctx, adminKey.bearer(t, "proxy", "admin", "operator"))
 	require.NoError(t, err)
-	assert.Equal(t, "operator", operator.Principal)
+	assert.Equal(t, id.Principal("operator"), operator.Principal)
 
 	_, err = app.AdminJWTAuthenticator.Authenticate(ctx, enduserKey.bearer(t, "mesh", "broker", "alice"))
 	assert.Error(t, err, "the admin server verifies only against its own key set")
