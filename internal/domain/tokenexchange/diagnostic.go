@@ -72,7 +72,6 @@ const (
 	DetailGrantRepositoryUnavailable      FailureDetail = "grant_repository_unavailable"
 	DetailSessionMissing                  FailureDetail = "session_missing"
 	DetailAccessTokenExpired              FailureDetail = "access_token_expired"
-	DetailRefreshTokenExpired             FailureDetail = "refresh_token_expired"
 	DetailRefreshUnavailable              FailureDetail = "refresh_unavailable"
 	DetailRefreshRejected                 FailureDetail = "refresh_rejected"
 	DetailProviderClientRejected          FailureDetail = "provider_client_rejected"
@@ -108,6 +107,11 @@ const (
 	ExchangeImpersonation ExchangeKind = "impersonation"
 )
 
+const (
+	DetailSubjectCategoryIneligible  FailureDetail = "subject_category_ineligible"
+	DetailSubjectCategoryUnsupported FailureDetail = "subject_category_unsupported"
+)
+
 func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 	d := Diagnostic{outcome: OutcomeInfrastructureError, stage: boundedStage(stage), detail: detail,
 		action: RecoveryRetry, target: TargetNone, kind: ExchangeThirdParty}
@@ -118,7 +122,9 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage, d.outcome, d.action, d.target = StageSubjectValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetSubjectIdentity
 	case DetailClientInvalid, DetailClientExpired:
 		d.stage, d.outcome, d.action, d.target = StageClientValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetCallingClient
-	case DetailClientPolicyDenied:
+	case DetailSubjectCategoryUnsupported:
+		d.stage, d.outcome, d.action = StageIdentityResolution, OutcomeAuthorizationDenied, RecoveryNone
+	case DetailClientPolicyDenied, DetailSubjectCategoryIneligible:
 		d.stage, d.outcome, d.action = StageClientAuthorization, OutcomeAuthorizationDenied, RecoveryNone
 	case DetailCELConfiguration, DetailJWTConfiguration:
 		d.outcome, d.action, d.target = OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration
@@ -140,7 +146,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage = StageGrantAuthorization
 	case DetailSessionMissing:
 		d.stage, d.outcome, d.action, d.target = StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
-	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable, DetailCredentialIdentityChanged:
+	case DetailAccessTokenExpired, DetailRefreshUnavailable, DetailCredentialIdentityChanged:
 		d.outcome, d.action, d.target = OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
 	case DetailRefreshRejected:
 		d.stage, d.outcome, d.action, d.target = StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession

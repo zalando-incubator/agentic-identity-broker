@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -682,25 +681,25 @@ func TestExchange_InvalidRequest(t *testing.T) {
 	}{
 		{
 			name:        "empty grant_type",
-			request:     NewTokenExchangeRequest("", "token", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest("", "token", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing subject_token",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing client_assertion",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing resource",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "assertion", "", "", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "assertion", JWTBearerType, "", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
@@ -2147,8 +2146,9 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			switch {
 			case tt.wantRefreshMarked:
 				after := *sessionRepo.session
-				require.NotNil(t, after.RefreshTokenExpiresAt, "a rejected refresh token must be recorded as expired")
-				after.RefreshTokenExpiresAt = before.RefreshTokenExpiresAt
+				require.NotNil(t, after.RefreshRejectedAt, "a rejected refresh token must be recorded as rejected")
+				after.RefreshRejectedAt = before.RefreshRejectedAt
+				after.UpdatedAt = before.UpdatedAt
 				assert.Equal(t, before, after, "a rejected refresh must not change stored tokens")
 			case tt.session != nil:
 				assert.Same(t, tt.session, sessionRepo.session, "a failed refresh must not persist session changes")
@@ -2273,7 +2273,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		&http.Client{Timeout: 5 * time.Second},
 		nil,
 		sessionConfig,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)

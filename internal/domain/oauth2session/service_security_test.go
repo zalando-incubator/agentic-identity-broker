@@ -396,7 +396,7 @@ func TestHandleCallbackSecurity_CIMDPublicClientInvalidClientDoesNotRetryOrFallb
 		t.Run(rejectedGrant, func(t *testing.T) {
 			ctx := context.Background()
 			sessions := memory.NewInMemoryUserSessionRepository()
-			service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 3, sessions)
+			service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.DiscardHandler), 3, sessions)
 			signer := &cimdAssertionSignerSpy{}
 			service = service.WithCIMDAssertionSigner(signer)
 			serviceID := id.NewServiceID()
@@ -685,7 +685,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 }
 
 func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *testing.T) {
-	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.DiscardHandler), 1)
 	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
 	var requests atomic.Int64
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1471,7 +1471,7 @@ func TestRefreshAccessTokenSecurity_DiscoveredFailuresPreserveContextErrors(t *t
 				calls.Add(1)
 				return nil, want
 			})}
-			service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), client)
+			service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.DiscardHandler), client)
 			provider := storedDCRSessionProvider(id.NewServiceID(), "https://auth.example.test/token", model.TokenEndpointAuthMethodNone, "", "https://mcp.example.test/mcp", "https://mcp.example.test/mcp")
 			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 			require.ErrorIs(t, err, want)
@@ -1488,7 +1488,7 @@ func TestRefreshAccessTokenSecurity_DiscoveredUnsafeEndpointRejectedBeforeReques
 		calls.Add(1)
 		return nil, errors.New("unsafe destination was contacted")
 	})}
-	service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), client)
+	service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.DiscardHandler), client)
 	for _, endpoint := range []string{
 		"http://auth.example.test/token?trace=" + marker,
 		"https://127.0.0.1/token?trace=" + marker,

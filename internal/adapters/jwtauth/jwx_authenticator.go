@@ -159,7 +159,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 
 	// Reject empty tokens early
 	if strings.TrimSpace(tokenStr) == "" {
-		a.logger.Warn("JWT authentication failed: malformed token",
+		a.logger.WarnContext(ctx, "JWT authentication failed: malformed token",
 			"reason", "empty_token",
 			"jwt_header", a.config.HeaderName,
 		)
@@ -169,20 +169,20 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Parse and verify the JWT
 	token, err := a.parseAndVerify(ctx, tokenStr)
 	if err != nil {
-		a.logValidationFailure(err)
+		a.logValidationFailure(ctx, err)
 		return nil, err
 	}
 
 	// Validate temporal claims
 	if err := a.validateClaims(token); err != nil {
-		a.logValidationFailure(err)
+		a.logValidationFailure(ctx, err)
 		return nil, err
 	}
 
 	// Extract claims map for CEL evaluation
 	claimsMap, err := a.extractClaimsMap(token)
 	if err != nil {
-		a.logger.Warn("JWT authentication failed: claim extraction error",
+		a.logger.WarnContext(ctx, "JWT authentication failed: claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, fmt.Errorf("%w: %v", jwtauth.ErrClaimExtraction, err)
@@ -191,13 +191,13 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Use CEL evaluator to extract principal and profile attributes
 	result, err := a.celEvaluator.ExtractClaims(claimsMap)
 	if err != nil {
-		a.logger.Warn("JWT authentication failed: CEL claim extraction error",
+		a.logger.WarnContext(ctx, "JWT authentication failed: CEL claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, err
 	}
 
-	a.logger.Info("JWT authentication successful",
+	a.logger.InfoContext(ctx, "JWT authentication successful",
 		"principal", result.Principal,
 		"has_display_name", result.DisplayName != nil,
 		"has_email", result.Email != nil,
@@ -226,7 +226,7 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 	if a.keySet != nil {
 		keySet, err := a.keySet.GetKeySet(ctx)
 		if err != nil {
-			a.logger.Error("local JWT pre-authentication key set unavailable", "error", err)
+			a.logger.ErrorContext(ctx, "local JWT pre-authentication key set unavailable", "error", err)
 			return nil, fmt.Errorf("%w: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 		return a.verifyWithKeySet(tokenStr, keySet)
@@ -236,14 +236,14 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 		// JWKS verification mode: ensure cache is ready, then fetch keyset
 		if !a.jwksCache.Ready(ctx, a.jwksURL) {
 			if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
-				a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
+				a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
 				return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 			}
 		}
 
 		keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
 		if err != nil {
-			a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
+			a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
 			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 
@@ -367,7 +367,7 @@ func (a *JWXAuthenticator) classifyParseError(err error) error {
 // logValidationFailure logs a structured audit event for JWT validation failures.
 // Per FR-020/SR-005: all authentication failures are logged with structured context
 // for security monitoring and incident response.
-func (a *JWXAuthenticator) logValidationFailure(err error) {
+func (a *JWXAuthenticator) logValidationFailure(ctx context.Context, err error) {
 	reason := "unknown"
 	switch {
 	case errors.Is(err, jwtauth.ErrJWKSUnavailable):
@@ -388,7 +388,7 @@ func (a *JWXAuthenticator) logValidationFailure(err error) {
 		reason = "claim_extraction"
 	}
 
-	a.logger.Warn("JWT authentication failed",
+	a.logger.WarnContext(ctx, "JWT authentication failed",
 		"reason", reason,
 		"error", err.Error(),
 		"jwt_header", a.config.HeaderName,

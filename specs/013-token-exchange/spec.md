@@ -212,7 +212,7 @@ Administrators need to configure authorization rules that validate client_assert
 
 ### User Story 5 - No Valid Session Returns Appropriate Error (Priority: P2)
 
-When a user has not established a session with a third-party service (no tokens in vault), or their session has expired (both access and refresh tokens expired), the system must return an appropriate error that privileged clients/agents can handle programmatically to trigger re-authentication flows.
+When a user has not established a session with a third-party service (no tokens in vault), or their session requires reauthentication because the access token expired without a refresh token or because the provider rejected the stored refresh token, the system must return an appropriate error that privileged clients/agents can handle programmatically to trigger re-authentication flows.
 
 **Why this priority**: This enables agents to detect when users need to re-authenticate with third-party services. It depends on P1 (basic exchange) and provides essential error handling.
 
@@ -223,7 +223,7 @@ When a user has not established a session with a third-party service (no tokens 
 1. **Given** the user has no session for the resolved service, **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant`. Its `error_uri` starts that service's third-party OAuth2 flow with an encoded `/sessions` return URI.
 2. **Given** the stored access token expired and no usable refresh token remains, **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant` with the same service-specific `error_uri`.
 3. **Given** a user opens the recoverable provider-session `error_uri`, **When** the browser requests it, **Then** the service-specific authorization GET starts provider login with PKCE. The provider callback returns to `/sessions`; the link is not broker `/oauth2/authorize` or a raw provider URL.
-4. **Given** the provider rejects a stored refresh token with HTTP 400 `invalid_grant`, **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant` with the same service-specific `error_uri` and does not return the provider's description. It keeps the stored tokens unchanged but records the refresh token as expired. Later exchanges return the recovery error without contacting the provider until the user reconnects the service.
+4. **Given** the provider rejects a stored refresh token with `invalid_grant` and an HTTP 4xx status other than 429 (for example HTTP 400), **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant` with the same service-specific `error_uri` and does not return the provider's description. It keeps the stored tokens unchanged and records the rejection. Later exchanges return the recovery error without contacting the provider, even while the stored access token has not expired, until the user reconnects the service.
 5. **Given** user's stored access_token has expired and the third-party service rejects the refresh request with error=invalid_client (or any non-invalid_grant code, provider 5xx, or unparseable response), **When** privileged client requests token exchange, **Then** system returns 500 Internal Server Error with error=server_error and no error_uri, and records the safe third-party HTTP status and OAuth error code in telemetry
 6. **Given** user's stored access_token has expired and the third-party service answers the refresh with a transient failure (5xx, 429, or a network error) followed by success, **When** privileged client requests token exchange, **Then** system retries the refresh with exponential backoff (at most 3 attempts, honouring a `Retry-After` of up to 10 seconds) and returns the refreshed token without signalling re-authentication
 
@@ -343,7 +343,7 @@ assertions, and tokens are synthetic.
 **Step 1 — Initial state: Alice's GitHub session needs a refresh**
 
 Her access token expired at 09:00:00. The session still holds the refresh token `ghr_old`, and no
-refresh-token expiry is recorded, so the broker treats it as usable. GitHub has revoked `ghr_old`.
+provider rejection is recorded, so the broker treats it as usable. GitHub has revoked `ghr_old`.
 
 **Step 2 — 09:30:00: the privileged client exchanges a token; GitHub rejects the refresh token**
 
@@ -389,7 +389,7 @@ Content-Type: application/json
 ```
 
 The stored access token, refresh token, and access-token expiry are unchanged. The session now
-records a refresh-token expiry of `2026-10-21T09:30:00Z`.
+records the provider rejection at `2026-10-21T09:30:00Z` and requires reauthentication.
 
 **Step 3 — 09:35:00: a later exchange fails the same way without reaching GitHub**
 
@@ -421,7 +421,7 @@ HTTP/1.1 302 Found
 Location: https://broker.example.com/sessions?service_id=880e8400-e29b-41d4-a716-446655440010&success=true
 ```
 
-The session now holds the new tokens, and the recorded refresh-token expiry is cleared.
+The session now holds the new tokens, and the recorded rejection is cleared.
 
 **Step 5 — 09:45:00: the next exchange succeeds**
 

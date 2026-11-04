@@ -87,14 +87,14 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req CreatePermissionSetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	// Validate request
 	if err := h.validateCreateRequest(ctx, &req); err != nil {
-		h.logger.Warn("validation failed", "error", err)
+		h.logger.WarnContext(ctx, "validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -102,7 +102,7 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Convert request service scopes to domain model
 	serviceScopes, err := h.convertServiceScopes(ctx, req.ServiceScopes)
 	if err != nil {
-		h.logger.Warn("invalid service scopes", "error", err)
+		h.logger.WarnContext(ctx, "invalid service scopes", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -251,7 +251,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreatePermissionSetRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.logger.Warn("failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -264,7 +264,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Validate request
 	if err := h.validateCreateRequest(ctx, &req); err != nil {
-		h.logger.Warn("validation failed", "error", err)
+		h.logger.WarnContext(ctx, "validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -272,7 +272,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Convert request service scopes to domain model
 	serviceScopes, err := h.convertServiceScopes(ctx, req.ServiceScopes)
 	if err != nil {
-		h.logger.Warn("invalid service scopes", "error", err)
+		h.logger.WarnContext(ctx, "invalid service scopes", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
@@ -487,7 +487,7 @@ func (h *PermissionSetsHandler) applyCanonicalServiceScopes(ctx context.Context,
 func (h *PermissionSetsHandler) handleStorageError(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	var storageErr *storage.StorageError
 	if !errors.As(err, &storageErr) {
-		h.logger.Error("unexpected error type", "operation", operation, "error", err)
+		h.logger.ErrorContext(r.Context(), "unexpected error type", "operation", operation, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -502,7 +502,7 @@ func (h *PermissionSetsHandler) handleStorageError(w http.ResponseWriter, r *htt
 	case storage.ErrorKindTimeout:
 		h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 	default:
-		h.logger.Error("storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
+		h.logger.ErrorContext(r.Context(), "storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 	}
 }

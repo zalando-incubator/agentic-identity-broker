@@ -1,0 +1,126 @@
+# PROPOSED OpenAPI delta: Agent-Subject Impersonation
+#
+# Feature: 054-agent-subject-impersonation (spec API-001..API-005, research R4–R6/R12)
+# Target file: api/enduser/openapi.yaml, operation POST /oauth2/token (operationId tokenExchange)
+#
+# STATUS: Approved (PR #293 comment 6495558326); sign-off via plan.md Approval Items A4/A10 (Constitution Principles IV and X).
+# C2-C4 were endorsed earlier on PR #293 (review inline comments and maintainer comment
+# 6477637352); C1 was WITHDRAWN. After approval, implementation Phase 2 applies the delta to
+# api/enduser/openapi.yaml. It adds no path, parameter, request field, response field, token claim,
+# or OAuth2 error code. It changes behavior, operation descriptions and examples.
+# A8/A9 are incompatible with the baseline; A10 requires the major End-User API bump
+# and migration/architecture gates in enduser-api-versioning.md. Applying descriptions
+# alone is insufficient; info.version must be 2.0.0 before behavioral implementation.
+#
+# Items:
+#   C1  WITHDRAWN by the PR #293 review: no `subject_category` claim. Agent-subject tokens are the
+#       ordinary local tokens with `sub == agent_id` (research R5).
+#   C2  PROPOSED (endorsed in the PR #293 review): category-ineligible requests use the existing
+#       generic 403 access_denied no-match envelope, with no error_uri (research R4).
+#   C3  PROPOSED (endorsed in the PR #293 review): third-party exchange of an agent-subject token
+#       whose detector matches returns 403 access_denied, with no error_uri and the description
+#       below (research R6).
+#   C4  PROPOSED (endorsed in maintainer comment 6477637352): detection uses
+#       token_exchange.claim_extraction.agent_subject_expression (default `sub == agent_id`);
+#       a configured expression replaces the default (research R5).
+
+info:
+  version: 2.0.0
+
+paths:
+  /oauth2/token:
+    post:
+      description: |
+        # (Append to the existing "Token Exchange Grant (RFC 8693) — User Impersonation" section.)
+
+        #### Agent subjects
+        Each impersonation rule lists the subject categories it accepts in
+        `allowed_subject_categories`: `human`, `agent`, or both. When the list is omitted, the
+        rule accepts only `human`. There is no request parameter for the category. A request is
+        **agent-category** only when the rule's subject role is signed, the subject credential
+        verifies, and its `sub` claim is byte-for-byte equal to the canonical UUID of the target
+        agent selected by `audience`. Every other request is human-category, including every
+        unsigned (`verification: none`) subject. A routing alias, a display name, a different
+        agent's UUID, or a UUID with different case or formatting never qualifies.
+
+        A rule that does not accept the classified category falls through to the next rule. If
+        no rule matches, the response is the existing `403 access_denied` with no `error_uri`.
+        This includes an agent-category request on a human-only rule, even when a human with the
+        same identifier text has an active delegation.
+
+        An agent-category request that a rule authorizes needs no user delegation. It never
+        returns the consent-required `error_uri`, and it creates no grant or session. The
+        issued token has `sub` and `agent_id` equal to the target UUID. It keeps the `act`
+        claim (`act.iss` is the verified actor issuer, `act.sub` is the extracted actor). There
+        is no category claim: `sub` and `agent_id` are reserved, so `token_claims_expression`
+        cannot change either of them.
+
+        Human-category requests keep the active-delegation requirement and the existing
+        consent-required response unchanged.
+
+        #### Third-party exchange of agent-subject tokens
+        A third-party token exchange (`resource` present) whose validated `subject_token`
+        matches `token_exchange.claim_extraction.agent_subject_expression` is rejected
+        with `403 access_denied`. The default expression matches when the token's `sub` and
+        `agent_id` claims are both present and equal, which holds for every agent-subject token
+        that the broker issues. A configured expression replaces the default, with no
+        additional built-in check; operators must keep it matching broker agent-subject tokens.
+        For a matching detector result, the rejection response has no `error_uri`, and no
+        grant or stored provider session is consulted, even if a human principal with the
+        same identifier text has both. A detection evaluation failure returns
+        `500 server_error`, with no `error_uri` or human-state access, and is never treated
+        as a non-agent token.
+        A non-matching result (`false`), including under a replacing override, continues
+        through the existing exchange checks. Those checks may consult matching human
+        grants and stored provider sessions and return existing consent-required errors
+        with an `error_uri`; categorical rejection and human-state isolation do not apply.
+
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            examples:
+              token_exchange_impersonation_agent_subject:
+                summary: Agent-subject impersonation request (agent acting for itself)
+                value:
+                  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange"
+                  audience: "https://broker.example.com/impersonation/research-agent"
+                  client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                  client_assertion: "SYNTHETIC_CLIENT_JWS"
+                  actor_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  actor_token: "SYNTHETIC_ACTOR_JWS"
+                  subject_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  subject_token: "SYNTHETIC_AGENT_JWS"   # verified sub == 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        "200":
+          content:
+            application/json:
+              examples:
+                impersonation_agent_subject_success:
+                  summary: Agent-subject impersonation response
+                  description: |
+                    Decoded access_token payload (excerpt):
+                    {"iss": "https://broker.example.com",
+                     "sub": "550e8400-e29b-41d4-a716-446655440000",
+                     "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+                     "aud": "https://policy.example.com",
+                     "act": {"iss": "https://idp.example.com", "sub": "research-runner"},
+                     "scope": "", "iat": 1793005200, "exp": 1793008800}
+                  value:
+                    access_token: "SYNTHETIC_BROKER_AGENT_JWS"
+                    token_type: "Bearer"
+                    issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
+                    expires_in: 3600
+        "403":
+          content:
+            application/json:
+              examples:
+                impersonation_subject_category_ineligible:
+                  summary: Impersonation - no rule accepts the subject category (C2)
+                  value:
+                    error: "access_denied"
+                    error_description: "impersonation not permitted"
+                agent_subject_third_party_exchange:
+                  summary: Third-party exchange - agent-subject tokens are not exchangeable (C3)
+                  value:
+                    error: "access_denied"
+                    error_description: "agent-subject tokens cannot be exchanged for third-party service tokens"

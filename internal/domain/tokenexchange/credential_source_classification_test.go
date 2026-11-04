@@ -171,7 +171,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 			sessionRepo := &MockSessionRepository{session: &storagedomain.UserSession{
 				ID: id.NewSessionID(), Principal: "user@example.com", ServiceID: svcID, UpstreamClientID: &establishedID,
 				EncryptedAccessToken: []byte(expiredAccessToken), EncryptedRefreshToken: []byte(refreshToken),
-				TokenType: "Bearer", Scope: []string{"repo"}, AccessTokenExpiresAt: &past, RefreshTokenExpiresAt: &future,
+				TokenType: "Bearer", Scope: []string{"repo"}, AccessTokenExpiresAt: &past,
 				EncryptionContext: storagedomain.EncryptionContext{ServiceID: svcID},
 			}}
 			if tc.missingIdentity {
@@ -243,7 +243,6 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				case DetailRefreshRejected:
 					wantOutcome, wantAction, wantTarget = OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
 					assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
-					assert.NotErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
 				case DetailCredentialIdentityChanged:
 					wantOutcome, wantAction, wantTarget = OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession
 				}
@@ -257,7 +256,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				if tc.sourceReason != "" {
 					assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
 					assert.NotErrorIs(t, err, oauth2session.ErrRefreshFailed)
-					assert.NotErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
+					assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
 					var sourceErr *model.CredentialSourceError
 					if assert.ErrorAs(t, err, &sourceErr) {
 						assert.Equal(t, tc.sourceReason, sourceErr.Reason)

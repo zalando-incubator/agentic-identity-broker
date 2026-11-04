@@ -802,6 +802,10 @@ const (
 	ImpersonationAudienceRequirementAbsent = "absent"
 )
 
+// SubjectCategoryList is a named type so the loader can reject non-sequence YAML values before
+// weak decoding would coerce them (for example "agent" into ["agent"]).
+type SubjectCategoryList []string
+
 // ImpersonationConfig is the optional oauth2_authorization_server.impersonation subtree.
 // It activates an RFC 8693 user-impersonation flow in local mode (data-model §1).
 type ImpersonationConfig struct {
@@ -813,6 +817,8 @@ type ImpersonationConfig struct {
 
 // ImpersonationRuleConfig is a self-contained, atomically reviewable impersonation rule (CR-002/CR-003).
 type ImpersonationRuleConfig struct {
+	// AllowedSubjectCategories defaults to human only when omitted.
+	AllowedSubjectCategories SubjectCategoryList `mapstructure:"allowed_subject_categories"`
 	// Name is a unique, operator-facing rule name; appears in audit (CR-003).
 	Name string `mapstructure:"name"`
 	// Roles declares per-role semantics keyed by role name (client_assertion|actor|subject) (CR-003).
@@ -911,6 +917,8 @@ type TokenExchangeConfig struct {
 // ClaimExtractionConfig defines CEL expressions for extracting claims from subject_token JWT.
 // These expressions are evaluated to extract the user principal and agent identifier.
 type ClaimExtractionConfig struct {
+	// AgentSubjectExpression is optional CEL boolean detection; empty uses the guarded equality default.
+	AgentSubjectExpression string `mapstructure:"agent_subject_expression"`
 	// PrincipalExpression is a CEL expression that extracts the user principal from subject_token.
 	// The expression receives the validated subject_token JWT as input.
 	// Default: "subject_token.sub"

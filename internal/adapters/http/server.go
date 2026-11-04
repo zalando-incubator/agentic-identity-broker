@@ -199,7 +199,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	atomic.StoreInt32(&s.healthState, int32(HealthStateHealthy))
 	s.startTime = time.Now()
 
-	s.logger.Info("Server started serving requests",
+	s.logger.InfoContext(ctx, "Server started serving requests",
 		"address", listener.Addr().String())
 
 	// Start serving (blocking call)
@@ -214,7 +214,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 // Shutdown initiates graceful shutdown of the server.
 // Sets health state to shutting down, then calls http.Server.Shutdown with timeout.
 func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) error {
-	s.logger.Info("Initiating graceful shutdown",
+	s.logger.InfoContext(parentCtx, "Initiating graceful shutdown",
 		"timeout", timeout)
 
 	// Set health state to shutting down
@@ -226,11 +226,11 @@ func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) erro
 
 	// Shutdown with timeout
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		s.logger.Error("Shutdown error", "error", err)
+		s.logger.ErrorContext(parentCtx, "Shutdown error", "error", err)
 		return fmt.Errorf("shutdown failed: %w", err)
 	}
 
-	s.logger.Info("Server shut down successfully")
+	s.logger.InfoContext(parentCtx, "Server shut down successfully")
 	return nil
 }
 

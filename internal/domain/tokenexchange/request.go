@@ -8,12 +8,12 @@ import (
 // TokenExchangeRequest represents an RFC 8693 token exchange request.
 // It is an immutable value object parsed from the application/x-www-form-urlencoded request body.
 //
-// Per RFC 8693 Section 2.1, a token exchange request contains:
+// The broker's token exchange profile requires:
 // - grant_type: REQUIRED - must be "urn:ietf:params:oauth:grant-type:token-exchange"
 // - subject_token: REQUIRED - the token being exchanged
-// - subject_token_type: OPTIONAL - type of subject_token (defaults to AccessTokenType)
+// - subject_token_type: REQUIRED - must be AccessTokenType
 // - client_assertion: REQUIRED - JWT authenticating the privileged client
-// - client_assertion_type: OPTIONAL - type of client_assertion (defaults to JWTBearerType)
+// - client_assertion_type: REQUIRED - must be JWTBearerType
 // - resource: REQUIRED per FR-008 - the target resource/service for the exchange
 // - scope: OPTIONAL - requested scope (space-separated list)
 //
@@ -22,8 +22,8 @@ import (
 // - SubjectToken must not be empty (per FR-008)
 // - ClientAssertion must not be empty (per FR-008)
 // - Resource must not be empty (per FR-008, FR-049a)
-// - SubjectTokenType defaults to AccessTokenType if empty
-// - ClientAssertionType defaults to JWTBearerType if empty
+// - SubjectTokenType must be exactly AccessTokenType
+// - ClientAssertionType must be exactly JWTBearerType
 //
 // Validation (per business rules):
 // - All required fields must be present
@@ -42,12 +42,7 @@ type TokenExchangeRequest struct {
 	// Immutable after creation.
 	SubjectToken string
 
-	// SubjectTokenType is the type of subject_token (e.g., AccessTokenType, JWTTokenType).
-	// OPTIONAL, defaults to AccessTokenType if empty.
-	// Per RFC 8693 Section 3, possible values include:
-	// - urn:ietf:params:oauth:token-type:access_token (default)
-	// - urn:ietf:params:oauth:token-type:jwt
-	// - urn:ietf:params:oauth:token-type:id_token
+	// SubjectTokenType must be exactly AccessTokenType.
 	// Immutable after creation.
 	SubjectTokenType string
 
@@ -58,8 +53,7 @@ type TokenExchangeRequest struct {
 	ClientAssertion string
 
 	// ClientAssertionType is the type of client_assertion.
-	// OPTIONAL, defaults to JWTBearerType if empty.
-	// Per RFC 7523, the standard type is "urn:ietf:params:oauth:client-assertion-type:jwt-bearer".
+	// REQUIRED and must be exactly JWTBearerType.
 	// Immutable after creation.
 	ClientAssertionType string
 
@@ -84,7 +78,7 @@ type TokenExchangeRequest struct {
 //
 // Per FR-049a, this also populates Scope if provided in parameters.
 func NewTokenExchangeRequest(grantType, subjectToken, subjectTokenType, clientAssertion, clientAssertionType, resource, scope string) *TokenExchangeRequest {
-	req := &TokenExchangeRequest{
+	return &TokenExchangeRequest{
 		GrantType:           grantType,
 		SubjectToken:        subjectToken,
 		SubjectTokenType:    subjectTokenType,
@@ -93,16 +87,6 @@ func NewTokenExchangeRequest(grantType, subjectToken, subjectTokenType, clientAs
 		Resource:            resource,
 		Scope:               scope,
 	}
-
-	// Set defaults for optional fields
-	if req.SubjectTokenType == "" {
-		req.SubjectTokenType = AccessTokenType
-	}
-	if req.ClientAssertionType == "" {
-		req.ClientAssertionType = JWTBearerType
-	}
-
-	return req
 }
 
 // Validate checks if the token exchange request is valid.
@@ -113,7 +97,7 @@ func NewTokenExchangeRequest(grantType, subjectToken, subjectTokenType, clientAs
 // 2. SubjectToken must not be empty (FR-008)
 // 3. ClientAssertion must not be empty (FR-008)
 // 4. Resource must not be empty (FR-008, FR-049a)
-// 5. SubjectTokenType and ClientAssertionType are optional with sensible defaults
+// 5. SubjectTokenType and ClientAssertionType must match the supported types exactly
 //
 // Returns NewInvalidRequestError for any validation failure.
 // Validation does NOT verify JWT signatures or contents - that's handled by JWT validation layer.
@@ -130,10 +114,16 @@ func (req *TokenExchangeRequest) Validate() error {
 	if req.SubjectToken == "" {
 		return NewInvalidRequestError("subject_token parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
+	if req.SubjectTokenType != AccessTokenType {
+		return NewInvalidRequestError("subject_token_type must be the access-token type").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+	}
 
 	// Validate client_assertion (required, must not be empty)
 	if req.ClientAssertion == "" {
 		return NewInvalidRequestError("client_assertion parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+	}
+	if req.ClientAssertionType != JWTBearerType {
+		return NewInvalidRequestError("client_assertion_type must be the JWT bearer type").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Validate resource (required per FR-008, FR-049a)
@@ -164,24 +154,6 @@ func (req *TokenExchangeRequest) String() string {
 // Used by HTTP layer to detect if this is a token exchange request.
 func (req *TokenExchangeRequest) GetGrantType() string {
 	return req.GrantType
-}
-
-// SubjectTokenType returns the subject token type.
-// Returns the explicitly set value or the default if empty.
-func (req *TokenExchangeRequest) GetSubjectTokenType() string {
-	if req.SubjectTokenType != "" {
-		return req.SubjectTokenType
-	}
-	return AccessTokenType
-}
-
-// ClientAssertionType returns the client assertion type.
-// Returns the explicitly set value or the default if empty.
-func (req *TokenExchangeRequest) GetClientAssertionType() string {
-	if req.ClientAssertionType != "" {
-		return req.ClientAssertionType
-	}
-	return JWTBearerType
 }
 
 // IsTokenExchangeRequest returns true if this request is a token exchange request.

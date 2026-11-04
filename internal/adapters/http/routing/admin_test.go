@@ -3,7 +3,6 @@ package routing_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -337,7 +336,7 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 		ServiceScopes: []domainstorage.ServiceScope{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: domainstorage.RequirementTypeOptional}},
 	}))
 	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(storage).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {

@@ -1,6 +1,7 @@
 package enduser
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,17 +42,17 @@ func (h *JWKSHandler) ServeJWKS(w http.ResponseWriter, r *http.Request) {
 	jwks, err := h.publisher.PublishJWKS(r.Context())
 	if err != nil {
 		if errors.Is(err, ports.ErrUpstreamUnavailable) {
-			h.logger.Error("JWKS unavailable", "error", err)
-			h.writeErrorJSON(w, http.StatusServiceUnavailable, "upstream key material temporarily unavailable")
+			h.logger.ErrorContext(r.Context(), "JWKS unavailable", "error", err)
+			h.writeErrorJSON(r.Context(), w, http.StatusServiceUnavailable, "upstream key material temporarily unavailable")
 			return
 		}
 		if errors.Is(err, ports.ErrKidConflict) {
-			h.logger.Error("JWKS configuration conflict", "error", err)
-			h.writeErrorJSON(w, http.StatusServiceUnavailable, "JWKS configuration conflict requires operator action")
+			h.logger.ErrorContext(r.Context(), "JWKS configuration conflict", "error", err)
+			h.writeErrorJSON(r.Context(), w, http.StatusServiceUnavailable, "JWKS configuration conflict requires operator action")
 			return
 		}
-		h.logger.Error("failed to build JWKS", "error", err)
-		h.writeErrorJSON(w, http.StatusInternalServerError, "internal server error")
+		h.logger.ErrorContext(r.Context(), "failed to build JWKS", "error", err)
+		h.writeErrorJSON(r.Context(), w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -59,14 +60,14 @@ func (h *JWKSHandler) ServeJWKS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", jwksCacheMaxAgeSeconds))
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(jwks); err != nil {
-		h.logger.Error("failed to encode JWKS response", "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to encode JWKS response", "error", err)
 	}
 }
 
-func (h *JWKSHandler) writeErrorJSON(w http.ResponseWriter, status int, message string) {
+func (h *JWKSHandler) writeErrorJSON(ctx context.Context, w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(errorResponse{Error: message}); err != nil {
-		h.logger.Warn("failed to encode error response", "error", err)
+		h.logger.WarnContext(ctx, "failed to encode error response", "error", err)
 	}
 }

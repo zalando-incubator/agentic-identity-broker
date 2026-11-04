@@ -3,7 +3,6 @@ package approval
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +115,7 @@ func newTestSyncService(queries *testQueryRepo, syncState *testSyncStateRepo, br
 		broadcaster,
 		10*time.Minute,
 		"https://broker.example.com",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 }
 

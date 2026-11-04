@@ -69,17 +69,17 @@ func (s *KeyService) GenerateKey(ctx context.Context, algorithm string) (*storag
 		algorithm = "ES256"
 	}
 	if algorithm != "ES256" {
-		s.audit("", "generate", "rejected")
+		s.audit(ctx, "", "generate", "rejected")
 		return nil, ErrUnsupportedCIMDAlgorithm
 	}
 	now := time.Now().UTC()
 	key, err := s.engine.GenerateWithInitialActivation(ctx, cimdClientAuthenticationPolicy(), now, now.Add(cimdKeyGracePeriod))
 	if err != nil {
-		s.audit("", "generate", "rejected")
+		s.audit(ctx, "", "generate", "rejected")
 		return nil, fmt.Errorf("generate CIMD key: %w", err)
 	}
 	s.invalidatePublicJWKCache()
-	s.audit(key.KID, "generate", "success")
+	s.audit(ctx, key.KID, "generate", "success")
 	return key, nil
 }
 
@@ -92,22 +92,22 @@ func (s *KeyService) ListKeys(ctx context.Context) ([]*storage.SigningKey, error
 func (s *KeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
 	key, err := s.engine.Promote(ctx, cimdClientAuthenticationPolicy(), kid, time.Now().UTC())
 	if err != nil {
-		s.audit(kid, "promote", "rejected")
+		s.audit(ctx, kid, "promote", "rejected")
 		return nil, err
 	}
 	s.invalidatePublicJWKCache()
-	s.audit(key.KID, "promote", "success")
+	s.audit(ctx, key.KID, "promote", "success")
 	return key, nil
 }
 
 // DeleteKey removes a non-current, non-effective CIMD key while preserving domain guards.
 func (s *KeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 	if err := s.engine.Delete(ctx, cimdClientAuthenticationPolicy(), kid, time.Now().UTC()); err != nil {
-		s.audit(kid, "remove", "rejected")
+		s.audit(ctx, kid, "remove", "rejected")
 		return err
 	}
 	s.invalidatePublicJWKCache()
-	s.audit(kid, "remove", "success")
+	s.audit(ctx, kid, "remove", "success")
 	return nil
 }
 
@@ -118,7 +118,7 @@ func (s *KeyService) EnsureInitialKey(ctx context.Context) (*storage.SigningKey,
 		s.invalidatePublicJWKCache()
 	}
 	if err != nil {
-		s.audit("", "bootstrap", "rejected")
+		s.audit(ctx, "", "bootstrap", "rejected")
 	}
 	return key, created, err
 }
@@ -343,8 +343,8 @@ func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
 	return key, nil
 }
 
-func (s *KeyService) audit(kid id.KeyID, operation, outcome string) {
-	s.logger.Info("CIMD client-authentication key lifecycle", "key_id", kid, "operation", operation, "outcome", outcome)
+func (s *KeyService) audit(ctx context.Context, kid id.KeyID, operation, outcome string) {
+	s.logger.InfoContext(ctx, "CIMD client-authentication key lifecycle", "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
 var _ ports.CIMDClientKeyService = (*KeyService)(nil)

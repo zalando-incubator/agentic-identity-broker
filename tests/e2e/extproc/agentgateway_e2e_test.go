@@ -433,7 +433,7 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort, prmPort in
               host: http://host.testcontainers.internal:%d/mcp
 `, routePrefix, policyHeader, jwtFixture.Issuer(), jwtFixture.Audience(), extprocPort, resourceExpression, mcpPort)
 
-	agentgwLogger.Info("agentgateway config", "yaml", configYAML)
+	agentgwLogger.InfoContext(ctx, "agentgateway config", "yaml", configYAML)
 
 	req := testcontainers.ContainerRequest{
 		Image:           image,
@@ -455,7 +455,7 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort, prmPort in
 		WaitingFor: wait.ForListeningPort("4000/tcp").WithStartupTimeout(30 * time.Second),
 	}
 
-	agentgwLogger.Info("starting agentgateway container", "image", image)
+	agentgwLogger.InfoContext(ctx, "starting agentgateway container", "image", image)
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,
 		Started:          true,

@@ -209,7 +209,7 @@ func (s *Service) GetApproval(ctx context.Context, approvalID id.ApprovalID, act
 	defer span.End()
 
 	if approval.IsExpired(time.Now()) && approval.Status == storage.ApprovalStatusPending {
-		s.logger.Info("approval expired (lazy detection)",
+		s.logger.InfoContext(ctx, "approval expired (lazy detection)",
 			"approval_id", approvalID,
 			"principal", actingPrincipal,
 			"agent_id", approval.AgentID,
@@ -266,7 +266,7 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	}
 	decision, err := resolveApprovalDecision(approval, req)
 	if err != nil {
-		s.logger.Warn("approval pattern rejected", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", approval.AgentID, "tool_name", approval.ToolName, "action", "pattern_rejected", "error", err)
+		s.logger.WarnContext(ctx, "approval pattern rejected", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", approval.AgentID, "tool_name", approval.ToolName, "action", "pattern_rejected", "error", err)
 		return nil, err
 	}
 	span.SetAttributes(attribute.String("approval.tool_pattern", decision.ToolPattern))
@@ -281,7 +281,7 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
-	s.logger.Info("approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
+	s.logger.InfoContext(ctx, "approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
 	return result, nil
 }
 
@@ -396,7 +396,7 @@ func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 
 	span.SetAttributes(attribute.String("approval.tool_name", result.ToolName))
 
-	s.logger.Info("approval denied",
+	s.logger.InfoContext(ctx, "approval denied",
 		"approval_id", approvalID,
 		"principal", actingPrincipal,
 		"agent_id", result.AgentID,
@@ -452,7 +452,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 	if s.rateLimiter != nil && s.metrics != nil {
 		pendingCount, err := s.metrics.CountPendingByPrincipalAndAgent(ctx, req.Principal, req.AgentID)
 		if err != nil {
-			s.logger.Warn("failed to count pending approvals for rate limit check",
+			s.logger.WarnContext(ctx, "failed to count pending approvals for rate limit check",
 				"principal", req.Principal,
 				"agent_id", req.AgentID,
 				"error", err,
@@ -463,7 +463,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 	}
 	canonicalRiskLevelValue, knownRiskLevel := canonicalRiskLevel(req.RiskLevel)
 	if req.RiskLevel != "" && !knownRiskLevel && s.logger != nil {
-		s.logger.Warn("unknown approval risk level, defaulting to critical",
+		s.logger.WarnContext(ctx, "unknown approval risk level, defaulting to critical",
 			"provided_risk_level", req.RiskLevel,
 			"principal", req.Principal,
 			"agent_id", req.AgentID,
@@ -518,7 +518,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 			return nil, err
 		}
 
-		s.logger.Info("approval created",
+		s.logger.InfoContext(ctx, "approval created",
 			"approval_id", result.ID,
 			"principal", req.Principal,
 			"agent_id", req.AgentID,
@@ -528,7 +528,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 			"timestamp", now,
 		)
 	} else {
-		s.logger.Info("approval returned (idempotent)",
+		s.logger.InfoContext(ctx, "approval returned (idempotent)",
 			"approval_id", result.ID,
 			"principal", req.Principal,
 			"agent_id", req.AgentID,
@@ -701,7 +701,7 @@ func (s *Service) ConsumeApproval(ctx context.Context, approvalID id.ApprovalID,
 		return nil, err
 	}
 
-	s.logger.Info("approval consumed",
+	s.logger.InfoContext(ctx, "approval consumed",
 		"approval_id", approvalID,
 		"principal", actingPrincipal,
 		"agent_id", result.AgentID,
@@ -909,7 +909,7 @@ func (s *Service) RevokePermanentApproval(ctx context.Context, approvalID id.App
 		return nil, err
 	}
 
-	s.logger.Info("permanent approval revoked",
+	s.logger.InfoContext(ctx, "permanent approval revoked",
 		"approval_id", approvalID,
 		"principal", actingPrincipal,
 		"agent_id", result.AgentID,

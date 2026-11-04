@@ -133,7 +133,7 @@ func TestHealthEndpointIsNotTraced(t *testing.T) {
 	handler := NewHandler(ServerConfig{Name: "enduser", Telemetry: ports.TelemetryConfig{Enabled: true}}, func(router chi.Router) {
 		router.Get("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 		router.Get("/api/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	for _, path := range []string{"/health", "/api/me"} {

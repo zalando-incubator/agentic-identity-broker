@@ -89,7 +89,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.1.0
+  version: 1.2.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -699,14 +699,15 @@ paths:
   /api/third-party/sessions:
     get:
       operationId: listThirdPartySessions
-      summary: List third-party services with session status
+      summary: List the current user's third-party sessions
       description: |
-        Returns a list of all configured third-party OAuth2 services along with the current user's session status for each service.
+        Returns one summary for each third-party OAuth2 session of the authenticated user.
+        Services without a session are not listed.
 
-        For services where the user has an active session, includes:
+        Each summary includes:
 
         - Session initiation timestamp
-        - Token expiration status
+        - Reauthentication status and access-token expiry status
         - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
 
@@ -716,7 +717,7 @@ paths:
         - preAuth: []
       responses:
         "200":
-          description: List of services with session status
+          description: Session summaries of the authenticated user
           content:
             application/json:
               schema:
@@ -725,40 +726,31 @@ paths:
                   - data
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ThirdPartyServiceWithSession"
+                    type: object
+                    required:
+                      - sessions
+                    properties:
+                      sessions:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserSessionSummary"
               example:
                 data:
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440000
-                      display_name: GitHub
-                      description: GitHub OAuth2 integration
-                      scopes:
-                        - scope_value: repo
-                          description: Full control of private repositories
-                        - scope_value: user:email
-                          description: Access user email addresses
-                    session:
-                      session_id: 660e8400-e29b-41d4-a716-446655440001
-                      initiated_at: "2025-12-20T10:30:00Z"
-                      access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      is_expired: false
-                      has_refresh_token: true
+                  sessions:
+                    - id: 660e8400-e29b-41d4-a716-446655440001
+                      service_id: 550e8400-e29b-41d4-a716-446655440000
+                      service_display_name: GitHub
+                      token_type: Bearer
                       scope:
                         - repo
                         - user:email
+                      initiated_at: "2025-12-20T10:30:00Z"
+                      requires_reauthentication: false
+                      is_expired: false
+                      access_token_expired: false
+                      has_refresh_token: true
                       dependent_agent_count: 3
-                      tokens_encrypted: true
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440002
-                      display_name: Google Workspace
-                      description: Google OAuth2 integration
-                      scopes:
-                        - scope_value: calendar.readonly
-                          description: Read calendar events
-                    session: null
+                      is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1055,17 +1047,26 @@ paths:
               example:
                 data:
                   session:
-                    session_id: 660e8400-e29b-41d4-a716-446655440001
+                    id: 660e8400-e29b-41d4-a716-446655440001
+                    principal: user@example.com
+                    service_id: 550e8400-e29b-41d4-a716-446655440000
+                    service_display_name: GitHub
+                    token_type: Bearer
                     initiated_at: "2025-12-20T10:30:00Z"
                     access_token_expires_at: "2025-12-20T11:30:00Z"
-                    refresh_token_expires_at: "2026-01-20T10:30:00Z"
+                    requires_reauthentication: false
                     is_expired: false
+                    access_token_expired: false
                     has_refresh_token: true
                     scope:
                       - repo
                       - user:email
                     dependent_agent_count: 2
-                    tokens_encrypted: true
+                    is_encrypted: true
+                    encryption_context:
+                      service_id: 550e8400-e29b-41d4-a716-446655440000
+                    created_at: "2025-12-20T10:30:00Z"
+                    updated_at: "2025-12-20T10:30:00Z"
                   dependent_agents:
                     - agent_id: 770e8400-e29b-41d4-a716-446655440000
                       display_name: Code Assistant
@@ -1153,8 +1154,8 @@ paths:
         Forces an immediate OAuth2 access-token refresh for the user's session with a
         third-party service, using the stored refresh token via the RFC 6749 refresh_token
         grant. Unlike the transparent refresh performed during token exchange, this refreshes
-        even when the current access token has not yet expired. Requires a stored, non-expired
-        refresh token.
+        even when the current access token has not yet expired. Requires a stored refresh
+        token that the provider has not rejected.
       tags:
         - Third-Party Sessions
       security:
@@ -1191,14 +1192,24 @@ paths:
                 error: not_found
                 message: session not found
         "409":
-          description: No valid refresh token available for this session
+          description: |
+            The session cannot be refreshed. `refresh_unavailable` means no refresh token is
+            stored. `refresh_rejected` means the provider already rejected the stored refresh
+            token with `invalid_grant`; the broker does not contact the provider again and the
+            user must log in to the service again.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example:
-                error: refresh_unavailable
-                message: no valid refresh token available for this session
+              examples:
+                refresh_unavailable:
+                  value:
+                    error: refresh_unavailable
+                    message: no valid refresh token available for this session
+                refresh_rejected:
+                  value:
+                    error: refresh_rejected
+                    message: refresh token rejected by provider; reauthentication required
         "502":
           description: Third-party provider rejected the refresh request
           content:
@@ -1466,6 +1477,23 @@ paths:
         Exchange a token issued by the Upstream OAuth2 Server for a third-party OAuth2 token
         stored in the token vault.
 
+        Third-party exchange requires the exact `subject_token_type`
+        `urn:ietf:params:oauth:token-type:access_token` and `client_assertion_type`
+        `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`. Missing, empty, or different
+        identifiers return `400 invalid_request`; the broker does not supply defaults.
+
+        All token grants require exactly one `Content-Type` field. Per RFC 6749 Section 3.2, a
+        parameter sent without a value is treated as omitted. A singleton form parameter with
+        more than one non-empty value returns `400 invalid_request`. These parameters are
+        `grant_type`, `client_id`, `client_secret`, `code`, `redirect_uri`, `refresh_token`,
+        `code_verifier`, `scope`, `subject_token`, `subject_token_type`, `client_assertion`,
+        `client_assertion_type`, `actor_token`, `actor_token_type`, and `requested_token_type`.
+
+        The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2.1.
+        Repeated `resource` values that normalize to the same URI are accepted. Distinct
+        `resource` values return `400 invalid_target` because the broker returns one service
+        token.
+
         The token exchange flow:
         1. Gateway authenticates using client_assertion JWT (gateway identity)
         2. System validates subject_token JWT (contains principal + agent identifier)
@@ -1494,15 +1522,16 @@ paths:
           and undeclared or removed permission sets. The broker denies before any token-vault lookup.
 
         **Session Recovery:**
-        - A missing session, or an expired session without a usable refresh token, returns
-          400 `invalid_grant`. Its `error_uri` starts authorization for the resolved service
-          at `<public URL>/api/third-party/{service-id}/oauth2/authorize` with an encoded
+        - A missing session, a session whose refresh token the provider has rejected, or an
+          expired session without a stored refresh token, returns 400 `invalid_grant`. Its
+          `error_uri` starts authorization for the resolved service at
+          `<public URL>/api/third-party/{service-id}/oauth2/authorize` with an encoded
           `<public URL>/sessions` return URI.
-        - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
-          `invalid_grant`, the broker returns 400 `invalid_grant` with the same service-specific
-          `error_uri`. The stored tokens are left unchanged, and the refresh token is recorded
-          as expired. Later exchanges return the same error without contacting the provider
-          until the user reconnects the service.
+        - When the provider rejects the stored refresh token with HTTP 4xx (except 429) and OAuth
+          error `invalid_grant`, the broker returns 400 `invalid_grant` with the same
+          service-specific `error_uri`. The stored tokens are left unchanged, and the rejection is
+          recorded. Later exchanges return the same error without contacting the provider, even
+          while the stored access token has not expired, until the user reconnects the service.
         - A missing required client-identity association or a mismatch with the selected client ID
           returns 400 `invalid_grant` with the same service-specific `error_uri`.
           The broker stops before provider authentication and leaves the established session unchanged.
@@ -1551,12 +1580,54 @@ paths:
         whose target is unknown returns `invalid_target`.
         No-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 
-        After a rule authorizes the request, the broker requires an active user delegation for the
-        extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
+        After a rule authorizes a human-category request, the broker requires an active user
+        delegation for the extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
         with the existing RFC 6749 `error_uri` response member set to the authenticated user's
         target-agent consent page. The response intentionally does not distinguish a missing delegation
         from an expired one. An unverified subject has no exemption; a delegation lookup failure returns
         `500 server_error` without `error_uri`.
+
+        #### Agent subjects
+        Each impersonation rule lists accepted `allowed_subject_categories`: `human`, `agent`,
+        or both. Omission means `[human]`. No request parameter selects the category. A request
+        is agent-category only when the rule's subject role is signed, its credential verifies,
+        and its raw string `sub` is byte-for-byte equal to the canonical UUID of the target
+        selected by `audience`. Every other request is human-category, including every unsigned
+        (`verification: none`) subject. Aliases, display names, other agents' UUIDs and different
+        UUID spelling do not qualify. All configured principal extractions must still succeed;
+        an eligible agent's represented subject is the target UUID, not necessarily the extracted principal.
+
+        A category-ineligible rule falls through. No match returns the existing generic
+        `403 access_denied` (`impersonation not permitted`) without `error_uri`. Signed exact
+        equality on human-only or omitted-category rules is ineligible even with active same-text
+        human delegation. Eligible, CEL-authorized agents need no delegation, never return a
+        consent-required `error_uri`, and create no grant or session. Human delegation denials
+        remain terminal and are never retried as agents.
+
+        Agent tokens have reserved `sub` and `agent_id` equal to the target UUID and existing
+        `act` (`iss`: verified actor issuer, `sub`: extracted actor). No category claim is added.
+        `token_claims_expression` cannot override those reserved identities. Subject email
+        extraction is not evaluated and no credential-derived email is supplied; output email
+        remains policy-owned. Issuer, signing, lifetime, scope and audience policy are unchanged.
+
+        #### Third-party exchange of agent-subject tokens
+        After validating credentials and extracting the principal, before agent-ID extraction,
+        authorization, resources, grants or sessions, third-party exchange evaluates
+        `token_exchange.claim_extraction.agent_subject_expression`. Its guarded default is
+        `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`.
+        A match returns `403 access_denied` with description
+        `agent-subject tokens cannot be exchanged for third-party service tokens`, no `error_uri`,
+        and no human grant, session or provider access, including same-text human state.
+        Default detection also rejects equal-claim legacy, mapped/unsigned human and trusted
+        external issuer tokens. An evaluation error, timeout or dynamic non-boolean output
+        returns `500 server_error` without consent recovery or human-state access, never false.
+
+        A configured expression replaces the default entirely, with no additional built-in check.
+        It must reference `subject_token.sub`; otherwise the broker refuses to start, so `false`
+        cannot be configured. Operators must retain broker agent-token matching, for example by
+        preserving the default as a disjunct. A non-matching result continues existing checks,
+        which may read matching human grants/sessions and return consent errors. Such overrides
+        remove categorical rejection and same-text human-credential isolation.
       operationId: tokenExchange
       tags:
         - OAuth2 Token
@@ -1627,6 +1698,17 @@ paths:
                   subject_token_type: "urn:ietf:params:oauth:token-type:jwt"
                   subject_token: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
                   scope: "read"
+              token_exchange_impersonation_agent_subject:
+                summary: Agent-subject impersonation (signed sub equals target UUID)
+                value:
+                  grant_type: "urn:ietf:params:oauth:grant-type:token-exchange"
+                  audience: "https://broker.example.com/impersonation/research-agent"
+                  client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                  client_assertion: "SYNTHETIC_CLIENT_JWS"
+                  actor_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  actor_token: "SYNTHETIC_ACTOR_JWS"
+                  subject_token_type: "urn:ietf:params:oauth:token-type:jwt"
+                  subject_token: "SYNTHETIC_AGENT_JWS"
               token_exchange_impersonation_unverified:
                 summary: "User Impersonation Request with an unverified subject (verification: none)"
                 value:
@@ -1658,6 +1740,21 @@ paths:
                   summary: Successful Token Exchange Response
                   value:
                     access_token: "ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    token_type: "Bearer"
+                    issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
+                    expires_in: 3600
+                impersonation_agent_subject_success:
+                  summary: Agent-subject impersonation response
+                  description: |
+                    Decoded access_token payload (excerpt):
+                    {"iss": "https://broker.example.com",
+                     "sub": "550e8400-e29b-41d4-a716-446655440000",
+                     "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+                     "aud": "https://policy.example.com",
+                     "act": {"iss": "https://idp.example.com", "sub": "research-runner"},
+                     "scope": "", "iat": 1793005200, "exp": 1793008800}
+                  value:
+                    access_token: "SYNTHETIC_BROKER_AGENT_JWS"
                     token_type: "Bearer"
                     issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
                     expires_in: 3600
@@ -1763,6 +1860,16 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "impersonation not permitted"
+                impersonation_subject_category_ineligible:
+                  summary: Impersonation - no rule accepts the subject category
+                  value:
+                    error: "access_denied"
+                    error_description: "impersonation not permitted"
+                agent_subject_third_party_exchange:
+                  summary: Third-party exchange - detector matches an agent-subject token
+                  value:
+                    error: "access_denied"
+                    error_description: "agent-subject tokens cannot be exchanged for third-party service tokens"
                 impersonation_consent_required:
                   summary: Impersonation - user delegation required
                   value:
@@ -1830,8 +1937,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "403":
+          description: |
+            The subject token is an agent-subject token (`token_exchange.claim_extraction.agent_subject_expression`
+            matched, ADR 045 decision 6a). Error code `forbidden`. Agent-subject tokens cannot act as a human
+            principal for approvals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "429":
           description: Rate limit exceeded for (principal, agent_id) pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:
@@ -2249,7 +2371,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
         "403":
-          description: Subject token principal does not match approval owner
+          description: |
+            Subject token principal does not match approval owner, or the subject token is an agent-subject
+            token (`token_exchange.claim_extraction.agent_subject_expression` matched, ADR 045 decision 6a).
+            Error code `forbidden`.
           content:
             application/json:
               schema:
@@ -2262,6 +2387,12 @@ paths:
                 $ref: "#/components/schemas/ApprovalError"
         "422":
           description: Approval is not once-persistence or not approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "503":
+          description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
             application/json:
               schema:
@@ -3737,52 +3868,6 @@ components:
           description: |
             Optional human-readable error message. Provides additional context about the error. May be empty for generic errors.
           example: authentication required
-    ThirdPartyServiceWithSession:
-      type: object
-      required:
-        - service
-      properties:
-        service:
-          $ref: "#/components/schemas/ThirdPartyService"
-        session:
-          $ref: "#/components/schemas/SessionStatus"
-          nullable: true
-          description: Session status if user has an active session, null otherwise
-    ThirdPartyService:
-      type: object
-      required:
-        - id
-        - display_name
-        - scopes
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: Unique service identifier
-        display_name:
-          type: string
-          description: Human-readable service name
-          maxLength: 255
-        description:
-          type: string
-          description: Service description
-        scopes:
-          type: array
-          description: Available OAuth2 scopes
-          items:
-            $ref: "#/components/schemas/OAuthScope"
-    OAuthScope:
-      type: object
-      required:
-        - scope_value
-        - description
-      properties:
-        scope_value:
-          type: string
-          description: OAuth2 scope identifier
-        description:
-          type: string
-          description: Human-readable scope description
     UserSessionSummary:
       type: object
       description: |
@@ -3795,6 +3880,7 @@ components:
         - token_type
         - scope
         - initiated_at
+        - requires_reauthentication
         - is_expired
         - access_token_expired
         - has_refresh_token
@@ -3818,18 +3904,24 @@ components:
         initiated_at:
           type: string
           format: date-time
+        requires_reauthentication:
+          type: boolean
+          description: |
+            True when the broker cannot obtain another access token for this session: the
+            provider rejected the stored refresh token with `invalid_grant`, or the access token
+            expired and no refresh token is stored. A recorded rejection takes effect even while
+            the stored access token has not expired. An expired access token with a stored,
+            not-rejected refresh token does not require reauthentication.
         is_expired:
           type: boolean
-          description: True when neither the access token nor a stored refresh token is usable. An expired access token alone does not expire a refreshable session.
+          deprecated: true
+          description: Deprecated alias of `requires_reauthentication` with the same value.
         access_token_expired:
           type: boolean
+          description: Whether the recorded access-token expiry has passed. An unknown expiry is not permanent validity.
         has_refresh_token:
           type: boolean
-        refresh_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
+          description: Whether a refresh token is stored. It stays true after a provider rejection; the broker cannot predict a refresh token's lifetime and never reports one.
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3838,56 +3930,42 @@ components:
           type: boolean
           description: Indicates tokens are stored encrypted
     SessionStatus:
-      type: object
-      required:
-        - session_id
-        - initiated_at
-        - is_expired
-        - has_refresh_token
-        - scope
-        - dependent_agent_count
-        - tokens_encrypted
-      properties:
-        session_id:
-          type: string
-          format: uuid
-          description: Session identifier
-        initiated_at:
-          type: string
-          format: date-time
-          description: When the OAuth2 flow was completed
-        access_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: When the access token expires (null if unknown)
-        refresh_token_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
-        is_expired:
-          type: boolean
-          description: |
-            True when neither the access token nor a stored refresh token is usable.
-            A session remains usable while its access token is valid or it has a refresh
-            token whose recorded expiry is absent or in the future. An access-only
-            session expires with its access token.
-        has_refresh_token:
-          type: boolean
-          description: Whether a refresh token is stored for this session
-        scope:
-          type: array
-          items:
-            type: string
-          description: OAuth2 scopes granted in this session
-        dependent_agent_count:
-          type: integer
-          minimum: 0
-          description: Number of distinct agents with grants owned by the authenticated session principal that reference this service
-        tokens_encrypted:
-          type: boolean
-          description: Indicates tokens are stored encrypted (always true)
+      description: |
+        Session details: the UserSessionSummary fields plus ownership and lifecycle
+        metadata. Mirrors the storage.UserSessionDetails domain read model. Token
+        material and the rejection timestamp are never exposed.
+      allOf:
+        - $ref: "#/components/schemas/UserSessionSummary"
+        - type: object
+          required:
+            - principal
+            - encryption_context
+            - created_at
+            - updated_at
+          properties:
+            principal:
+              type: string
+              description: Authenticated user who owns the session
+            access_token_expires_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: When the access token expires (absent if unknown; unknown is not permanent validity)
+            encryption_context:
+              type: object
+              required:
+                - service_id
+              properties:
+                service_id:
+                  type: string
+                  format: uuid
+              description: Additional authenticated data bound to the encrypted tokens (ADR 008)
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
     AffectedAgent:
       type: object
       required:
@@ -3990,7 +4068,7 @@ components:
           type: string
           description: |
             Type of the subject_token.
-            - `urn:ietf:params:oauth:token-type:access_token`: third-party token exchange (default).
+            - `urn:ietf:params:oauth:token-type:access_token`: required exact type for third-party token exchange, with no default.
             - `urn:ietf:params:oauth:token-type:jwt`: user impersonation (local mode only). A
               signed subject is signature-verified; a rule declaring `verification: none` accepts
               an unsigned (`alg:none`) subject JWT and rejects signed JWSs on that path. An

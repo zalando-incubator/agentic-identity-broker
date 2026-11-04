@@ -29,7 +29,7 @@ func TestExchangeCodeWithRetry_UsesConfiguredClientTimeout(t *testing.T) {
 	service := &OAuth2SessionService{
 		httpClient: &http.Client{Timeout: 20 * time.Millisecond},
 		config:     Config{MaxRetries: 1},
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:     slog.New(slog.DiscardHandler),
 	}
 	cfg := &oauth2.Config{
 		ClientID: "client",
@@ -68,7 +68,7 @@ func TestExchangeCodeWithRetry_DoesNotRetryNonTransientResponses(t *testing.T) {
 			service := &OAuth2SessionService{
 				httpClient: server.Client(),
 				config:     Config{MaxRetries: 3, RetryBaseDelay: time.Millisecond},
-				logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+				logger:     slog.New(slog.DiscardHandler),
 			}
 			cfg := &oauth2.Config{
 				ClientID: "client",
@@ -106,7 +106,7 @@ func TestExchangeCodeWithRetry_RetriesNetworkFailure(t *testing.T) {
 	service := &OAuth2SessionService{
 		httpClient: server.Client(),
 		config:     Config{MaxRetries: 2, RetryBaseDelay: time.Millisecond},
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:     slog.New(slog.DiscardHandler),
 	}
 	cfg := &oauth2.Config{
 		ClientID: "client",

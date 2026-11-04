@@ -1,0 +1,1 @@
+COMMENT ON COLUMN user_sessions.refresh_token_expires_at IS 'Timestamp of an observed provider refresh rejection (HTTP 4xx invalid_grant). NULL means no rejection has been observed, not proven validity. The broker never predicts refresh-token expiry; this column holds no provider-reported expiry (ADR 046).';

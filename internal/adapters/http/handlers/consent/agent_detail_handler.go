@@ -149,21 +149,21 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	agentID := chi.URLParam(r, "agent-id")
 
 	if agentID == "" {
-		h.logger.Warn("agent ID is missing in request")
+		h.logger.WarnContext(ctx, "agent ID is missing in request")
 		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID is required")
 		return
 	}
 
 	userID, ok := getPrincipalFromContext(ctx)
 	if !ok {
-		h.logger.Warn("principal not found in context")
+		h.logger.WarnContext(ctx, "principal not found in context")
 		h.writeError(w, http.StatusUnauthorized, "unauthorized", "principal required")
 		return
 	}
 
 	parsedAgentID, parseErr := id.ParseAgentID(agentID)
 	if parseErr != nil {
-		h.logger.Warn("invalid agent ID format", "agent_id", agentID, "error", parseErr)
+		h.logger.WarnContext(ctx, "invalid agent ID format", "agent_id", agentID, "error", parseErr)
 		h.writeError(w, http.StatusBadRequest, "bad request", "invalid agent ID format")
 		return
 	}
@@ -173,16 +173,16 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	detail, err := h.consentService.GetAgentConsentDetail(ctx, parsedAgentID, userPrincipal)
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentNotFound) {
-			h.logger.Warn("agent not found", "agent_id", agentID)
+			h.logger.WarnContext(ctx, "agent not found", "agent_id", agentID)
 			h.writeError(w, http.StatusNotFound, "not found", "agent not found")
 			return
 		}
 		if errors.Is(err, consent.ErrMissingMandatoryPS) {
-			h.logger.Warn("agent permission-set configuration is missing", "agent_id", agentID, "error", err)
+			h.logger.WarnContext(ctx, "agent permission-set configuration is missing", "agent_id", agentID, "error", err)
 			h.writeError(w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
 			return
 		}
-		h.logger.Error("failed to get agent consent detail", "agent_id", agentID, "error", err)
+		h.logger.ErrorContext(ctx, "failed to get agent consent detail", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -193,30 +193,30 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	cimdMeta, err := h.resolveSessionContext(r, parsedAgentID)
 	if err != nil {
 		if errors.Is(err, errSessionExpired) {
-			h.logger.Warn("authorization session expired", "agent_id", agentID)
+			h.logger.WarnContext(ctx, "authorization session expired", "agent_id", agentID)
 			h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			return
 		}
 		if errors.Is(err, errInvalidToken) {
-			h.logger.Error("authorization session token invalid", "agent_id", agentID)
+			h.logger.ErrorContext(ctx, "authorization session token invalid", "agent_id", agentID)
 			h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			return
 		}
 		if errors.Is(err, errInternalSession) {
-			h.logger.Error("internal session validation error", "agent_id", agentID, "error", err)
+			h.logger.ErrorContext(ctx, "internal session validation error", "agent_id", agentID, "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}
-		h.logger.Warn("authorization session error", "agent_id", agentID, "error", err)
+		h.logger.WarnContext(ctx, "authorization session error", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusBadRequest, "bad request", "invalid authorization session")
 		return
 	}
 
 	response := GetAgentDetailResponse{
-		Data: h.buildResponse(detail, services, cimdMeta),
+		Data: h.buildResponse(ctx, detail, services, cimdMeta),
 	}
 
-	h.logger.Info("agent detail retrieved",
+	h.logger.InfoContext(ctx, "agent detail retrieved",
 		"agent_id", agentID,
 		"user_id", userID,
 		"services_count", len(services))
@@ -224,7 +224,7 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	h.writeJSON(w, http.StatusOK, response)
 }
 
-func (h *AgentDetailHandler) buildResponse(detail *consent.AgentConsentDetail, services []ServiceRequirementForUser, cimdMeta *CIMDMetadataResponse) AgentDetailData {
+func (h *AgentDetailHandler) buildResponse(ctx context.Context, detail *consent.AgentConsentDetail, services []ServiceRequirementForUser, cimdMeta *CIMDMetadataResponse) AgentDetailData {
 	agent := detail.Agent
 	agentResp := AgentMetadata{
 		ID:                   agent.ID.String(),
@@ -246,7 +246,7 @@ func (h *AgentDetailHandler) buildResponse(detail *consent.AgentConsentDetail, s
 	permissionSets := make([]PermissionSetWithRequirement, 0, len(detail.ResolvedPermissionSets))
 	for _, entry := range detail.ResolvedPermissionSets {
 		if entry.PermissionSet == nil {
-			h.logger.Warn("resolved permission set entry has nil PermissionSet, omitting")
+			h.logger.WarnContext(ctx, "resolved permission set entry has nil PermissionSet, omitting")
 			continue
 		}
 		serviceScopes := make([]ServiceScopeInfo, 0, len(entry.PermissionSet.ServiceScopes))

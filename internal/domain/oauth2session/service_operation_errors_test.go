@@ -234,7 +234,7 @@ func TestRefreshRejectionMarkerPersistence(t *testing.T) {
 					changed, err := refresh(ctx, &current)
 					require.NoError(t, err)
 					require.True(t, changed)
-					require.NotNil(t, current.RefreshTokenExpiresAt)
+					require.NotNil(t, current.RefreshRejectedAt)
 					assert.False(t, current.CanRefresh())
 					if commitFails {
 						return nil, cause
@@ -253,7 +253,7 @@ func TestRefreshRejectionMarkerPersistence(t *testing.T) {
 					assert.Equal(t, DependencySessionRepository, metadata.Dependency())
 					assert.ErrorIs(t, err, cause)
 					assert.NotErrorIs(t, err, ErrRefreshRejected)
-					assert.Nil(t, session.RefreshTokenExpiresAt)
+					assert.Nil(t, session.RefreshRejectedAt)
 				} else {
 					requireOperationError(t, err, OperationRefresh, DetailRefreshRejected)
 					assert.ErrorIs(t, err, ErrRefreshRejected)
@@ -411,8 +411,8 @@ func TestForceRefreshValidAccessWithoutRefreshIsUnavailableNotExpired(t *testing
 	_, err := service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
 	requireOperationError(t, err, OperationRefresh, DetailRefreshUnavailable)
 	assert.ErrorIs(t, err, ErrRefreshNotAvailable)
-	assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
-	assert.NotErrorIs(t, err, ErrSessionExpired)
+	assert.NotErrorIs(t, err, ErrRefreshRejected)
+	assert.NotErrorIs(t, err, ErrReauthenticationRequired)
 }
 
 type operationFailingReader struct{ cause error }

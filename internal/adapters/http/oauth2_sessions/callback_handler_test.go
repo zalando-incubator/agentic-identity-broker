@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +33,7 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
 	require.NoError(t, key.Set(jwk.AlgorithmKey, "A256GCM"))
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	encryption := testutil.NewTestEncryptionAdapter(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
 		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(), encryption,

@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,7 +29,7 @@ func TestHandleHealth_IncludesComponentHealth(t *testing.T) {
 		},
 		healthState: int32(HealthStateHealthy),
 		startTime:   time.Now().Add(-2 * time.Minute),
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:      slog.New(slog.DiscardHandler),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -49,7 +48,7 @@ func TestHandleHealth_IncludesComponentHealth(t *testing.T) {
 func TestHandleHealth_UsesCurrentServerStartTime(t *testing.T) {
 	server := &Server{
 		healthState: int32(HealthStateHealthy),
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:      slog.New(slog.DiscardHandler),
 	}
 
 	handler := server.handleHealth()
@@ -69,7 +68,7 @@ func TestHandleHealth_UsesCurrentServerStartTime(t *testing.T) {
 }
 
 func TestServerServe_HealthRouteRemainsReachableWithRootSPA(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	staticPath := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "index.html"), []byte("index"), 0o600))
 
