@@ -22,7 +22,7 @@ acceptance validation runs in the workflow on the pushed commit and remains a re
 | `just test` | Domain reconcile policy, no-op equality, validation, memory uniqueness, handler parsing |
 | `just test-integration-infra` | Migration `046` block/apply/rollback/reapply and PostgreSQL conflict mapping (US3, DB-003) |
 | `just test-e2e-backend` | US1.1, US1.5–US1.7, US2.1–US2.8, US4.1–US4.3 on the in-memory broker |
-| `just test-e2e-docker` | US1.2–US1.3 single labeled scenarios each exercising memory and PostgreSQL multi-URI create/update replay and same-second timestamps; US1.4 two-broker race; US3.1–US3.4 upgrade journeys |
+| `just test-e2e-docker` | US1.2–US1.3 single labeled scenarios each exercising memory and PostgreSQL multi-URI create/update replay with unchanged replay timestamps; US1.4 two-broker race; US3.1–US3.4 upgrade journeys |
 
 Expected: all pass. `tests/e2e/agent_external_id_filter_test.go` no longer asserts that two agents
 share one external ID.
@@ -80,8 +80,9 @@ BODY='{"canonical_id":"research-assistant","display_name":"Research Assistant","
    `201`, `Location: /api/agents/<uuid>`, `Preference-Applied: reference-id=canonical`.
 2. **Replay** (US1.2): repeat step 1 → `200`, identical body including `updated_at`.
 3. **Change** (US1.3): replace the display name with `Research Assistant v2` → `200`, same `id`
-   and `created_at`, newer `updated_at` even within the same second. Responses expose UTC zero-to-six
-   fractional digits at microsecond precision, not whole-second-only timestamps.
+   and `created_at`, and `updated_at` at the update time in whole-second RFC 3339 form. Within the
+   same second as the previous write, `updated_at` may be unchanged; replaying the change returns
+   the identical body.
 4. **Lookup** (US4.1): `curl -s "${H[@]}" "$ADMIN/api/agents?external_id=$SEL" | jq length` → `1`.
 5. **Duplicate on create** (US2.1): `POST /api/agents` with the same `external_id` and another
    canonical ID → `409`, `external_id is already held by another agent`.
@@ -98,12 +99,12 @@ replay, POST/ID-addressed PUT and single/list/filter GET. Reordered equal URI se
 other collection ordering and optional omission remain unchanged. Use a fresh selector when
 repeating the manual journey on PostgreSQL; compare full response bodies under each `Prefer` choice.
 
-Automated same-second tests seed a future stored `updated_at` via test fixtures, then issue an
-actual update: the minimum advances it by exactly one microsecond, even if wall time is behind it.
-The next replay and GET retain that exact fractional timestamp and creation time on both stores.
-Service helper tests use fixed clock values; do not use sleeps or a new production clock API.
-The timestamp is not an ETag or a concurrent total ordering. API-ORDER/API-TIMESTAMPS
-are covered by the supplied maintainer approval cited in ADR 045.
+Automated update tests assert the changed definition, preserved `id` and `created_at`, and the
+existing whole-second `updated_at` presentation; the next replay and GET return the identical
+representation, including `updated_at`, on both stores, with no replay write. Do not use sleeps or
+a production clock API. The timestamp is not an ETag or a concurrent total ordering. API-ORDER is
+covered by the supplied maintainer approval cited in ADR 045; the 2026-11-04 timestamp revision
+of ADR 045 needs a new approval.
 
 Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.md#concrete-example-journeys-mandatory).
 

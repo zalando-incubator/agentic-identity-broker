@@ -4,8 +4,9 @@
 
 **Input**: Feature specification from `specs/055-agent-external-id-upsert/spec.md`
 
-**Status**: Planned. Every item in [Approval Items](#approval-items) is Proposed and needs the
-maintainer's sign-off before implementation.
+**Status**: Planned; revised 2026-11-04 on maintainer direction to withdraw API-TIMESTAMPS. Every
+item in [Approval Items](#approval-items) needs the maintainer's sign-off on the current approval
+comment before implementation of the revised text.
 
 ## Summary
 
@@ -29,9 +30,10 @@ Make a set Agent External ID globally unique and non-empty, and add an idempoten
   operator runbook supplies the complete read-only inventory, remediation, retry, and
   rollback ([R8–R9](./research.md#r8--migration-design-proposed-db-046)).
 - **Contract.** Admin API `3.0.0` ([contract delta](./contracts/admin-agents-openapi.yaml)) and
-  draft [ADR 045](./adr-045-unique-agent-external-id-upsert.md). Proposed shared Admin Agent
-  presentation sorts client URIs by byte order and exposes microsecond timestamps; sequential
-  actual reconcile updates advance by at least one stored microsecond ([R4](./research.md#r4--no-op-detection)).
+  draft [ADR 045](./adr-045-unique-agent-external-id-upsert.md) (Proposed revision). Proposed
+  shared Admin Agent presentation sorts client URIs by byte order. Timestamps keep the
+  whole-second RFC 3339 presentation of Admin API `2.1.0` and the existing current-time assignment;
+  a no-op replay returns the stored `updated_at` ([R4](./research.md#r4--no-op-detection)).
 
 ## Technical Context
 
@@ -84,8 +86,8 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **API Design First**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml)
   defines the change; it merges into `api/admin/openapi.yaml` only after approval.
 - [x] **API Documentation**: Admin API only (`api/admin/openapi.yaml`).
-- [ ] **API Changes**: Pending maintainer sign-off on API-UPSERT, API-OMISSION, API-UNIQUE, and
-  API-VERSION, API-ORDER, and API-TIMESTAMPS. This gate stays open until the approval comment receives a 👍.
+- [ ] **API Changes**: Pending maintainer sign-off on API-UPSERT, API-OMISSION, API-UNIQUE,
+  API-VERSION, and API-ORDER. This gate stays open until the approval comment receives a 👍.
 - [x] **Database Design**: `046_unique_agent_external_id.{up,down}.sql` with go-migrate naming;
   SQL behavior in [data-model.md](./data-model.md#postgresql-schema--migration-046_unique_agent_external_id-proposed-db-046).
 - [x] **E2E Acceptance Tests**: Planned for all 22 scenarios before implementation
@@ -102,8 +104,10 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   creations and updates (SR-001–SR-003).
 - [x] **Architecture Docs**: ARCHITECTURE.md gets the glossary update, the Admin API `3.0.0`
   versioning note, and the ADR index entry.
-- [x] **ADRs**: Draft [ADR 045](./adr-045-unique-agent-external-id-upsert.md) (Proposed) records the
-  uniqueness invariant, collection-PUT reconcile pattern, migration, and version bump. ADR 004,
+- [x] **ADRs**: Draft [ADR 045](./adr-045-unique-agent-external-id-upsert.md) (Proposed revision)
+  records the uniqueness invariant, collection-PUT reconcile pattern, migration, and version bump.
+  ADR 045 is not on the default branch, so Principle II permits revising it in this PR; the
+  revision withdraws the approved microsecond timestamp text and needs a new approval. ADR 004,
   013, and 017 are followed; none is superseded.
 - [x] **Library-First Security**: No cryptography.
 - [x] **Zalando Guidelines**: Collection `PUT` with a selector departs from the guidelines' usual
@@ -126,19 +130,24 @@ confirmation gate, which is the expected sign-off. No violation needs Complexity
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-UPSERT | API | Add `PUT /api/agents?external_id={value}`: required single selector, `AgentCreateRequest` body, `201` + UUID `Location` on create, `200` on update and on no-op replay with unchanged `updated_at`, `400 invalid external_id` for selector/body external-ID errors, `409` for identifier conflicts, `Prefer: reference-id=canonical` support | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:87-244 |
-| API-OMISSION | API | Update-branch field policy: preserve omitted `client_id`/`canonical_id`, `canonical_id: null` clears, `client_id: null` → `400 validation failed`, metadata and optional collections replaced (omitted or null → absent/empty) | specs/055-agent-external-id-upsert/spec.md:535-546 |
-| API-UNIQUE | API | External IDs unique when set: `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` (`external_id is already held by another agent`) and `400 validation failed` for `""`; `PUT /api/agents/{agent-id}` documents `409`; `GET ?external_id=` returns zero or one agent (ID-addressed PUT delta at lines 246-268 of the same file) | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:13-86 |
-| API-VERSION | API | Bump Admin API from `2.1.0` to `3.0.0` on the existing routes | specs/055-agent-external-id-upsert/research.md:176-185 |
+| API-UPSERT | API | Add `PUT /api/agents?external_id={value}`: required single selector, `AgentCreateRequest` body, `201` + UUID `Location` on create, `200` on update and on no-op replay with unchanged `updated_at`, `400 invalid external_id` for selector/body external-ID errors, `409` for identifier conflicts, `Prefer: reference-id=canonical` support | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:82-239 |
+| API-OMISSION | API | Update-branch field policy: preserve omitted `client_id`/`canonical_id`, `canonical_id: null` clears, `client_id: null` → `400 validation failed`, metadata and optional collections replaced (omitted or null → absent/empty) | specs/055-agent-external-id-upsert/spec.md:538-549 |
+| API-UNIQUE | API | External IDs unique when set: `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` (`external_id is already held by another agent`) and `400 validation failed` for `""`; `PUT /api/agents/{agent-id}` documents `409`; `GET ?external_id=` returns zero or one agent (ID-addressed PUT delta at lines 241-263 of the same file) | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:13-81 |
+| API-VERSION | API | Bump Admin API from `2.1.0` to `3.0.0` on the existing routes | specs/055-agent-external-id-upsert/research.md:181-190 |
 | API-ORDER | API | Present `client_uris` in ascending Go string byte order in every Admin Agent response, including immediate create/update and single/list/filter reads, without changing URI spelling, stored order, other collection order or optional omission | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:24-27 |
-| API-TIMESTAMPS | API | Expose UTC microsecond-truncated Agent timestamps with zero to six fractional digits on every Admin Agent response; reconcile creation uses microsecond now, sequential actual update advances to max(now, observed microsecond time + 1 microsecond), no-op preserves stored times; possible slight wall-clock lead, no concurrent revision guarantee | specs/055-agent-external-id-upsert/contracts/admin-agents-openapi.yaml:29-39 |
-| ADR-045 | ADR | Draft ADR 045: unique Agent External ID and create-or-update by external ID, stable response ordering and microsecond timestamp advancement | specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md:1-93 |
-| DB-046 | Decision | Migration `046`: lock `agents`, block with a bounded error (first 100 duplicate groups and empty-value entries plus remainder counts) and complete read-only runbook inventory of values/UUIDs without changing data, then add `uq_agents_external_id` and `chk_agents_external_id_not_empty` and drop `idx_agents_external_id`; DOWN restores the old index without touching rows; new operator runbook | specs/055-agent-external-id-upsert/data-model.md:133-184 |
-| DEC-054 | Decision | Supersede feature 054's non-uniqueness clarification and FR-011; remove its shared-ID E2E scenario and cover zero-or-one results once in US4.1; leave the 054 spec unchanged as history | specs/055-agent-external-id-upsert/research.md:245-256 |
+| ADR-045 | ADR | Revised ADR 045: unique Agent External ID and create-or-update by external ID, stable client-URI response ordering, and unchanged whole-second timestamps with existing current-time assignment (withdraws the approved microsecond presentation and `+1 microsecond` advancement) | specs/055-agent-external-id-upsert/adr-045-unique-agent-external-id-upsert.md:1-102 |
+| DB-046 | Decision | Migration `046`: lock `agents`, block with a bounded error (first 100 duplicate groups and empty-value entries plus remainder counts) and complete read-only runbook inventory of values/UUIDs without changing data, then add `uq_agents_external_id` and `chk_agents_external_id_not_empty` and drop `idx_agents_external_id`; DOWN restores the old index without touching rows; new operator runbook | specs/055-agent-external-id-upsert/data-model.md:128-179 |
+| DEC-054 | Decision | Supersede feature 054's non-uniqueness clarification and FR-011; remove its shared-ID E2E scenario and cover zero-or-one results once in US4.1; leave the 054 spec unchanged as history | specs/055-agent-external-id-upsert/research.md:250-261 |
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in ADR 045's Status line and moves
-the draft to `adrs/045-unique-agent-external-id-upsert.md`.
+the draft to `adrs/045-unique-agent-external-id-upsert.md`, replacing the earlier approved text.
+
+API-TIMESTAMPS (microsecond presentation and `+1 microsecond` advancement) was withdrawn on
+2026-11-04 by maintainer direction ([spec.md Clarifications](./spec.md#session-2026-11-04-planning-revision)).
+Admin Agent timestamp presentation stays as released in `2.1.0`, so it needs no API sign-off; the
+ADR-045 revision above carries the change. Implementation reverts the merged API-TIMESTAMPS text
+in `api/admin/openapi.yaml`, the microsecond presentation and advancement code, and their tests.
 
 ## Project Structure
 
@@ -153,7 +162,7 @@ specs/055-agent-external-id-upsert/
 ├── quickstart.md                              # Phase 1
 ├── contracts/
 │   └── admin-agents-openapi.yaml              # Phase 1 — Admin API 3.0.0 delta
-├── adr-045-unique-agent-external-id-upsert.md # Draft ADR (Proposed)
+├── adr-045-unique-agent-external-id-upsert.md # Draft ADR 045 revision (Proposed)
 ├── checklists/requirements.md
 └── tasks.md                                   # Phase 2 — 70 implementation/verification tasks
 ```
@@ -245,7 +254,7 @@ Ordering constraints for tasks:
 |---|---|---|
 | US1.1 | `tests/e2e/agent_external_id_upsert_test.go` | `It("should create the agent with 201 and a UUID Location when no agent holds the external ID")` |
 | US1.2 | same, `Label("docker")`, both stores | `It("should return 200 with an unchanged representation and timestamps on replay")` — include reverse-lexical multi-URI creation/replay |
-| US1.3 | same, `Label("docker")`, both stores | `It("should update the same agent and advance only updated_at when the definition changes")` — include multi-URI update/replay and deterministic same-second microsecond advancement |
+| US1.3 | same, `Label("docker")`, both stores | `It("should update the same agent and preserve its identity and creation time when the definition changes")` — include multi-URI update then identical replay returning the unchanged whole-second representation |
 | US1.4 | same, `Label("docker")` | `It("should create exactly one agent when two PostgreSQL brokers race on the first call")` |
 | US1.5 | same | `It("should preserve identities and clear metadata and collections when optional fields are omitted")` |
 | US1.6 | same | `It("should clear the canonical ID, metadata, and collections on explicit nulls without touching grants")` |
@@ -286,9 +295,9 @@ assertions (status codes, `Location`, timestamps, stored agents, migration error
 
 - In-memory scenarios: fresh `bootstrap.TestServer` and storage per test.
 - US1.2–US1.3: run existing scenario assertions on both memory and PostgreSQL fixtures; use at
-  least two reverse-ordered valid client URIs for create/update replay. Seed a future stored
-  timestamp in test fixtures for deterministic same-second +1 microsecond update then replay/GET;
-  no sleeps or production clock API. Keep one `Label("docker")` `It()` per scenario with both
+  least two reverse-ordered valid client URIs for create/update replay. Assert the full update
+  response and then exact equality of the replay and GET, including `updated_at`; no sleeps or
+  production clock API. Keep one `Label("docker")` `It()` per scenario with both
   store cases inside it, so the non-Docker suite does not require PostgreSQL or skip a case.
 - US1.4: one `bootstrap.NewPostgresFixture`, two storage adapters and two servers, concurrent PUTs.
 - US3: new `bootstrap.NewPostgresFixtureAtVersion(ctx, 45)` plus `MigrateUp()` on the fixture, so a
@@ -303,16 +312,17 @@ request helper in `tests/e2e/helpers/agent_external_id.go` if the existing helpe
 
 - `internal/domain/agents/service_test.go` / `reconcile_test.go`: table tests for selector and body
   validation, each FR-012 row on both branches, effective-definition equality (including client-URI
-  set comparison), conflict re-read, bounded retry, and >1 holder as an internal error. Fixed-time
-  tests cover microsecond creation and minimum advancement on rapid/frozen/backward-clock updates;
-  real memory/PostgreSQL read-back verifies actual change then exact no-op preservation.
+  set comparison), conflict re-read, bounded retry, and >1 holder as an internal error. Timestamp
+  tests cover current-time creation, preserved `CreatedAt` and current-time `UpdatedAt` on actual
+  update; real memory/PostgreSQL read-back verifies actual change then exact no-op preservation.
 - `internal/domain/storage/agent_test.go`: empty external ID rejected; nil allowed.
 - `internal/adapters/storage/memory/agent_repository_test.go`: create/update/delete index behavior;
   indexed `ListByExternalID` zero-or-one/cloning on move/clear/delete/reuse and rejected writes;
   concurrent creates under `-race`.
 - `internal/adapters/http/handlers/admin/agents_handler_test.go`: selector parsing, member presence,
   `client_id: null`, status, `Location`, `Vary`, `Preference-Applied`, error mapping; shared byte-sorted
-  client-URI and UTC microsecond timestamp presentation across all Admin Agent response paths.
+  client-URI presentation and whole-second RFC 3339 (`Z`) timestamps across all Admin Agent
+  response paths.
 
 **Integration Tests** (`just test-integration-infra`):
 

@@ -63,8 +63,8 @@ ID, Client ID, or Stable Identifier, and never selects an agent by those values.
 | metadata URLs (3) | as supplied | clear | clear | replace |
 | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | as supplied or empty | empty | empty | replace whole collection |
 | `display_name`, `description`, `permission_sets` | required | required | rejected | replace |
-| `created_at` | UTC now truncated to microseconds | preserved | preserved | preserved |
-| `updated_at` | same microsecond instant as `created_at` | unchanged on no-op; advancement rule below on change | same | same |
+| `created_at` | UTC now | preserved | preserved | preserved |
+| `updated_at` | same instant as `created_at` | unchanged on no-op; UTC now on change | same | same |
 
 ### Effective-definition equality (FR-008)
 
@@ -73,7 +73,7 @@ service requirements in order (`nil` and empty `required_scopes` equal); permiss
 in order; redirect URIs and allowed scopes in order (`nil` equals empty); client URIs as a set.
 Not compared: `ID`, `CreatedAt`, `UpdatedAt`, `ClearCanonicalID`.
 
-### Stable Agent presentation (Proposed, API-ORDER and API-TIMESTAMPS)
+### Stable Agent presentation (Proposed, API-ORDER)
 
 Every Admin Agent response (POST, both PUT forms, single GET, and list/filter GET) presents
 `client_uris` in ascending Go string byte order on a copied slice. Do not mutate the aggregate,
@@ -82,24 +82,17 @@ remains set-based; stored client-URI order is not a domain invariant. Sorting th
 response as well as subsequent reads guarantees identical create/update replay bodies on both stores,
 independent of PostgreSQL collation or memory input order.
 
-Collection PUT creation sets both timestamps to `time.Now().UTC().Truncate(time.Microsecond)`.
-For an actual update against the observed agent, set:
+Timestamps follow the existing write paths. Collection PUT creation sets both timestamps to
+`time.Now().UTC()`, as `POST` does. An actual update preserves `CreatedAt` and sets `UpdatedAt` to
+`time.Now().UTC()`, as ID-addressed `PUT` does. No-op returns the stored timestamps without a
+write. Every Admin Agent timestamp keeps the whole-second RFC 3339 presentation of Admin API
+`2.1.0`, rendered as `t.UTC().Format(time.RFC3339)` ([R4](./research.md#r4--no-op-detection)). A change within the same second as the previous write may therefore present an unchanged
+`updated_at`; it is not an ETag or a total ordering of writes, and the existing last-writer-wins
+policy remains. No clock abstraction or minimum-advancement rule is added.
 
-`UpdatedAt = max(now.UTC().Truncate(time.Microsecond), observed.UpdatedAt.UTC().Truncate(time.Microsecond).Add(time.Microsecond))`.
-
-Preserve `CreatedAt` exactly. No-op returns the stored timestamps without a write. PostgreSQL
-`TIMESTAMPTZ` and memory persist the reconcile timestamp at microsecond precision. Every Admin
-Agent timestamp is presented as UTC, truncated to microseconds, then formatted with
-`time.RFC3339Nano` (zero to six fractional digits, trailing zeroes omitted). Existing POST and
-ID-addressed PUT timestamp assignment is otherwise unchanged. This changes the former whole-second
-HTTP presentation, not the schema or timestamp fields. The advancement rule guarantees a strictly
-later observable timestamp for each sequential actual reconcile update, including a frozen or
-backward-moving clock; it may lead wall time by one microsecond per rapid change. It is not an ETag
-or a total ordering of concurrent writes; the existing last-writer-wins policy remains.
-
-Tests fix the observed timestamp and proposed clock instant in `_test.go` helpers, never by a
-new production clock/configuration API. Exercise same-second update then no-op through the service,
-real persistence and HTTP presentation on both stores; assert exact replay equality and no write.
+Replay tests assert exact equality of the full representation, including `updated_at`, and no
+write; update tests assert the changed definition, preserved `id` and `created_at`, and a valid
+whole-second `updated_at` that is not earlier than `created_at`.
 
 ### State transitions
 
@@ -108,7 +101,7 @@ stateDiagram-v2
     [*] --> Absent
     Absent --> Present: PUT (no holder) → Created, 201
     Present --> Present: PUT equal definition → Unchanged, 200, no write
-    Present --> Present: PUT different definition → Updated, 200, updated_at advances
+    Present --> Present: PUT different definition → Updated, 200, updated_at = now
     Absent --> Present: PUT loses create race → re-read → Unchanged/Updated, 200
 ```
 

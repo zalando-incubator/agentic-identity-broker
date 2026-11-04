@@ -1,6 +1,6 @@
 # Proposed Admin API contract changes for feature 055.
 # Status: Proposed — awaiting maintainer sign-off (plan.md Approval Items API-UPSERT,
-# API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER, API-TIMESTAMPS). Implementation merges these operations and
+# API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER). Implementation merges these operations and
 # components into api/admin/openapi.yaml after approval. Component references point to
 # the existing document.
 openapi: 3.0.3
@@ -26,17 +26,12 @@ info:
     byte order. URI spelling, other collection ordering and empty-field omission
     are unchanged. Stored order is irrelevant; equal-URI-set collection PUT replay does not write.
 
-    API-TIMESTAMPS: Every Admin Agent `created_at` and `updated_at` is UTC RFC 3339
-    with microsecond precision: truncate to microseconds and use RFC3339Nano
-    formatting (zero to six fractional digits, trailing zeroes omitted). This
-    replaces whole-second presentation; names and date-time schemas do not change.
-    Collection PUT creation sets both stored times to UTC now truncated to microseconds.
-    Each sequential actual reconcile update preserves `created_at` and sets `updated_at`
-    to max(UTC now truncated to microseconds, observed stored `updated_at` truncated
-    to microseconds + 1 microsecond). Thus rapid same-second changes are observable,
-    even with a frozen/backward clock. It may lead wall time slightly; it is not a
-    concurrent-write revision or ETag. No-op replay preserves stored times and writes
-    nothing. Other write operations retain existing timestamp assignment.
+    Timestamps: Every Admin Agent `created_at` and `updated_at` keeps the whole-second
+    RFC 3339 presentation of Admin API 2.1.0. Collection PUT creation sets both to the
+    current time, and an actual reconcile update preserves `created_at` and sets
+    `updated_at` to the current time, as `POST` and ID-addressed `PUT` do. Two changes
+    within one second may therefore present the same `updated_at`; it is not a revision
+    or ETag. No-op replay preserves stored times and writes nothing.
 paths:
   /api/agents:
     get:
@@ -57,7 +52,7 @@ paths:
 
         Returns a direct array of agent objects (no envelope), in no guaranteed order.
       operationId: listAgents
-      x-change: The `multiple_agents` example applies to the unfiltered list; parameters, array shape, and errors are unchanged from 2.1.0. Shared Agent presentation follows API-ORDER/API-TIMESTAMPS above, including single-agent GET.
+      x-change: The `multiple_agents` example applies to the unfiltered list; parameters, array shape, and errors are unchanged from 2.1.0. Shared Agent presentation follows API-ORDER above, including single-agent GET.
 
     post:
       summary: Create a new agent
@@ -124,8 +119,8 @@ paths:
         with the existing `validation failed` envelope. Canonical-ID conflicts,
         configuration-dependent `client_id` conflicts (`multi_agent_client.enabled`),
         and client-URI identity conflicts return `409 conflict` on both branches.
-        Failed requests change no agent. Shared Agent ordering and timestamp presentation
-        follow API-ORDER/API-TIMESTAMPS above on create, update, and replay.
+        Failed requests change no agent. Shared Agent ordering follows API-ORDER above,
+        and timestamps keep the whole-second presentation, on create, update, and replay.
       operationId: reconcileAgentByExternalId
       tags:
         - Agents
