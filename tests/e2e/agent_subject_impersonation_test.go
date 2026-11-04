@@ -327,6 +327,19 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 					Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
 				}
 			}
+
+			cfg := configFor([]string{"human", "agent"})
+			subjectRole := cfg.OAuth2AuthServer.Impersonation.Rules[0].Roles["subject"]
+			subjectRole.PrincipalExpression = "subject_token.ref"
+			cfg.OAuth2AuthServer.Impersonation.Rules[0].Roles["subject"] = subjectRole
+			boot(cfg, false)
+			seedGrant(other.ID.String(), false)
+			now := time.Now()
+			mapped, err := issuer.SignJWT(map[string]any{"iss": issuer.URL(), "sub": "alice@example.com", "ref": other.ID.String(), "aud": fixtures.ImpersonationAudience, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()})
+			Expect(err).NotTo(HaveOccurred())
+			form := requestFor("alice@example.com")
+			form.Set("subject_token", mapped)
+			assertDenied(form, false)
 		})
 		// US2.5 from specs/054-agent-subject-impersonation/spec.md
 		It("rejects invalid category values and YAML shapes before accepting traffic", func() {

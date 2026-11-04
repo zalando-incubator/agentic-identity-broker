@@ -122,6 +122,8 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 		unsigned     bool
 		unbound      bool
 		lookupErr    error
+		mappedOther  bool
+		status       ports.UserDelegationStatus
 		wantCode     string
 		wantCalls    int
 		wantCategory SubjectCategory
@@ -133,6 +135,8 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCalls: 1},
 		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "access_denied", wantCalls: 1},
 		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "access_denied", wantCalls: 1},
+		{name: "extracted principal names another agent", categories: []string{"human", "agent"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.UserDelegationActive, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "extracted principal names another agent on human-only rule", categories: []string{"human"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.UserDelegationActive, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "agent lookup failure fails closed", categories: []string{"human", "agent"}, subject: func(*Target) string { return other.ID.String() }, lookupErr: context.DeadlineExceeded, wantCode: "server_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,6 +147,11 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 			cfg.Rules[0].AllowedSubjectCategories = tc.categories
 			cfg.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 			cfg.Rules[0].Authorization.CEL.Expression = "subject_token.sub != ''"
+			if tc.mappedOther {
+				subjectRole := cfg.Rules[0].Roles["subject"]
+				subjectRole.PrincipalExpression = "'" + other.ID.String() + "'"
+				cfg.Rules[0].Roles["subject"] = subjectRole
+			}
 			if tc.unbound {
 				cfg.Rules[0].Authorization.CEL.Expression = "client_assertion.sub != '' && !has(subject_token.nonce)"
 			}
@@ -157,7 +166,11 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 			}}
 			key, keyset := signedValidationKey(t, "cross-agent")
 			issuer := &stubIssuer{}
-			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
+			status := tc.status
+			if status == "" {
+				status = ports.UserDelegationMissing
+			}
+			verifier := &recordingDelegationVerifier{status: status}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
 			}, agents, issuer, 0, nil, verifier, "https://broker.example.com")

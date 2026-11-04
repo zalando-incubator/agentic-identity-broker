@@ -228,7 +228,8 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		res.subject = targetAgent.ID.String()
 	}
 	if res.category == SubjectCategoryHuman && (!subjectUnverified || subBound) {
-		crossAgent, err := s.isOtherRegisteredAgent(ctx, subjectClaims, targetAgent.ID)
+		rawSub, _ := subjectClaims["sub"].(string)
+		crossAgent, err := s.isOtherRegisteredAgent(ctx, targetAgent.ID, rawSub, subjectID)
 		if err != nil {
 			res.abort = originError(ctx, serverError("subject agent lookup failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentRepositoryUnavailable)
 			return res
@@ -408,23 +409,27 @@ func failureAudit(targetAgentID string, res *ruleResult, err *tokenexchange.Toke
 	return record
 }
 
-// isOtherRegisteredAgent reports whether the raw sub is the canonical UUID of a registered agent
-// other than the target. Such a cross-agent subject is never eligible and never falls back to
-// human delegation (ADR 045 decision 2b).
-func (s *Service) isOtherRegisteredAgent(ctx context.Context, claims map[string]interface{}, target id.AgentID) (bool, error) {
-	subject, ok := claims["sub"].(string)
-	if !ok {
-		return false, nil
-	}
-	agentID, err := id.ParseAgentID(subject)
-	if err != nil || agentID.String() != subject || agentID == target {
-		return false, nil
-	}
-	if _, err := s.agents.Get(ctx, agentID); err != nil {
-		if ports.IsNotFoundErr(err) {
-			return false, nil
+// isOtherRegisteredAgent reports whether any candidate (the raw sub or the extracted principal) is
+// the canonical UUID of a registered agent other than the target. Such a cross-agent subject is
+// never eligible and never falls back to human delegation (ADR 045 decision 2b).
+func (s *Service) isOtherRegisteredAgent(ctx context.Context, target id.AgentID, candidates ...string) (bool, error) {
+	checked := make(map[id.AgentID]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		agentID, err := id.ParseAgentID(candidate)
+		if err != nil || agentID.String() != candidate || agentID == target {
+			continue
 		}
-		return false, err
+		if _, seen := checked[agentID]; seen {
+			continue
+		}
+		checked[agentID] = struct{}{}
+		if _, err := s.agents.Get(ctx, agentID); err != nil {
+			if ports.IsNotFoundErr(err) {
+				continue
+			}
+			return false, err
+		}
+		return true, nil
 	}
-	return true, nil
+	return false, nil
 }

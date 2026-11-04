@@ -284,7 +284,7 @@ N/A under API-004. No frontend component, Storybook story, semantic-token/WCAG c
 - [X] T081 [R] Update the OpenAPI approval create/consume responses, then write failing tests and route third-party exchange and subject-token approval authentication through `CELEvaluator.ResolveHumanSubject`; agent-subject tokens return `403 forbidden` and detection failures `503` on approvals; add ADR 045 decision 6a, FR-013 and the US3.5 E2E scenario (finding 2, A11)
 - [X] T082 [R] Write failing tests, then classify an unverified exact-target subject as agent when the rule's predicate binds `subject_token.sub` (`classifySubject`); add FR-003a, US1.4 and its E2E scenario, and revise SR-003, ADR 045 (decision 2a), research R8, glossary and configuration docs (A13)
 - [X] T083 [R] Withdraw A10 (A14): restore End-User OpenAPI `info.version` `1.1.0`, remove the End-User API 2.0.0 migration guide and its cross-references, restore the ARCHITECTURE API-versioning paragraph, replace ADR 045 decision 8, and delete `contracts/enduser-api-versioning.md`. Supersedes the versioning parts of T010, T048, T053 and T059.
-- [X] T084 [R] Write failing tests, then reject cross-agent subjects (signed or predicate-bound unverified `sub` naming another registered agent) on every rule without human fallback; add FR-003b, US2.6 and its E2E scenario, ADR 045 decision 2b, and configuration/reference docs (A15)
+- [X] T084 [R] Write failing tests, then reject cross-agent subjects (signed or predicate-bound unverified `sub`, or the extracted subject principal, naming another registered agent) on every rule without human fallback; add FR-003b, US2.6 and its E2E scenario, ADR 045 decision 2b, and configuration/reference docs (A15)
 
 ## Acceptance Coverage
 
