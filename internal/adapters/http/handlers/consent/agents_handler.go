@@ -20,7 +20,7 @@ type AgentsHandler struct {
 // NewAgentsHandler creates a new agents handler.
 func NewAgentsHandler(consentService ConsentService, logger *slog.Logger) *AgentsHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("consent.NewAgentsHandler: logger must not be nil")
 	}
 	return &AgentsHandler{
 		consentService: consentService,

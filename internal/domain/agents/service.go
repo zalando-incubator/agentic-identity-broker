@@ -43,7 +43,7 @@ func NewService(
 	multiAgentEnabled bool,
 ) *Service {
 	if logger == nil {
-		logger = slog.Default()
+		panic("agents.NewService: logger must not be nil")
 	}
 	return &Service{
 		repo:              repo,

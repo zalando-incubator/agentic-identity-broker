@@ -58,11 +58,11 @@ type AgentDetailHandler struct {
 
 // NewAgentDetailHandler creates a new agent detail handler.
 func NewAgentDetailHandler(consentService ConsentService, logger *slog.Logger, sessionTokenValidator ports.SessionTokenValidator) *AgentDetailHandler {
+	if logger == nil {
+		panic("consent.NewAgentDetailHandler: logger must not be nil")
+	}
 	if sessionTokenValidator == nil {
 		panic("AgentDetailHandler requires a non-nil SessionTokenValidator")
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &AgentDetailHandler{
 		consentService:        consentService,

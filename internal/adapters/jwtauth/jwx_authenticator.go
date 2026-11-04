@@ -70,6 +70,9 @@ type JWXAuthenticator struct {
 // NewJWXAuthenticator creates a new JWX-based JWT authenticator.
 // It initializes the JWKS cache (for "jwks" verification mode) and validates configuration.
 func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) {
+	if cfg.Logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
 	if cfg.JWTConfig == nil {
 		return nil, fmt.Errorf("JWTConfig is required")
 	}
@@ -77,16 +80,11 @@ func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) 
 		return nil, fmt.Errorf("CELEvaluator is required")
 	}
 
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	auth := &JWXAuthenticator{
 		config:       cfg.JWTConfig,
 		celEvaluator: cfg.CELEvaluator,
 		jwksURL:      cfg.JWTConfig.JWKSURI,
-		logger:       logger,
+		logger:       cfg.Logger,
 	}
 
 	signed := cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == ""

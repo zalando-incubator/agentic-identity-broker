@@ -129,7 +129,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 	}
 
 	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
-	handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
+	handler := consent.NewAgentDetailHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
 	rctx := chi.NewRouteContext()
@@ -206,7 +206,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 	}
 
 	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
-	handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
+	handler := consent.NewGrantsHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
 	rctx := chi.NewRouteContext()
@@ -341,7 +341,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 
 	t.Run("GetAgentDetail", func(t *testing.T) {
-		handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
+		handler := consent.NewAgentDetailHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
 		reqCtx := principal.WithPrincipal(context.Background(), principalValue)
 		rctx := chi.NewRouteContext()
@@ -376,7 +376,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 	})
 
 	t.Run("GetAgentGrants", func(t *testing.T) {
-		handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
+		handler := consent.NewGrantsHandler(consentSvc, slog.New(slog.DiscardHandler), newIntegrationSessionTokenValidator())
 
 		reqCtx := principal.WithPrincipal(context.Background(), principalValue)
 		rctx := chi.NewRouteContext()

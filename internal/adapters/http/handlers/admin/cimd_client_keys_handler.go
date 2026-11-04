@@ -24,7 +24,7 @@ type CIMDClientKeysHandler struct {
 // NewCIMDClientKeysHandler constructs the CIMD key handler.
 func NewCIMDClientKeysHandler(keys ports.CIMDClientKeyLifecycle, logger *slog.Logger) *CIMDClientKeysHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("admin.NewCIMDClientKeysHandler: logger must not be nil")
 	}
 	return &CIMDClientKeysHandler{keys: keys, logger: logger}
 }

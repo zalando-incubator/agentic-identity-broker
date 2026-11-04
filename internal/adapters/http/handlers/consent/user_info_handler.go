@@ -19,7 +19,7 @@ type UserInfoHandler struct {
 // NewUserInfoHandler creates a new user info handler.
 func NewUserInfoHandler(logger *slog.Logger) *UserInfoHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("consent.NewUserInfoHandler: logger must not be nil")
 	}
 	return &UserInfoHandler{
 		logger: logger,

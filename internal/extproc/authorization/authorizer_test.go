@@ -269,7 +269,7 @@ func TestOPAAuthorizer_Evaluate_CreatesTraceSpanWithDecisionAttributes(t *testin
 	})
 
 	path := writePolicy(t, allowAllPolicy)
-	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -320,7 +320,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName(t *testing.T) 
 	})
 
 	path := writePolicy(t, allowAllPolicy)
-	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -362,7 +362,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent(t *test
 	})
 
 	path := writePolicy(t, allowAllPolicy)
-	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -396,7 +396,7 @@ func TestOPAAuthorizer_Allow(t *testing.T) {
 	path := writePolicy(t, allowAllPolicy)
 	cfg := authzConfig(path)
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -412,7 +412,7 @@ import rego.v1
 result := {"action": "allow"} if {
 	input.parsed_body.id == 9007199254740993
 } else := {"action": "deny"}`)
-	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -429,7 +429,7 @@ func TestOPAAuthorizer_Deny(t *testing.T) {
 	path := writePolicy(t, denyAllPolicy)
 	cfg := authzConfig(path)
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -443,7 +443,7 @@ func TestOPAAuthorizer_PermissionSetContextAvailability(t *testing.T) {
 	path := writePolicy(t, permissionSetPolicy)
 	cfg := authzConfig(path)
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -503,7 +503,7 @@ func TestOPAAuthorizer_UndefinedResult_Deny(t *testing.T) {
 	path := writePolicy(t, undefinedPolicy)
 	cfg := authzConfig(path)
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -517,7 +517,7 @@ func TestOPAAuthorizer_UndefinedResult_DeniesEvenWhenConfiguredAllowDefaultInPat
 	cfg := authzConfig(path)
 	cfg.DefaultDecision = "allow"
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -533,7 +533,7 @@ func TestOPAAuthorizer_EvaluationTimeout_Deny(t *testing.T) {
 	cfg := authzConfig(path)
 	cfg.EvaluationTimeout = 100 * time.Millisecond
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -553,7 +553,7 @@ func TestOPAAuthorizer_Stop_GracefulShutdown(t *testing.T) {
 	path := writePolicy(t, allowAllPolicy)
 	cfg := authzConfig(path)
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	// First Stop
@@ -678,7 +678,7 @@ func TestOPAAuthorizer_SDKUndefined_DeniesEvenWhenDefaultDecisionAllow(t *testin
 	cfg := authzSDKConfig(writeOPAConfigFile(t, bundleServer.URL()))
 	cfg.DefaultDecision = "allow"
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -698,7 +698,7 @@ func TestOPAAuthorizer_SDKConfigWithEnvoyPlugin_StartsSuccessfully(t *testing.T)
 
 	cfg := authzSDKConfig(writeOPAConfigFileWithEnvoyPlugin(t, bundleServer.URL()))
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -751,7 +751,7 @@ plugins := {"envoy_ext_authz_grpc": {"addr": "127.0.0.1:0", "path": "aib/extproc
 
 	cfg := authzSDKConfig(writeOPAConfigFileWithDiscovery(t, bundleServer.URL()))
 
-	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
+	auth, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	defer auth.Stop(context.Background())
 
@@ -785,6 +785,6 @@ func TestNewOPAAuthorizer_InvalidPolicyPath(t *testing.T) {
 	// Scenario: policy file does not exist → NewOPAAuthorizer returns error
 	cfg := authzConfig("/does/not/exist/policy.rego")
 
-	_, err := authorization.NewOPAAuthorizer(cfg, nil)
+	_, err := authorization.NewOPAAuthorizer(cfg, slog.New(slog.DiscardHandler))
 	require.Error(t, err)
 }

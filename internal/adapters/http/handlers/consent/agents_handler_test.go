@@ -3,6 +3,7 @@ package consent
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,7 +47,7 @@ func TestGetAgentDelegations_Success(t *testing.T) {
 	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return(mockDelegations, nil).Once()
 
 	// Create handler
-	handler := NewAgentsHandler(mockSvc, nil)
+	handler := NewAgentsHandler(mockSvc, slog.New(slog.DiscardHandler))
 
 	// Create request with principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
@@ -97,7 +98,7 @@ func TestGetAgentDelegations_EmptyList(t *testing.T) {
 	mockSvc := newMockAgentsService(t)
 	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation{}, nil).Once()
 
-	handler := NewAgentsHandler(mockSvc, nil)
+	handler := NewAgentsHandler(mockSvc, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)
@@ -118,7 +119,7 @@ func TestGetAgentDelegations_EmptyList(t *testing.T) {
 // TestGetAgentDelegations_MissingPrincipal tests error when principal is not in context.
 func TestGetAgentDelegations_MissingPrincipal(t *testing.T) {
 	mockSvc := newMockAgentsService(t)
-	handler := NewAgentsHandler(mockSvc, nil)
+	handler := NewAgentsHandler(mockSvc, slog.New(slog.DiscardHandler))
 
 	// Request without principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
@@ -141,7 +142,7 @@ func TestGetAgentDelegations_ServiceError(t *testing.T) {
 	mockSvc := newMockAgentsService(t)
 	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation(nil), errors.New("database connection failed")).Once()
 
-	handler := NewAgentsHandler(mockSvc, nil)
+	handler := NewAgentsHandler(mockSvc, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)
@@ -165,7 +166,7 @@ func TestGetAgentDelegations_ContentType(t *testing.T) {
 	mockSvc := newMockAgentsService(t)
 	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation{}, nil).Once()
 
-	handler := NewAgentsHandler(mockSvc, nil)
+	handler := NewAgentsHandler(mockSvc, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)

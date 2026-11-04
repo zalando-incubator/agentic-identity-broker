@@ -56,6 +56,9 @@ type SessionSweepService struct {
 }
 
 func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *OAuth2SessionService, logger *slog.Logger) *SessionSweepService {
+	if logger == nil {
+		panic("oauth2session.NewSessionSweepService: logger must not be nil")
+	}
 	meter := otel.Meter("oauth2session")
 	refreshed, _ := meter.Int64Counter("session_sweep_refreshed_total",
 		metric.WithDescription("Sessions refreshed and committed by an admin sweep"), metric.WithUnit("{refresh}"))
@@ -63,9 +66,6 @@ func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *
 		metric.WithDescription("Admin sweep candidates that could not be refreshed"), metric.WithUnit("{refresh}"))
 	skipped, _ := meter.Int64Counter("session_sweep_skipped_total",
 		metric.WithDescription("Admin sweep candidates skipped because they were already refreshed or deleted"), metric.WithUnit("{refresh}"))
-	if logger == nil {
-		logger = slog.Default()
-	}
 	return &SessionSweepService{
 		expiry: expiry, sessions: sessions, logger: logger,
 		refreshedCounter: refreshed, failedCounter: failed, skippedCounter: skipped,
