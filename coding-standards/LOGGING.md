@@ -36,6 +36,7 @@ s.logger.InfoContext(ctx, "oauth2 session refreshed",
 - Write a short lowercase phrase. Do not add a period. Examples: `"grant revoked"`, `"cimd document fetch failed"`.
 - Use a constant string. Do not use `fmt.Sprintf`. Put all values in attributes.
 - Do not use an event identifier (`TokenIssued`, `provider_created`) as the message. Put it in `event`.
+- The `sloglint` linter (`.golangci.yml`) fails a message that is not a constant (`static-msg`) and a key that is not `snake_case` (`key-naming-case: snake`). Dotted `token_exchange.*` keys are excluded (section 2.3). A helper that forwards each caller's constant message (ExtProc `logDiagnostic`), or a library's message (the OPA SDK logger), carries a `//nolint:sloglint` comment that says why.
 
 ### 2.2 Event Identifier
 
