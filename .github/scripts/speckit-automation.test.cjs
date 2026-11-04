@@ -117,7 +117,9 @@ function fixture(eventName, payload, options = {}) {
   const minimized = [];
   const dispatched = [];
   const sources = { ...files, ...options.extra };
+  const hooks = [];
   const github = {
+    hook: { wrap: (name, wrapper) => hooks.push({ name, wrapper }) },
     rest: {
       repos: {
         getCollaboratorPermissionLevel: async (args) => {
@@ -201,7 +203,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads, created, deleted, minimized, dispatched,
+    github, calls, contentReads, created, deleted, minimized, dispatched, hooks,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -767,6 +769,80 @@ function preparationIO(t) {
   t.mock.method(fs, "writeFileSync", (name, body) => saved.push({ name, body }));
   return saved;
 }
+
+async function settle(t, promise) {
+  let done = false;
+  const result = promise.then((value) => ({ value }), (error) => ({ error })).finally(() => { done = true; });
+  while (!done) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(10_000);
+  }
+  return result;
+}
+
+test("phase preparation retries transient GitHub read failures before the agent starts", async (t) => {
+  preparationIO(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.deepEqual(f.hooks.map(({ name }) => name), ["request"]);
+  const [{ wrapper }] = f.hooks;
+  const failure = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
+  const responder = (statuses) => {
+    const attempts = [];
+    const request = async (options) => {
+      attempts.push(options.method);
+      const status = statuses[attempts.length - 1];
+      if (status) throw failure(status);
+      return { status: 200, data: "ok" };
+    };
+    return { attempts, request };
+  };
+
+  const recovered = responder([503, 502]);
+  assert.deepEqual(await settle(t, wrapper(recovered.request, { method: "GET" })), { value: { status: 200, data: "ok" } });
+  assert.equal(recovered.attempts.length, 3);
+
+  const outage = responder([503, 503, 503, 503, 503]);
+  assert.equal((await settle(t, wrapper(outage.request, { method: "GET" }))).error.status, 503);
+  assert.equal(outage.attempts.length, 4);
+
+  const query = responder([502]);
+  const lookup = { method: "POST", url: "/graphql", query: "query Lookup { viewer { login } }" };
+  assert.deepEqual(await settle(t, wrapper(query.request, lookup)), { value: { status: 200, data: "ok" } });
+  assert.equal(query.attempts.length, 2);
+
+  const mutation = { method: "POST", url: "/graphql", query: "\n  mutation($id: ID!) { minimizeComment(input: {subjectId: $id}) { clientMutationId } }" };
+  for (const [status, options] of [[404, { method: "GET" }], [403, { method: "GET" }], [503, { method: "POST", url: "/repos/example/broker/issues/42/comments" }], [503, mutation]]) {
+    const once = responder([status]);
+    assert.equal((await settle(t, wrapper(once.request, options))).error.status, status);
+    assert.equal(once.attempts.length, 1);
+  }
+
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.equal(f.hooks.length, 1);
+});
+
+test("every workflow entry point retries transient reads once per client", async (t) => {
+  preparationIO(t);
+  const entries = {
+    route: (f) => route(f),
+    announce: (f) => announce({ ...f, needs: {} }),
+    verify: (f) => verify({ ...f, comment: 11, phase: "clarify" }),
+    publishApprovals: (f) => publishApprovals({ ...f, comment: 11 }),
+    remediable: (f) => remediable({ ...f, pr: 42 }),
+    publishProposals: (f) => publishProposals({ ...f, review: 40 }),
+    testTarget: (f) => testTarget({ ...f, pr: 42 }),
+    dispatchTests: (f) => dispatchTests({ ...f, target: {} }),
+    report: (f) => report({ ...f, needs: {} }),
+  };
+  for (const [name, entry] of Object.entries(entries)) {
+    const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+    await entry(f).catch(() => {});
+    await entry(f).catch(() => {});
+    assert.deepEqual(f.hooks.map(({ name: hook }) => hook), ["request"], name);
+  }
+});
 
 test("specification context preserves only the issue title and body, not comments", async (t) => {
   const saved = preparationIO(t);
