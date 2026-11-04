@@ -4,13 +4,20 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft — clarification required
+**Status**: Draft — clarified; consequential proposals require maintainer approval
 
 **Input**: User description:
 
 > Invalidate tokens after service client-id change
 >
 > In case a thirdparty service client-id changes, established related sessions must get invalidated and users prompted for reauth. The consent screen should be shown automatically so that users are guided to re-login with a thirdparty.
+
+## Clarifications
+
+### Session 2026-11-04
+
+- Q: When must legacy sessions without a recorded establishing client identity reconnect? → A: On a service client-ID change after rollout, not solely on rollout (Q1 option B). **Proposed approval item DEC-001 (Decision; FR-013, AS-1.6)**: Preserve ADR 041's existing exception for unchanged, never-transitioned stored services, but end it for sessions predating a subsequent client-ID change. This meets the issue's service-change guarantee without forcing every legacy user to sign in on deployment. The main alternative is requiring all identity-less sessions to reconnect on rollout; retaining the exception after a known change would leave affected sessions outside the guarantee. No historical identity may be inferred or backfilled. Planning must register this item in `plan.md`'s Approval Items and draft a Proposed superseding ADR for the changed legacy exception, including any needed persisted change evidence and guarded rollout. This entry is a proposal, not approval of that ADR or a schema.
+- Q: What interaction must automatically show consent after invalidation? → A: The next relevant agent browser authorization (Q2 option A; FR-007 and FR-014). Existing pages must show sign-in when connection state is next loaded, but no unsolicited navigation, notification delivery, or client-driven agent-consent entry is required. This follows the issue's consent requirement using the established authorization entry point and avoids adding a notification feature. The main alternative is automatically navigating an already-open page into consent; that adds navigation and retry-loop scope without an active agent authorization context. Direct RFC 8693 recovery continues to return to `/sessions` under ADR 044. **Proposed approval item API-001 (API)**: Planning must register and specify the changed automatic-consent and session-usability behavior on existing authorization, consent, session-management, and token-acquisition contracts (FR-002, FR-006–FR-009), including applicable compatibility/versioning treatment. Reusing an existing route or response shape does not itself approve changed behavior.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -31,6 +38,7 @@ As an operator replacing a third-party service's client ID, I need the broker to
 3. **AS-1.3** — **Given** an old session has a refresh token, **When** an on-demand refresh, background refresh, or operator-triggered session sweep evaluates it after the client-ID change, **Then** the broker does not authenticate to the provider with that old session's refresh token and does not restore its usability.
 4. **AS-1.4** — **Given** a third-party authorization or refresh began under `reports-client-v1`, **When** the client ID changes before its resulting credentials would become usable, **Then** credentials associated with the previous client identity cannot become the usable connection under `reports-client-v2`; the user can start a fresh connection under the current identity.
 5. **AS-1.5** — **Given** a session has already been invalidated by a client-ID change, **When** an operator later restores `reports-client-v1` without the user reconnecting, **Then** the invalidated session does not automatically regain usability.
+6. **AS-1.6** — **Given** Alice and Bob have identity-less legacy sessions for a never-transitioned stored service that ADR 041 permits to remain usable, **When** the feature rolls out with that service's client ID unchanged, **Then** rollout alone does not require reconnection; **When** the operator subsequently changes that service's client ID, **Then** neither legacy session can supply a token or be refreshed until its owner reconnects, including after a broker restart or client-ID rollback. Alice's successful reconnection does not reconnect Bob. No historical session identity is inferred; legacy sessions already rejected by ADR 041 remain rejected. This scenario expresses proposed DEC-001.
 
 ---
 
@@ -50,7 +58,7 @@ As a user whose agent needs a changed service, I need the broker to show the con
 4. **AS-2.4** — **Given** Alice is reconnecting an invalidated session, **When** she declines provider authorization or the provider fails, **Then** the old session remains unusable, she receives an understandable failure outcome and a way to retry, and no new permissions are granted silently.
 5. **AS-2.5** — **Given** Alice's invalidated session exists, **When** she views session management or agent consent, **Then** the changed service is not represented as a usable connected service merely because its old token has not expired; the page provides a sign-in action for that service.
 
-AS-2.1 defines the minimum required automatic browser entry. Whether an additional automatic entry is required is Q2 below; no unsolicited browser navigation is assumed approved.
+AS-2.1 defines the automatic browser entry: the next relevant agent authorization. An already-open page reflects invalidation when it next loads connection state (AS-2.5), without automatically navigating into agent consent or requiring proactive notification.
 
 ---
 
@@ -76,8 +84,8 @@ As a user or operator, I need this change to affect only connections for a servi
 - Requests, callbacks, refreshes, and reconnections may overlap a change. Work under a previous identity must not overwrite a connection established under the current identity.
 - Two client-ID changes before a user returns still require a connection under the current identity; a rollback alone is not reauthorization (AS-1.5).
 - Unavailable or unreadable identity information must not be treated as either a confirmed identity change or proof that an old session remains usable. Fail closed without disguising an infrastructure problem as a guaranteed fixable sign-in problem.
-- Legacy sessions without an established identity require the explicit policy in Q1; current credentials must not be used to invent their historical identity.
-- An already-open browser cannot be assumed to receive an immediate notification. The automatic navigation boundary is Q2.
+- Identity-less legacy sessions retain only ADR 041's unchanged-service exception until a post-rollout client-ID change invalidates them (proposed DEC-001). Current credentials must not be used to invent their historical identity; pre-rollout changes cannot be reconstructed from current values.
+- An already-open browser is not proactively notified or navigated into consent. Its next connection-state load must represent invalidation, and its sign-in action remains available.
 - Reconnection must not bypass mandatory service requirements, revive an expired delegation, or silently opt the user into an optional service they did not include.
 
 ## Concrete Example Journeys *(mandatory)*
@@ -86,7 +94,7 @@ All identifiers, identities, paths, codes, and token markers below are synthetic
 
 **Shared cast and initial state**: Alice (`alice@example.com`) and Bob (`bob@example.com`) authenticate through the broker's trusted pre-authentication proxy. Agent Reports Reader has ID `550e8400-e29b-41d4-a716-446655440000` and callback `https://agent.example.com/callback`. Reports Production has ID `880e8400-e29b-41d4-a716-446655440010`, canonical ID `reports-prod`, standard confidential authentication, and filesystem-selected credentials. Its provider authorization endpoint is `https://reports.example.com/oauth/authorize`. Alice and Bob have established sessions under `reports-client-v1`. Alice has already delegated Reports Reader the permission set covering Reports Production. Alice also has a usable Calendar Production session. Times are 2026-11-04 UTC.
 
-### Journey 1 — The operator changes identity and old connections stop working (User Story 1, AS-1.1–AS-1.5; User Story 3, AS-3.1–AS-3.2)
+### Journey 1 — The operator changes identity and old connections stop working (User Story 1, AS-1.1–AS-1.6; User Story 3, AS-3.1–AS-3.2)
 
 **Step 1 — 09:00: Existing service configuration selects the credential files**
 
@@ -138,11 +146,13 @@ The request token markers stand for valid test-fixture JWTs under the deployment
 
 Refreshing or sweeping Alice's old session does not submit its refresh token to the provider under the changed identity. An older in-flight callback cannot produce a usable connection for the new identity. Restoring `reports-client-v1` without a fresh user connection does not revive a session already invalidated by this change. Calendar remains usable throughout; a same-ID secret rotation alone would not have caused this invalidation.
 
+**Legacy rollout variant (AS-1.6; proposed DEC-001)**: Instead, take a stored Reports service that never changed credential source, with Alice's and Bob's sessions lacking recorded client identity. At 09:00 the feature rolls out while its configured ID remains `reports-client-v1`; these sessions retain ADR 041's exception, without assigning that ID to their history. At 10:00 an accepted administrative update changes the service to `reports-client-v2`. At 10:01 both users receive the same no-token recovery outcome illustrated above, even with unexpired tokens. Restarting the broker or restoring `reports-client-v1` does not revive these invalidated sessions. Alice follows Journey 2 or 3 to connect under the current identity; Bob must independently do so. Legacy sessions already denied by ADR 041 receive no new exception.
+
 **Observable result**: Both Reports connections require sign-in, no previous-client token is newly released by the broker after the effective change, and unrelated Calendar access and delegations are preserved. Previously delivered tokens are outside this broker-side guarantee.
 
 ### Journey 2 — Alice sees consent automatically and reconnects Reports (User Story 2, AS-2.1–AS-2.2 and AS-2.4–AS-2.5)
 
-This journey shows the minimum next-authorization behavior. Q2 determines whether further automatic entry points are needed.
+This journey defines the selected next-authorization behavior. There is no additional proactive notification or automatic live-page navigation into consent.
 
 **Step 1 — 10:02: Reports Reader starts browser authorization**
 
@@ -295,7 +305,7 @@ HTTP/1.1 302 Found
 Location: https://reports.example.com/oauth/authorize?response_type=code&client_id=reports-client-v2&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440010%2Foauth2%2Fcallback&scope=reports%3Aread&state=SYNTHETIC_SEALED_DIRECT_RECOVERY_STATE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
 ```
 
-This direct recovery retains ADR 044's service-specific destination; it is not silently redirected to agent consent. Q2 must not be interpreted as permission to change that accepted decision.
+This direct recovery retains ADR 044's service-specific destination; it is not silently redirected to agent consent. Automatic consent applies to the agent browser authorization flow, not this direct recovery link.
 
 **Step 2 — Alice authorizes the current service identity**
 
@@ -354,8 +364,8 @@ The next eligible token request uses Alice's new Reports connection. Calendar an
 - **FR-010**: Cancellation or failed reconnection MUST leave the previous session unusable and expose a retry path without granting extra permissions.
 - **FR-011**: Sessions for unrelated services, broker authentication, existing delegation records, selected scopes, and delegation expiry MUST NOT change solely because one service's client ID changes. A service not included in a delegation MUST NOT force that delegation into consent.
 - **FR-012**: Same-ID secret rotation, metadata-only updates, and same-identity credential-source transitions MUST NOT themselves trigger client-ID-change invalidation. Existing validation and source-transition constraints continue to apply.
-- **FR-013**: Legacy sessions with no recorded establishing client identity require a defined rollout policy: [NEEDS CLARIFICATION: Should legacy sessions retain ADR 041's never-transitioned-stored exception, or be required to reconnect when a client-ID change occurs, or all be required to reconnect on rollout? The latter policies may require an explicitly approved superseding ADR; no historical identity may be inferred from current credentials.]
-- **FR-014**: In addition to FR-007's next-authorization behavior, automatic consent entry requires a product boundary: [NEEDS CLARIFICATION: Is automatic consent on the next relevant browser authorization sufficient, or must an already-open broker page or client interaction also initiate recovery without a new authorization request? Specify the additional entry point if required; direct RFC 8693 service recovery remains governed by ADR 044 unless an approved superseding decision changes it.]
+- **FR-013 (Proposed DEC-001)**: Rollout alone MUST NOT invalidate identity-less legacy sessions that ADR 041 permits for never-transitioned stored services. A subsequent effective service client-ID change MUST invalidate those pre-change sessions for every principal, even without a recorded establishing identity. Invalidation MUST survive restart and client-ID rollback. Legacy sessions already requiring identity under ADR 041 MUST remain unusable. No historical client identity may be inferred or backfilled from current credentials; successful fresh authorization records the actual initiating identity. Planning must define change evidence without assigning a fictitious historical identity and propose a superseding ADR before implementation.
+- **FR-014**: Automatic agent-consent entry is required on the next relevant browser authorization only (FR-007). Already-open consent and session-management pages MUST reflect unusability on their next connection-state load and offer sign-in (FR-008), but MUST NOT initiate unsolicited navigation into agent consent solely because the client ID changed. Proactive notifications and new client recovery entry points are out of scope. Direct RFC 8693 recovery MUST retain ADR 044's service-specific authorization action and `/sessions` return destination.
 
 ### Domain Model *(if applicable - document before API or database design)*
 
@@ -393,11 +403,11 @@ No new runtime setting or opt-out is requested. The journey uses the existing `s
 
 Use the existing agent authorization/consent, third-party authorization/callback, session-management, and token-exchange surfaces. The RFC-style examples illustrate the current [End-User contract](../../api/enduser/openapi.yaml), not a newly approved schema or endpoint. Stored-client changes use the existing [Admin service contract](../../api/admin/openapi.yaml), including validation and concurrency preconditions.
 
-Planning MUST identify behavior changes to those contracts, document them in OpenAPI before implementation, and submit API changes and consequential decisions for explicit maintainer approval. This specify phase grants no such approval. In particular, UI invalidation must not be achieved by silently repurposing the existing expiry fields or changing error contracts without review.
+Planning MUST identify behavior changes to those contracts, document them in OpenAPI before implementation, and submit API changes and consequential decisions for explicit maintainer approval, starting with proposed API-001 in Clarifications. This clarification phase grants no such approval. In particular, UI invalidation must not be achieved by silently repurposing the existing expiry fields or changing error contracts without review.
 
 ### Database Requirements *(if applicable)*
 
-Invalidation and recovery MUST have equivalent semantics across supported persistent and in-memory deployments and must not regain previous-identity usability after a restart. No schema or deletion strategy is selected in this phase. Any required schema changes must follow the repository's migration and both-store consistency requirements, including guarded rollout treatment for the policy selected in Q1.
+Invalidation and recovery MUST have equivalent semantics across supported persistent and in-memory deployments and must not regain previous-identity usability after a restart. No schema or deletion strategy is selected in this phase. Any required schema changes must follow the repository's migration and both-store consistency requirements, including guarded rollout treatment and durable service-change evidence for proposed FR-013. Current service values must not be backfilled as legacy sessions' establishing identities.
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -435,38 +445,6 @@ The existing consent and session-management experiences must distinguish a usabl
 - Identity changes become effective through the service's existing supported configuration boundary. Subsequent operations must enforce the current identity; planning must make race and multi-replica boundaries explicit rather than assume periodic cleanup is sufficient.
 - The operator has registered the new client and corresponding callback/credentials correctly. Recovery remains subject to ordinary provider availability and approval.
 - Existing delegations remain intact. Users do not need to regrant unrelated permissions solely to reconnect a service.
-- The minimum automatic consent trigger is the next relevant browser authorization. Additional live-page or client entry points remain Q2, not an assumed background notification feature.
-- Q1 must be settled before defining acceptance expectations for identity-less legacy sessions. Nothing in this draft authorizes overriding ADR 041's legacy exception.
+- The automatic consent trigger is the next relevant browser authorization. Existing pages reflect invalidation on their next state load; proactive notification and unsolicited navigation into consent are not part of this feature.
+- Proposed DEC-001 defines acceptance expectations for identity-less legacy sessions after rollout. It requires maintainer sign-off and an approved superseding ADR before overriding ADR 041's legacy exception after a service client-ID change.
 - Existing accepted constraints include [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) for identity association and credential sources, [ADR 044](../../adrs/044-service-specific-session-recovery-url.md) for direct recovery, [ADR 038](../../adrs/038-proactive-token-refresh.md) for refresh behavior, and [ADR 035](../../adrs/035-root-mounted-spa.md) for canonical browser routes. Planning must identify any required superseding decisions, including broader identity enforcement than ADR 041 currently provides and interaction with ADR 038's immediate valid-token return. No ADR is amended or accepted in this phase.
-
-## Open Product Questions — NEEDS CLARIFICATION
-
-### Q1 — Legacy sessions without recorded client identity
-
-**Context**: FR-013; ADR 041 currently permits missing identity for never-transitioned stored services. Current credentials cannot establish what client identity an older session used.
-
-**What we need to know**: Which legacy-session experience is intended when introducing this invalidation rule?
-
-| Option | Answer | Implications |
-| --- | --- | --- |
-| A | Retain the current legacy exception. | Limits the guarantee for identity-less, never-transitioned stored sessions; no forced rollout sign-in for those sessions. |
-| B | Require legacy reconnection when the service client ID changes. | Preserves unchanged legacy connections but requires an approved design that detects the change without inventing their history; may require superseding the exception. |
-| C | Require all identity-less legacy sessions to reconnect on rollout. | Gives a uniform established-identity baseline but interrupts previously working connections; requires explicit approval and an appropriate superseding decision. |
-| Custom | Specify another rollout policy. | State exactly which users reconnect and when; retain fail-closed and no-inference protections. |
-
-**Your choice**: Pending separate clarification session.
-
-### Q2 — Automatic consent entry point
-
-**Context**: FR-007 and FR-014; the issue asks for consent to be shown automatically, while agent browser authorization and direct service recovery are distinct existing flows.
-
-**What we need to know**: Is the next relevant browser authorization sufficient, or is another automatic entry point required?
-
-| Option | Answer | Implications |
-| --- | --- | --- |
-| A | Show consent automatically on the next relevant browser authorization. | Uses the minimum flow illustrated in Journey 2; no unsolicited navigation or push notification. |
-| B | Also guide an already-open broker page into the affected consent/reconnect experience when it next loads connection state. | Adds live-page behavior and needs explicit navigation and retry-loop acceptance scenarios. |
-| C | Require immediate proactive notification/navigation without a new authorization or page interaction. | Adds a notification scope and delivery expectations that must be specified and approved before planning. |
-| Custom | Name the additional user or client entry point. | Specify the actor, triggering interaction, destination, and expected return path; changes to accepted recovery behavior need explicit approval. |
-
-**Your choice**: Pending separate clarification session.
