@@ -30,18 +30,6 @@ func SignedImpersonationRule(issuer, jwks string, categories []string) ports.Imp
 	}
 }
 
-func HumanImpersonationRule(issuer, jwks string) ports.ImpersonationRuleConfig {
-	return SignedImpersonationRule(issuer, jwks, []string{"human"})
-}
-
-func AgentImpersonationRule(issuer, jwks string) ports.ImpersonationRuleConfig {
-	return SignedImpersonationRule(issuer, jwks, []string{"agent"})
-}
-
-func DualImpersonationRule(issuer, jwks string) ports.ImpersonationRuleConfig {
-	return SignedImpersonationRule(issuer, jwks, []string{"human", "agent"})
-}
-
 func ImpersonationTarget(clientID string) *storage.Agent {
 	agent := AgentWithClientID(clientID)
 	canonical := clientID
