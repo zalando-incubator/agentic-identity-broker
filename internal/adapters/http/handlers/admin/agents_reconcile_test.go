@@ -142,7 +142,7 @@ func TestAgentResponseStablePresentation(t *testing.T) {
 	response, err := h.toResponseWithServiceMap(a, map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"https://example/A", "https://example/z"}, response.ClientURIs)
-	assert.Equal(t, "2026-01-01T00:02:03.123456Z", response.CreatedAt)
+	assert.Equal(t, "2026-01-01T00:02:03Z", response.CreatedAt)
 	assert.Equal(t, response.CreatedAt, response.UpdatedAt)
 	assert.Equal(t, before, a)
 }

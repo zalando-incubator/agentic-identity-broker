@@ -1,7 +1,10 @@
 # ADR 045: Unique Agent External ID and Create-or-Update by External ID
 
-**Status**: Accepted (approved by mjungsbluth on 2026-10-31: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6541899974)
-**Date**: 2026-10-30
+**Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887)
+**Date**: 2026-10-30 (revised 2026-11-04)
+**Revision**: Withdraws the microsecond timestamp presentation and `+1 microsecond` advancement
+(API-TIMESTAMPS) on maintainer direction. Admin Agent timestamps keep the whole-second RFC 3339
+presentation of Admin API 2.1.0.
 **Feature**: 055-agent-external-id-upsert (issue #334)
 **Supersedes**: No ADR. Replaces feature 054's non-uniqueness clarification and FR-011, which are specification decisions.
 
@@ -37,13 +40,13 @@ that creates or updates by an alternate key.
    the FR-012 field policy: omitted `client_id` and `canonical_id` are preserved (ADR 017), and
    metadata and collections are replaced. No-op compares client URIs as a set; shared Admin Agent
    presentation sorts a copied URI slice in ascending Go string byte order on all write/read
-   responses, without changing URI spelling, stored order, or other collections. Collection PUT
-   creation persists UTC microsecond now for both timestamps; each sequential actual update uses
-   max(UTC microsecond now, observed UpdatedAt truncated to microseconds + 1 microsecond), preserving
-   CreatedAt exactly. No-op preserves stored times without a write. All Admin Agent timestamps use
-   UTC microsecond-truncated RFC3339Nano presentation (zero to six fractional digits); other writes
-   retain existing timestamp assignment. These approved presentation changes are API-ORDER and
-   API-TIMESTAMPS, not a concurrent revision guarantee.
+   responses, without changing URI spelling, stored order, or other collections (API-ORDER).
+   Timestamps follow the existing write paths: creation sets both to UTC now, and an actual update
+   preserves `CreatedAt` and sets `UpdatedAt` to UTC now. No-op preserves stored times without a
+   write, so a replay without an intervening change returns the unchanged representation,
+   including `updated_at`. All Admin Agent timestamps keep the whole-second RFC 3339 presentation
+   of Admin API 2.1.0. A change within the same second as the previous write may present an
+   unchanged `updated_at`; it is not a revision or concurrent-write guarantee.
 3. **Race handling without locks.** The domain service reads by external ID, then calls the
    existing repository `Create` or `Update`. If `Create` reports any conflict, the service re-reads
    by external ID once and, when a holder now exists, continues on the update branch. No new
@@ -64,9 +67,9 @@ that creates or updates by an alternate key.
 - Existing clients that relied on shared or empty external IDs receive `409` or `400` and must
   migrate. Upgrades stop until operators resolve legacy duplicates and empties.
 - `GET /api/agents?external_id=` keeps its array shape but returns at most one agent. Admin Agent
-  responses consistently sort client URIs and expose microseconds instead of whole-second-only
-  timestamps; existing consumers must tolerate the approved precision/ordering change. Rapid
-  sequential changes may put `updated_at` slightly ahead of wall time; it is not an ETag.
+  responses consistently sort client URIs; timestamp presentation is unchanged. Callers detect an
+  update by the returned definition, not by `updated_at`, which can stay the same for two writes
+  within one second and is not an ETag.
 - A future alternate-key reconcile operation for another resource should follow this pattern:
   adapter-enforced uniqueness, collection `PUT` with a required selector, bounded conflict re-read,
   and effective-definition no-op detection.
@@ -87,7 +90,10 @@ that creates or updates by an alternate key.
   and their grants.
 - **Preserve client-URI input order**: requires persisted PostgreSQL ordinal positions to match
   memory; response-only sorting avoids a schema addition and makes create/update replays stable.
+- **Microsecond timestamps with `+1 microsecond` minimum advancement** (the earlier API-TIMESTAMPS
+  text): makes every same-second update observable, but changes every Admin Agent response and can
+  put `updated_at` ahead of wall time for a guarantee the issue does not require.
 - **Whole-second timestamp advancement**: preserves former formatting but requires a full-second
-  logical jump for rapid changes, causing larger wall-clock drift than the microsecond minimum.
+  logical jump for rapid changes, causing larger wall-clock drift.
 - **Keep Admin API 2.x**: treats a behavior change that breaks existing callers as a fix, which
   Principles IV and X forbid.

@@ -28,17 +28,13 @@ info:
     byte order. URI spelling, other collection ordering and empty-field omission
     are unchanged. Stored order is irrelevant; equal-URI-set collection PUT replay does not write.
 
-    Every Admin Agent `created_at` and `updated_at` is UTC RFC 3339
-    with microsecond precision: truncate to microseconds and use RFC3339Nano
-    formatting (zero to six fractional digits, trailing zeroes omitted). This
-    replaces whole-second presentation; names and date-time schemas do not change.
-    Collection PUT creation sets both stored times to UTC now truncated to microseconds.
-    Each sequential actual reconcile update preserves `created_at` and sets `updated_at`
-    to max(UTC now truncated to microseconds, observed stored `updated_at` truncated
-    to microseconds + 1 microsecond). Thus rapid same-second changes are observable,
-    even with a frozen/backward clock. It may lead wall time slightly; it is not a
-    concurrent-write revision or ETag. No-op replay preserves stored times and writes
-    nothing. Other write operations retain existing timestamp assignment.
+    Every Admin Agent `created_at` and `updated_at` keeps the whole-second UTC
+    RFC 3339 presentation of Admin API 2.1.0. Collection PUT creation sets both
+    stored times to the current time. An actual reconcile update preserves
+    `created_at` and sets `updated_at` to the current time, as POST and ID-addressed
+    PUT do. Two changes within one second may therefore present the same
+    `updated_at`; it is not a revision or ETag. No-op replay preserves stored times
+    and writes nothing.
 
     ## Dual-Port Architecture
 
@@ -2781,9 +2777,9 @@ components:
 
     Agent:
       description: |
-        Admin Agent timestamps are UTC microsecond-truncated RFC 3339 with zero to six
-        fractional digits and trailing zeroes omitted. client_uris is presented in ascending
-        Go string byte order on a copy; stored order and other collections are unchanged.
+        Admin Agent timestamps use whole-second UTC RFC 3339 presentation.
+        client_uris is presented in ascending Go string byte order on a copy;
+        stored order and other collections are unchanged.
       type: object
       required:
         - id
@@ -2939,13 +2935,13 @@ components:
         created_at:
           type: string
           format: date-time
-          description: Timestamp when the agent was created (UTC microsecond-truncated RFC3339Nano format)
+          description: Timestamp when the agent was created (whole-second UTC RFC 3339 format)
           example: '2025-12-19T10:30:00Z'
           readOnly: true
         updated_at:
           type: string
           format: date-time
-          description: Timestamp when the agent was last updated (UTC microsecond-truncated RFC3339Nano format)
+          description: Timestamp when the agent was last updated (whole-second UTC RFC 3339 format)
           example: '2025-12-19T15:45:00Z'
           readOnly: true
 

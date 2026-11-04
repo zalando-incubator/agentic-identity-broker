@@ -548,10 +548,11 @@ canonical IDs and client IDs retain their separate existing rules. Collection
 UUID-addressed relative `Location`, or returns `200` on update/no-op. The domain applies the
 approved omitted-identity/metadata-replacement policy and compares the effective definition before
 writing; a replay preserves timestamps and emits no mutation audit. Client URIs are compared as a
-set and presented byte-sorted on a copy. All Admin Agent responses use UTC microsecond-truncated
-RFC3339Nano timestamps. Reconcile creation uses microsecond now; a sequential real update uses
-max(microsecond now, observed UpdatedAt truncated to microseconds + 1 microsecond), preserves
-CreatedAt, and may lead wall time slightly. There is no concurrent revision guarantee.
+set and presented byte-sorted on a copy. All Admin Agent responses keep whole-second UTC
+RFC 3339 timestamps. Reconcile creation sets both stored times to the same current UTC instant;
+a real update preserves CreatedAt and assigns current UTC time to UpdatedAt, as existing writes
+do. Two changes within one second may display the same updated_at; it is not an ETag or a
+concurrent revision guarantee. No-op preserves exact stored times without a write.
 
 Both adapters enforce external-ID uniqueness atomically; memory maintains a locked lookup index
 and PostgreSQL uses a partial unique index. Reconcile adds one indexed read to a normal write and
@@ -1411,8 +1412,8 @@ Integration Method: [e.g., REST API, SDK]
 **Admin API 3.0.0 (feature 055, approved)** replaces released `2.1.0`
 on the existing routes. Unique/non-empty external IDs introduce intentional `409 conflict` and
 `400 validation failed` outcomes on existing writes; filtered GET keeps its array shape with
-zero or one result. Shared URI ordering and microsecond timestamps are also approved contract
-changes. No versioned compatibility route is added, and the end-user and ExtProc contracts are
+zero or one result. Shared URI ordering is also an approved contract change; timestamps keep
+the whole-second presentation of 2.1.0. No versioned compatibility route is added, and the end-user and ExtProc contracts are
 unchanged. Migration `046` and consumer adaptation precede deployment. The contract version is
 not a broker release announcement. [ADR 045](adrs/045-unique-agent-external-id-upsert.md) cites the
 maintainer approval.

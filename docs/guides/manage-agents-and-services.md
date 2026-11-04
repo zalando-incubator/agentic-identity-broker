@@ -867,14 +867,12 @@ All Admin Agent responses (POST, both PUT forms, single GET and list/filter GET)
 `z-client.json`; changing only their input order is a no-op. URI spelling, stored order, other
 collections, and empty-field omission do not change.
 
-All Admin Agent timestamps are UTC RFC 3339 with zero to six fractional digits, microsecond
-truncation and no trailing zeroes. Reconcile creation uses the same microsecond instant for both
-timestamps. A sequential real update sets `updated_at` to the later of microsecond now and the
-observed value plus one microsecond, preserving `created_at`. A rapid update can therefore move
-`2026-10-30T09:00:00Z` to `2026-10-30T09:00:00.000001Z`; its identical replay and next GET retain
-that precise value. It can lead wall time slightly under rapid changes or a backward clock.
-This is not an ETag or concurrent-write ordering guarantee. Other write operations retain their
-existing timestamp assignment.
+All Admin Agent timestamps retain whole-second UTC RFC 3339 presentation. Reconcile creation
+sets both stored timestamps to the same current instant. A real update preserves `created_at`
+and sets `updated_at` to the current time, as existing write operations do. Two changes within
+one second may both display `2026-10-30T09:00:00Z`; the changed definition, not the timestamp,
+shows the update. Its identical replay and next GET preserve the full changed representation
+without another write. The timestamp is not an ETag or concurrent-write ordering guarantee.
 
 Collection PUT's replacement policy is not a general patch:
 
@@ -904,7 +902,8 @@ definitions remain last-writer-wins; no bulk sync, delete-by-external-ID, or `If
 This approved breaking contract replaces released Admin API 2.1.0 on the existing routes, without
 a compatibility endpoint. It does not change the end-user or ExtProc APIs or client-ID sharing
 configuration. Update consumers to accept 400/409 uniqueness errors, zero-or-one filtered arrays,
-byte-sorted client URIs and fractional timestamps. Do not assume each PUT advances `updated_at`.
+byte-sorted client URIs. Timestamps retain whole-second presentation; do not assume each PUT
+advances the displayed `updated_at`.
 
 Migration 046 blocks the release if legacy duplicates or empty IDs remain. Use the
 [runbook](../operations/agent-external-id-uniqueness.md) to inventory **every** affected UUID/value,

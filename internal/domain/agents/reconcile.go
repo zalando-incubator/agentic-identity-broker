@@ -48,7 +48,7 @@ func (s *Service) ReconcileByExternalID(ctx context.Context, selector id.Externa
 	candidate := desired.Copy()
 	candidate.ID = id.NewAgentID()
 	candidate.ExternalID = &selector
-	candidate.CreatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	candidate.CreatedAt = time.Now().UTC()
 	candidate.UpdatedAt = candidate.CreatedAt
 	if err := s.Create(ctx, candidate); err == nil {
 		return candidate, Created, nil
@@ -101,20 +101,11 @@ func (s *Service) reconcileExisting(ctx context.Context, existing, desired *stor
 	if sameDefinition(existing, candidate) {
 		return existing.Copy(), Unchanged, nil
 	}
-	candidate.UpdatedAt = reconcileUpdatedAt(time.Now(), existing.UpdatedAt)
+	candidate.UpdatedAt = time.Now().UTC()
 	if err := s.Update(ctx, existing.ID, candidate, false); err != nil {
 		return nil, Unchanged, err
 	}
 	return candidate, Updated, nil
-}
-
-func reconcileUpdatedAt(now, observed time.Time) time.Time {
-	now = now.UTC().Truncate(time.Microsecond)
-	minimum := observed.UTC().Truncate(time.Microsecond).Add(time.Microsecond)
-	if now.Before(minimum) {
-		return minimum
-	}
-	return now
 }
 
 func samePointer[T comparable](a, b *T) bool {

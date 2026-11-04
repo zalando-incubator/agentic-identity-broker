@@ -45,7 +45,7 @@ Use constructor injection with port interfaces. Create services in `app/builder.
 
 ### Agent Reconciliation
 
-`agents.Service.ReconcileByExternalID` owns selector validation, field presence policy, effective-definition equality, and one conflict-driven reread (ADR 045). No-op replay performs no write or mutation audit. Adapters enforce external-ID uniqueness atomically; handlers only parse presence and present responses.
+`agents.Service.ReconcileByExternalID` owns selector validation, field presence policy, effective-definition equality, and one conflict-driven reread (ADR 045). Creation and real updates assign current UTC time; no logical minimum increment is used. No-op replay preserves exact stored timestamps and performs no write or mutation audit. Admin Agent presentation retains whole-second UTC RFC 3339 timestamps. Adapters enforce external-ID uniqueness atomically; handlers only parse presence and present responses.
 
 ### Cross-Domain Dependencies
 

@@ -3,11 +3,12 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed
-and needs new maintainer sign-off. The [earlier ADR](../../adrs/045-unique-agent-external-id-upsert.md)
-approves the former microsecond design, not this revision. Timestamp implementation and fresh
-validation remain open in [tasks.md](./tasks.md). PostgreSQL and container-backed acceptance
-validation runs in the workflow on the pushed commit and remains a release gate.
+automated suites. [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records the revised
+decision approved by mjungsbluth on 2026-11-04:
+https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887.
+Current timestamp implementation and validation evidence is in [tasks.md](./tasks.md).
+PostgreSQL and container-backed acceptance validation runs in the workflow on the pushed commit
+and remains a release gate.
 
 ## Prerequisites
 
@@ -31,40 +32,39 @@ share one external ID.
 
 ## Acceptance mapping and previous validation
 
-All 22 scenarios already have one mapped `It()`. The locations below refer to the current
-implementation baseline; T014/T018 update the timestamp assertions and refresh locations without
-adding scenarios. The earlier backend run passed 15 in-memory scenarios (928 total passing specs);
-that is historical evidence for the former design, not validation of the whole-second revision.
-Seven PostgreSQL/both-store scenarios belong to CI. The superseded feature-054 shared-ID test and
-fixture remain removed; its retained scenarios are regression coverage.
+All 22 scenarios have one mapped `It()` with the revised timestamp assertions. The current
+backend run passes all 15 in-memory feature scenarios (928 total passing specs). Seven
+PostgreSQL/both-store scenarios are validated by the workflow’s container tests on the pushed
+commit, not claimed passed locally. The superseded feature-054 shared-ID test and fixture remain
+removed; its retained scenarios are regression coverage.
 
 | Scenario | `tests/e2e/agent_external_id_upsert_test.go` location |
 | --- | --- |
 | US1.1 | :129 |
 | US1.2 | :144 |
-| US1.3 | :166 |
-| US1.4 | :201 |
-| US1.5 | :279 |
-| US1.6 | :300 |
-| US1.7 | :320 |
-| US2.1 | :353 |
-| US2.2 | :364 |
-| US2.3 | :377 |
-| US2.4 | :388 |
-| US2.5 | :405 |
-| US2.6 | :416 |
-| US2.7 | :438 |
-| US2.8 | :504 |
-| US3.1 | :595 |
-| US3.2 | :604 |
-| US3.3 | :611 |
-| US3.4 | :640 |
-| US4.1 | :659 |
-| US4.2 | :669 |
-| US4.3 | :677 |
+| US1.3 | :175 |
+| US1.4 | :226 |
+| US1.5 | :304 |
+| US1.6 | :325 |
+| US1.7 | :345 |
+| US2.1 | :378 |
+| US2.2 | :389 |
+| US2.3 | :402 |
+| US2.4 | :413 |
+| US2.5 | :430 |
+| US2.6 | :441 |
+| US2.7 | :463 |
+| US2.8 | :529 |
+| US3.1 | :620 |
+| US3.2 | :629 |
+| US3.3 | :636 |
+| US3.4 | :665 |
+| US4.1 | :684 |
+| US4.2 | :694 |
+| US4.3 | :702 |
 
-The baseline field/error/preference matrices and migration inventory/relationship checks are authored;
-the timestamp assertions still need the T014/T030/T031 revision.
+The field/error/preference matrices and migration inventory/relationship checks remain intact;
+T014/T030/T031 now cover current-time assignment and whole-second UTC presentation.
 Migration tests verify complete inventories beyond the first 100 entries and preserve grants, credentials,
 authorization codes, refresh sessions, approvals and client URIs. Container-backed red/green evidence
 comes from CI on the pushed commit; it is not claimed as local validation.
@@ -104,13 +104,11 @@ replay, POST/ID-addressed PUT and single/list/filter GET. Reordered equal URI se
 other collection ordering and optional omission remain unchanged. Use a fresh selector when
 repeating the manual journey on PostgreSQL; compare full response bodies under each `Prefer` choice.
 
-After T014/T030/T031, automated update tests must assert the changed definition, preserved `id` and
-`created_at`, and the
-existing whole-second `updated_at` presentation; the next replay and GET return the identical
-representation, including `updated_at`, on both stores, with no replay write. Do not use sleeps or
-a production clock API. The timestamp is not an ETag or a concurrent total ordering. API-ORDER is
-covered by the earlier maintainer approval cited in ADR 045 and remains in the current Approval
-Items; the 2026-11-04 timestamp revision of ADR 045 needs a new approval.
+Automated update tests assert the changed definition, preserved `id` and `created_at`, current-time
+assignment and whole-second `updated_at` presentation; the next replay and GET return the identical
+representation, including `updated_at`, on both stores, with no replay write. They use no sleeps or
+production clock API. The timestamp is not an ETag or a concurrent total ordering. The approval
+cited in ADR 045 covers all eight current items, including API-ORDER and the timestamp revision.
 
 Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.md#concrete-example-journeys-mandatory).
 

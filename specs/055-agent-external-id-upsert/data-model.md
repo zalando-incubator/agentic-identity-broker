@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
-**Current decision record**: The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed and needs new maintainer sign-off. The [earlier ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records approval of the previous microsecond design, not this revision. Timestamp implementation and validation remain open in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 No new entity, aggregate, table, typed ID, or configuration is introduced. The feature changes one
 invariant on the existing Agent aggregate, adds a domain operation, and adds one migration.
@@ -53,7 +53,7 @@ ID, Client ID, or Stable Identifier, and never selects an agent by those values.
 
 `ReconcileOutcome`: `Created`, `Updated`, `Unchanged`.
 
-### Field policy (FR-012, Proposed API-OMISSION)
+### Field policy (FR-012, Approved API-OMISSION)
 
 | Field | Creation branch | Update branch: omitted | Update branch: `null` | Update branch: value |
 |---|---|---|---|---|
@@ -73,7 +73,7 @@ service requirements in order (`nil` and empty `required_scopes` equal); permiss
 in order; redirect URIs and allowed scopes in order (`nil` equals empty); client URIs as a set.
 Not compared: `ID`, `CreatedAt`, `UpdatedAt`, `ClearCanonicalID`.
 
-### Stable Agent presentation (Proposed, API-ORDER)
+### Stable Agent presentation (Approved, API-ORDER)
 
 Every Admin Agent response (POST, both PUT forms, single GET, and list/filter GET) presents
 `client_uris` in ascending Go string byte order on a copied slice. Do not mutate the aggregate,
@@ -125,7 +125,7 @@ canonical ID and client URIs); `Update` moves the entry when the value changes; 
 primary map; an absent entry returns an empty array and a present entry a one-element array.
 It never scans the registry. Move/clear/delete/reuse tests verify lookup and index consistency.
 
-### PostgreSQL schema — migration `046_unique_agent_external_id` (Proposed, DB-046)
+### PostgreSQL schema — migration `046_unique_agent_external_id` (Approved, DB-046)
 
 Before (migration `001`):
 

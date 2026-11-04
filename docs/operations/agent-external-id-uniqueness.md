@@ -5,16 +5,16 @@ description: Inventory and deliberately remediate legacy agents before migration
 
 # Upgrade to unique Agent external IDs
 
-**Delivery status:** Feature 055 has maintainer approval but implementation and PostgreSQL
-acceptance validation are not complete. This runbook describes the approved upgrade procedure;
-do not deploy the feature until its mandatory tests and migration implementation pass.
+**Delivery status:** Feature 055 implements the revised decision approved on 2026-11-04.
+PostgreSQL and container-backed acceptance validation remains the workflow release gate;
+do not deploy until the mandatory migration and complete E2E suites pass.
 
 Admin API `3.0.0` replaces `2.1.0` on the existing routes. A set `external_id` must be non-empty
 and unique by exact, case-sensitive equality. Multiple agents may have no external ID (`NULL`).
 Existing POST and ID-addressed PUT reject duplicates with `409 conflict` and empty strings with
 `400 validation failed`. Filtered GET returns zero or one Agent in an array. Consumers must also
-accept byte-sorted `client_uris` and UTC microsecond timestamps rather than whole-second-only
-presentation. [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-unique-agent-external-id-upsert.md) records approval.
+accept byte-sorted `client_uris`. Agent timestamps retain whole-second UTC RFC 3339
+presentation; two changes within one second may display the same `updated_at`. [ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-unique-agent-external-id-upsert.md) records approval.
 
 ## 1. Prepare and coordinate writers
 

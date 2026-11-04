@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
-**Current decision record**: The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed and needs new maintainer sign-off. The [earlier ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records approval of the previous microsecond design, not this revision. Timestamp implementation and validation remain open in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
+**Current decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records mjungsbluth’s 2026-11-04 approval of all eight current items, including this timestamp revision: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887. The [feature-local link](./adr-045-unique-agent-external-id-upsert.md) forwards to the accepted record. Current implementation and validation evidence is in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in
@@ -102,7 +102,7 @@ metadata URLs; service requirements (order-sensitive, with `nil` and empty `requ
 permission declarations (order-sensitive); redirect URIs and allowed scopes (order-sensitive, `nil`
 equals empty); and client URIs as a set. Timestamps and `ClearCanonicalID` are excluded.
 
-**Stable ordering (Proposed, API-ORDER)**: Sort a copied `client_uris` slice in ascending Go
+**Stable ordering (Approved, API-ORDER)**: Sort a copied `client_uris` slice in ascending Go
 string byte order in every Admin Agent response (POST, both PUT forms, single GET, list/filter
 GET), including the immediate create/update response. Preserve URI spelling, optional omission,
 other collection order, and stored order. PostgreSQL retrieval order/collation and memory input
@@ -134,8 +134,8 @@ compare rendered JSON (depends on `Prefer`); always write then restore timestamp
 microsecond presentation with a `+1 microsecond` minimum advancement (the withdrawn API-TIMESTAMPS:
 changes every Admin Agent response and can lead wall time for a guarantee the issue does not
 require); whole-second presentation with a full-second minimum advancement (larger wall-clock
-drift); nanosecond persistence (PostgreSQL cannot round-trip it). The ordering change remains
-Proposed because existing response behavior is externally visible.
+drift); nanosecond persistence (PostgreSQL cannot round-trip it). The ordering change is covered by the maintainer approval recorded in ADR 045 because existing
+response behavior is externally visible.
 
 ## R5 — HTTP adapter shape
 
@@ -168,7 +168,7 @@ existing admin error envelope (API-003).
 because the issue fixes the shape (R5) and external IDs can contain `/`, which path parameters
 handle poorly behind proxies.
 
-## R6 — Error values on existing operations (Proposed, API-UNIQUE)
+## R6 — Error values on existing operations (Approved, API-UNIQUE)
 
 **Decision**: Existing POST and ID-addressed PUT return `400 validation failed` for an empty
 `external_id` (domain validation) and `409 conflict` / `external_id is already held by another
@@ -178,7 +178,7 @@ canonical-ID and client-ID conflicts but is undocumented.
 **Rationale**: Reuses the existing envelope of each operation. Main alternative: a new
 `invalid external_id` error value on create and update.
 
-## R7 — Admin API version (Proposed, API-VERSION)
+## R7 — Admin API version (Approved, API-VERSION)
 
 **Decision**: Bump `api/admin/openapi.yaml` `info.version` from `2.1.0` to `3.0.0`; keep all
 routes. Released tags since `v0.1.118` contain the feature 054 filter, and the latest tag carries
@@ -189,7 +189,7 @@ major version on the existing route. Feature 051 followed the same path (`1.0.0`
 Main alternative: `2.2.0`, treating uniqueness as additive; rejected because existing clients that
 rely on shared external IDs would break silently.
 
-## R8 — Migration design (Proposed, DB-046)
+## R8 — Migration design (Approved, DB-046)
 
 **Decision**: One guarded, atomic migration pair `046_unique_agent_external_id.{up,down}.sql`.
 
@@ -247,7 +247,7 @@ remainder; the runbook's read-only queries list everything.
 
 **Rationale**: FR-004 and DB-003 require runbook procedures with explicit result columns.
 
-## R10 — Superseding feature 054 behavior (Proposed, DEC-054)
+## R10 — Superseding feature 054 behavior (Approved, DEC-054)
 
 **Decision**: Feature 054's non-uniqueness clarification and FR-011 are superseded by this
 feature. `specs/054-agent-external-id-filter/` stays unchanged as a historical record. Its E2E file

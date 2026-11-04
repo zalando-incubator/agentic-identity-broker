@@ -39,14 +39,18 @@ func TestReconcileLifecycle(t *testing.T) {
 	desired := desiredAgent()
 	desired.ClientURIs = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
 	original := desired.Copy()
+	started := time.Now().UTC()
 	created, outcome, err := svc.ReconcileByExternalID(ctx, "registry", desired, ReconcileInput{})
+	finished := time.Now().UTC()
 	require.NoError(t, err)
 	require.NotNil(t, created)
 	assert.Equal(t, Created, outcome)
 	assert.False(t, created.ID.IsZero())
 	assert.Equal(t, id.ExternalID("registry"), *created.ExternalID)
 	assert.Equal(t, created.CreatedAt, created.UpdatedAt)
-	assert.Equal(t, created.CreatedAt.UTC().Truncate(time.Microsecond), created.CreatedAt)
+	assert.Equal(t, time.UTC, created.CreatedAt.Location())
+	assert.False(t, created.CreatedAt.Before(started))
+	assert.False(t, created.CreatedAt.After(finished))
 	assert.Equal(t, original, desired)
 	require.Contains(t, logs.String(), "agent_created")
 	logs.Reset()
@@ -62,13 +66,17 @@ func TestReconcileLifecycle(t *testing.T) {
 	assert.Zero(t, writes)
 	assert.Empty(t, logs.String())
 	desired.DisplayName = "Changed"
+	started = time.Now().UTC()
 	changed, result, err := svc.ReconcileByExternalID(ctx, "registry", desired, ReconcileInput{})
+	finished = time.Now().UTC()
 	require.NoError(t, err)
 	require.NotNil(t, changed)
 	assert.Equal(t, Updated, result)
 	assert.Equal(t, created.ID, changed.ID)
 	assert.Equal(t, created.CreatedAt, changed.CreatedAt)
-	assert.True(t, changed.UpdatedAt.After(created.UpdatedAt))
+	assert.Equal(t, time.UTC, changed.UpdatedAt.Location())
+	assert.False(t, changed.UpdatedAt.Before(started))
+	assert.False(t, changed.UpdatedAt.After(finished))
 	assert.Equal(t, 1, writes)
 	assert.Contains(t, logs.String(), "agent_updated")
 }
@@ -87,7 +95,7 @@ func TestReconcileFieldPolicy(t *testing.T) {
 			existing.RedirectURIs = []string{"https://example.com/callback"}
 			existing.AllowedScopes = []string{"openid"}
 			existing.CreatedAt = time.Now().Add(-time.Hour)
-			existing.UpdatedAt = time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+			existing.UpdatedAt = time.Now().UTC().Add(time.Hour)
 			repo := newMockAgentRepo()
 			repo.agents[existing.ID] = existing.Copy()
 			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
@@ -95,7 +103,9 @@ func TestReconcileFieldPolicy(t *testing.T) {
 			}
 			desired := desiredAgent()
 			desired.PermissionSets = existing.PermissionSets
+			started := time.Now().UTC()
 			got, result, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{CanonicalIDPresent: canonicalPresent})
+			finished := time.Now().UTC()
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			assert.Equal(t, Updated, result)
@@ -110,7 +120,9 @@ func TestReconcileFieldPolicy(t *testing.T) {
 			assert.Nil(t, got.AgentInterfaceURL)
 			assert.Empty(t, got.RedirectURIs)
 			assert.Empty(t, got.AllowedScopes)
-			assert.Equal(t, existing.UpdatedAt.Add(time.Microsecond), got.UpdatedAt)
+			assert.Equal(t, time.UTC, got.UpdatedAt.Location())
+			assert.False(t, got.UpdatedAt.Before(started))
+			assert.False(t, got.UpdatedAt.After(finished))
 			assert.Equal(t, existing.CreatedAt, got.CreatedAt)
 		})
 	}
@@ -146,18 +158,34 @@ func TestReconcileInvalidInputs(t *testing.T) {
 	}
 }
 
-func TestReconcileUpdatedAt(t *testing.T) {
-	observed := time.Date(2026, 1, 1, 12, 0, 0, 123456789, time.FixedZone("offset", 3600))
-	for _, now := range []time.Time{observed.Add(-time.Hour), observed, observed.Add(time.Nanosecond), observed.Add(time.Second)} {
-		got := reconcileUpdatedAt(now, observed)
-		minimum := observed.UTC().Truncate(time.Microsecond).Add(time.Microsecond)
-		assert.False(t, got.Before(minimum))
-		assert.Equal(t, got.UTC().Truncate(time.Microsecond), got)
-		if now.Before(minimum) {
-			assert.Equal(t, minimum, got)
-		} else {
-			assert.Equal(t, now.UTC().Truncate(time.Microsecond), got)
-		}
+func TestReconcileReplayPreservesFractionalStoredTimes(t *testing.T) {
+	for _, nano := range []int{0, 123456000, 123456789} {
+		t.Run(time.Duration(nano).String(), func(t *testing.T) {
+			existing := desiredAgent()
+			existing.ID = id.NewAgentID()
+			existing.ExternalID = ptr.To(id.ExternalID("registry"))
+			existing.CreatedAt = time.Date(2026, 1, 1, 12, 0, 0, nano, time.FixedZone("offset", 3600))
+			existing.UpdatedAt = existing.CreatedAt.Add(time.Hour)
+			original := existing.Copy()
+			repo := newMockAgentRepo()
+			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
+				return []*storage.Agent{existing.Copy()}, nil
+			}
+			repo.updateFn = func(context.Context, *storage.Agent) error {
+				t.Fatal("replay must not write")
+				return nil
+			}
+			var logs bytes.Buffer
+			svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			for range 10 {
+				got, result, err := svc.ReconcileByExternalID(context.Background(), "registry", existing.Copy(), ReconcileInput{})
+				require.NoError(t, err)
+				assert.Equal(t, Unchanged, result)
+				assert.Equal(t, original, got)
+			}
+			assert.Empty(t, logs.String())
+			assert.Equal(t, original, existing)
+		})
 	}
 }
 
@@ -252,7 +280,7 @@ func TestSameDefinitionCoversEveryAgentField(t *testing.T) {
 		"ID":               "UUID identity is retained independently of the desired definition",
 		"ClearCanonicalID": "update instruction, not persisted definition state",
 		"CreatedAt":        "creation metadata is retained independently of the desired definition",
-		"UpdatedAt":        "update metadata advances only after the definition changes",
+		"UpdatedAt":        "update metadata is assigned only after the definition changes",
 	}
 	agentType := reflect.TypeFor[storage.Agent]()
 	require.Equal(t, agentType.NumField(), len(changes)+len(ignored))

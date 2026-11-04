@@ -505,8 +505,8 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 				ClientID:    clientIDToString(agent.ClientID),
 				DisplayName: agent.DisplayName,
 				Description: agent.Description,
-				CreatedAt:   agent.CreatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
-				UpdatedAt:   agent.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
+				CreatedAt:   agent.CreatedAt.UTC().Format(time.RFC3339),
+				UpdatedAt:   agent.UpdatedAt.UTC().Format(time.RFC3339),
 			}
 		}
 		responses[i] = resp
@@ -587,8 +587,8 @@ func (h *AgentsHandler) toResponseWithServiceMap(agent *storage.Agent, serviceMa
 		RedirectURIs:         agent.RedirectURIs,
 		AllowedScopes:        agent.AllowedScopes,
 		ClientURIs:           slices.Sorted(slices.Values(agent.ClientURIs)),
-		CreatedAt:            agent.CreatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
-		UpdatedAt:            agent.UpdatedAt.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano),
+		CreatedAt:            agent.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:            agent.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 
 	if len(agent.ServiceRequirements) > 0 {

@@ -1,8 +1,8 @@
-# Proposed Admin API contract changes for feature 055.
-# Status: Proposed — awaiting maintainer sign-off (plan.md Approval Items API-UPSERT,
-# API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER). Implementation merges these operations and
-# components into api/admin/openapi.yaml after approval. Component references point to
-# the existing document.
+# Approved Admin API contract changes for feature 055.
+# Status: Approved by mjungsbluth on 2026-11-04:
+# https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887
+# Covers API-UPSERT, API-OMISSION, API-UNIQUE, API-VERSION and API-ORDER.
+# Merged into api/admin/openapi.yaml; component references point to that document.
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API (feature 055 delta)
@@ -19,7 +19,7 @@ info:
     - `GET /api/agents?external_id=` returns `[]` or a one-element array.
     - Agents without an external ID remain unrestricted in number.
 
-    ### Stable Agent Response Presentation (Proposed)
+    ### Stable Agent Response Presentation
 
     API-ORDER: Every Admin Agent response (POST, collection PUT, ID-addressed PUT,
     single GET, and list/filter GET) returns `client_uris` in ascending Go string

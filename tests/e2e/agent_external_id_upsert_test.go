@@ -149,6 +149,12 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 					Expect(err).To(Succeed())
 					created := readObject(resp, http.StatusCreated)
 					Expect(created["client_uris"]).To(Equal([]any{"https://agent.example/a.json", "https://agent.example/z.json"}))
+					agentID, err := id.ParseAgentID(created["id"].(string))
+					Expect(err).To(Succeed())
+					beforeReplay, err := st.Agents().Get(ctx, agentID)
+					Expect(err).To(Succeed())
+					Expect(created["created_at"]).To(Equal(beforeReplay.CreatedAt.UTC().Format(time.RFC3339)))
+					Expect(created["updated_at"]).To(Equal(beforeReplay.UpdatedAt.UTC().Format(time.RFC3339)))
 					for range 10 {
 						resp, err := helpers.ReconcileAgent(s, principal, selector, definition, "")
 						Expect(err).To(Succeed())
@@ -157,13 +163,16 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 					found, err := st.Agents().ListByExternalID(ctx, selector)
 					Expect(err).To(Succeed())
 					Expect(found).To(HaveLen(1))
-					Expect(found[0].ID.String()).To(Equal(created["id"]))
+					Expect(found[0]).To(Equal(beforeReplay))
+					resp, err = s.AuthenticatedGET("/api/agents/"+agentID.String(), principal)
+					Expect(err).To(Succeed())
+					Expect(readObject(resp, http.StatusOK)).To(Equal(created))
 				})
 			}
 		})
 
 		// Scenario US1.3 from specs/055-agent-external-id-upsert/spec.md
-		It("should update the same agent and advance only updated_at when the definition changes", Label("docker"), func() {
+		It("should update the same agent and preserve its identity and creation time when the definition changes", Label("docker"), func() {
 			for _, backend := range []string{"memory", "postgres"} {
 				withExternalIDBackend(backend, func(s *bootstrap.TestServer, st *storageadapter.Adapter) {
 					definition["display_name"] = "Research Assistant"
@@ -175,21 +184,37 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 					Expect(err).To(Succeed())
 					a, err := st.Agents().Get(ctx, agentID)
 					Expect(err).To(Succeed())
-					a.UpdatedAt = time.Now().UTC().Add(time.Hour).Truncate(time.Second).Add(123456 * time.Microsecond)
+					a.UpdatedAt = time.Now().UTC().Add(time.Hour)
 					Expect(st.Agents().Update(ctx, a)).To(Succeed())
 					definition["display_name"] = "Changed Research Assistant"
 					definition["client_uris"] = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
+					started := time.Now().UTC()
 					resp, err = helpers.ReconcileAgent(s, principal, selector, definition, "")
 					Expect(err).To(Succeed())
 					changed := readObject(resp, http.StatusOK)
+					finished := time.Now().UTC()
+					Expect(changed["display_name"]).To(Equal("Changed Research Assistant"))
 					Expect(changed["id"]).To(Equal(created["id"]))
 					Expect(changed["created_at"]).To(Equal(created["created_at"]))
-					Expect(changed["updated_at"]).To(Equal(a.UpdatedAt.Add(time.Microsecond).Format(time.RFC3339Nano)))
+					updated, err := time.Parse(time.RFC3339, changed["updated_at"].(string))
+					Expect(err).To(Succeed())
+					Expect(changed["updated_at"]).To(Equal(updated.UTC().Format(time.RFC3339)))
+					Expect(updated.Before(started.Truncate(time.Second))).To(BeFalse())
+					Expect(updated.After(finished)).To(BeFalse())
+					saved, err := st.Agents().Get(ctx, agentID)
+					Expect(err).To(Succeed())
+					Expect(saved.UpdatedAt.Before(started.Add(-time.Microsecond))).To(BeFalse())
+					Expect(saved.UpdatedAt.After(finished.Add(time.Microsecond))).To(BeFalse())
 					Expect(changed["client_uris"]).To(Equal([]any{"https://agent.example/a.json", "https://agent.example/z.json"}))
 					definition["client_uris"] = []string{"https://agent.example/a.json", "https://agent.example/z.json"}
-					resp, err = helpers.ReconcileAgent(s, principal, selector, definition, "")
+					for range 10 {
+						resp, err = helpers.ReconcileAgent(s, principal, selector, definition, "")
+						Expect(err).To(Succeed())
+						Expect(readObject(resp, http.StatusOK)).To(Equal(changed))
+					}
+					afterReplay, err := st.Agents().Get(ctx, agentID)
 					Expect(err).To(Succeed())
-					Expect(readObject(resp, http.StatusOK)).To(Equal(changed))
+					Expect(afterReplay).To(Equal(saved))
 					resp, err = s.AuthenticatedGET("/api/agents/"+agentID.String(), principal)
 					Expect(err).To(Succeed())
 					Expect(readObject(resp, http.StatusOK)).To(Equal(changed))

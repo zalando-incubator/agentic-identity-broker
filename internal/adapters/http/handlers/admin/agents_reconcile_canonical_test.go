@@ -26,7 +26,7 @@ func TestReconcileCanonicalNestedReferencesOnBothBranchesAndReplay(t *testing.T)
 			permissionID, fallbackPermissionID := id.NewPermissionSetID(), id.NewPermissionSetID()
 			services := []id.ServiceID{serviceID, fallbackServiceID}
 			permissionIDs := []id.PermissionSetID{permissionID, fallbackPermissionID}
-			a := &storage.Agent{ID: id.NewAgentID(), ExternalID: ptr.To(id.ExternalID("registry")), DisplayName: "Canonical Agent", Description: "Definition", CreatedAt: time.Now().UTC().Truncate(time.Microsecond), UpdatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+			a := &storage.Agent{ID: id.NewAgentID(), ExternalID: ptr.To(id.ExternalID("registry")), DisplayName: "Canonical Agent", Description: "Definition", CreatedAt: time.Date(2026, 1, 1, 1, 2, 3, 123456789, time.FixedZone("offset", 3600)), UpdatedAt: time.Date(2026, 1, 1, 2, 3, 4, 987654321, time.FixedZone("offset", 3600))}
 			validator := canonicalPermissionSetValidator{ids: map[string]id.PermissionSetID{"canonical-permission": permissionID}, canonicalIDs: map[id.PermissionSetID]string{permissionID: "canonical-permission"}, sets: map[id.PermissionSetID]*storage.PermissionSet{}}
 			for i, service := range services {
 				a.ServiceRequirements = append(a.ServiceRequirements, storage.ServiceRequirement{ServiceID: service, RequirementType: storage.RequirementTypeOptional})
@@ -71,7 +71,7 @@ func TestReconcileCanonicalNestedReferencesOnBothBranchesAndReplay(t *testing.T)
 			assert.Contains(t, w.Header().Values("Vary"), "Prefer")
 			if operation == "replay" {
 				assert.Nil(t, written)
-				assert.Equal(t, a.UpdatedAt.Format(time.RFC3339Nano), response.UpdatedAt)
+				assert.Equal(t, a.UpdatedAt.UTC().Format(time.RFC3339), response.UpdatedAt)
 			} else {
 				require.NotNil(t, written)
 				assert.Equal(t, a.PermissionSets, written.PermissionSets)

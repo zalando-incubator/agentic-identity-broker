@@ -95,10 +95,10 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 				for _, instant := range []string{response.CreatedAt, response.UpdatedAt} {
 					parsed, err := time.Parse(time.RFC3339Nano, instant)
 					require.NoError(t, err)
-					assert.Equal(t, parsed.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), instant)
+					assert.Equal(t, parsed.UTC().Format(time.RFC3339), instant)
 				}
 				if strings.HasPrefix(operation, "GET") || operation == "PUT replay" {
-					assert.Equal(t, "2026-01-01T00:02:03.123456Z", response.CreatedAt)
+					assert.Equal(t, "2026-01-01T00:02:03Z", response.CreatedAt)
 					assert.Equal(t, response.CreatedAt, response.UpdatedAt)
 				}
 				if strings.HasPrefix(operation, "GET") || strings.HasPrefix(operation, "PUT ") && operation != "PUT ID" {
@@ -124,12 +124,12 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 	}
 }
 
-func TestAgentTimestampFractionPresentation(t *testing.T) {
+func TestAgentTimestampWholeSecondPresentation(t *testing.T) {
 	h := newAgentsHandlerForTest(new(MockAgentRepository), new(MockProviderRepository), slog.Default())
 	for _, tc := range []struct {
 		nano int
 		want string
-	}{{0, "2026-01-01T00:00:00Z"}, {100000000, "2026-01-01T00:00:00.1Z"}, {123456789, "2026-01-01T00:00:00.123456Z"}} {
+	}{{0, "2026-01-01T00:00:00Z"}, {100000000, "2026-01-01T00:00:00Z"}, {123456789, "2026-01-01T00:00:00Z"}} {
 		a := &storage.Agent{CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, tc.nano, time.UTC)}
 		resp, err := h.toResponseWithServiceMap(a, nil)
 		require.NoError(t, err)

@@ -26,7 +26,7 @@ description: A pre-deployment, deployment, and post-deployment checklist for run
 - [ ] Follow the [Agent external-ID uniqueness runbook](./agent-external-id-uniqueness.md) before migration 046. Unresolved duplicate or empty values block the release; no automatic cleanup is performed.
 - [ ] Coordinate old writers, deliberately remediate through complete ID-addressed Admin PUTs, and compare Agent UUIDs/grants/relationships against the baseline.
 - [ ] Inspect dirty migration metadata and actual schema before any manual force/retry. Keep the separate migration role/image and Helm Job boundary.
-- [ ] Adapt consumers to unique IDs, 400/409 errors, zero-or-one filtered arrays, byte-sorted client URIs and microsecond timestamps; verify rollback/reapply without data loss.
+- [ ] Adapt consumers to unique IDs, 400/409 errors, zero-or-one filtered arrays, byte-sorted client URIs and unchanged whole-second timestamps; verify rollback/reapply without data loss.
 
 ## Deployment Steps
 
