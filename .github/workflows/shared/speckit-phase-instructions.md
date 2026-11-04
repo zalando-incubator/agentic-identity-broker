@@ -157,9 +157,9 @@ container-backed suites, such as `just test-integration-infra` and
 container tests run them on the pushed commit after a completed phase, and a
 failure starts a repair run with their reports. Write container-backed tests
 and their implementation as usual, and list those suites in the report as
-validated by the container tests. That run on the pushed commit is their red
-and green evidence. Never make a task that needs no container wait for
-container-backed evidence.
+deferred to the container tests, never as validated. That run on the pushed
+commit is their red and green evidence. Never make a task that needs no
+container wait for container-backed evidence.
 
 Commit refactoring of existing code that the feature requires on its own,
 before the feature commits, with no behavior change and the existing tests

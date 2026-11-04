@@ -30,7 +30,7 @@ finding text and file links, then the code it points to.
   `just test-e2e-docker`, and never report their absence as a blocker. The
   container tests run them on the pushed commit after a completed phase, and a
   failure starts a repair run with their reports. List those suites in the
-  report as validated by the container tests.
+  report as deferred to the container tests, never as validated.
 - If an item cannot be resolved as described, leave the code unchanged for
   that item and say why in the report. The next review re-evaluates it. A
   partly resolved review is still `complete` when the checks pass and every
