@@ -681,8 +681,9 @@ paths:
         conflict. Canonical-ID, client-ID, and client-URI conflicts also return `409`.
 
         **Update Semantics**:
-        - All fields in the request body will update the agent
-        - Omitted optional fields are preserved from existing configuration
+        - PUT is a full replacement, not PATCH. Send every field you want to keep
+        - Omitted or null `external_id`, `governance_url`, `user_documentation_url`, `agent_interface_url`, `service_requirements`, `redirect_uris`, `allowed_scopes`, and `client_uris` are cleared
+        - `canonical_id` and `client_id` are the exceptions: omitted preserves the existing value, and explicit null clears it
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
@@ -709,7 +710,7 @@ paths:
               $ref: '#/components/schemas/AgentUpdateRequest'
             examples:
               update_display_name:
-                summary: Update display name only
+                summary: Update the display name of an agent with no other optional fields
                 value:
                   client_id: agent-research-assistant
                   display_name: Advanced Research Assistant
@@ -718,7 +719,7 @@ paths:
                     - permission_set_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
                       requirement_type: mandatory
               update_urls:
-                summary: Update documentation URLs
+                summary: Set documentation URLs on an agent with no other optional fields
                 value:
                   client_id: agent-research-assistant
                   display_name: Research Assistant
@@ -751,6 +752,8 @@ paths:
           $ref: '#/components/responses/AgentConflictError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
