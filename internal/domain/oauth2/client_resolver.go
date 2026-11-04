@@ -67,7 +67,11 @@ func (r *AgentClientResolver) resolveCIMD(ctx context.Context, rawURL string) (*
 			r.logger.WarnContext(ctx, "cimd_client_uri_ambiguous", "client_uri", security.RedactURL(rawURL))
 			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "Client not registered"}
 		}
-		r.logger.ErrorContext(ctx, "failed to look up agent by client URI", "error", err, "client_uri", security.RedactURL(rawURL))
+		errorKind := storage.ErrorKindUnknown
+		if storageErr != nil {
+			errorKind = storageErr.Kind
+		}
+		r.logger.ErrorContext(ctx, "failed to look up agent by client URI", "error_kind", errorKind, "client_uri", security.RedactURL(rawURL))
 		return nil, &ports.ClientIDError{Code: "server_error", Desc: "Failed to validate client"}
 	}
 

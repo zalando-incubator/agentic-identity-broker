@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	queryClientURL    = "https://agent.example.com/client?marker=query-secret"
-	redactedClientURL = "https://agent.example.com/client"
+	queryClientURL = "https://agent.example.com/client?marker=query-secret"
 )
 
 func TestService_Resolve_LogsNoURLQueryOrWrappedCause(t *testing.T) {
@@ -76,7 +75,7 @@ func TestService_Resolve_LogsNoURLQueryOrWrappedCause(t *testing.T) {
 			assert.NotContains(t, out, "query-secret")
 			assert.NotContains(t, out, "connection refused")
 			assert.Contains(t, out, `"error_kind":"`+test.wantKind+`"`)
-			assert.Contains(t, out, `"url":"`+redactedClientURL+`"`)
+			assert.NotContains(t, out, `"url"`)
 			assert.Contains(t, out, `"agent_id":"`+agent.ID.String()+`"`)
 		})
 	}
@@ -99,5 +98,6 @@ func TestService_Resolve_SuccessLogsNoURLQuery(t *testing.T) {
 	assert.Contains(t, out, "cimd_document_fetched")
 	assert.Contains(t, out, "cimd_document_cache_hit")
 	assert.Contains(t, out, "client_id URL contains query string")
-	assert.Contains(t, out, `"url":"`+redactedClientURL+`"`)
+	assert.NotContains(t, out, `"url"`)
+	assert.Contains(t, out, `"agent_id":"`+agent.ID.String()+`"`)
 }

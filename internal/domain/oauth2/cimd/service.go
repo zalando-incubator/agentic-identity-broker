@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -48,19 +47,17 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 		return nil, err
 	}
 
-	loggedURL := security.RedactURL(rawURL)
-
 	// RFC §3 SHOULD NOT: warn when client_id URL contains a query string
 	if parsed, parseErr := url.Parse(rawURL); parseErr == nil && (parsed.RawQuery != "" || parsed.ForceQuery) {
 		s.logger.WarnContext(ctx, "client_id URL contains query string (discouraged by RFC)",
-			"url", loggedURL, "agent_id", agent.ID)
+			"agent_id", agent.ID)
 	}
 
 	// Cache hit
 	if entry := s.cache.Get(rawURL); entry != nil {
-		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "url", loggedURL, "agent_id", agent.ID)
+		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "agent_id", agent.ID)
 		if err := entry.Document.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-			s.logFailure(ctx, "cimd_document_invalid", loggedURL, agent, ErrorKindRedirectURINotAllowlisted)
+			s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindRedirectURINotAllowlisted)
 			return nil, err
 		}
 		return entry.Document, nil
@@ -71,9 +68,9 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	if err != nil {
 		kind := fetchErrorKind(err)
 		if kind == ErrorKindSSRFBlocked {
-			s.logFailure(ctx, "cimd_fetch_blocked", loggedURL, agent, kind)
+			s.logFailure(ctx, "cimd_fetch_blocked", agent, kind)
 		} else {
-			s.logFailure(ctx, "cimd_fetch_failed", loggedURL, agent, kind)
+			s.logFailure(ctx, "cimd_fetch_failed", agent, kind)
 		}
 		return nil, err
 	}
@@ -81,11 +78,11 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Parse and validate the raw response body
 	doc, err := ParseDocument(result.Body, rawURL, s.nameBlocklist)
 	if err != nil {
-		s.logFailure(ctx, "cimd_document_invalid", loggedURL, agent, ErrorKindInvalidDocument)
+		s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindInvalidDocument)
 		return nil, err
 	}
 	if err := doc.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-		s.logFailure(ctx, "cimd_document_invalid", loggedURL, agent, ErrorKindRedirectURINotAllowlisted)
+		s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindRedirectURINotAllowlisted)
 		return nil, err
 	}
 
@@ -101,7 +98,6 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	s.cache.Set(rawURL, doc, CacheHeaders{CacheControl: result.CacheControl, Expires: result.Expires}, time.Now())
 
 	s.logger.InfoContext(ctx, "cimd_document_fetched",
-		"url", loggedURL,
 		"agent_id", agent.ID,
 		"client_name", doc.ClientName,
 		"redirect_uris_count", len(doc.RedirectURIs),
@@ -132,6 +128,6 @@ func fetchErrorKind(err error) string {
 	return ErrorKindFetchFailed
 }
 
-func (s *Service) logFailure(ctx context.Context, msg, loggedURL string, agent *storage.Agent, kind string) {
-	s.logger.WarnContext(ctx, msg, "url", loggedURL, "agent_id", agent.ID, "error_kind", kind)
+func (s *Service) logFailure(ctx context.Context, msg string, agent *storage.Agent, kind string) {
+	s.logger.WarnContext(ctx, msg, "agent_id", agent.ID, "error_kind", kind)
 }

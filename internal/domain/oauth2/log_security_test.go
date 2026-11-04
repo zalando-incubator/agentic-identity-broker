@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,11 @@ func TestAgentClientResolver_CIMDLogsNoURLQuery(t *testing.T) {
 
 			out := logs.String()
 			assert.NotContains(t, out, "query-secret")
+			assert.NotContains(t, out, "connection lost")
 			assert.Contains(t, out, `"client_uri":"`+redactedClientURI+`"`)
+			if test.repoErr != nil && !strings.Contains(test.name, "ambiguous") {
+				assert.Contains(t, out, `"error_kind":"connection"`)
+			}
 		})
 	}
 }
@@ -87,6 +92,7 @@ func TestAuthorizationService_ErrorRedirectFailureLogsNoRedirectURIQuery(t *test
 	assert.NotContains(t, out, "pass")
 	assert.NotContains(t, out, "state-secret")
 	assert.NotContains(t, out, "::1")
+	assert.NotContains(t, out, `"redirect_uri"`)
 	assert.Contains(t, out, `"agent_id":"`+agentID.String()+`"`)
 	assert.Contains(t, out, `"reason":"invalid_redirect_uri"`)
 }

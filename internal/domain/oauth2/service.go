@@ -377,14 +377,13 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 // (which is now the broker's internal agent UUID). When MultiAgentClient.Enabled,
 // appends the agent's internal UUID as the configured AgentIDParamName query parameter.
 // errorRedirectURL builds the client error redirect for a validated redirect_uri. It returns
-// "" when the URI cannot carry the error, and logs no part of the URI or the parse error.
+// "" when the URI cannot carry the error. The log names the registered agent, not the URI.
 func (s *AuthorizationService) errorRedirectURL(ctx context.Context, req *ports.AuthorizationRequest, agentID id.AgentID, errorCode, errorDescription string) string {
 	redirect, err := BuildErrorRedirectURL(req.RedirectURI, req.State, errorCode, errorDescription)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.ErrorContext(ctx, "failed to build error redirect URL",
 				"agent_id", agentID,
-				"redirect_uri", security.RedactURL(req.RedirectURI),
 				"reason", "invalid_redirect_uri")
 		}
 		return ""
