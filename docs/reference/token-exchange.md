@@ -378,18 +378,18 @@ OTel resources exclude process command arguments and command lines, including co
 
 The domain mutation service emits one successful operational record after persistence. Request handlers do not emit a second success or infer a mutation from the HTTP status. These synchronous logs are observations, not a durable transactional audit ledger.
 
-| Actions | Purpose-limited fields |
+| `event` | Purpose-limited fields |
 |---|---|
-| `grant_created`, `grant_updated` | Owner `principal`, `agent_id`, committed `grant_id`, `valid_until`, `created_at`, `updated_at`, and typed `{permission_set_id, included_service_ids}` entries. |
-| `grant_revoked` | Atomically deleted grant's owner, IDs, validity, update time and granted entries, plus `revoked_at`. |
-| `agent_created`, `agent_updated` | Registered `agent_id`, typed `permission_sets`, and `service_requirements` with service ID, requirement type, required scopes and all-scopes flag. |
-| `agent_deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
-| `permission_set_created`, `permission_set_updated` | `permission_set_id` and typed `service_scopes`. |
-| `permission_set_deleted` | The permission-set ID actually deleted. |
+| `consent.grant.created`, `consent.grant.updated` | Owner `principal`, `agent_id`, committed `grant_id`, `valid_until`, `created_at`, `updated_at`, and typed `{permission_set_id, included_service_ids}` entries. |
+| `consent.grant.revoked` | Atomically deleted grant's owner, IDs, validity, update time and granted entries, plus `revoked_at`. |
+| `agents.agent.created`, `agents.agent.updated` | Registered `agent_id`, typed `permission_sets`, and `service_requirements` with service ID, requirement type, required scopes and all-scopes flag. |
+| `agents.agent.deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
+| `permissionset.permission_set.created`, `permissionset.permission_set.updated` | `permission_set_id` and typed `service_scopes`. |
+| `permissionset.permission_set.deleted` | The permission-set ID actually deleted. |
 
 Audit timestamps use UTC RFC3339Nano. Indefinite grant validity is JSON `null`. Stored definition scopes are authorization metadata, not issued-token scope values; names, profile text, credentials, token/JWT material, arbitrary errors and sensitive URIs are excluded. None of these identity or snapshot fields are metric labels.
 
-Updates include applicable `previous_observed_*` validity, definition/inclusion and update-time fields only when that state was read before writing. They describe that observed state, not a transactionally guaranteed immediate predecessor. A raced initial consent upsert that updates another request's winning grant is `grant_updated`, with no fabricated previous snapshot. A sequential unchanged consent submission returns the existing grant without a mutation record; an actual successful definition Update remains audited.
+Updates include applicable `previous_observed_*` validity, definition/inclusion and update-time fields only when that state was read before writing. They describe that observed state, not a transactionally guaranteed immediate predecessor. A raced initial consent upsert that updates another request's winning grant is `consent.grant.updated`, with no fabricated previous snapshot. A sequential unchanged consent submission returns the existing grant without a mutation record; an actual successful definition Update remains audited.
 
 Validation or persistence failure, absent idempotent deletion, and rejected empty consent POSTs emit no successful mutation event. An empty POST cannot revoke an existing grant. Explicit consent DELETE retains 204 then 404 behavior; repeated absent agent or permission-set DELETEs remain 204 without false audits.
 
@@ -492,7 +492,7 @@ rejected scopes.
 
 ### Audit events
 
-Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
+Each impersonation decision records a credential-free structured log record with `event` `impersonation.decision.recorded`.
 The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`. After classification it also contains `subject_category` (`human` or `agent`); `subject_identity` is the represented/minted subject. It contains no wholesale claims.
 When one token-exchange grant and its audience identify an impersonation request, repeated nonempty parameters also produce this event before credential authentication.
 The event records `invalid_request` and the resolved target, without unvalidated identities or credential values.
