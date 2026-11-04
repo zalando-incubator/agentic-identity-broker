@@ -80,7 +80,9 @@ func (h *ProtectedResourcesHandler) add(w http.ResponseWriter, r *http.Request, 
 	}
 	h.etag(w, result.Version)
 	h.json(w, status, protectedResourceMutationResponse{result.Resource, result.ProtectedResources})
-	h.audit(r, "add", serviceID.String(), "success", status, normalized, "", "")
+	if result.Changed {
+		h.audit(r, "add", serviceID.String(), "success", status, normalized, "", "")
+	}
 }
 func (h *ProtectedResourcesHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	resource, err := h.memberResource(r)
@@ -140,7 +142,9 @@ func (h *ProtectedResourcesHandler) Rename(w http.ResponseWriter, r *http.Reques
 	}
 	h.etag(w, result.Version)
 	h.json(w, http.StatusOK, protectedResourceMutationResponse{result.Resource, result.ProtectedResources})
-	h.audit(r, "rename", serviceID.String(), "success", http.StatusOK, "", source, target)
+	if result.Changed {
+		h.audit(r, "rename", serviceID.String(), "success", http.StatusOK, "", source, target)
+	}
 }
 func (h *ProtectedResourcesHandler) List(w http.ResponseWriter, r *http.Request) {
 	serviceID, ok := h.serviceID(w, r)
