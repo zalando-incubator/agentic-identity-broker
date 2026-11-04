@@ -171,7 +171,7 @@ func NewHandler(config ServerConfig, routeSetup func(chi.Router), logger *slog.L
 	}
 	router.Use(middleware.OptionalPrincipalMiddleware(config.Authentication, config.JWTAuthenticator, logger))
 	router.Use(middleware.SecurityContextMiddleware(requestContext, config.Telemetry.Enabled && config.Telemetry.Traces.Enabled))
-	router.Use(LoggingMiddleware(logger, "/api/", "/oauth2/", "/.well-known/", "/health"))
+	router.Use(LoggingMiddleware(logger, "/api/", "/oauth2/", "/.well-known/", "/access/", "/health"))
 	router.Use(ContextRecoveryMiddleware(logger, requestContext.Trace.ResponseEnabled))
 	routeSetup(router)
 	return router

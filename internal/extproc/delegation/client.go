@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -150,7 +153,12 @@ type evaluationAction struct {
 
 // Evaluate asks the broker for the delegation of subjectToken to resourceURI. A permit's
 // deadline is computed once from the clock read immediately before the request is sent.
-func (c *Client) Evaluate(ctx context.Context, subjectToken, resourceURI string) (Result, error) {
+func (c *Client) Evaluate(ctx context.Context, subjectToken, resourceURI string) (result Result, err error) {
+	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.delegation.evaluate", trace.WithSpanKind(trace.SpanKindClient))
+	defer func() {
+		observeResolution(span, err)
+		span.End()
+	}()
 	assertion, err := c.assertions.ClientAssertion()
 	if err != nil {
 		return Result{}, newError(CategoryUnavailable, err)

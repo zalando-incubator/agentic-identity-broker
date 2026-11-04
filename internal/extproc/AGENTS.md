@@ -35,6 +35,7 @@ internal/extproc/
     client.go        Access Evaluation client: typed permit decoding, max-age, deadline
     context.go       Typed permit context validation (unknown members dropped)
     resolver.go      Permit-only cache with singleflight, no stale fallback
+    telemetry.go     Bounded resolution outcomes; no credentials, context, URLs or causes
     setup.go         NewResolverFromConfig: production composition shared by root.go and E2E
 
   httpclient/
