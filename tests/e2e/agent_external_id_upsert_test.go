@@ -674,6 +674,21 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			resp, err := legacyServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(legacy[0].ID.String()))
+
+			definition["external_id"] = string(*legacy[0].ExternalID)
+			encoded, err := json.Marshal(definition)
+			Expect(err).To(Succeed())
+			resp, err = legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			Expect(err).To(Succeed())
+			Expect(readObject(resp, http.StatusConflict)["error"]).To(Equal("conflict"))
+			Expect(snapshot()).To(Equal(before))
+
+			delete(definition, "external_id")
+			encoded, err = json.Marshal(definition)
+			Expect(err).To(Succeed())
+			resp, err = legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			Expect(err).To(Succeed())
+			Expect(readObject(resp, http.StatusCreated)["external_id"]).To(BeNil())
 		})
 	})
 
