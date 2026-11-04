@@ -2,7 +2,7 @@
 
 **Input**: Design documents from `specs/055-agent-external-id-upsert/`.
 **Prerequisites**: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/admin-agents-openapi.yaml`, `quickstart.md`.
-**Status**: All 70 agent tasks complete under the revised decision approved by mjungsbluth on 2026-11-04. Whole-second Agent presentation and current-time assignment are implemented and all required non-container gates pass. PostgreSQL/migration and container E2E validation is owned by the workflow on the pushed commit, not claimed passed locally. Current evidence below supersedes the earlier design’s historical records.
+**Status**: All 73 agent tasks complete under the revised decision approved by mjungsbluth on 2026-11-04, including the first container-validation repair. Agent copies now preserve empty string collections so PostgreSQL single and filtered reads agree without weakening replay assertions. All required non-container gates pass. PostgreSQL/migration and container E2E validation is owned by the workflow on the repair commit, not claimed passed locally. The repair evidence below supersedes earlier validation records.
 **Tests**: Mandatory red-green-refactor under Principles VIII and XIII. Write tests first, make them compile using minimal scaffolding where needed, observe concrete semantic failures, implement, then refactor without weakening assertions.
 **Organization**: Shared design and enforcement prerequisites precede independently verifiable user-story increments. Paths are relative to the repository root. `[P]` means different files and no mutual dependency within the stated batch; it does not waive earlier gates.
 
@@ -300,6 +300,28 @@ T001 new approval → T002 baseline review
 | Infrastructure compilation | go test -tags=integration -c compiles migration and PostgreSQL binaries without executing them. |
 
 SC-001 is demonstrated by direct create/update; SC-002 by exact ten-replay representation and stored-state preservation; SC-003 by the self-contained ten-call race with one creation; SC-004 by all eight rejection/invariant scenarios; SC-006 by all three lookup/preference scenarios. Both-store SC-002/SC-003 and migration SC-005 are validated by the workflow’s container tests on the pushed commit: just test-integration-infra, just test-e2e-docker and ExtProc agentgateway scenarios. No local execution or passing result is claimed for those suites. The checkmarks record completed agent work and that required CI handoff, not release authorization before the gate passes.
+
+## Container-validation repair — round 1, 2026-11-04
+
+- [X] T071 Add table-driven `TestAgent_Copy_StringCollections` in `internal/domain/storage/agent_test.go` for nil, non-nil empty and populated redirect URIs, allowed scopes and client URIs, including independent backing arrays; reproduce the semantic empty-to-nil failure before production changes (US1.2; FR-008, FR-013; Principles VIII, IX).
+- [X] T072 Preserve nil/empty state and backing-array independence with standard-library `slices.Clone` in `internal/domain/storage/agent.go`. Keep PostgreSQL reads, reconciliation, presentation and all existing E2E assertions unchanged; prove the new regression green (US1.2; FR-008, FR-013; Principles VI, VIII, IX).
+- [X] T073 Re-run `just check`, `just test`, `just test-integration`, `just test-coverage`, `just test-e2e-backend`, `just test-e2e-frontend` and the existing non-container ExtProc selection. Record results and hand off unchanged container assertions for validation on the repair commit (US1–US4; Principles VIII, XIII).
+
+**Failure and cause**: The failed Docker E2E run https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/41802660769 reports US1.2 at `tests/e2e/agent_external_id_upsert_test.go:166`: PostgreSQL filtered lookup returns empty redirect/scope arrays while the earlier single lookup returns nil. `Agent.Copy()` used `append([]string(nil), values...)`, which loses a non-nil empty slice. Single lookup calls Copy; filtered lookup retains the scanned empty arrays. This is inconsistent read-back, not an observed replay write. Standard-library cloning preserves both nilness and independence without changing the approved HTTP omission or timestamp contract. No E2E assertion, selector, migration, API or approved decision is changed.
+
+**Red → green**: `go test ./internal/domain/storage -run '^TestAgent_Copy_StringCollections$' -count=1` compiled and failed only its empty case before the fix, showing all three empty string collections becoming nil. After the fix, `go test ./internal/domain/storage -run '^TestAgent_Copy' -count=1` passes nil, empty, populated and existing copy cases. The original container US1.2 assertion remains intact for CI green evidence.
+
+| Check | Repair evidence |
+| --- | --- |
+| `just check` | Pass: formatting, vet and lint. |
+| `just test` | Pass with race detection. |
+| `just test-integration` | Pass: self-contained integration, including reconciliation journeys. |
+| `just test-coverage` | Pass: 64.2% total statement coverage; not a PostgreSQL execution result. |
+| `just test-e2e-backend` | 928/946 specs pass, 0 failures/pending; 18 existing container/performance exclusions. All 15 local feature scenarios pass. |
+| `just test-e2e-frontend` | 67/67 specs pass; 0 failures/pending/skipped. |
+| `ginkgo -v --procs=2 --skip-file=agentgateway ./tests/e2e/extproc/` | 98/115 specs pass, 0 failures/pending; 17 container scenarios excluded by the existing selection. |
+
+No local work or new approval is deferred. `just test-e2e-docker`, `just test-integration-infra` and ExtProc agentgateway scenarios are deferred to the workflow's container tests on the repair commit. The provided prior run is failure evidence, not validation of this fix. Release remains gated on a passing container run; none is claimed here.
 
 ## Historical implementation evidence — before the 2026-11-04 revision
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -247,17 +248,9 @@ func (a *Agent) Copy() *Agent {
 		}
 	}
 
-	// Deep copy redirect URIs and allowed scopes
-	if a.RedirectURIs != nil {
-		copy.RedirectURIs = append([]string(nil), a.RedirectURIs...)
-	}
-	if a.AllowedScopes != nil {
-		copy.AllowedScopes = append([]string(nil), a.AllowedScopes...)
-	}
-
-	if a.ClientURIs != nil {
-		copy.ClientURIs = append([]string(nil), a.ClientURIs...)
-	}
+	copy.RedirectURIs = slices.Clone(a.RedirectURIs)
+	copy.AllowedScopes = slices.Clone(a.AllowedScopes)
+	copy.ClientURIs = slices.Clone(a.ClientURIs)
 
 	return copy
 }
