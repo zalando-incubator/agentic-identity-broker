@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Research**: [research.md](./research.md)
 
-**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and local verification are complete; PostgreSQL/container acceptance validation remains the workflow release gate.
+**Current decision record**: The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed and needs new maintainer sign-off. The [earlier ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records approval of the previous microsecond design, not this revision. Timestamp implementation and validation remain open in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 No new entity, aggregate, table, typed ID, or configuration is introduced. The feature changes one
 invariant on the existing Agent aggregate, adds a domain operation, and adds one migration.

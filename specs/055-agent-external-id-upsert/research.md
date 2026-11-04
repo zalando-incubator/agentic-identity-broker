@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-30
 
-**Approved decision record**: [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) cites the supplied maintainer approval. Implementation and local verification are complete; PostgreSQL/container acceptance validation remains the workflow release gate.
+**Current decision record**: The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed and needs new maintainer sign-off. The [earlier ADR 045](../../adrs/045-unique-agent-external-id-upsert.md) records approval of the previous microsecond design, not this revision. Timestamp implementation and validation remain open in [tasks.md](./tasks.md); earlier results are historical. PostgreSQL/container acceptance remains the workflow release gate.
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale, and the main alternatives. Items marked **Proposed** are registered in

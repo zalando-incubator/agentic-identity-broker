@@ -3,9 +3,11 @@
 **Feature**: [spec.md](./spec.md) | **Contract**: [contracts/admin-agents-openapi.yaml](./contracts/admin-agents-openapi.yaml) | **Data model**: [data-model.md](./data-model.md)
 
 This guide proves the feature end to end after implementation. It does not replace the
-automated suites. Implementation and local regression verification are complete under the maintainer approval
-recorded in [ADR 045](../../adrs/045-unique-agent-external-id-upsert.md). PostgreSQL and container-backed
-acceptance validation runs in the workflow on the pushed commit and remains a release gate.
+automated suites. The [ADR 045 revision](./adr-045-unique-agent-external-id-upsert.md) is Proposed
+and needs new maintainer sign-off. The [earlier ADR](../../adrs/045-unique-agent-external-id-upsert.md)
+approves the former microsecond design, not this revision. Timestamp implementation and fresh
+validation remain open in [tasks.md](./tasks.md). PostgreSQL and container-backed acceptance
+validation runs in the workflow on the pushed commit and remains a release gate.
 
 ## Prerequisites
 
@@ -27,12 +29,14 @@ acceptance validation runs in the workflow on the pushed commit and remains a re
 Expected: all pass. `tests/e2e/agent_external_id_filter_test.go` no longer asserts that two agents
 share one external ID.
 
-## Current acceptance coverage
+## Acceptance mapping and previous validation
 
-All 22 scenarios now have one mapped `It()`. The 15 in-memory scenarios pass in the backend
-suite (928 total passing specs). Seven PostgreSQL/both-store scenarios are assigned to CI,
-not claimed as locally validated. The superseded feature-054 shared-ID test and fixture have
-been removed with uniqueness enforcement; its remaining scenarios pass unchanged.
+All 22 scenarios already have one mapped `It()`. The locations below refer to the current
+implementation baseline; T014/T018 update the timestamp assertions and refresh locations without
+adding scenarios. The earlier backend run passed 15 in-memory scenarios (928 total passing specs);
+that is historical evidence for the former design, not validation of the whole-second revision.
+Seven PostgreSQL/both-store scenarios belong to CI. The superseded feature-054 shared-ID test and
+fixture remain removed; its retained scenarios are regression coverage.
 
 | Scenario | `tests/e2e/agent_external_id_upsert_test.go` location |
 | --- | --- |
@@ -59,7 +63,8 @@ been removed with uniqueness enforcement; its remaining scenarios pass unchanged
 | US4.2 | :669 |
 | US4.3 | :677 |
 
-The field/error/preference matrices and migration inventory/relationship checks are authored.
+The baseline field/error/preference matrices and migration inventory/relationship checks are authored;
+the timestamp assertions still need the T014/T030/T031 revision.
 Migration tests verify complete inventories beyond the first 100 entries and preserve grants, credentials,
 authorization codes, refresh sessions, approvals and client URIs. Container-backed red/green evidence
 comes from CI on the pushed commit; it is not claimed as local validation.
@@ -99,12 +104,13 @@ replay, POST/ID-addressed PUT and single/list/filter GET. Reordered equal URI se
 other collection ordering and optional omission remain unchanged. Use a fresh selector when
 repeating the manual journey on PostgreSQL; compare full response bodies under each `Prefer` choice.
 
-Automated update tests assert the changed definition, preserved `id` and `created_at`, and the
+After T014/T030/T031, automated update tests must assert the changed definition, preserved `id` and
+`created_at`, and the
 existing whole-second `updated_at` presentation; the next replay and GET return the identical
 representation, including `updated_at`, on both stores, with no replay write. Do not use sleeps or
 a production clock API. The timestamp is not an ETag or a concurrent total ordering. API-ORDER is
-covered by the supplied maintainer approval cited in ADR 045; the 2026-11-04 timestamp revision
-of ADR 045 needs a new approval.
+covered by the earlier maintainer approval cited in ADR 045 and remains in the current Approval
+Items; the 2026-11-04 timestamp revision of ADR 045 needs a new approval.
 
 Journey examples with exact bodies: [spec.md, Concrete Example Journeys](./spec.md#concrete-example-journeys-mandatory).
 
