@@ -830,7 +830,7 @@ func TestWriteTokenResponse(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.writeTokenResponse(w, &ports.TokenResponse{
+		s.writeTokenResponse(t.Context(), w, &ports.TokenResponse{
 			AccessToken:  "tok123",
 			RefreshToken: "refresh123",
 			TokenType:    "Bearer",
@@ -854,7 +854,7 @@ func TestWriteTokenResponse(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.writeTokenResponse(w, &ports.TokenResponse{
+		s.writeTokenResponse(t.Context(), w, &ports.TokenResponse{
 			AccessToken: "tok456",
 			TokenType:   "Bearer",
 			ExpiresIn:   900,

@@ -100,7 +100,7 @@ func (a *FileAdapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 	a.mu.Lock()
 	if !a.expiryLogged && a.lastErr != nil {
 		a.expiryLogged = true
-		a.logger.Warn("trust anchor key set expired",
+		a.logger.WarnContext(ctx, "trust anchor key set expired",
 			"trust_anchor", a.anchorPath,
 			"key_source", string(trustanchor.SourceFile),
 			"path", a.path,

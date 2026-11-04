@@ -183,7 +183,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 	}
 	for serviceID := range serviceIDs {
 		if serviceMap[serviceID] == nil {
-			s.logger.Warn("service not found for agent requirement", "service_id", serviceID, "agent_id", agent.ID)
+			s.logger.WarnContext(ctx, "service not found for agent requirement", "service_id", serviceID, "agent_id", agent.ID)
 		}
 	}
 	connected := make(map[id.ServiceID]bool, len(activeSessionServiceIDs))

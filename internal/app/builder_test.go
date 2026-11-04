@@ -1425,7 +1425,7 @@ func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
 
 	baseline := countHTTPRCGoroutines(t)
 	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if built != nil {

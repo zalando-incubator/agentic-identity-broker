@@ -99,7 +99,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	default:
 		if h.Logger != nil {
-			h.Logger.Error("unexpected authorization decision action", "action", decision.Action)
+			h.Logger.ErrorContext(r.Context(), "unexpected authorization decision action", "action", decision.Action)
 		}
 		redirectWithError(w, r, authReq.RedirectURI, authReq.State, "server_error", "unexpected authorization decision")
 	}

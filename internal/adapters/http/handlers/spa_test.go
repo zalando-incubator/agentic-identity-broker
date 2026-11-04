@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +21,7 @@ func TestSPAHandlerServesAssetsWithoutEscapingStaticPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "assets", "app.js"), []byte("asset"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0o600))
 
-	handler := NewSPAHandler(staticPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewSPAHandler(staticPath, slog.New(slog.DiscardHandler))
 
 	t.Run("serves a root-mounted asset", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
@@ -49,7 +48,7 @@ func TestSPAHandlerSetsSecurityHeaders(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "index.html"), []byte("index"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "assets", "app.js"), []byte("asset"), 0o600))
 
-	handler := NewSPAHandler(staticPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewSPAHandler(staticPath, slog.New(slog.DiscardHandler))
 	securityHeaders := map[string]string{
 		"X-Frame-Options":         "DENY",
 		"X-Content-Type-Options":  "nosniff",

@@ -32,7 +32,7 @@ func (s *CredentialService) Generate(ctx context.Context, agentID id.AgentID) (p
 	isRotation := existing != nil
 	credential, plaintextSecret, err := s.generator.GenerateCredentials(agentID)
 	if err != nil {
-		s.logger.Error("failed to generate credentials", "agent_id", agentID, "error", err)
+		s.logger.ErrorContext(ctx, "failed to generate credentials", "agent_id", agentID, "error", err)
 		return ports.CredentialGenerationResult{}, err
 	}
 
@@ -41,12 +41,12 @@ func (s *CredentialService) Generate(ctx context.Context, agentID id.AgentID) (p
 	if isRotation {
 		credential.RotatedAt = &now
 		if err := s.credentials.Rotate(ctx, agentID, credential); err != nil {
-			s.logger.Error("failed to rotate credentials", "agent_id", agentID, "error", err)
+			s.logger.ErrorContext(ctx, "failed to rotate credentials", "agent_id", agentID, "error", err)
 			return ports.CredentialGenerationResult{}, err
 		}
 	} else {
 		if err := s.credentials.Create(ctx, credential); err != nil {
-			s.logger.Error("failed to store credentials", "agent_id", agentID, "error", err)
+			s.logger.ErrorContext(ctx, "failed to store credentials", "agent_id", agentID, "error", err)
 			return ports.CredentialGenerationResult{}, err
 		}
 	}
@@ -66,6 +66,6 @@ func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) erro
 	if err != nil {
 		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
 	}
-	s.logger.Info("refresh sessions revoked", "trigger", "credential_revoked", "agent_id", agentID, "row_count", count)
+	s.logger.InfoContext(ctx, "refresh sessions revoked", "trigger", "credential_revoked", "agent_id", agentID, "row_count", count)
 	return nil
 }

@@ -114,7 +114,7 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 	s.invalidateJWKSCache()
 	s.invalidateSigner()
 
-	s.logger.Info("signing key generated", "kid", key.KID, "algorithm", key.Algorithm, "is_current", makeCurrent, "activates_at", key.ActivatesAt)
+	s.logger.InfoContext(ctx, "signing key generated", "kid", key.KID, "algorithm", key.Algorithm, "is_current", makeCurrent, "activates_at", key.ActivatesAt)
 	return key, nil
 }
 
@@ -218,17 +218,17 @@ func (s *SigningKeyService) buildJWKS(ctx context.Context) (jwk.Set, error) {
 	processedKids := make(map[id.KeyID]struct{}, len(keys))
 	for _, key := range keys {
 		if key == nil {
-			s.logger.Error("nil signing key returned from repository, skipping")
+			s.logger.ErrorContext(ctx, "nil signing key returned from repository, skipping")
 			continue
 		}
 
 		jwkKey, err := s.publicJWKForSigningKey(ctx, key)
 		if err != nil {
-			s.logger.Error("failed to build signing key public JWK, skipping", "kid", key.KID, "error", err)
+			s.logger.ErrorContext(ctx, "failed to build signing key public JWK, skipping", "kid", key.KID, "error", err)
 			continue
 		}
 		if err := set.AddKey(jwkKey); err != nil {
-			s.logger.Error("failed to add signing key to JWKS, skipping", "kid", key.KID, "error", err)
+			s.logger.ErrorContext(ctx, "failed to add signing key to JWKS, skipping", "kid", key.KID, "error", err)
 			continue
 		}
 		processedKids[key.KID] = struct{}{}
@@ -268,7 +268,7 @@ func (s *SigningKeyService) publicJWKForSigningKey(ctx context.Context, key *sto
 		if ports.IsNotFoundErr(err) {
 			return nil, fmt.Errorf("failed to backfill public JWK: %w", err)
 		}
-		s.logger.Warn("failed to backfill public JWK; publishing derived key", "kid", key.KID, "error", err)
+		s.logger.WarnContext(ctx, "failed to backfill public JWK; publishing derived key", "kid", key.KID, "error", err)
 		return jwkKey, nil
 	}
 	outcome := "written"

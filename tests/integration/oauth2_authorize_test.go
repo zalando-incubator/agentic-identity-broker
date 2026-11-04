@@ -412,7 +412,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 
 	// Wrap with audit middleware
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	auditMiddleware := middleware.OAuth2AuditMiddleware(logger)
 	wrappedHandler := auditMiddleware(handler)
 

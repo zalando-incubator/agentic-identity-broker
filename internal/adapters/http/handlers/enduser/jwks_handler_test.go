@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +45,7 @@ func newTestJWKSHandler(t *testing.T) *JWKSHandler {
 	set := jwk.NewSet()
 	require.NoError(t, set.AddKey(publicKey))
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := slog.New(slog.DiscardHandler)
 	return NewJWKSHandler(&mockSuccessPublisher{set: set}, logger)
 }
 
@@ -116,7 +115,7 @@ func TestJWKSHandler_ServeJWKS(t *testing.T) {
 	})
 
 	t.Run("returns 503 when upstream unavailable", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+		logger := slog.New(slog.DiscardHandler)
 		handler := NewJWKSHandler(&mockErrorPublisher{err: ports.ErrUpstreamUnavailable}, logger)
 
 		req := httptest.NewRequest(http.MethodGet, "/oauth2/jwks.json", nil)
@@ -134,7 +133,7 @@ func TestJWKSHandler_ServeJWKS(t *testing.T) {
 	})
 
 	t.Run("returns 503 when kid conflict detected", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+		logger := slog.New(slog.DiscardHandler)
 		handler := NewJWKSHandler(&mockErrorPublisher{err: ports.ErrKidConflict}, logger)
 
 		req := httptest.NewRequest(http.MethodGet, "/oauth2/jwks.json", nil)
@@ -152,7 +151,7 @@ func TestJWKSHandler_ServeJWKS(t *testing.T) {
 	})
 
 	t.Run("returns 500 when publisher returns generic error", func(t *testing.T) {
-		logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+		logger := slog.New(slog.DiscardHandler)
 		handler := NewJWKSHandler(&mockErrorPublisher{err: errors.New("storage error")}, logger)
 
 		req := httptest.NewRequest(http.MethodGet, "/oauth2/jwks.json", nil)

@@ -3,7 +3,6 @@ package thirdparty_test
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"testing"
 
@@ -89,7 +88,7 @@ func newCredentialSourceFixture(t *testing.T) *credentialSourceFixture {
 	repo := &credentialSourceRepository{InMemoryThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository()}
 	crypto := &credentialSourceEncryption{EncryptionPort: testutil.NewTestEncryptionAdapter(t)}
 	keys := &credentialSourceBranchKeys{}
-	service := thirdparty.NewThirdpartyOAuth2ProviderService(repo, crypto, keys, nil, false, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	service := thirdparty.NewThirdpartyOAuth2ProviderService(repo, crypto, keys, nil, false, slog.New(slog.DiscardHandler))
 	return &credentialSourceFixture{repo: repo, crypto: crypto, keys: keys, service: service}
 }
 
