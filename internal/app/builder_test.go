@@ -324,13 +324,13 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		authenticated, err := app.AdminJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		require.NoError(t, err)
 		require.NotNil(t, authenticated)
-		assert.Equal(t, "operator@example.com", authenticated.Principal)
+		assert.Equal(t, id.Principal("operator@example.com"), authenticated.Principal)
 
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
 		require.NotNil(t, enduser)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 		_, err = app.EnduserJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		assert.Error(t, err, "end-user authenticator must not trust the admin issuer")
 		_, err = app.AdminJWTAuthenticator.Authenticate(context.Background(), enduserToken)
@@ -343,7 +343,7 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 	})
 
 }
@@ -849,6 +849,17 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if got := app.EnduserHealthComponents(); got != nil {
 			t.Fatalf("EnduserHealthComponents() = %#v, want nil in local mode", got)
 		}
+	})
+
+	t.Run("detector-only configuration requires an external trust anchor", func(t *testing.T) {
+		cfg := baseConfig(jweKey)
+		cfg.OAuth2AuthServer = ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}}
+		cfg.TokenExchange.ClaimExtraction.AgentSubjectExpression = "subject_token.sub"
+		built, err := NewBuilder().WithConfig(cfg).WithStorage(newStorage(t)).WithLogger(logger).Build()
+		if built != nil {
+			t.Cleanup(func() { assert.NoError(t, built.Shutdown(context.Background())) })
+		}
+		require.ErrorContains(t, err, "no client-assertion trust anchor is set")
 	})
 
 	t.Run("local mode with token exchange requires an external trust anchor", func(t *testing.T) {
@@ -1429,7 +1440,7 @@ func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
 
 	baseline := countHTTPRCGoroutines(t)
 	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if built != nil {

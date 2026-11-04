@@ -53,11 +53,11 @@ type ClientAssertionVerifier struct {
 
 // NewClientAssertionVerifier creates a verifier with fixed audience and time dependencies.
 func NewClientAssertionVerifier(keys ClientKeySource, replay ports.ClientAssertionReplayRepository, audiences []string, clock func() time.Time, logger *slog.Logger) *ClientAssertionVerifier {
+	if logger == nil {
+		panic("oauth2server.NewClientAssertionVerifier: logger must not be nil")
+	}
 	if clock == nil {
 		clock = time.Now
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	approvedAudiences := make(map[string]struct{}, len(audiences))
 	for _, audience := range audiences {

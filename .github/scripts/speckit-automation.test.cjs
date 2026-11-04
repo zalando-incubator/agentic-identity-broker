@@ -16,6 +16,13 @@ const {
   announce,
   report,
   continuesToPlan,
+  validateReviewState,
+  parseReview,
+  parseProposal,
+  publishProposals,
+  remediable,
+  testTarget,
+  dispatchTests,
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
@@ -108,8 +115,11 @@ function fixture(eventName, payload, options = {}) {
   const created = [];
   const deleted = [];
   const minimized = [];
+  const dispatched = [];
   const sources = { ...files, ...options.extra };
+  const hooks = [];
   const github = {
+    hook: { wrap: (name, wrapper) => hooks.push({ name, wrapper }) },
     rest: {
       repos: {
         getCollaboratorPermissionLevel: async (args) => {
@@ -169,6 +179,20 @@ function fixture(eventName, payload, options = {}) {
           data: (options.reactions || []).filter((entry) => entry.comment_id === comment_id),
         }),
       },
+      actions: {
+        getWorkflowRun: async ({ run_id }) => ({
+          data: options.runs?.[run_id] ?? { id: run_id, triggering_actor: { login: "maintainer" } },
+        }),
+        listJobsForWorkflowRun: async ({ run_id, filter }) => {
+          assert.equal(filter, "latest");
+          return { data: options.jobs?.[run_id] || [] };
+        },
+        createWorkflowDispatch: async (args) => {
+          if (options.dispatchError) throw options.dispatchError;
+          dispatched.push(args);
+          return { status: 204 };
+        },
+      },
     },
     graphql: async (query, { id }) => {
       assert.match(query, /minimizeComment\(input: \{subjectId: \$id, classifier: OUTDATED\}\)/);
@@ -179,7 +203,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads, created, deleted, minimized,
+    github, calls, contentReads, created, deleted, minimized, dispatched, hooks,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -746,6 +770,80 @@ function preparationIO(t) {
   return saved;
 }
 
+async function settle(t, promise) {
+  let done = false;
+  const result = promise.then((value) => ({ value }), (error) => ({ error })).finally(() => { done = true; });
+  while (!done) {
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(10_000);
+  }
+  return result;
+}
+
+test("phase preparation retries transient GitHub read failures before the agent starts", async (t) => {
+  preparationIO(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.deepEqual(f.hooks.map(({ name }) => name), ["request"]);
+  const [{ wrapper }] = f.hooks;
+  const failure = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
+  const responder = (statuses) => {
+    const attempts = [];
+    const request = async (options) => {
+      attempts.push(options.method);
+      const status = statuses[attempts.length - 1];
+      if (status) throw failure(status);
+      return { status: 200, data: "ok" };
+    };
+    return { attempts, request };
+  };
+
+  const recovered = responder([503, 502]);
+  assert.deepEqual(await settle(t, wrapper(recovered.request, { method: "GET" })), { value: { status: 200, data: "ok" } });
+  assert.equal(recovered.attempts.length, 3);
+
+  const outage = responder([503, 503, 503, 503, 503]);
+  assert.equal((await settle(t, wrapper(outage.request, { method: "GET" }))).error.status, 503);
+  assert.equal(outage.attempts.length, 4);
+
+  const query = responder([502]);
+  const lookup = { method: "POST", url: "/graphql", query: "query Lookup { viewer { login } }" };
+  assert.deepEqual(await settle(t, wrapper(query.request, lookup)), { value: { status: 200, data: "ok" } });
+  assert.equal(query.attempts.length, 2);
+
+  const mutation = { method: "POST", url: "/graphql", query: "\n  mutation($id: ID!) { minimizeComment(input: {subjectId: $id}) { clientMutationId } }" };
+  for (const [status, options] of [[404, { method: "GET" }], [403, { method: "GET" }], [503, { method: "POST", url: "/repos/example/broker/issues/42/comments" }], [503, mutation]]) {
+    const once = responder([status]);
+    assert.equal((await settle(t, wrapper(once.request, options))).error.status, status);
+    assert.equal(once.attempts.length, 1);
+  }
+
+  await prepare({ ...f, inputs: { phase: "clarify", pr: 42 } });
+  assert.equal(f.hooks.length, 1);
+});
+
+test("every workflow entry point retries transient reads once per client", async (t) => {
+  preparationIO(t);
+  const entries = {
+    route: (f) => route(f),
+    announce: (f) => announce({ ...f, needs: {} }),
+    verify: (f) => verify({ ...f, comment: 11, phase: "clarify" }),
+    publishApprovals: (f) => publishApprovals({ ...f, comment: 11 }),
+    remediable: (f) => remediable({ ...f, pr: 42 }),
+    publishProposals: (f) => publishProposals({ ...f, review: 40 }),
+    testTarget: (f) => testTarget({ ...f, pr: 42 }),
+    dispatchTests: (f) => dispatchTests({ ...f, target: {} }),
+    report: (f) => report({ ...f, needs: {} }),
+  };
+  for (const [name, entry] of Object.entries(entries)) {
+    const f = fixture("pull_request_target", {}, { comments: [comment(result("clarify"))] });
+    await entry(f).catch(() => {});
+    await entry(f).catch(() => {});
+    assert.deepEqual(f.hooks.map(({ name: hook }) => hook), ["request"], name);
+  }
+});
+
 test("specification context preserves only the issue title and body, not comments", async (t) => {
   const saved = preparationIO(t);
   const issue = { number: 7, state: "open", labels: [{ name: "speckit:specify" }], title: "Feature $(not-a-command)", body: "Original issue body" };
@@ -1034,6 +1132,25 @@ test("a blocked implementation resumes under its approval although it changed th
   })), /changed after the approval/);
 });
 
+test("implementation may tick and add tasks, but only after it started and never in the reviewed spec or plan", async (t) => {
+  preparationIO(t);
+  const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
+  const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
+  const partial = comment(result("implement", { status: "blocked", next_step: "Install ginkgo" }), { id: 60 });
+  const ticked = { [`${spec}/tasks.md`]: "- [X] T001 Implement feature\n- [ ] T002 Record the new finding" };
+  const attempt = (comments, extra) => route(fixture("pull_request_target", payload, {
+    comments, extra, reactions: [thumbs()], tree: "tree-2",
+  }));
+  assert.equal((await attempt([...reviewed, partial], ticked)).action, "implement");
+  const resumed = fixture("pull_request_target", {}, {
+    comments: [...reviewed, partial], extra: ticked, reactions: [thumbs()], tree: "tree-2",
+  });
+  assert.equal((await prepare({ ...resumed, inputs: { phase: "implement", pr: 42 } })).previous.phase, "reanalyze");
+  await assert.rejects(attempt(reviewed, ticked), /tasks\.md changed after reanalyze/);
+  await assert.rejects(attempt([...reviewed, partial], { ...ticked, [`${spec}/plan.md`]: "Revised plan" }),
+    /plan\.md changed after reanalyze/);
+});
+
 test("the approval comment lists each item with a pinned link, replaces the previous one, and binds the reviewed state", async () => {
   const head = "a".repeat(40);
   const contract = `${spec}/contracts/api.yaml`;
@@ -1150,9 +1267,19 @@ test("published results name the next step when blocked and list approval items 
   }, extra);
   listed.run();
   assert.deepEqual(listed.published("analyze").approvals, [{ kind: "api", title: "Adds a path", location: `${contract}:2` }]);
-  const stopped = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step: "Decide X" }, extra);
+  for (const next_step of [
+    "Decide X, then rerun T001–T009 in order and record the evidence at quickstart.md:12",
+    "1. Decide X\nThen rerun",
+    [1, 2, 3, 4, 5, 6].map((n) => `${n}. Step ${n}`).join("\n"),
+    `1. ${"x".repeat(300)}`,
+  ]) {
+    const prose = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step }, extra);
+    assert.throws(prose.run, /numbered list of at most 5 actions/);
+  }
+  const steps = "1. Decide X in `spec.md:12`\n2. Allow `openid.net` for the implement workflow";
+  const stopped = resultCommand({ phase: "remediate" }, { status: "blocked", report: "Blocked", next_step: steps }, extra);
   stopped.run();
-  assert.equal(stopped.published("phase").next_step, "Decide X");
+  assert.equal(stopped.published("phase").next_step, steps);
   const done = resultCommand({ phase: "remediate" }, { status: "complete", report: "Done", next_step: "Ignored" }, extra);
   done.run();
   assert.equal(done.published("phase").next_step, undefined);
@@ -1340,4 +1467,510 @@ test("the first clarification stops for spec review; later ones continue into pl
   assert.equal(continuesToPlan(result("clarify")), true);
   assert.equal(continuesToPlan(result("clarify", { status: "waiting", questions: ["Which policy applies?"] })), false);
   assert.equal(continuesToPlan(result("plan")), false);
+});
+
+test("a completed implementation shows its architecture review, the proposal, and keeps the review unfolded", async () => {
+  const comments = [
+    posted(result("reanalyze", { approvals: [] }), 18),
+    posted(result("implement", { summary: "Implemented" }), 21),
+    architectureReview([item("F1", { bucket: "auto" }), item("F2"), item("F3", { bucket: "question", question: "Why?" })], { id: 22 }),
+  ];
+  const needs = (review, proposals) => ({
+    route: { result: "success", outputs: { action: "implement", pr: "42" } },
+    implement: { result: "success", outputs: { comment_id: "21" } }, verify: { result: "success", outputs: {} },
+    review, ...(proposals ? { proposals } : {}),
+  });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments });
+  await report({ ...f, needs: needs({ result: "success", outputs: { comment_id: "22" } },
+    { result: "success", outputs: { comment_id: "23", recommendation: "DISCUSS", questions: "1" } }) });
+  const { body } = f.created[0];
+  assert.ok(body.startsWith("## Spec Kit · ✅ Implementation complete\n"));
+  assert.ok(body.includes("Implement ✅** › Review 🟡 › Fix ○ › Apply ○"));
+  assert.ok(body.includes(`Architecture review: **DISCUSS**. [Read the review](${link(22)}).`));
+  assert.ok(body.includes(`Decide the remaining items in the [remediation proposal](${link(23)}): tick each item to apply, then tick **Apply the selected items**.`));
+  assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+  assert.deepEqual(f.minimized, ["node-18", "node-21"]);
+
+  const rereviewed = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments });
+  await report({ ...rereviewed, needs: { ...needs({ result: "success", outputs: { comment_id: "19" } },
+    { result: "success", outputs: { comment_id: "", recommendation: "APPROVE", questions: "0" } }),
+  rereview: { result: "success", outputs: { comment_id: "22" } } } });
+  assert.ok(rereviewed.created[0].body.includes(`Architecture review: **APPROVE**. [Read the review](${link(22)}).\n\nNothing is left to remediate.`));
+
+  const failed = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments });
+  await report({ ...failed, needs: needs({ result: "success", outputs: { comment_id: "22" } }, { result: "failure", outputs: { error: "Review provenance does not match this run" } }) });
+  assert.ok(failed.created[0].body.startsWith("## Spec Kit · ⛔ Stopped in `proposals`\n"));
+  assert.ok(failed.created[0].body.includes("### Next step\n\nReview provenance does not match this run"));
+
+  const crashed = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments });
+  await report({ ...crashed, needs: { ...needs({ result: "success", outputs: { comment_id: "22" } }), fix: { result: "failure", outputs: {} } } });
+  assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ⛔ `fix` failed\n"));
+  assert.ok(crashed.created[0].body.includes("### Next step\n\nThe architecture review step failed before publishing."));
+
+  const skipped = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments });
+  await report({ ...skipped, needs: needs({ result: "skipped", outputs: {} }) });
+  assert.ok(!skipped.created[0].body.includes("Architecture review"));
+
+  const blocked = fixture("issue_comment", commandEvent(command("/speckit-implement")), {
+    comments: [...comments, posted(result("remediate-review", { status: "blocked", next_step: "Fix the failing e2e suite" }), 24)],
+  });
+  await report({ ...blocked, needs: needs({ result: "success", outputs: { comment_id: "22" } }) });
+  assert.ok(blocked.created[0].body.startsWith("## Spec Kit · ⛔ Fix is blocked\n"));
+  assert.ok(blocked.created[0].body.includes("### Next step\n\nFix the failing e2e suite\n\nThen comment `/architecture-review` to review the current commit again."));
+});
+
+function item(id, overrides = {}) {
+  return {
+    id, severity: "YELLOW", dimension: "otel-parity", bucket: "proposed", title: `Finding ${id} <b>`,
+    change: `Change for ${id}`, alternative: `Alternative for ${id}`, ...overrides,
+  };
+}
+
+function architectureReview(items, { id = 22, head = "a".repeat(40), run = "100/1", recommendation = "DISCUSS" } = {}) {
+  const findings = Object.fromEntries(["RED", "YELLOW", "GREEN"].map((severity) =>
+    [severity, items.filter((entry) => entry.severity === severity).length]));
+  const state = { run, pr: 42, head, recommendation, summary: "Summary", findings, failed: [], items };
+  return {
+    id, node_id: `node-${id}`, user: bot, issue_url: issueURL, html_url: link(id),
+    body: "## 🏗️ Architectural Review\n\nBody\n\n<details><summary>Review state</summary>\n\n## Architecture review result\n" +
+      `\`\`\`json\n${JSON.stringify(state)}\n\`\`\`\n\n</details>\n\n` +
+      `> Generated by [Architecture Review](https://github.com/example/broker/actions/runs/${run.split("/")[0]})\n\n` +
+      "<!-- gh-aw-workflow-call-id: example/broker/architecture-review -->",
+  };
+}
+
+function proposalComment({ selected = [], apply = false, head = "a".repeat(40), review = 22, intro = "Intro." } = {}, overrides = {}) {
+  const box = (id) => (selected.includes(id) ? "x" : " ");
+  return {
+    id: 23, node_id: "node-23", user: bot, issue_url: issueURL, html_url: link(23), updated_at: "2026-10-29T10:00:00Z",
+    body: `## Spec Kit remediation proposal\n\n${intro}\n\n- [${box("P1")}] **P1** 🟡 Finding F1. Recommended: Change for F1\n` +
+      `- [${box("P2")}] **P2** 🟡 Finding F2. Automatic fix, untick to skip. Recommended: Change for F2\n` +
+      `- [${apply ? "x" : " "}] **Apply the selected items**\n\n` +
+      `<!-- speckit-proposal: ${JSON.stringify({ review, head, items: { P1: "F1", P2: "F2" } })} -->\n`,
+    ...overrides,
+  };
+}
+
+function editEvent(before, after, sender = { login: "maintainer", type: "User" }) {
+  return { action: "edited", issue: { number: 42, pull_request: {} }, comment: after, sender, changes: { body: { from: before.body } } };
+}
+
+test("/architecture-review on a managed PR routes to the review and fails visibly elsewhere", async () => {
+  assert.deepEqual(parseCommand("/architecture-review session lifecycle"), { phase: "architecture-review", argument: "session lifecycle" });
+  const f = fixture("issue_comment", commandEvent(command("/architecture-review sessions")));
+  assert.deepEqual(await route(f), { action: "review", issue: 7, pr: 42, comment: 20 });
+  await assert.rejects(route(fixture("issue_comment", commandEvent(command("/architecture-review"), { number: 7 }))),
+    /\/architecture-review runs on a Spec Kit pull request/);
+  await assert.rejects(route(fixture("pull_request_review", reviewEvent(review("/architecture-review")))),
+    /\/architecture-review runs in a pull request comment, not a review/);
+  const unmanaged = fixture("issue_comment", commandEvent(command("/architecture-review")), { pr: { body: "Plain PR", head: { ref: "feature", sha: "a".repeat(40), repo: { full_name: "example/broker" } } } });
+  assert.deepEqual(await route(unmanaged), { action: "noop" });
+  assert.equal((await route(fixture("issue_comment", commandEvent(command("/architecture-review")), { permission: "read" }))).action, "noop");
+});
+
+test("ticking Apply on the remediation proposal routes the selected items; other edits do not", async () => {
+  const before = proposalComment({ selected: ["P1"] });
+  const after = proposalComment({ selected: ["P1"], apply: true });
+  const f = fixture("issue_comment", editEvent(before, after), { comments: [after] });
+  assert.deepEqual(await route(f), { action: "apply", issue: 7, pr: 42, comment: 0, proposal: 23 });
+
+  const later = proposalComment({ selected: ["P1", "P2"], apply: true });
+  const queued = fixture("issue_comment", editEvent(before, after), { comments: [later] });
+  assert.deepEqual(await route(queued), { action: "apply", issue: 7, pr: 42, comment: 0, proposal: 23 });
+
+  const cases = [
+    fixture("issue_comment", editEvent(proposalComment(), proposalComment({ selected: ["P1"] })), { comments: [proposalComment({ selected: ["P1"] })] }),
+    fixture("issue_comment", editEvent(before, proposalComment({ selected: ["P1"], apply: true, intro: "Edited intro." })),
+      { comments: [proposalComment({ selected: ["P1"], apply: true, intro: "Edited intro." })] }),
+    fixture("issue_comment", editEvent(before, after, { login: "github-actions[bot]", type: "Bot" }), { comments: [after] }),
+    fixture("issue_comment", editEvent(before, after, { login: "contributor", type: "User" }), { comments: [after] }),
+    fixture("issue_comment", editEvent(before, after), { comments: [after], permission: "read" }),
+    fixture("issue_comment", editEvent(before, after), { comments: [after], pr: { body: "Plain PR" } }),
+    fixture("issue_comment", editEvent(before, { ...after, body: after.body.replace("<!-- speckit-proposal:", "<!-- other:") }),
+      { comments: [{ ...after, body: after.body.replace("<!-- speckit-proposal:", "<!-- other:") }] }),
+    fixture("issue_comment", { ...editEvent(before, after), changes: undefined }, { comments: [after] }),
+  ];
+  for (const entry of cases) assert.deepEqual(await route(entry), { action: "noop" });
+
+  const deleted = fixture("issue_comment", editEvent(before, after), { comments: [] });
+  deleted.github.rest.issues.getComment = async () => {
+    const error = new Error("Not found");
+    error.status = 404;
+    throw error;
+  };
+  assert.deepEqual(await route(deleted), { action: "noop" });
+
+  const empty = proposalComment({ apply: true });
+  await assert.rejects(route(fixture("issue_comment", editEvent(proposalComment(), empty), { comments: [empty] })),
+    /Tick at least one item/);
+  const stale = proposalComment({ selected: ["P1"], apply: true, head: "b".repeat(40) });
+  await assert.rejects(route(fixture("issue_comment", editEvent(proposalComment({ selected: ["P1"], head: "b".repeat(40) }), stale), { comments: [stale] })),
+    /changed after the proposal/);
+});
+
+test("the proposal comment lists automatic fixes pre-ticked, decisions unticked, and questions apart", async () => {
+  const items = [item("F1", { bucket: "auto", alternative: undefined }), item("F2", { severity: "RED" }),
+    item("F3", { bucket: "question", question: "Which source wins? @team" }), item("F4", { severity: "GREEN", bucket: "note" })];
+  const stale = proposalComment({}, { id: 30 });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [architectureReview(items), stale] });
+  const published = await publishProposals({ ...f, review: "22" });
+  assert.deepEqual(published, { comment_id: "901", recommendation: "DISCUSS", questions: 1, remediable: true });
+  assert.deepEqual(f.deleted, [30]);
+  assert.equal(f.created[0].body, [
+    "## Spec Kit remediation proposal", "",
+    `The [architecture review](${link(22)}) of commit \`aaaaaaa\` needs your decision on the items below. ` +
+      "Tick the items to apply, then tick **Apply the selected items**. The pipeline applies them, pushes, and reviews the result. " +
+      "Unticked items stay open.", "",
+    "- [x] **P1** 🟡 Finding F1 &lt;b>. Automatic fix, untick to skip. Recommended: Change for F1",
+    "- [ ] **P2** 🔴 Finding F2 &lt;b>. Recommended: Change for F2 Alternative: Alternative for F2",
+    "- [ ] **Apply the selected items**", "",
+    "Open questions, answered with `/speckit-plan <decision>`:",
+    "- 🟡 **Finding F3 &lt;b>**: Which source wins? @​team", "",
+    `<!-- speckit-proposal: ${JSON.stringify({ review: 22, head: "a".repeat(40), items: { P1: "F1", P2: "F2" } })} -->`, "",
+  ].join("\n"));
+  const parsed = parseProposal({ ...f.created[0], user: bot });
+  assert.deepEqual(parsed, { review: 22, head: "a".repeat(40), items: { P1: "F1", P2: "F2" }, selected: ["P1"], apply: false });
+
+  const questions = fixture("issue_comment", commandEvent(command("/speckit-implement")),
+    { comments: [architectureReview([item("F3", { bucket: "question", question: "Why?" })])] });
+  assert.deepEqual(await publishProposals({ ...questions, review: "22" }), { comment_id: "901", recommendation: "DISCUSS", questions: 1, remediable: true });
+  assert.ok(questions.created[0].body.includes("left only open questions."));
+  assert.ok(!questions.created[0].body.includes("Apply the selected items"));
+
+  const clean = fixture("issue_comment", commandEvent(command("/speckit-implement")),
+    { comments: [architectureReview([], { recommendation: "APPROVE" })] });
+  assert.deepEqual(await publishProposals({ ...clean, review: "22" }), { comment_id: "", recommendation: "APPROVE", questions: 0, remediable: true });
+  assert.equal(clean.created.length, 0);
+
+  const foreign = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [architectureReview(items, { run: "99/1" })] });
+  await assert.rejects(publishProposals({ ...foreign, review: "22" }), /provenance/);
+  const moved = fixture("issue_comment", commandEvent(command("/speckit-implement")),
+    { comments: [architectureReview(items)], pr: { head: { ref: "speckit/issue-7", sha: "b".repeat(40), repo: { full_name: "example/broker" } } } });
+  await assert.rejects(publishProposals({ ...moved, review: "22" }), /changed while it was reviewed/);
+  await assert.rejects(publishProposals({ ...f, review: "" }), /did not publish/);
+});
+
+test("remediation phases receive the review items they may change", async (t) => {
+  preparationIO(t);
+  const implemented = comment(result("implement"), { id: 21 });
+  const items = [item("F1", { bucket: "auto" }), item("F2"), item("F3", { bucket: "question", question: "Why?" })];
+  const fix = fixture("issue_comment", {}, { comments: [implemented, architectureReview(items)] });
+  const context = await prepare({ ...fix, inputs: { phase: "remediate-review", pr: 42 } });
+  assert.equal(context.previous.phase, "implement");
+  assert.deepEqual(context.review, { url: link(22), items: [items[0]] });
+
+  const nothing = fixture("issue_comment", {}, { comments: [implemented, architectureReview([items[1]])] });
+  await assert.rejects(prepare({ ...nothing, inputs: { phase: "remediate-review", pr: 42 } }), /nothing to remediate automatically/);
+  const unreviewed = fixture("issue_comment", {}, { comments: [implemented, architectureReview(items, { head: "b".repeat(40) })] });
+  await assert.rejects(prepare({ ...unreviewed, inputs: { phase: "remediate-review", pr: 42 } }), /No architecture review exists/);
+  const unimplemented = fixture("issue_comment", {}, { comments: [comment(result("reanalyze")), architectureReview(items)] });
+  await assert.rejects(prepare({ ...unimplemented, inputs: { phase: "remediate-review", pr: 42 } }), /completed implementation is required/);
+
+  const proposal = proposalComment({ selected: ["P1"], apply: true });
+  const apply = fixture("issue_comment", {}, { comments: [implemented, architectureReview(items), proposal] });
+  const applied = await prepare({ ...apply, inputs: { phase: "apply-review", pr: 42, proposal: 23 } });
+  assert.deepEqual(applied.review, {
+    url: link(22), items: [items[0]],
+    proposal: { id: 23, url: link(23), selected: ["P1"], approver: "maintainer", at: "2026-10-29T10:00:00Z" },
+  });
+  for (const [entry, pattern] of [
+    [proposalComment({ selected: ["P1"] }), /not an applicable remediation proposal/],
+    [proposalComment({ apply: true }), /not an applicable remediation proposal/],
+    [proposalComment({ selected: ["P1"], apply: true, head: "b".repeat(40) }), /changed after the proposal/],
+    [proposalComment({ selected: ["P1"], apply: true, review: 99 }), /missing or stale/],
+  ]) {
+    const f = fixture("issue_comment", {}, { comments: [implemented, architectureReview(items), entry] });
+    await assert.rejects(prepare({ ...f, inputs: { phase: "apply-review", pr: 42, proposal: 23 } }), pattern);
+  }
+  const unknown = fixture("issue_comment", {}, { comments: [implemented, architectureReview([items[1], items[2]]), proposal] });
+  await assert.rejects(prepare({ ...unknown, inputs: { phase: "apply-review", pr: 42, proposal: 23 } }), /findings the review does not list/);
+
+  const refixed = fixture("issue_comment", {}, {
+    comments: [implemented, comment(result("apply-review", { status: "blocked", next_step: "Decide" }), { id: 25 }), architectureReview(items)],
+  });
+  await assert.rejects(prepare({ ...refixed, inputs: { phase: "remediate-review", pr: 42 } }), /apply-review is blocked/);
+});
+
+test("review results are parsed only from the review worker's footer and a consistent state", () => {
+  const valid = architectureReview([item("F1")]);
+  assert.equal(parseReview(valid).items[0].id, "F1");
+  assert.equal(parseReview({ ...valid, user: { login: "maintainer", type: "User" } }), null);
+  assert.equal(parseReview({ ...valid, body: valid.body.replace("/architecture-review -->", "/speckit-analyze -->") }), null);
+  const mismatch = architectureReview([item("F1")]);
+  mismatch.body = mismatch.body.replace('"YELLOW":1', '"YELLOW":2');
+  assert.equal(parseReview(mismatch), null);
+  assert.throws(() => validateReviewState({ ...JSON.parse(valid.body.match(/```json\n(\{.*\})\n```/)[1]), items: [item("F1", { bucket: "auto", change: undefined })] }),
+    /needs a one-line recommended change/);
+});
+
+test("remediation waits for a completed code phase; earlier reviews publish no proposal", async () => {
+  const items = [item("F1", { bucket: "auto" }), item("F2"), item("F3", { bucket: "question", question: "Why?" })];
+  const implemented = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), architectureReview(items)] });
+  assert.equal(await remediable({ ...implemented, pr: 42 }), true);
+  const applied = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), posted(result("apply-review"), 23)] });
+  assert.equal(await remediable({ ...applied, pr: "42" }), true);
+  const blocked = fixture("issue_comment", {}, { comments: [posted(result("implement"), 21), posted(result("remediate-review", { status: "blocked", next_step: "1. Decide" }), 23)] });
+  assert.equal(await remediable({ ...blocked, pr: 42 }), false);
+  const planned = fixture("issue_comment", {}, { comments: [posted(result("reanalyze", { approvals: [] }), 18), architectureReview(items)] });
+  assert.equal(await remediable({ ...planned, pr: 42 }), false);
+
+  const stale = proposalComment({}, { id: 30 });
+  const early = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments: [architectureReview(items), stale] });
+  assert.deepEqual(await publishProposals({ ...early, review: "22", remediable: false }),
+    { comment_id: "", recommendation: "DISCUSS", questions: 1, remediable: false });
+  assert.deepEqual(early.deleted, [30]);
+  assert.equal(early.created.length, 0);
+  const later = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments: [architectureReview(items)] });
+  assert.equal((await publishProposals({ ...later, review: "22" })).remediable, true);
+  assert.equal(later.created.length, 1);
+
+  const status = fixture("issue_comment", commandEvent(command("/architecture-review")),
+    { comments: [posted(result("reanalyze", { approvals: [] }), 18), architectureReview(items)] });
+  await report({ ...status, needs: {
+    route: { result: "success", outputs: { action: "review", pr: "42" } },
+    review: { result: "success", outputs: { comment_id: "22" } },
+    reviewed: { result: "success", outputs: { auto: "true", remediable: "false" } },
+    fix: { result: "skipped", outputs: {} },
+    proposals: { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } },
+  } });
+  const { body } = status.created[0];
+  assert.ok(body.includes(`Architecture review: **DISCUSS**. [Read the review](${link(22)}).`));
+  assert.ok(body.includes("Its findings are remediated after `/speckit-implement`, when the review runs again."));
+  assert.ok(!body.includes("remediation proposal"));
+  assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+});
+
+const head = "a".repeat(40);
+const testEvent = { action: "completed", workflow_run: { id: 500, head_branch: "speckit/issue-7", pull_requests: [{ number: 42 }] } };
+const testJobs = {
+  500: [
+    {
+      name: "Infra integration tests", html_url: "https://github.com/example/broker/actions/runs/500/job/1", conclusion: "failure",
+      steps: [{ name: "Checkout", conclusion: "success" }, { name: "Infra integration suites with JUnit", conclusion: "failure" }],
+    },
+    { name: "Docker E2E tests", html_url: "https://github.com/example/broker/actions/runs/500/job/2", conclusion: "success", steps: [] },
+  ],
+};
+
+function testRun(overrides = {}) {
+  return {
+    id: 500, path: ".github/workflows/container-tests.yml", event: "workflow_dispatch", conclusion: "failure",
+    head_branch: "speckit/issue-7", head_sha: head, head_repository: { full_name: "example/broker" },
+    html_url: "https://github.com/example/broker/actions/runs/500", ...overrides,
+  };
+}
+
+function implemented(id, run = 100, overrides = {}, sha = head) {
+  return [pushed(id, sha, { run }), posted(result("implement", { run: `${run}/1`, ...overrides }), id + 1, run)];
+}
+
+function repairFixture(options = {}) {
+  const f = fixture("workflow_run", options.payload || testEvent, {
+    permissions: { "app-bot": "read" }, jobs: testJobs, ...options,
+    reactions: options.reactions ?? [thumbs()],
+    runs: { 500: testRun(), ...options.runs },
+    comments: [posted(result("clarify"), 10), posted(result("reanalyze"), 13), approvalComment(),
+      ...(options.comments ?? implemented(60))],
+  });
+  f.context.actor = "app-bot";
+  return f;
+}
+
+test("failed container tests on the implementation's commit start a repair for the maintainer who started it", async () => {
+  assert.deepEqual(await route(repairFixture()),
+    { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 1 });
+  for (const options of [
+    { runs: { 500: testRun({ conclusion: "success" }) } },
+    { runs: { 500: testRun({ path: ".github/workflows/security.yml" }) } },
+    { runs: { 500: testRun({ event: "pull_request" }) } },
+    { runs: { 500: testRun({ path: ".github/workflows/ci.yml" }) } },
+    { runs: { 500: testRun({ head_branch: "speckit/issue-8" }) } },
+    { payload: { action: "completed", workflow_run: { id: 500, head_branch: "main", pull_requests: [{ number: 42 }] } } },
+    { runs: { 500: testRun({ head_sha: "b".repeat(40) }) } },
+    { runs: { 500: testRun({ head_repository: { full_name: "outsider/broker" } }) } },
+    { payload: { action: "completed", workflow_run: { id: 500, head_branch: "speckit/issue-7", pull_requests: [] } } },
+    { payload: { ...testEvent, action: "requested" } },
+    { comments: [posted(result("implement"), 61)] },
+    { comments: implemented(60, 100, {}, "c".repeat(40)) },
+    { comments: implemented(60, 100, { status: "blocked", next_step: "1. Decide X" }) },
+    { comments: [...implemented(60), posted(result("plan", { run: "110/1" }), 70, 110)] },
+    { runs: { 100: { id: 100, triggering_actor: { login: "app-bot" } } } },
+    { pr: { user: { login: "contributor", type: "User" } } },
+  ]) assert.deepEqual(await route(repairFixture(options)), { action: "noop" });
+  await assert.rejects(route(repairFixture({ reactions: [] })),
+    (error) => error.pr === 42 && /Approval pending/.test(error.message));
+});
+
+test("failed container tests on a review fix or an applied proposal start a repair too", async () => {
+  const implementation = implemented(60, 100, {}, "c".repeat(40));
+  for (const phase of ["remediate-review", "apply-review"]) {
+    const fixed = [pushed(62, head), posted(result(phase), 63)];
+    assert.deepEqual(await route(repairFixture({ comments: [...implementation, ...fixed] })),
+      { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 1 });
+    const failed = [pushed(62, head), posted(result(phase, { status: "blocked", next_step: "1. Decide X" }), 63)];
+    assert.deepEqual(await route(repairFixture({ comments: [...implementation, ...failed] })), { action: "noop" });
+  }
+  assert.deepEqual(await route(repairFixture({ comments: [pushed(62, head), posted(result("remediate-review"), 63)] })),
+    { action: "noop" });
+});
+
+test("repairs are bounded per maintainer implementation and a new one allows more", async () => {
+  const two = [...implemented(60), ...implemented(62, 101, { repair: 1 }), ...implemented(64, 102, { repair: 2 })];
+  assert.deepEqual(await route(repairFixture({ comments: two })),
+    { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 3 });
+  const three = [...two, ...implemented(66, 103, { repair: 3 })];
+  assert.deepEqual(await route(repairFixture({ comments: three })),
+    { action: "exhausted", issue: 7, pr: 42, comment: 0, validation: 500, round: 4 });
+  assert.equal((await route(repairFixture({ comments: [...three, ...implemented(68, 104)] }))).round, 1);
+});
+
+test("a repair worker is authorized by the routed test failure, not by the test run's actor", async (t) => {
+  const saved = preparationIO(t);
+  const data = await prepare({ ...repairFixture(), inputs: { phase: "implement", pr: 42, validation: 500 } });
+  assert.deepEqual(data.validation, {
+    round: 1, max: 3, run: 500, url: "https://github.com/example/broker/actions/runs/500", head,
+    jobs: [{
+      name: "Infra integration tests", url: "https://github.com/example/broker/actions/runs/500/job/1",
+      steps: ["Infra integration suites with JUnit"],
+    }],
+    reports: "/tmp/gh-aw/speckit/validation",
+  });
+  assert.deepEqual(JSON.parse(saved.at(-1).body).validation, data.validation);
+  await assert.rejects(prepare({ ...repairFixture(), inputs: { phase: "implement", pr: 42 } }), /Maintainer permission/);
+  await assert.rejects(prepare({ ...repairFixture(), inputs: { phase: "plan", pr: 42, validation: 500 } }), /Only implementation/);
+  for (const options of [
+    { runs: { 500: testRun({ conclusion: "success" }) } },
+    { comments: [...implemented(60), ...implemented(62, 101, { repair: 1 }), ...implemented(64, 102, { repair: 2 }),
+      ...implemented(66, 103, { repair: 3 })] },
+  ]) {
+    await assert.rejects(prepare({ ...repairFixture(options), inputs: { phase: "implement", pr: 42, validation: 500 } }),
+      /not eligible for a repair/);
+  }
+});
+
+test("the status comment names the repair round and stops after the last repair", async () => {
+  const running = repairFixture();
+  await announce({ ...running, needs: { route: { result: "success",
+    outputs: { action: "implement", pr: "42", validation: "500", round: "2" } } } });
+  assert.ok(running.created[0].body.startsWith("## Spec Kit · ⏳ Repairing container test failures (round 2 of 3)\n"));
+  assert.ok(running.created[0].body.includes(
+    "Started by the failed [container test run](https://github.com/example/broker/actions/runs/500)."));
+
+  const comments = [...implemented(60), ...implemented(62, 101, { repair: 1 })];
+  const exhausted = repairFixture({ comments });
+  await report({ ...exhausted, needs: { route: { result: "success",
+    outputs: { action: "exhausted", pr: "42", validation: "500", round: "4" } } } });
+  const { body } = exhausted.created[0];
+  assert.ok(body.startsWith("## Spec Kit · ⛔ Container tests are still red after 3 repairs\n"));
+  assert.ok(body.includes("- [Infra integration tests](https://github.com/example/broker/actions/runs/500/job/1)\n"));
+  assert.ok(!body.includes("Docker E2E tests"));
+  assert.ok(body.includes("comment `/speckit-implement` to allow up to 3 more repair runs."));
+  assert.match(body, /\[Repair 1 ✅\]/);
+
+  const gated = repairFixture();
+  await report({ ...gated, needs: { route: { result: "failure", outputs: { error: "Approval pending: react", pr: "42" } } } });
+  assert.ok(gated.created[0].body.startsWith("## Spec Kit · ⛔ Stopped in `route`\n"));
+  for (const route of [
+    { result: "failure", outputs: { error: "Lookup failed" } },
+    { result: "success", outputs: { action: "noop" } },
+  ]) {
+    const quiet = repairFixture();
+    assert.equal(await report({ ...quiet, needs: { route } }), null);
+    assert.equal(await announce({ ...quiet, needs: { route } }), null);
+    assert.equal(quiet.created.length + quiet.deleted.length, 0);
+  }
+});
+
+test("a repair result records its round and must commit a fix or hand the failure over", () => {
+  const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
+  const ticked = { ...files, [`${spec}/tasks.md`]: "- [X] T001 Implement feature" };
+  const context = { phase: "implement", run: "101/1", feature: spec, head, validation: { round: 2 } };
+  const draft = {
+    status: "complete", summary: "Fixed the migration test", report: "Repair report", findings: [], questions: [],
+    checks: ["just check", "just test"],
+  };
+  const local = {
+    "/tmp/gh-aw/speckit/context.json": context, "/tmp/gh-aw/speckit/result.json": draft,
+    ".specify/feature.json": { feature_directory: spec },
+  };
+  const saved = [];
+  const git = [];
+  let commits = "0";
+  const io = {
+    readFileSync: (name) => {
+      name = name.replace(/^\/workspace\//, "");
+      return Object.hasOwn(local, name) ? JSON.stringify(local[name]) : ticked[name];
+    },
+    existsSync: (name) => Object.hasOwn(ticked, name),
+    lstatSync: () => ({ isSymbolicLink: () => false }),
+    writeFileSync: (name, body) => saved.push({ name, body }),
+  };
+  const childProcess = { execFileSync: (file, args) => { git.push([file, ...args]); return `${commits}\n`; } };
+  const run = () => {
+    const module = { exports: {} };
+    const load = (name) => name === "node:fs" ? io : name === "node:child_process" ? childProcess : require(name);
+    load.main = module;
+    vm.runInNewContext(source, {
+      module, require: load, process: { argv: ["node", "automation.cjs", "result"], cwd: () => "/workspace" },
+    });
+  };
+  assert.throws(run, /repair that commits nothing must report blocked/);
+  assert.deepEqual(git, [["git", "rev-list", "--count", `${head}..HEAD`]]);
+  commits = "2";
+  run();
+  const parse = (body) => parseResult({ ...comment(result("implement")), body: `${body}\n<!-- gh-aw-workflow-call-id: example/broker/speckit-implement -->` });
+  assert.equal(parse(saved[0].body).repair, 2);
+  commits = "0";
+  Object.assign(draft, { status: "blocked", next_step: "1. Restore the CI runner's Docker daemon", checks: [] });
+  run();
+  assert.equal(parse(saved[1].body).repair, 2);
+  context.head = "HEAD~1";
+  Object.assign(draft, { status: "complete", checks: ["just check", "just test"] });
+  assert.throws(run, /Invalid repair head/);
+
+  for (const repair of [0, 4, 1.5, "1"]) {
+    assert.equal(parseResult(comment(result("implement", { repair }))), null);
+  }
+  assert.equal(parseResult(comment(result("plan", { repair: 1 }))), null);
+  assert.equal(parseResult(comment(result("implement", { repair: 3 }))).repair, 3);
+});
+
+test("a dispatched test run without a matched pull request is routed through the PR branch", async () => {
+  const payload = { ...testEvent, workflow_run: { ...testEvent.workflow_run, pull_requests: [] } };
+  assert.deepEqual(await route(repairFixture({ payload, existing: [{ number: 42 }] })),
+    { action: "implement", issue: 7, pr: 42, comment: 0, validation: 500, round: 1 });
+  for (const existing of [[], [{ number: 42 }, { number: 43 }]]) {
+    assert.deepEqual(await route(repairFixture({ payload, existing })), { action: "noop" });
+  }
+});
+
+test("container tests start only on the commit that a completed code phase pushed", async () => {
+  const f = repairFixture();
+  const target = await testTarget({ ...f, pr: 42 });
+  assert.deepEqual(target, { pr: 42, branch: "speckit/issue-7", head });
+  await dispatchTests({ ...f, target });
+  assert.deepEqual(f.dispatched, [{
+    owner: "example", repo: "broker", workflow_id: "container-tests.yml", ref: "speckit/issue-7", inputs: { pr: "42" },
+  }]);
+  for (const comments of [
+    implemented(60, 100, { status: "blocked", next_step: "1. Decide X" }),
+    implemented(60, 100, {}, "c".repeat(40)),
+  ]) assert.equal(await testTarget({ ...repairFixture({ comments }), pr: 42 }), null);
+  assert.equal(await testTarget({ ...repairFixture({ pr: { user: { login: "contributor", type: "User" } } }), pr: 42 }), null);
+  const missing = repairFixture({ dispatchError: new Error("No ref found for: speckit/issue-7") });
+  await assert.rejects(dispatchTests({ ...missing, target }),
+    /could not start on `speckit\/issue-7`: No ref found.*merge the default branch into it/);
+});
+
+test("worker comments from the Agentic Workflows App's bot count, but not from any other App", async (t) => {
+  preparationIO(t);
+  const worker = { login: "zalando-incubator-agent-workflows[bot]", type: "Bot" };
+  const f = fixture("pull_request_target", {}, { comments: [comment(result("remediate"), { user: worker })] });
+  assert.equal((await verify({ ...f, comment: 11, phase: "remediate" })).phase, "remediate");
+  const by = (user) => implemented(60).map((entry) => ({ ...entry, user }));
+  assert.equal((await route(repairFixture({ comments: by(worker) }))).action, "implement");
+  for (const user of [{ login: "coderabbitai[bot]", type: "Bot" }, { ...worker, type: "User" }]) {
+    assert.equal(parseResult(comment(result("implement"), { user })), null);
+    assert.deepEqual(await route(repairFixture({ comments: by(user) })), { action: "noop" });
+  }
 });

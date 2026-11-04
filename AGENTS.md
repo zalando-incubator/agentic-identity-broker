@@ -16,6 +16,11 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
 `.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
 
+### Coding Standards
+
+`coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
+`coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
+
 ### Section-Specific Agent Context
 
 `internal/AGENTS.md` | Backend hexagonal architecture, builder pattern, testing conventions
@@ -165,13 +170,18 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
-| 045 | `adrs/045-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc delegation resolver with bounded permit freshness; `granted_permission_sets` deprecation |
+| 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
+| 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
+| 047 | `adrs/047-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc delegation resolver with bounded permit freshness; `granted_permission_sets` deprecation |
 
 ## Domain Glossary
 
 | Term | Definition |
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
+| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified with a predicate binding `subject_token.sub`; another registered agent's UUID is a rejected cross-agent request; otherwise `human`. |
+| **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |
@@ -190,6 +200,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | **Delegation Decision** | AuthZEN evaluation outcome: permit with a Delegation Context and ≤60 s freshness, consent denial with a grant detail and consent URL, or a request failure that is never a decision. |
 | **Delegation Context** | Credential-free projection of an authorized delegation: principal, agent, resource and effective scopes, grant version and expiry, granted permission sets. Unset canonical IDs are omitted. |
 | **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
+| **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
 
@@ -223,6 +234,8 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
 - **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
+- **Structured logging** — Follow `coding-standards/LOGGING.md`. Log principals only as `id.Principal`. Never log credentials.
+- **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Set principals on spans only through `id.Principal.SpanAttribute`, and add none until #356 provides it. Never put a principal in a metric or a credential in any signal.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
 ## Database Migrations

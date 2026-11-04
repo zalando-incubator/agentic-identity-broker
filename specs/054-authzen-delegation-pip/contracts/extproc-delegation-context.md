@@ -5,7 +5,7 @@ namespace and is **not** part of the broker Helm chart. **Status**: Accepted und
 API-4–API-6 and ADR-1 (👍 on
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>);
 implemented in `internal/extproc/{config,delegation,server,authorization}` and
-[ADR 045](../../../adrs/045-authzen-delegation-pip.md). The maintainer endorsed the new ADR decision
+[ADR 047](../../../adrs/047-authzen-delegation-pip.md). The maintainer endorsed the new ADR decision
 set (research R16) in the 2026-10-28 review. This contract changes ADR 028's input schema and
 request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
 spec clarification (FR-017, FR-018, and research R15).

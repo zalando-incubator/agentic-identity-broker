@@ -30,7 +30,7 @@ var defaultReservedClientNames = []string{
 // always enforced regardless of operator configuration (FR-023c).
 func NewService(fetcher ports.CIMDFetcher, cache *CIMDCache, nameBlocklist []string, logger *slog.Logger) *Service {
 	if logger == nil {
-		logger = slog.Default()
+		panic("cimd.NewService: logger must not be nil")
 	}
 	merged := append(append([]string(nil), defaultReservedClientNames...), nameBlocklist...)
 	return &Service{
@@ -97,7 +97,7 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 
 	s.cache.Set(rawURL, doc, CacheHeaders{CacheControl: result.CacheControl, Expires: result.Expires}, time.Now())
 
-	s.logger.Info("cimd_document_fetched",
+	s.logger.InfoContext(ctx, "cimd_document_fetched",
 		"url", rawURL,
 		"client_name", doc.ClientName,
 		"redirect_uris_count", len(doc.RedirectURIs),

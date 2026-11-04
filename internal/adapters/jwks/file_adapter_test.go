@@ -258,6 +258,9 @@ func TestFileAdapterRecordsAFailedFetchSpanWhenStale(t *testing.T) {
 	assert.Equal(t, codes.Error, span.Status().Code)
 	assert.Empty(t, span.Events(), "key-set errors must not become exception events")
 	assert.Contains(t, span.Attributes(), attribute.String("error.type", "jwks_unavailable"))
+	for _, attr := range span.Attributes() {
+		assert.NotContains(t, []attribute.Key{"dependency", "operation"}, attr.Key, "jwks.fetch must not set unprefixed keys")
+	}
 }
 
 func TestFileAdapterNeverAppliesAPartiallyValidDocument(t *testing.T) {

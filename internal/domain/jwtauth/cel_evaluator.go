@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 )
@@ -82,7 +83,7 @@ type CELEvaluator struct {
 // email, picture URL) are only compiled if configured (non-empty).
 func NewCELEvaluator(config CELEvaluatorConfig, logger *slog.Logger) (*CELEvaluator, error) {
 	if logger == nil {
-		logger = slog.Default()
+		return nil, fmt.Errorf("logger must not be nil")
 	}
 
 	timeout := config.EvaluationTimeout
@@ -154,7 +155,7 @@ func (e *CELEvaluator) ExtractClaims(claims map[string]interface{}) (*AuthResult
 	if principal == "" {
 		return nil, fmt.Errorf("%w: principal expression returned empty value", ErrClaimExtraction)
 	}
-	result.Principal = principal
+	result.Principal = id.NewPrincipal(principal)
 
 	// Extract optional display name
 	if e.displayNameProgram != nil {

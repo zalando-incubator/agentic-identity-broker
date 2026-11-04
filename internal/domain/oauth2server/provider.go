@@ -52,6 +52,7 @@ func NewProvider(
 	pkceRepo ports.PKCESessionRepository,
 	credRepo ports.ClientCredentialRepository,
 	clientResolver ports.ClientResolver,
+	hasher *Argon2Hasher,
 	signingKeyService *SigningKeyService,
 	issuerURI string,
 	tokenTTL time.Duration,
@@ -69,7 +70,7 @@ func NewProvider(
 	}
 
 	// Build services
-	clientAuth := NewClientAuthService(credRepo, clientResolver, logger)
+	clientAuth := NewClientAuthService(credRepo, clientResolver, hasher, logger)
 
 	// Our strategies
 	accessStrategy, err := NewJWXAccessTokenStrategy(signingKeyService, issuerURI, tokenTTL, customClaimsEval, logger)

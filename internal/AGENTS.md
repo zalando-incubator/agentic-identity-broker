@@ -14,7 +14,7 @@
 
 Dependency arrows flow **inward only**: `app/` → `adapters/` → `ports/` ← `domain/`
 
-- **Domain** (`domain/`) — Pure business logic. ZERO infrastructure imports. Never imports `adapters/` or `app/`.
+- **Domain** (`domain/`) — Pure business logic. ZERO infrastructure imports, except the OpenTelemetry API packages (`coding-standards/OPENTELEMETRY.md` section 1). Never imports `adapters/` or `app/`.
 - **Ports** (`ports/`) — Interfaces + minimal DTOs only. The hexagonal boundary definitions.
 - **Driven adapters** (`adapters/`) — Infrastructure port implementations. Import `ports/` and `domain/`, never other adapters.
 - **HTTP routing** (`adapters/http/routing/`) — Receives handlers from `app/`.
@@ -81,7 +81,7 @@ adapters/
     factory.go     Backend selection from configuration
     memory/        In-memory storage
     postgres/      PostgreSQL storage with sqlx and pgx v5
-  telemetry/       OpenTelemetry provider and slog handler
+  telemetry/       OpenTelemetry provider and slog handlers (context, principal policy, fan-out)
 
 app/
   builder.go       Builder pattern — all DI wiring
@@ -114,6 +114,14 @@ app/
 func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig)
 func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteConfig)
 ```
+
+## Logging
+
+Read `coding-standards/LOGGING.md` before you add or change a log call. Use a `*Context` method, log principals as `id.Principal`, and never log credentials.
+
+## Tracing and Metrics
+
+Read `coding-standards/OPENTELEMETRY.md` before you add or change a span or metric. Get tracers and meters from the OTel globals, set span kind and error status, set principals on spans only through `id.Principal.SpanAttribute` (add none until #356 provides it), and never put a principal in a metric attribute or a credential in any attribute.
 
 ## Testing Conventions
 

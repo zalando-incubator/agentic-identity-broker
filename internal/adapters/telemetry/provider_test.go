@@ -15,7 +15,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -38,11 +37,11 @@ func saveAndRestoreGlobalProviders(t *testing.T) {
 	t.Helper()
 	prevTP := otel.GetTracerProvider()
 	prevMP := otel.GetMeterProvider()
-	prevLP := global.GetLoggerProvider()
+	prevLP := otel.GetLoggerProvider()
 	t.Cleanup(func() {
 		otel.SetTracerProvider(prevTP)
 		otel.SetMeterProvider(prevMP)
-		global.SetLoggerProvider(prevLP)
+		otel.SetLoggerProvider(prevLP)
 	})
 }
 
@@ -525,12 +524,12 @@ func TestNewProvider_HTTPLogsDeliverCorrelatedRecords(t *testing.T) {
 		_ = shutdown(shutdownCtx)
 	})
 
-	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(global.GetLoggerProvider())))
+	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(otel.GetLoggerProvider())))
 	spanCtx, span := otel.Tracer("test").Start(ctx, "token-exchange")
 	logger.ErrorContext(spanCtx, "Token exchange failed", "thirdparty_error_code", "invalid_grant")
 	span.End()
 
-	lp, ok := global.GetLoggerProvider().(*sdklog.LoggerProvider)
+	lp, ok := otel.GetLoggerProvider().(*sdklog.LoggerProvider)
 	require.True(t, ok, "global LoggerProvider must be *sdklog.LoggerProvider after NewProvider")
 	flushCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

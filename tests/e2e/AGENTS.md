@@ -128,6 +128,8 @@ ginkgo -v --label-filter="!performance" --focus="pattern" ./tests/e2e/    # Focu
 ```
 
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
+The backend suite runs the agentgateway `oauthTokenExchange` policy against a real agentgateway
+container and the production broker, so it requires Docker. `AGENTGATEWAY_IMAGE` overrides the pinned image.
 `test-e2e-performance` runs the warmed local-mode, signed-subject 100-request SC-001 measurement with one Ginkgo worker. Its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` line is recorded in PR #464.
 
 ### Parallelism expectations

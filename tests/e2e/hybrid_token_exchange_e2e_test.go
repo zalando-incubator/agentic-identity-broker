@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -42,7 +41,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 	const localAgentRedirectURI = "http://localhost:9999/callback"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 		principal = fixtures.DefaultPrincipal().String()
@@ -296,7 +295,7 @@ var _ = Describe("Token Exchange Client-Assertion JWKS Override", func() {
 	const localAgentRedirectURI = "http://localhost:9999/callback"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 		mockJWKS = helpers.NewMockJWKSServer()

@@ -42,7 +42,7 @@ type Engine struct {
 
 func NewEngine(repository ports.SigningKeyRepository, bootstrapCoordinator ports.SigningKeyBootstrapCoordinator, encryptor ports.EncryptionPort, branchKeyManager ports.BranchKeyManager, logger *slog.Logger) *Engine {
 	if logger == nil {
-		logger = slog.Default()
+		panic("keylifecycle.NewEngine: logger must not be nil")
 	}
 	return &Engine{repository: repository, bootstrapCoordinator: bootstrapCoordinator, encryption: encryptor, branchKeyManager: branchKeyManager, logger: logger}
 }
@@ -90,7 +90,7 @@ func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm 
 	}
 	ciphertext, err := e.encryption.Encrypt(ctx, privatePEM, subject.EncryptionContext())
 	if err != nil {
-		e.warnOrphanedBranchKey("orphaned branch key after encryption failure; manual cleanup required", kid, branchKeyID)
+		e.warnOrphanedBranchKey(ctx, "orphaned branch key after encryption failure; manual cleanup required", kid, branchKeyID)
 		return nil, fmt.Errorf("encrypt private key: %w", err)
 	}
 	if activatesAt.IsZero() {
@@ -116,7 +116,7 @@ func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm 
 		err = e.repository.Create(ctx, key)
 	}
 	if err != nil {
-		e.warnOrphanedBranchKey("orphaned branch key after storage failure; manual cleanup required", kid, branchKeyID)
+		e.warnOrphanedBranchKey(ctx, "orphaned branch key after storage failure; manual cleanup required", kid, branchKeyID)
 		return nil, fmt.Errorf("store signing key: %w", err)
 	}
 	return key, nil
@@ -141,10 +141,10 @@ func (e *Engine) EnsureInitialKey(ctx context.Context, policy Policy, activatesA
 			recoveryCtx, cancel := context.WithTimeout(context.Background(), bootstrapRecoveryProbeTimeout)
 			defer cancel()
 			if count, probeErr := e.repository.CountActiveInDomain(recoveryCtx, policy.Domain); probeErr == nil && count > 0 {
-				e.logger.Warn("bootstrap lock returned error after key bootstrap work; treating startup as recovered", "key_domain", policy.Domain, "active_key_count", count, "created_locally", created != nil, "error", err)
+				e.logger.WarnContext(ctx, "bootstrap lock returned error after key bootstrap work; treating startup as recovered", "key_domain", policy.Domain, "active_key_count", count, "created_locally", created != nil, "error", err)
 				return created, created != nil, nil
 			} else if probeErr != nil {
-				e.logger.Warn("bootstrap recovery count probe failed", "key_domain", policy.Domain, "created_locally", created != nil, "error", err, "recovery_error", probeErr)
+				e.logger.WarnContext(ctx, "bootstrap recovery count probe failed", "key_domain", policy.Domain, "created_locally", created != nil, "error", err, "recovery_error", probeErr)
 			}
 		}
 		return nil, false, err
@@ -219,12 +219,12 @@ func (e *Engine) Delete(ctx context.Context, policy Policy, kid id.KeyID, now ti
 	return e.repository.DeleteInDomain(ctx, policy.Domain, kid)
 }
 
-func (e *Engine) warnOrphanedBranchKey(message string, kid id.KeyID, branchKeyID string) {
+func (e *Engine) warnOrphanedBranchKey(ctx context.Context, message string, kid id.KeyID, branchKeyID string) {
 	if branchKeyID == "" {
-		e.logger.Debug("skipping orphan warning: branch key ID is empty (noop backend or unexpected empty return)", "kid", kid)
+		e.logger.DebugContext(ctx, "skipping orphan warning: branch key ID is empty (noop backend or unexpected empty return)", "kid", kid)
 		return
 	}
-	e.logger.Warn(message, "kid", kid, "branch_key_id", branchKeyID)
+	e.logger.WarnContext(ctx, message, "kid", kid, "branch_key_id", branchKeyID)
 }
 
 // EffectiveCurrent returns the eligible key with the current marker preferred.

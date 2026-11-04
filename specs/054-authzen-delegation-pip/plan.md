@@ -138,7 +138,7 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 |---|---|---|
 | Security-first | Pass with rationale | Broker evaluation is on whenever exchange is on, and it is always authenticated and authorized. ExtProc's opt-in default follows ADR 028's Security-First reconciliation: an additive consumer whose absence leaves today's controls in force. The ADR records this (R16). Every enabled-mode failure is closed. |
 | Architecture docs | Pass | Update `ARCHITECTURE.md` §3.1.4 (routes), §3.2.1 (resolver port and permit cache), §3.2.3 (enabled-mode ordering), the policy-gates table, the glossary, and the ADR index. Update `internal/extproc/AGENTS.md`, `internal/AGENTS.md` (tokenexchange description), and the root `AGENTS.md` ADR table. |
-| ADRs | Pass with precondition | The maintainer endorsed the R16 decision set in the 2026-10-28 review. The draft [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) (status Proposed) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. It records the clarified R15 shape. Sign-off is approval item ADR-1. Implementation records that approval in the Status line and moves the draft to `adrs/` (Principle II allows same-PR revision before merge). |
+| ADRs | Pass with precondition | The maintainer endorsed the R16 decision set in the 2026-10-28 review. The draft [adr-047-authzen-delegation-pip.md](./adr-047-authzen-delegation-pip.md) (status Proposed) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. It records the clarified R15 shape. Sign-off is approval item ADR-1. Implementation records that approval in the Status line and moves the draft to `adrs/` (Principle II allows same-PR revision before merge). |
 | Library-first security | Pass | No new cryptography. JWTs are verified by the existing jwx-based `JWTValidator`. TLS uses the existing ExtProc HTTP client. |
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
@@ -165,7 +165,7 @@ in the next section are implementation-time gates. They do not block the design.
 - The resolver depends on no session service, so FR-013 holds by construction.
 - ADR 028's enabled-mode input and ordering need a new superseding ADR. That ADR also extends
   ADR 033's token-only finalization seam to evaluation. The maintainer endorsed the decision
-  set in review. The draft [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md)
+  set in review. The draft [adr-047-authzen-delegation-pip.md](./adr-047-authzen-delegation-pip.md)
   stays Proposed until sign-off, and neither existing ADR is amended in place.
 - The freshness rules (I1/U1/U2) are decided. The I2 perimeter extension is part of the ADR
   draft, and it still needs its test-first design and implementation work.
@@ -181,7 +181,7 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
   deprecation marker (R12). The review used a stale version baseline; `1.2.0` is now Proposed
   from the existing `1.1.0` and remains subject to API-3 sign-off.
 - **New ADR**: the R16 decision set is endorsed, including the I2 audit-perimeter extension,
-  and drafted in [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md).
+  and drafted in [adr-047-authzen-delegation-pip.md](./adr-047-authzen-delegation-pip.md).
 
 Review direction is not sign-off. Every consequential item is registered in
 [Approval Items](#approval-items). Implementation proceeds only for the items that the
@@ -190,7 +190,7 @@ maintainer's 👍 on the pipeline's approval comment covers.
 Still open:
 
 1. **Sign off the [Approval Items](#approval-items)**. The implementation phase records the
-   approval in the ADR draft and moves it to `adrs/045-authzen-delegation-pip.md`. `tasks.md`
+   approval in the ADR draft and moves it to `adrs/047-authzen-delegation-pip.md`. `tasks.md`
    T001 performs this step before any other implementation task.
 2. **Run the API-003 Verify checks** against the final AuthZEN 1.0 text before the OpenAPI is
    frozen: the discovery member names, the path-insertion rule (R8), and the denial envelope
@@ -210,10 +210,10 @@ Still open:
 | API-4 | API | Proposed: add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:10-50` |
 | API-5 | API | Proposed: ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:81-105` |
 | API-6 | API | Proposed: ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and permanent, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:107-186` |
-| ADR-1 | ADR | Proposed ADR 045: AuthZEN delegation PIP — information boundary, CEL reuse, freshness, fourth ExtProc port and ordering, supersession of ADR 028's enabled-mode input schema and ordering, ADR 033 deferred-finalization seam extension to evaluation, opt-in rationale, exchange-field deprecation. Alternative: amend ADR 028 in place (forbidden by Principle II). | `specs/054-authzen-delegation-pip/adr-045-authzen-delegation-pip.md:1-149` |
+| ADR-1 | ADR | Proposed ADR 047: AuthZEN delegation PIP — information boundary, CEL reuse, freshness, fourth ExtProc port and ordering, supersession of ADR 028's enabled-mode input schema and ordering, ADR 033 deferred-finalization seam extension to evaluation, opt-in rationale, exchange-field deprecation. Alternative: amend ADR 028 in place (forbidden by Principle II). | `specs/054-authzen-delegation-pip/adr-047-authzen-delegation-pip.md:1-149` |
 | D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:116-133` |
-| D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `specs/054-authzen-delegation-pip/adr-045-authzen-delegation-pip.md:55-69` |
-| D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `specs/054-authzen-delegation-pip/adr-045-authzen-delegation-pip.md:103-109` |
+| D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `specs/054-authzen-delegation-pip/adr-047-authzen-delegation-pip.md:55-69` |
+| D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `specs/054-authzen-delegation-pip/adr-047-authzen-delegation-pip.md:103-109` |
 | D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:617-620` |
 
 ## Project Structure
@@ -230,7 +230,7 @@ specs/054-authzen-delegation-pip/
 ├── contracts/
 │   ├── authzen-evaluation-api.md            # proposed end-user OpenAPI delta (pending confirmation)
 │   └── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
-├── adr-045-authzen-delegation-pip.md        # ADR draft (Proposed); moved to adrs/ on approval
+├── adr-047-authzen-delegation-pip.md        # ADR draft (Proposed); moved to adrs/ on approval
 ├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
 └── tasks.md                                 # /speckit-tasks
@@ -239,7 +239,7 @@ specs/054-authzen-delegation-pip/
 ### Source code and documentation affected
 
 ```text
-adrs/045-authzen-delegation-pip.md                       # Moved from the feature draft with the recorded approval; number rechecked
+adrs/047-authzen-delegation-pip.md                       # Moved from the feature draft with the recorded approval; number rechecked
 
 api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, proposed 1.2.0
 
@@ -428,7 +428,7 @@ After stakeholder confirmation:
 
 - **2a Domain model and ADR**:
   - Record the maintainer's approval (from the approval comment) in the Status line of
-    [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) and move it to
+    [adr-047-authzen-delegation-pip.md](./adr-047-authzen-delegation-pip.md) and move it to
     `adrs/` at the next unused number. The draft already records the R16 decision set, the
     freshness decisions, and the clarified R15 shape: direct members, a typed mapping,
     permanent permit-derived `granted_permission_sets*`, and no wrapper or flag.

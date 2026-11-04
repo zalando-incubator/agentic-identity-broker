@@ -3,7 +3,6 @@ package oauth2session_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/url"
 	"path/filepath"
@@ -74,7 +73,7 @@ func TestCredentialExclusions_CIMDUsesRealFreshVerifiedAssertionsAndNeverReadsBi
 	h := newCredentialSessionHarness(t, map[string]ports.CredentialFileBinding{"cimd-service": binding})
 	ctx := context.Background()
 	keys := memory.NewSigningKeyStore()
-	keyService := cimdclient.NewKeyService(keys, keys, newTestEncryption(t), newNoopBranchKeyManager(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	keyService := cimdclient.NewKeyService(keys, keys, newTestEncryption(t), newNoopBranchKeyManager(), slog.New(slog.DiscardHandler))
 	_, err := keyService.GenerateKey(ctx, "ES256")
 	require.NoError(t, err)
 	h.providers.WithCIMDPublicURL("https://broker.example.com").WithCIMDKeyReadiness(keyService)

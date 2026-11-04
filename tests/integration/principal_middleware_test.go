@@ -42,7 +42,7 @@ func TestPrincipalMiddlewareExtraction(t *testing.T) {
 			return
 		}
 
-		resp := map[string]string{"principal": p}
+		resp := map[string]string{"principal": p.String()}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	})
@@ -156,7 +156,7 @@ func TestPrincipalMiddlewareValidation(t *testing.T) {
 
 		r.Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
 			p, _ := principal.FromContext(r.Context())
-			resp := map[string]string{"authenticatedAs": p}
+			resp := map[string]string{"authenticatedAs": p.String()}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 		})
@@ -415,7 +415,7 @@ func TestPrincipalMiddlewareCustomHeader(t *testing.T) {
 
 	router.Get("/verify", func(w http.ResponseWriter, r *http.Request) {
 		p, _ := principal.FromContext(r.Context())
-		resp := map[string]string{"principal": p}
+		resp := map[string]string{"principal": p.String()}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	})

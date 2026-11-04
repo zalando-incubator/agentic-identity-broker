@@ -118,7 +118,7 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 					ID:                    sessionID,
 					Principal:             principal,
 					ServiceID:             additionalServiceID,
-					RefreshTokenExpiresAt: &future,
+					EncryptedRefreshToken: []byte("refresh"),
 					Scope:                 []string{"read", "write", "admin"},
 				},
 			}}
@@ -127,7 +127,7 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 				ID:                    declaredSessionID,
 				Principal:             principal,
 				ServiceID:             declaredServiceID,
-				RefreshTokenExpiresAt: &future,
+				EncryptedRefreshToken: []byte("refresh"),
 				Scope:                 []string{"read", "write", "admin"},
 			}
 			grantRepo := &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}

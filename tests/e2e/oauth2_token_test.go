@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -35,9 +34,7 @@ var _ = Describe("OAuth2 Token Endpoint E2E (User Story 2)", func() {
 	// Set up test infrastructure before each test
 	BeforeEach(func() {
 		// Initialize logger for test
-		logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}))
+		logger = slog.New(slog.DiscardHandler)
 
 		// Create fresh mock upstream server
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()

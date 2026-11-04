@@ -48,6 +48,10 @@ oauth2_authorization_server:
       # Startup budget for initial signing-key bootstrap in local mode.
       bootstrap_timeout: 90s
 
+    client_secret_hashing:
+      # Client secret hashes that may run at once. Each Argon2id hash allocates 64 MiB.
+      max_concurrent: 2
+
 # Storage backend
 storage:
   backend: "memory" # Use "postgres" for production

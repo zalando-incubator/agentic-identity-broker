@@ -235,7 +235,7 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 		permissionSetService: psService,
 		oauth2SessionService: oauth2session.NewOAuth2SessionService(
 			nil, nil, nil, nil, nil, nil, nil, nil,
-			oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"}, nil,
+			oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"}, slog.New(slog.DiscardHandler),
 		),
 	}
 	agent := &storagedomain.Agent{

@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -27,7 +26,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 	)
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		config := fixtures.LocalConfig()
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		var err error

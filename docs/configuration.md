@@ -182,7 +182,7 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 
 ## ExtProc delegation context configuration
 
-The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
+The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 047](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/047-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
 
 | Key | Environment variable | Flag | Default |
 |---|---|---|---|
@@ -663,11 +663,11 @@ These options control the authorization-code flow and token refresh for third-pa
 
 **Refresh notes:**
 
-- Token exchange returns a still-valid access token immediately. Within `token_refresh.lookahead_duration` (default `5m`), a usable refresh token allows background refresh without delaying the response. Failed or dropped background work does not change the response.
+- Token exchange returns a still-valid access token immediately, unless the provider has rejected the session's refresh token. A recorded rejection refuses the exchange with `invalid_grant` even while the access token has not expired. Within `token_refresh.lookahead_duration` (default `5m`), a usable refresh token allows background refresh without delaying the response. Failed or dropped background work does not change the response.
 - Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts. Backoff delays are 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, other 4xx rejections, timeouts, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation; stored credentials remain unchanged, and a later provider rejection can require login.
 - Refresh error bodies are limited to 64 KiB. Larger bodies are treated as incomplete and are not retried.
-- If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
-- The broker does not infer refresh-token expiry from provider-specific lifetime fields. An unknown expiry does not guarantee indefinite validity. Provider rejection remains authoritative.
+- If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and any recorded rejection. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
+- The broker does not infer or record refresh-token expiry from provider-specific lifetime fields. It records only an observed provider `invalid_grant` rejection, which requires the user to log in again. Provider rejection remains authoritative.
 - The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. During refresh, absent or null metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid`. Other positive fractions are truncated to whole seconds. Refresh commits explicit token type and scope with the new tokens. An omitted scope retains the stored scope; an explicit empty scope clears it. GitHub scopes use comma separators.
 
 **Notes:**
@@ -1324,6 +1324,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
 | `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.expected_audience` | string | `token_exchange.expected_audience` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE` | Audience required only for client assertions. When omitted, the shared token-exchange audience is retained for backward compatibility; subject tokens in third-party token exchange use `token_exchange.expected_audience`. Impersonation subject credentials use the applicable rule audience or no audience in unverified mode. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
 | `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
@@ -1336,6 +1337,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 token_exchange:
   client_assertion:
     issuer_uri: "https://privileged-gateway-idp.example.com"
+    expected_audience: "https://broker.example.com/oauth2/token"
     # Optional when discovery is unavailable:
     # jwks_uri: "https://privileged-gateway-idp.example.com/keys"
     # jwks_min_refresh: "15m"
@@ -1545,6 +1547,7 @@ See `examples/config/trust-anchor-local-jwks.yaml` for a complete configuration 
 | `oauth2_authorization_server.local.token_ttl` | duration | `1h` | Go duration (e.g. `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL` | — | Validity period for locally issued JWT access tokens. |
 | `oauth2_authorization_server.local.token_claims_expression` | string | `""` | CEL expression | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION` | — | CEL expression to inject custom claims into issued JWTs. |
 | `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` | duration | `90s` | Positive duration | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT` | — | Startup budget for signing-key bootstrap in local/hybrid mode. Covers advisory locking, key generation, encryption, and persistence. |
+| `oauth2_authorization_server.local.client_secret_hashing.max_concurrent` | int | `2` | Positive integer | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT` | — | Client secret hashes that may run at once in local/hybrid mode. Each Argon2id hash allocates 64 MiB, and further requests wait for a free slot. Plan about 128 MiB of container memory per slot. Each hash already uses up to four CPUs, so more slots add memory, not throughput. |
 
 **Required**: `oauth2_authorization_server.mode` is mandatory — the broker rejects startup when the block is absent or `mode` is empty or invalid. Set `mode` to `proxy`, `local`, or `hybrid` before deploying.
 
@@ -1625,7 +1628,48 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 #### oauth2_authorization_server.impersonation
 
-**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every rule-authorized request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted subject is used unchanged as the grant principal; this is mandatory for signed and unverified subjects, with no configuration opt-out. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every eligible human-category request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted human subject is used unchanged as the grant principal; this remains mandatory for signed and unverified humans, with no configuration opt-out. Accepted ADR 045 narrowly exempts eligible signed self-agent requests, as described below. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+
+##### Subject categories and self-agent issuance
+
+`rules[].allowed_subject_categories` is an optional YAML-only string list, like the existing rule list. Omission alone means `[human]`. A present list must contain one or two distinct, case-sensitive values from `human` and `agent`; either dual order is valid. Empty lists, unknown/case-mismatched values, duplicates, explicit null, scalars, mappings, non-string entries and null entries fail startup. Errors identify `oauth2_authorization_server.impersonation.rules[i].allowed_subject_categories`, without credential content. Direct configurations enforce the same value invariants.
+
+The broker classifies a request as `agent` only after the rule's signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target's canonical UUID. An unsigned (`verification: none`) subject with that exact `sub` is `agent` only when the rule's authorization predicate binds `subject_token.sub`. The broker only checks that the predicate uses that field, so make it limit the agents, for example `subject_token.sub in ['agent-uuid-a', 'agent-uuid-b']`; the predicate is then the only control on which agent a client may represent, because agent issuance skips consent. `subject_token.sub == request.agent_id` does not limit anything: an agent request already requires `sub` to equal the target, which is `request.agent_id`. A `sub` or extracted subject principal that is the canonical UUID of a different registered agent is rejected on every rule as a cross-agent request, without falling back to human delegation. Everything else is `human`. No alias/case/UUID normalization, extracted-principal mapping, or request parameter selects agent issuance. Eligibility is checked separately, before CEL authorization and delegation. Ineligible rules fall through; no matching rule returns generic `403 access_denied` without consent recovery. Signed exact-target equality is rejected on human-only/omitted rules even with active same-text delegation.
+
+| Allowed categories | Human subject | Signed exact-target subject |
+| --- | --- | --- |
+| Omitted / `[human]` | Active delegation required | Ineligible |
+| `[agent]` | Ineligible | No delegation required |
+| `[human, agent]` / `[agent, human]` | Active delegation required | No delegation required |
+
+Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
+
+See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), and [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md).
+
+##### Agent-subject detection for third-party exchange
+
+`token_exchange.claim_extraction.agent_subject_expression` is an optional CEL boolean over validated `subject_token` claims. Empty or omitted selects the exact guarded default:
+
+```cel
+has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+```
+
+The scalar setting supports YAML, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION`, and `--token_exchange.claim_extraction.agent_subject_expression`. Explicit CLI overrides environment, which overrides YAML, which overrides the evaluator default; an unchanged CLI flag does not shadow a lower source. Environment/CLI work with no YAML key or file. An explicitly empty highest-precedence value selects the evaluator default, not a lower source. Rule lists remain YAML-only.
+
+The expression compiles once at startup. Syntax errors, undeclared variables, a static output type other than boolean/dynamic, or an expression that does not reference `subject_token.sub` fail startup. Evaluation uses the existing CEL timeout. Runtime errors/timeouts return `500 server_error` (`identity_resolution/cel_evaluation_failed`); dynamic non-boolean output returns `500 server_error` (`identity_resolution/cel_configuration`). Neither is treated as false. Matching tokens receive `403 access_denied` (`identity_resolution/subject_category_unsupported`) without `error_uri`, before any grant/session/provider access. The default matches all broker agent-subject tokens, but also legacy human, mapped-principal/unsigned human and trusted external issuer tokens with equal `sub`/`agent_id`; fix identity collisions through the migration guide, not consent fabrication.
+
+A non-empty override **replaces the default entirely**. A configured expression must reference `subject_token.sub` (field selection, `has()`, or `subject_token["sub"]`); otherwise startup fails with a CEL configuration error, so `false`, `true`, or an `azp`-only comparison cannot be configured. Keep broker agent-token matching, for example:
+
+```yaml
+token_exchange:
+  claim_extraction:
+    agent_subject_expression: >-
+      (has(subject_token.sub) && has(subject_token.agent_id) &&
+       subject_token.sub == subject_token.agent_id) ||
+      (has(subject_token.token_use) && subject_token.token_use == 'machine')
+```
+
+**Warning:** A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access. Existing checks may then consult matching human grants/sessions and return consent errors; this is not support for third-party agent identity or guaranteed exchange success. See [token-exchange examples](../examples/config/token-exchange.yaml), [concepts](concepts/token-exchange.md), [reference](reference/token-exchange.md), and [token endpoint](api/enduser-api.md#agent-subject-token-exchange).
 
 **Configuration block** (nested under `oauth2_authorization_server`, `local` mode only):
 
@@ -1634,12 +1678,13 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 | `impersonation.audience_prefix` | URI | — | Absolute HTTP(S) URI; host required; no userinfo/query/fragment/trailing slash | Yes (CR-001) | Routing-only prefix. Exactly one `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent; it never sets the issued token `aud`. |
 | `impersonation.rules` | list | — | Non-empty, ordered | Yes (CR-002) | Ordered rules evaluated first-match. |
 | `impersonation.rules[].name` | string | — | Unique across rules | Yes (CR-003) | Operator-facing rule identifier. |
+| `impersonation.rules[].allowed_subject_categories` | list of strings | `[human]` when omitted | One or two distinct `human`/`agent` values | No | Category eligibility, independent of signed raw-sub classification; YAML-only. |
 | `impersonation.rules[].roles` | map | — | Keys `client_assertion`, `actor`, `subject` | Yes (CR-003) | Role semantics keyed by role name; all three roles MUST be defined. |
 | `impersonation.rules[].roles.<role>.expected_audience` | string | — | Non-empty string | Yes for signed roles without `audience_requirement: absent` | The `aud` each signed credential for this role must carry. Omit it for an unverified subject (`verification: none`) or when `audience_requirement` is `absent`. |
 | `impersonation.rules[].roles.<role>.audience_requirement` | enum | — | `absent` | No | Signed roles only. `absent` accepts only a credential with no `aud` claim and rejects a credential with an `aud`. It is mutually exclusive with `expected_audience`, forbidden on an unverified subject, and requires the authorization predicate to reference this role (CR-009). |
 | `impersonation.rules[].roles.<role>.principal_expression` | string | — | CEL expression | Yes | CEL extracting a non-empty identity from the role's token. |
 | `impersonation.rules[].roles.subject.verification` | enum | `jwks` | `jwks`, `none` | No | `subject` role only. `jwks` = signed subject validated against a trusted issuer; `none` = unverified unsigned `alg:none` subject JWT under `subject_token_type=urn:ietf:params:oauth:token-type:jwt` (broker profile extension, ADR 031). |
-| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting the subject's email; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
+| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting a human subject's email; not evaluated for agents; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
 | `impersonation.rules[].trusted_issuers` | list | — | Non-empty | Yes (CR-008) | Trust anchors permitted to sign this rule's credentials. |
 | `impersonation.rules[].trusted_issuers[].issuer_uri` | string | — | Valid URI | Yes | Matched against a credential's `iss`. |
 | `impersonation.rules[].trusted_issuers[].jwks_uri` | string | Discovered from `issuer_uri` | Valid URI | No | Explicit JWKS endpoint; discovered from issuer metadata when empty. |
@@ -1886,8 +1931,8 @@ When tracing is enabled, the following operations emit child spans:
 | `storage.get.thirdPartyService` | PostgreSQL `ThirdpartyServiceRepository.Get` | `db.system=postgresql` |
 | `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
-| `jwks.fetch` | JWKS key set fetch/cache lookup | `url.full` |
-| `oauth2.token_exchange` | Upstream OAuth2 token proxy | `http.method=POST`, `http.status_code` |
+| `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
+| `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
 
 ### Security notes
 

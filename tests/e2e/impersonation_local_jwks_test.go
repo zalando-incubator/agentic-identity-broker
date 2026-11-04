@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -36,7 +35,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 	)
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		issuer = helpers.NewCountingServer()
 		gateway = helpers.NewLocalES256Key(gatewayKID)

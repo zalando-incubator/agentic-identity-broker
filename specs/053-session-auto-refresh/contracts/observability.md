@@ -1,6 +1,6 @@
 # Contract: Observability
 
-**Feature**: `053-session-auto-refresh` | FR-017 to FR-024, SR-007 | Research R10 to R13
+**Feature**: `053-session-auto-refresh` | FR-017 to FR-024, FR-027 to FR-030, SR-007 | Research R10 to R13
 
 These names become a compatibility surface once released. All instruments use the global MeterProvider (ADR 011) on meter `oauth2session`. Nothing is exposed on `/metrics` or `/health`.
 
@@ -12,9 +12,20 @@ These names become a compatibility surface once released. All instruments use th
 | `session_sweep_duration_seconds` | `Float64Histogram`, buckets `1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600` | `s` | `outcome` (`completed`, `rejected`, `aborted`, `canceled`), `dry_run` (`true`, `false`) | Each sweep request with an operator principal, at the same time as the `session sweep` audit record |
 | `session_sweep_skipped_total` | `Int64Counter` | `{refresh}` | `triggered_by="sweep"` | Each skipped candidate in a real sweep |
 
-The existing instruments `session_sweep_refreshed_total`, `session_sweep_failed_total`, and `proactive_refresh_*_total` are unchanged.
+## Changed instruments (User Story 4)
 
-Cardinality: `oauth2_sessions` has 8 × services series per replica. The histogram has 8 attribute combinations. No instrument carries a principal, session ID, or token (FR-022).
+| Instrument | Attributes | Recorded when |
+|---|---|---|
+| `session_sweep_refreshed_total` | `triggered_by="sweep"`, `service_id` | Unchanged |
+| `session_sweep_failed_total` | `triggered_by="sweep"`, `service_id`, `failure_detail` | Unchanged |
+| `proactive_refresh_triggered_total` | `triggered_by="background"`, `service_id` | Unchanged |
+| `proactive_refresh_failed_total` | `triggered_by="background"`, `service_id`, `failure_detail` | Unchanged |
+
+`service_id` on these counters and on `oauth2_sessions` is the service's canonical ID when one is set, otherwise its UUID (FR-030). Releases before FR-030 export the UUID for every service, so queries that match the UUID of a service with a canonical ID must switch to the canonical ID. The counters look the canonical ID up when they record, and the gauge once per export cycle; both use the UUID when the lookup fails. The background triggered counter is recorded by the worker that runs the refresh, so the lookup stays off the token exchange.
+
+`failure_detail` is the `ErrorDetail` of the failure's error metadata, the value that `session.oauth2.refresh_failed` logs as `failure_detail`. `session_sweep_skipped_total` and `proactive_refresh_dropped_total` keep `triggered_by` only. This supersedes the single-attribute rule in the [029 observability contract](../../029-proactive-token-refresh/contracts/observability.md).
+
+Cardinality: `oauth2_sessions` has 8 × services series per replica. The histogram has 8 attribute combinations. The refreshed and triggered counters have one series per service, and the failed counters at most one per service and `failure_detail` value. No instrument carries a principal, session ID, or token (FR-022).
 
 ## New log record
 
@@ -56,6 +67,11 @@ absent_over_time(oauth2_sessions[15m])
 
 # Sweep failures over a day
 sum(increase(session_sweep_failed_total[1d])) > 0
+
+# Refresh failures per service and reason over the last hour
+sum by (service_id, failure_detail) (
+  increase(session_sweep_failed_total[1h]) or increase(proactive_refresh_failed_total[1h])
+)
 ```
 
 For clusters that run kube-state-metrics (optional):

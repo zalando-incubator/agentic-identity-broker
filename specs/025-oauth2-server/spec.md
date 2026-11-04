@@ -415,6 +415,7 @@ sequenceDiagram
 - **`oauth2_authorization_server.local.token_ttl`**: Duration, lifetime of locally-issued access tokens. Default: 1 hour
 - **`oauth2_authorization_server.local.token_claims_expression`**: String, a CEL expression evaluated at token issuance time to produce custom claims for locally-issued access tokens. The expression receives `agent` (object: `id`, `client_id`, `display_name`), `principal` (object: `id` always present, `email` and `display_name` optional), and `request` (object: `grant_type`, `scopes`). MUST return a `map<string, dyn>` of additional claims to merge into the token. Default: `{}` (no additional claims). Only applicable in local/hybrid mode. Compiled and validated at startup.
 - **`oauth2_authorization_server.local.signing_keys.bootstrap_timeout`**: Duration, startup budget for initial signing-key bootstrap coordination in local/hybrid mode. Default: 90 seconds
+- **`oauth2_authorization_server.local.client_secret_hashing.max_concurrent`**: Integer, number of client secret hashes that may run at once in local/hybrid mode (see SR-008). Default: 2
 
 Note: signing key material is NOT configured via env var or config file — keys are stored in the database, operators manage them via the Admin API, and the broker may auto-generate the initial signing key on first startup when none exists.
 
@@ -470,6 +471,7 @@ oauth2_authorization_server:
 - **SR-005c**: Authorization codes MUST be single-use; replay MUST be rejected with an `invalid_grant` error
 - **SR-006**: The broker MUST fail closed: if a signing key exists in the database but its encrypted material cannot be decrypted or parsed, startup MUST fail with a clear error (corrupt key is not auto-replaced); absence of any key triggers auto-generation per FR-010, which is not an error condition
 - **SR-007**: All credential generation, rotation, and token issuance events MUST be emitted as structured audit log entries
+- **SR-008**: The broker MUST run at most `client_secret_hashing.max_concurrent` client secret hashes at once, so peak memory stays bounded. Further requests MUST wait for a free slot and stop waiting when the request ends
 
 ## Success Criteria *(mandatory)*
 

@@ -97,7 +97,7 @@ func NewHealthHandler(
 		w.WriteHeader(healthStateHTTPStatus(healthState))
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			logger.Error("Failed to encode health response",
+			logger.ErrorContext(r.Context(), "Failed to encode health response",
 				"error", err)
 			// Don't try to write another response; headers already sent
 		}

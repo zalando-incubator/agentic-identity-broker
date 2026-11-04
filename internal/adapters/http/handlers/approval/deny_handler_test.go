@@ -52,7 +52,7 @@ func TestDenyHandler_PersistsOwnedDenialAndRejectsOtherPrincipal(t *testing.T) {
 		routeContext := chi.NewRouteContext()
 		routeContext.URLParams.Add("id", approval.ID.String())
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
-		req = req.WithContext(principal.WithPrincipal(req.Context(), string(approval.Principal)))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), approval.Principal))
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)

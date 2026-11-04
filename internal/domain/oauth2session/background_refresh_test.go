@@ -187,11 +187,43 @@ func backgroundMetrics(t *testing.T) *sdkmetric.ManualReader {
 	return reader
 }
 
+// backgroundMetricKeys lists the only attributes each background counter may carry (spec 053 FR-027 to FR-029).
+var backgroundMetricKeys = map[string][]string{
+	"proactive_refresh_triggered_total": {"triggered_by", "service_id"},
+	"proactive_refresh_dropped_total":   {"triggered_by"},
+	"proactive_refresh_failed_total":    {"triggered_by", "service_id", "failure_detail"},
+}
+
 func assertBackgroundMetrics(t *testing.T, reader *sdkmetric.ManualReader, expected map[string]int64) {
+	t.Helper()
+	got := make(map[string]int64)
+	for name, points := range backgroundCounterPoints(t, reader) {
+		for _, point := range points {
+			got[name] += point.Value
+		}
+	}
+	for name, value := range expected {
+		assert.Equal(t, value, got[name], "counter %s", name)
+	}
+}
+
+// backgroundFailures returns proactive_refresh_failed_total keyed by "service_id/failure_detail".
+func backgroundFailures(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	failures := make(map[string]int64)
+	for _, point := range backgroundCounterPoints(t, reader)["proactive_refresh_failed_total"] {
+		service, _ := point.Attributes.Value("service_id")
+		detail, _ := point.Attributes.Value("failure_detail")
+		failures[service.AsString()+"/"+detail.AsString()] += point.Value
+	}
+	return failures
+}
+
+func backgroundCounterPoints(t *testing.T, reader *sdkmetric.ManualReader) map[string][]metricdata.DataPoint[int64] {
 	t.Helper()
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
-	got := make(map[string]int64)
+	points := make(map[string][]metricdata.DataPoint[int64])
 	for _, scope := range collected.ScopeMetrics {
 		for _, instrument := range scope.Metrics {
 			if !strings.HasPrefix(instrument.Name, "proactive_refresh_") {
@@ -200,17 +232,18 @@ func assertBackgroundMetrics(t *testing.T, reader *sdkmetric.ManualReader, expec
 			sum, ok := instrument.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "%s must be an Int64Counter", instrument.Name)
 			for _, point := range sum.DataPoints {
-				attributes := point.Attributes.ToSlice()
-				require.Len(t, attributes, 1, "session ID, service ID, and principal must not be metric labels")
-				assert.Equal(t, "triggered_by", string(attributes[0].Key))
-				assert.Equal(t, "background", attributes[0].Value.AsString())
-				got[instrument.Name] += point.Value
+				var keys []string
+				for _, attr := range point.Attributes.ToSlice() {
+					keys = append(keys, string(attr.Key))
+				}
+				assert.ElementsMatch(t, backgroundMetricKeys[instrument.Name], keys, "session ID and principal must not be metric labels")
+				trigger, _ := point.Attributes.Value("triggered_by")
+				assert.Equal(t, "background", trigger.AsString())
+				points[instrument.Name] = append(points[instrument.Name], point)
 			}
 		}
 	}
-	for name, value := range expected {
-		assert.Equal(t, value, got[name], "counter %s", name)
-	}
+	return points
 }
 
 func receiveBackground[T any](t *testing.T, result <-chan T) T {
@@ -234,15 +267,16 @@ func submitBackground(t *testing.T, pool *backgroundRefresher, ctx context.Conte
 }
 
 func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *testing.T) {
-	for _, name := range []string{"absent refresh token", "expired refresh token"} {
+	for _, name := range []string{"absent refresh token", "rejected refresh token"} {
 		t.Run(name, func(t *testing.T) {
 			reader := backgroundMetrics(t)
 			session := backgroundSession(id.NewServiceID(), "unrefreshable-user")
-			if name == "absent refresh token" {
-				session.EncryptedRefreshToken = nil
+			rejected := name == "rejected refresh token"
+			if rejected {
+				rejectedAt := time.Now().Add(-time.Minute)
+				session.RefreshRejectedAt = &rejectedAt
 			} else {
-				expired := time.Now().Add(-time.Minute)
-				session.RefreshTokenExpiresAt = &expired
+				session.EncryptedRefreshToken = nil
 			}
 			service, store, _ := newBackgroundFixture(t, session)
 			var providerLookups atomic.Int32
@@ -256,9 +290,16 @@ func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *t
 			defer func() { assert.NoError(t, service.Close(context.Background())) }()
 
 			got, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
-			require.NoError(t, err)
-			assert.Equal(t, session.ID, got.ID)
-			assert.Equal(t, "old-unrefreshable-user", token)
+			if rejected {
+				require.ErrorIs(t, err, ErrRefreshRejected, "a recorded rejection refuses issuance even while the access token is valid")
+				assert.ErrorIs(t, err, ErrReauthenticationRequired)
+				assert.Nil(t, got)
+				assert.Empty(t, token)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, session.ID, got.ID)
+				assert.Equal(t, "old-unrefreshable-user", token)
+			}
 			require.NoError(t, service.Close(context.Background()))
 			assert.Zero(t, providerLookups.Load())
 			assertBackgroundMetrics(t, reader, map[string]int64{
@@ -707,6 +748,73 @@ func (c *joinedFlightContext) Done() <-chan struct{} {
 	return c.Context.Done()
 }
 
+func TestBackgroundRefresh_OnDemandJoinRefusesRejectionFoundUnderLock(t *testing.T) {
+	session := backgroundSession(id.NewServiceID(), "joined-rejected-user")
+	stale := *session
+	expired := time.Now().Add(-time.Minute)
+	stale.AccessTokenExpiresAt = &expired
+	service, store, _ := newBackgroundFixture(t, session)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return store.withLocked(ctx, principal, serviceID, refresh)
+	})
+	var requests atomic.Int32
+	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		return operationTokenResponse(http.StatusOK, `{"access_token":"unexpected-renewal","expires_in":3600}`), nil
+	})
+	pool := newBackgroundRefresher(service, 1)
+	submitBackground(t, pool, context.Background(), session)
+	receiveBackground(t, started)
+	rejectedAt := time.Now()
+	record := store.record(session.Principal, session.ServiceID)
+	record.mu.Lock()
+	record.session.RefreshRejectedAt = &rejectedAt
+	record.mu.Unlock()
+	service.sessionRepo = operationSessionRepository{find: func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
+		return &stale, nil
+	}}
+	caller := &joinedFlightContext{Context: context.Background(), joined: make(chan struct{})}
+	type result struct {
+		session *storage.UserSession
+		token   string
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		current, token, err := service.GetValidAccessToken(caller, session.Principal, session.ServiceID)
+		done <- result{current, token, err}
+	}()
+	receiveBackground(t, caller.joined)
+	close(release)
+	joined := receiveBackground(t, done)
+	require.ErrorIs(t, joined.err, ErrRefreshRejected)
+	assert.ErrorIs(t, joined.err, ErrReauthenticationRequired)
+	assert.Nil(t, joined.session)
+	assert.Empty(t, joined.token)
+	require.NoError(t, pool.Close(context.Background()))
+	assert.Zero(t, requests.Load())
+	stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, &rejectedAt, stored.RefreshRejectedAt)
+	assert.Equal(t, stale.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, stale.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+}
+
 func TestBackgroundRefresh_OnDemandJoinReportsSynchronousFailure(t *testing.T) {
 	session := backgroundSession(id.NewServiceID(), "joined-failure-user")
 	service, store, logs := newBackgroundFixture(t, session)
@@ -871,18 +979,62 @@ func TestBackgroundRefresh_DeletedSessionIsNotRecreated(t *testing.T) {
 	assert.Empty(t, logs.events(t, "session.oauth2.refresh_failed"), "a deleted session is not a background failure")
 }
 
+// canonicalProviderRepository adds canonical IDs to operationProviderRepository.
+type canonicalProviderRepository struct {
+	operationProviderRepository
+	canonicalIDs map[id.ServiceID]string
+}
+
+func (r canonicalProviderRepository) GetByCanonicalID(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return nil, errors.New("unexpected canonical ID resolution")
+}
+
+func (r canonicalProviderRepository) GetCanonicalIDs(context.Context, []id.ServiceID) (map[id.ServiceID]string, error) {
+	return r.canonicalIDs, nil
+}
+
+func TestBackgroundRefresh_CountsUnderCanonicalIDWhereSet(t *testing.T) {
+	reader := backgroundMetrics(t)
+	session := backgroundSession(id.NewServiceID(), "canonical-user")
+	service, _, _ := newBackgroundFixture(t, session)
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: session.ServiceID, ClientID: "public-client", Secret: model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://provider.example/token"},
+	}
+	service.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(canonicalProviderRepository{
+		operationProviderRepository: operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			return provider, nil
+		}},
+		canonicalIDs: map[id.ServiceID]string{session.ServiceID: "calendar"},
+	}, operationEncryption{}, operationBranchKeyManager{}, nil, false, service.logger)
+	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+		return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+	})
+	pool := newBackgroundRefresher(service, 1)
+	submitBackground(t, pool, context.Background(), session)
+	require.NoError(t, pool.Close(context.Background()))
+
+	triggered := backgroundCounterPoints(t, reader)["proactive_refresh_triggered_total"]
+	require.Len(t, triggered, 1)
+	serviceAttr, _ := triggered[0].Attributes.Value("service_id")
+	assert.Equal(t, "calendar", serviceAttr.AsString())
+	assert.Equal(t, map[string]int64{"calendar/" + string(DetailRefreshRejected): 1}, backgroundFailures(t, reader))
+}
+
 func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardinalityCounters(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		level     string
+		detail    ErrorDetail
 		configure func(*OAuth2SessionService)
 	}{
-		{"provider rejection", "WARN", func(service *OAuth2SessionService) {
+		{"provider rejection", "WARN", DetailRefreshRejected, func(service *OAuth2SessionService) {
 			service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 				return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"private-provider-body"}`), nil
 			})
 		}},
-		{"encryption outage", "ERROR", func(service *OAuth2SessionService) {
+		{"encryption outage", "ERROR", DetailEncryptionFailed, func(service *OAuth2SessionService) {
 			service.encryption = operationEncryption{
 				decrypt: func(_ context.Context, data []byte, _ map[string]string) ([]byte, error) {
 					return bytes.Clone(bytes.TrimPrefix(data, []byte("sealed:"))), nil
@@ -915,6 +1067,7 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 			assert.NotContains(t, logs.text(), "private-provider-body")
 			assert.NotContains(t, logs.text(), "private-encryption-cause")
 			assertBackgroundMetrics(t, reader, map[string]int64{"proactive_refresh_triggered_total": 1, "proactive_refresh_dropped_total": 0, "proactive_refresh_failed_total": 1})
+			assert.Equal(t, map[string]int64{session.ServiceID.String() + "/" + string(tc.detail): 1}, backgroundFailures(t, reader))
 		})
 	}
 }

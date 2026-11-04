@@ -177,6 +177,9 @@ func TestCommonExchangeFieldsMatchLogsSpansAndExistingMetrics(t *testing.T) {
 				spanFields[string(attr.Key)] = attr.Value.AsString()
 			}
 			assertCommonFields(t, spanFields, expected, test.outcome == OutcomeSuccess)
+			if test.outcome == OutcomeSuccess {
+				assert.NotContains(t, spanFields, "error.type")
+			}
 			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
 				var record map[string]any
 				require.NoError(t, json.Unmarshal(line, &record))
@@ -187,6 +190,7 @@ func TestCommonExchangeFieldsMatchLogsSpansAndExistingMetrics(t *testing.T) {
 					}
 				}
 				assertCommonFields(t, fields, expected, test.outcome == OutcomeSuccess)
+				assert.NotContains(t, fields, "error.type")
 			}
 			var metrics metricdata.ResourceMetrics
 			require.NoError(t, reader.Collect(context.Background(), &metrics))
@@ -228,7 +232,6 @@ func TestCommonExchangeFieldsMatchLogsSpansAndExistingMetrics(t *testing.T) {
 func assertCommonFields(t *testing.T, fields, expected map[string]string, omitSuccessFailure bool) {
 	t.Helper()
 	assert.NotContains(t, fields, "outcome")
-	assert.NotContains(t, fields, "error.type")
 	for key, value := range expected {
 		if omitSuccessFailure && (key == "token_exchange.failure_stage" || key == "token_exchange.failure_detail") {
 			assert.NotContains(t, fields, key)

@@ -39,6 +39,7 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 		memory.NewPKCESessionStore(),
 		credRepo,
 		&testClientResolver{agentRepo: agentRepo},
+		NewArgon2Hasher(1),
 		signingKeySvc,
 		"https://broker.example.com",
 		time.Hour, // 1h TTL
@@ -632,6 +633,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 			memory.NewPKCESessionStore(),
 			credRepo,
 			resolver,
+			NewArgon2Hasher(1),
 			signingKeySvc,
 			"https://broker.example.com",
 			time.Hour,
@@ -931,7 +933,7 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		logger := testSlogger()
 		signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
 		provider, err := NewProvider(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(),
-			memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, signingKeySvc,
+			memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, NewArgon2Hasher(1), signingKeySvc,
 			"https://broker.example.com", time.Hour, time.Hour, "", nil, nil, logger)
 		require.NoError(t, err)
 		_, err = signingKeySvc.generateAndStore(ctx, "ES256", true, time.Now())
@@ -1238,7 +1240,7 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1302,7 +1304,7 @@ func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), nil, logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())

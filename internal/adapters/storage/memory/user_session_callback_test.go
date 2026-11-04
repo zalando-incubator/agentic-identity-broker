@@ -92,15 +92,12 @@ func TestSessionSummariesReturnIsolatedSnapshots(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()
 	session := refreshTestSession("summary@example.com", id.NewServiceID())
-	session.RefreshTokenExpiresAt = &session.CreatedAt
 	require.NoError(t, repo.Create(ctx, session))
 	summaries, err := repo.ListSummariesByPrincipal(ctx, session.Principal)
 	require.NoError(t, err)
 	require.Len(t, summaries, 1)
 	summaries[0].Scope[0] = "mutated-scope"
-	*summaries[0].RefreshTokenExpiresAt = session.CreatedAt.AddDate(1, 0, 0)
 	persisted, err := repo.Get(ctx, session.ID)
 	require.NoError(t, err)
 	assert.Equal(t, session.Scope, persisted.Scope)
-	assert.Equal(t, session.RefreshTokenExpiresAt, persisted.RefreshTokenExpiresAt)
 }

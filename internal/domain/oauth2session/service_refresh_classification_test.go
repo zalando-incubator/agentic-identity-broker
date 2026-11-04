@@ -23,8 +23,7 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 		contentType    string
 		body           string
 		hasRefresh     bool
-		storedExpired  bool
-		refreshExpired bool
+		storedRejected bool
 		oauthError     string
 		detail         oauth2session.ErrorDetail
 	}{
@@ -37,7 +36,7 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 		{name: "service answers 500 with invalid_grant", status: 500, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
 		{name: "service answers 503 with invalid_client", status: 503, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client", detail: oauth2session.DetailProviderUnavailable},
 		{name: "service answers 429 with invalid_grant", status: 429, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
-		{name: "stored refresh token expired", hasRefresh: true, storedExpired: true, refreshExpired: true, detail: oauth2session.DetailRefreshTokenExpired},
+		{name: "stored refresh token rejected", hasRefresh: true, storedRejected: true, detail: oauth2session.DetailRefreshRejected},
 		{name: "no refresh token stored", detail: oauth2session.DetailAccessTokenExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,8 +74,8 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 				session.EncryptedRefreshToken, err = enc.Encrypt(ctx, []byte("refresh-token"), encContext)
 				require.NoError(t, err)
 			}
-			if tc.storedExpired {
-				session.RefreshTokenExpiresAt = &expired
+			if tc.storedRejected {
+				session.RefreshRejectedAt = &expired
 			}
 			require.NoError(t, sessions.Create(ctx, session))
 
@@ -101,12 +100,7 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 					assert.Equal(t, tc.oauthError, rejected.OAuthError)
 				}
 			} else {
-				assert.ErrorIs(t, err, oauth2session.ErrSessionExpired)
-			}
-			if tc.refreshExpired {
-				assert.ErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
-			} else {
-				assert.NotErrorIs(t, err, oauth2session.ErrRefreshTokenExpired)
+				assert.ErrorIs(t, err, oauth2session.ErrReauthenticationRequired)
 			}
 		})
 	}

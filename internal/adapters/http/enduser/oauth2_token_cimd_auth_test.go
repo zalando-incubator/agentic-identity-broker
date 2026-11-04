@@ -65,18 +65,16 @@ func runCIMDAuthHandler(form url.Values, authorization string, minting *mockToke
 
 func TestCIMDTokenRequestPassesCredentialPresenceToProvider(t *testing.T) {
 	for _, test := range []struct {
-		name               string
-		assertionType      bool
-		emptyAssertionType bool
-		assertion          bool
-		clientSecret       bool
-		authorization      string
+		name          string
+		assertionType bool
+		assertion     bool
+		clientSecret  bool
+		authorization string
 	}{
 		{name: "assertion type without assertion", assertionType: true},
 		{name: "assertion without type", assertion: true},
 		{name: "assertion combined with secret", assertionType: true, assertion: true, clientSecret: true},
 		{name: "assertion combined with authorization header", assertionType: true, assertion: true, authorization: "Basic dGVzdA=="},
-		{name: "empty assertion type is still present", emptyAssertionType: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			called := false
@@ -93,9 +91,7 @@ func TestCIMDTokenRequestPassesCredentialPresenceToProvider(t *testing.T) {
 				},
 			}
 			form := cimdAuthTestForm("authorization_code")
-			if test.emptyAssertionType {
-				form["client_assertion_type"] = []string{""}
-			} else if test.assertionType {
+			if test.assertionType {
 				form.Set("client_assertion_type", oauth2server.ClientAssertionTypeJWTBearer)
 			}
 			if test.assertion {
@@ -107,7 +103,7 @@ func TestCIMDTokenRequestPassesCredentialPresenceToProvider(t *testing.T) {
 			response := runCIMDAuthHandler(form, test.authorization, minting)
 			assert.Equal(t, http.StatusOK, response.Code)
 			assert.True(t, called, "the adapter must pass credential facts to the provider")
-			assert.Equal(t, test.assertionType || test.emptyAssertionType, received.HasAssertionType)
+			assert.Equal(t, test.assertionType, received.HasAssertionType)
 			assert.Equal(t, test.assertion, received.HasAssertion)
 			assert.Equal(t, test.clientSecret, received.HasClientSecret)
 			assert.Equal(t, test.authorization != "", received.HasAuthorizationHeader)

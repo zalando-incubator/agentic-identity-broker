@@ -85,7 +85,7 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 
 	key, err := h.signingKeyService.GenerateAndStoreKey(r.Context(), req.Algorithm, true)
 	if err != nil {
-		h.logger.Error("failed to add signing key", "operator_principal", operatorPrincipal, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to add signing key", "operator_principal", operatorPrincipal, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -98,7 +98,7 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   key.CreatedAt.Format(time.RFC3339),
 	}
 
-	h.logger.Info("signing key added", "operator_principal", operatorPrincipal, "kid", key.KID, "algorithm", key.Algorithm, "activates_at", key.ActivatesAt)
+	h.logger.InfoContext(r.Context(), "signing key added", "operator_principal", operatorPrincipal, "kid", key.KID, "algorithm", key.Algorithm, "activates_at", key.ActivatesAt)
 	h.writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -112,7 +112,7 @@ func (h *SigningKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := h.signingKeyService.ListKeys(r.Context())
 	if err != nil {
-		h.logger.Error("failed to list signing keys", "operator_principal", operatorPrincipal, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to list signing keys", "operator_principal", operatorPrincipal, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -152,7 +152,7 @@ func (h *SigningKeysHandler) SetCurrent(w http.ResponseWriter, r *http.Request) 
 			h.writeError(w, http.StatusNotFound, "signing key not found", "")
 			return
 		}
-		h.logger.Error("failed to set current key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to set current key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
@@ -165,7 +165,7 @@ func (h *SigningKeysHandler) SetCurrent(w http.ResponseWriter, r *http.Request) 
 		CreatedAt:   key.CreatedAt.Format(time.RFC3339),
 	}
 
-	h.logger.Info("signing key promoted to current", "operator_principal", operatorPrincipal, "kid", kid)
+	h.logger.InfoContext(r.Context(), "signing key promoted to current", "operator_principal", operatorPrincipal, "kid", kid)
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
@@ -193,13 +193,13 @@ func (h *SigningKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ports.ErrEffectiveCurrentKey):
 			h.writeError(w, http.StatusConflict, signingKeyDeleteCurrentKeyError, signingKeyDeleteEffectiveCurrentKeyMessage)
 		default:
-			h.logger.Error("failed to remove signing key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
+			h.logger.ErrorContext(r.Context(), "failed to remove signing key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		}
 		return
 	}
 
-	h.logger.Info("signing key removed", "operator_principal", operatorPrincipal, "kid", kid)
+	h.logger.InfoContext(r.Context(), "signing key removed", "operator_principal", operatorPrincipal, "kid", kid)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -219,7 +219,7 @@ func (h *SigningKeysHandler) writeError(w http.ResponseWriter, statusCode int, e
 	h.writeJSON(w, statusCode, resp)
 }
 
-func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx context.Context) (string, bool) {
+func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx context.Context) (id.Principal, bool) {
 	operatorPrincipal, ok := operatorPrincipalFromContext(ctx, h.logger)
 	if !ok {
 		h.writeError(w, http.StatusInternalServerError, signingKeyOperatorPrincipalError, signingKeyOperatorPrincipalMessage)
@@ -228,11 +228,11 @@ func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx
 	return operatorPrincipal, true
 }
 
-func operatorPrincipalFromContext(ctx context.Context, logger *slog.Logger) (string, bool) {
+func operatorPrincipalFromContext(ctx context.Context, logger *slog.Logger) (id.Principal, bool) {
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		if logger != nil {
-			logger.Warn("operator principal missing from context; audit trail incomplete")
+			logger.WarnContext(ctx, "operator principal missing from context; audit trail incomplete")
 		}
 		return "", false
 	}

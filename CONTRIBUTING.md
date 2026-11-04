@@ -52,21 +52,34 @@ just verify   # Security scanning plus test, integration, and E2E checks
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
 `just verify` runs security scanning before the existing test, integration, and E2E gate.
 
-`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.3 export-data format.
-If lint reports an unsupported export-data version, run `just install-tools` with the repository's Go toolchain.
+CI selects Go from `go.mod`. `just fmt` and `just fmt-check` use that toolchain's
+`gofmt`, not a separate formatter found on `PATH`; `go vet` also ships with Go.
+The pre-commit hook delegates formatting validation to `just fmt-check`.
+
+Development tool versions are pinned in `justfile`. Keep the Ginkgo CLI pins in the
+workflows and `justfile` aligned with the library version in `go.mod`.
+`just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
+replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
 Commit the corresponding lockfile when changing an override. Verify both site builds and the
 instrumented frontend build (`VITE_COVERAGE=1 npm run build --prefix web`). The frontend's
 js-yaml 4 override removes the unpatched sprintf-js dependency from coverage tooling.
 
-The root `osv-scanner.toml` temporarily excludes `GHSA-vfj7-8cjw-p6xm` until 2026-11-07.
-No patched braces release exists, and Docusaurus requires Chokidar 3's glob support. Its
-patterns are repository-controlled; the deployed documentation is static. Reassess this
-exception at expiry or if documentation tooling starts accepting untrusted patterns.
+The root `osv-scanner.toml` temporarily excludes three go-jose v3 advisories and one deepmerge
+advisory until 2026-11-30. Neither package has a patched release. go-jose v3 arrives only through
+ory/fosite, whose HTTP request parsers the broker does not call; deepmerge runs only on
+repository-controlled SVGO configuration during the documentation build. Reassess these
+exceptions at expiry, when fosite moves to go-jose v4, or if either path starts accepting
+untrusted input.
 
 Both commands must pass before you open a pull request.
+
+For agentic-workflow changes, run `gh aw compile <workflow>` and commit the generated `.lock.yml`.
+The CI workflow-lint job validates all agentic workflows with `gh aw` and runs `actionlint` and `zizmor`.
+The exceptions in `.github/actionlint.yaml` and `.github/zizmor.yml` apply only to specific workflow paths.
 
 ## Making Changes
 
@@ -84,12 +97,43 @@ For new features, follow this workflow using [Speckit](https://speckit.org/):
 4. Implement according to the plan
 5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
 
+### Architecture Review
+
+Maintainers can request an automated architectural review of any open pull request from
+this repository by commenting `/architecture-review`, optionally followed by a focus such
+as `/architecture-review session lifecycle`. The workflow in
+`.github/workflows/architecture-review-assisted.yml` checks the commenter's permission,
+then runs `.github/workflows/architecture-review.md`: one lead agent briefs eight
+sub-agents, one per analysis dimension (ubiquitous language, hexagonal compliance, ADR
+compliance, data authority, coupling and cohesion, OTel parity, E2E test quality, and
+maintainability), and consolidates their findings into a single review comment with a
+recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
+edits or pushes code. A new review folds the previous one.
+
+On a Spec Kit draft PR, `/architecture-review` and the automatic review after
+`/speckit-implement` go one step further. Each finding carries a remediation bucket:
+
+- **auto**: the pipeline applies the fix in the same run, with a worker that cannot push
+  changes under `api/`, `adrs/`, `migrations/`, or `specs/`, then reviews the result again.
+- **proposed**: the fix changes a contract, an ADR, persisted data, or a design choice with a
+  real alternative. The pipeline posts a **Spec Kit remediation proposal** comment with one
+  checkbox per item and the recommended change. Tick the items to apply, then tick
+  **Apply the selected items**; the pipeline applies them, pushes, and reviews again. The
+  ticks are the sign-off for exactly those items.
+- **question**: the reviewer needs knowledge only the author or a maintainer has. Answer with
+  `/speckit-plan <decision>`.
+
+The status comment links the latest review and proposal and names the next step. A new
+review replaces the proposal, so items left unticked stay open until the next review.
+
 ### Backend
 
 Follow hexagonal architecture:
 - **Domain** (`internal/domain/`): Pure business logic
 - **Ports** (`internal/ports/`): Interface boundaries
 - **Adapters** (`internal/adapters/`): HTTP, storage, config
+
+Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md) and [OpenTelemetry](coding-standards/OPENTELEMETRY.md).
 
 ### Frontend
 
@@ -156,6 +200,24 @@ The last command writes the combined browser and Vitest report to `web/coverage/
 - ✅ Static quality checks passing (`just check`)
 - ✅ Full verification gate passing (`just verify`)
 - ✅ Architecture changes require both maintainers
+
+### Opt-in conflict resolution
+
+Maintainers can add `auto-resolve-conflicts` to an open PR from this repository.
+The latest person to apply the label must have write, maintain, or admin access.
+The workflow does not run on fork PRs or PRs without merge conflicts.
+
+For PRs targeting `main`, the workflow starts on a label or PR update, or when `main` moves.
+For stacked PRs, a scheduled scan runs every ten minutes and merges the current parent branch into the child branch.
+The workflow pushes one merge commit to the same PR only after its checks pass. It never merges the PR itself.
+Changes to protected files, including workflow sources and dependencies, require a human review.
+Remove the label to stop later runs. A blocked resolution leaves the remote branch unchanged and adds a PR comment.
+
+Before enabling the label, make sure the App with the private key in the existing Actions secret
+`AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
+Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
+The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines
 

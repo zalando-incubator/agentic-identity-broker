@@ -13,7 +13,7 @@ No entity, table, column, or migration is added. The feature reads the existing 
 | `ServiceID id.ServiceID` | `service_id UUID NOT NULL` | Metric attribute `service_id` |
 | `AccessTokenExpiresAt *time.Time` | `access_token_expires_at TIMESTAMPTZ NULL` | Access-expiry class |
 | `EncryptedRefreshToken []byte` | `encrypted_refresh_token BYTEA NULL` | Presence only (`len > 0` / `octet_length > 0`); never decrypted |
-| `RefreshTokenExpiresAt *time.Time` | `refresh_token_expires_at TIMESTAMPTZ NULL` | Refresh usability |
+| `RefreshRejectedAt *time.Time` | `refresh_token_expires_at TIMESTAMPTZ NULL` | Refresh usability (non-NULL means the provider rejected the token, ADR 046) |
 
 ## New value objects
 
@@ -36,7 +36,7 @@ One row of the health query result.
 |---|---|---|
 | `ServiceID` | `id.ServiceID` | Service the sessions belong to |
 | `AccessExpiry` | `AccessExpiryClass` | Class of the access-token expiry |
-| `RefreshUsable` | `bool` | Refresh token present and its expiry is nil or after `now` (same as `CanRefresh`) |
+| `RefreshUsable` | `bool` | Refresh token present and not rejected by the provider (same as `CanRefresh`) |
 | `Count` | `int` | Number of sessions in this group, `> 0` |
 
 Each `(ServiceID, AccessExpiry, RefreshUsable)` appears at most once per result. At most eight groups exist per service.
@@ -71,6 +71,7 @@ The result of one classification, built per export cycle and not retained.
 | Field | Type | Invariant |
 |---|---|---|
 | `Counts` | `map[id.ServiceID]map[SessionHealthKey]int` | Every service present has all eight `(expiry, refreshable)` combinations, zero-filled (FR-019). Services with no sessions are absent. |
+| `CanonicalIDs` | `map[id.ServiceID]string` | Canonical ID of each service in `Counts` that has one, from one provider-service lookup per cycle; nil when that lookup failed. The gauge uses it as `service_id` (FR-030) |
 
 Built from the groups by summing counts per `(service, expiry, refreshable)`. Validation: a group with `Count <= 0` or an unknown `AccessExpiry` is an adapter contract violation and fails the cycle.
 

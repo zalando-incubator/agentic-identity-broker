@@ -18,7 +18,6 @@ import (
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/contrib/propagators/ot"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
@@ -417,10 +416,10 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	baseHandler := b.logger.Handler()
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Logs.Enabled {
 		otelHandler := otelslog.NewHandler(b.config.Telemetry.ServiceName,
-			otelslog.WithLoggerProvider(global.GetLoggerProvider()))
+			otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
 		baseHandler = telemetry.NewMultiHandler(baseHandler, otelHandler)
 	}
-	b.logger = slog.New(telemetry.NewContextHandler(baseHandler))
+	b.logger = slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler)))
 	app.Logger = b.logger
 
 	// Phase 1: Initialize encryption adapter (must happen before domain services).
@@ -593,7 +592,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		app.chainShutdown(func(context.Context) error { return trustDir.Close() })
 	}
 
-	approvalAuthRequested := b.config.TokenExchange.ClaimExtraction.PrincipalExpression != "" ||
+	approvalAuthRequested := b.config.TokenExchange.ClaimExtraction.AgentSubjectExpression != "" ||
+		b.config.TokenExchange.ClaimExtraction.PrincipalExpression != "" ||
 		b.config.TokenExchange.ClaimExtraction.AgentIDExpression != "" ||
 		b.config.TokenExchange.Authorization.CEL.Expression != ""
 	if approvalAuthRequested && clientAssertionIssuerURI == "" {
@@ -1053,13 +1053,14 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// buildLocalProvider constructs the local token issuance infrastructure.
 	// Used in both "local" and "hybrid" modes.
-	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
+	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, secretHasher *oauth2server.Argon2Hasher, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
 		provider, err := oauth2server.NewProvider(
 			b.storage.AuthorizationCodes(),
 			b.storage.RefreshTokenSessions(),
 			b.storage.PKCESessions(),
 			b.storage.BrokerCredentials(),
 			clientResolver,
+			secretHasher,
 			signingKeyService,
 			localIssuerURI,
 			tokenTTL,
@@ -1100,9 +1101,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// wireLocalAdminHandlers constructs the local-mode admin services and handlers.
 	// Used in both "local" and "hybrid" modes.
-	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
+	wireLocalAdminHandlers := func(secretHasher *oauth2server.Argon2Hasher) *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
-		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
+		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, secretHasher, b.logger)
 		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
@@ -1125,8 +1126,10 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	switch cfg := oauthCfg.(type) {
 	case *ports.LocalOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
+		// One hasher for token requests and credential generation, so they share the limit.
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -1144,8 +1147,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		jwksPublisher = publisher
 		jwksHandler = enduserHandlers.NewJWKSHandler(publisher, b.logger)
 	case *ports.HybridOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.Local.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -1267,6 +1271,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		}
 
 		celConfig := tokenexchange.CELEvaluatorConfig{
+			AgentSubjectExpression:  b.config.TokenExchange.ClaimExtraction.AgentSubjectExpression,
 			PrincipalExpression:     b.config.TokenExchange.ClaimExtraction.PrincipalExpression,
 			AgentIDExpression:       b.config.TokenExchange.ClaimExtraction.AgentIDExpression,
 			AuthorizationExpression: b.config.TokenExchange.Authorization.CEL.Expression,
@@ -1301,15 +1306,21 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		if brokerAudience == "" {
 			brokerAudience = tokenexchange.DefaultBrokerAudience
 		}
+		clientAssertionAudience := b.config.TokenExchange.ClientAssertion.ExpectedAudience
+		if clientAssertionAudience == "" {
+			clientAssertionAudience = brokerAudience
+		}
 
 		approvalJWTValidator, err = tokenexchange.NewJWTValidatorWithPolicies(
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    subjectTokenJWKSAdapter,
-				ExpectedIssuers: subjectTokenIssuers,
+				JWKSProvider:     subjectTokenJWKSAdapter,
+				ExpectedIssuers:  subjectTokenIssuers,
+				ExpectedAudience: brokerAudience,
 			},
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    clientAssertionJWKS,
-				ExpectedIssuers: []string{clientAssertionIssuerURI},
+				JWKSProvider:     clientAssertionJWKS,
+				ExpectedIssuers:  []string{clientAssertionIssuerURI},
+				ExpectedAudience: clientAssertionAudience,
 			},
 			brokerAudience,
 			tokenexchange.DefaultClockSkewTolerance,
@@ -1361,7 +1372,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		Agents:         consent.NewAgentsHandler(app.ConsentService, b.logger),
 		AgentDetail:    agentDetailHandler,
 		Grants:         consent.NewGrantsHandler(app.ConsentService, b.logger, app.SessionTokenService),
-		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService),
+		OAuth2Sessions: oauth2_sessions.NewHandler(app.OAuth2SessionService, b.logger),
 		OAuth2Authorize: &enduser.OAuth2AuthorizeHandler{
 			Service:        app.OAuth2Service,
 			Logger:         b.logger,
@@ -1394,7 +1405,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	var healthMetrics *oauth2session.SessionHealthMetrics
 	if b.config.TokenRefresh.HealthMetrics.Enabled {
-		healthMetrics, err = oauth2session.NewSessionHealthMetrics(b.storage.SessionHealth(),
+		healthMetrics, err = oauth2session.NewSessionHealthMetrics(b.storage.SessionHealth(), app.ProviderService,
 			b.config.TokenRefresh.LookaheadDuration, b.config.TokenRefresh.HealthMetrics.QueryTimeout, b.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create session health metrics: %w", err)

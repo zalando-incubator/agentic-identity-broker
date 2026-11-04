@@ -188,28 +188,35 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S2 from specs/013-token-exchange/spec.md
-		It("[US1-S2] should look up service by resource URI in protected_resources", func() {
-			// Given: Service with protected_resources is configured (to be added in Phase 3)
-			mockUpstream.WithSuccessfulTokenResponse().
-				WithAccessToken("third-party-token-456")
-
+		DescribeTable("[US1-S2] resolves repeated resources to the expected vault token", func(resources []string, wantError string) {
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
 				"subject_token":         {tokenFixtures.SubjectToken},
 				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
 				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 				"client_assertion":      {tokenFixtures.ClientAssertion},
-				"resource":              {"https://api.github.com"},
+				"resource":              resources,
 			}
-
-			// When: Token exchange request includes resource parameter
 			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
-
-			// Then: System looks up service by resource URI
+			if wantError != "" {
+				Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+				var body map[string]any
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				Expect(body["error"]).To(Equal(wantError))
+				Expect(body).NotTo(HaveKey("access_token"))
+				return
+			}
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
-		})
+			Expect(resp).To(matchers.HaveTokenExchangeSuccess().WithAccessToken("github-token-xyz"))
+		},
+			Entry("identical resources", []string{"https://api.github.com", "https://api.github.com"}, ""),
+			Entry("normalized identical resources", []string{"https://api.github.com/", "https://api.github.com"}, ""),
+			Entry("empty resource omitted", []string{"", "https://api.github.com"}, ""),
+			Entry("distinct resources rejected", []string{"https://api.github.com", "https://other.example.com"}, "invalid_target"),
+			Entry("invalid resource rejected", []string{"https://api.github.com", "not a uri"}, "invalid_request"),
+		)
 
 		// Spec Reference: US1-S3 from specs/013-token-exchange/spec.md
 		It("[US1-S3] should return RFC 8693 response with access_token and token_type", func() {
@@ -939,12 +946,18 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US5-S3 from specs/013-token-exchange/spec.md
-		It("[US5-S3] should complete third-party authorization from the returned recovery URL and resume exchange", func() {
-			// Given: A principal with a grant has no session with the resolved service.
+		DescribeTable("[US5-S3] should complete third-party authorization from the returned recovery URL and resume exchange", func(rejectedSession bool) {
 			ctx := context.Background()
 			anotherPrincipal := fixtures.AdminPrincipal().String()
+			var existing *storagedomain.UserSession
+			if rejectedSession {
+				existing = fixtures.GitHubSessionForPrincipal(anotherPrincipal)
+				rejectedAt := time.Now().Add(-time.Minute)
+				existing.RefreshRejectedAt = &rejectedAt
+				Expect(testStorage.UserSessions().Create(ctx, existing)).To(Succeed())
+			}
 
-			// Create a token for principal with no session
+			// Use the recovering principal's subject token throughout the client journey.
 			adminClaims := map[string]interface{}{
 				"sub": anotherPrincipal,
 				"azp": agent.ID.String(),
@@ -971,7 +984,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 				"resource":              {"https://api.github.com"},
 			}
 
-			// When: Token exchange fails with invalid_grant (no session exists)
+			// Token exchange supplies the recovery URL for the unavailable session.
 			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -983,11 +996,14 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
 			Expect(errorResponse["error_uri"]).To(Equal(recoveryURI()))
+			Expect(mockUpstream.GetTokenRequests()).To(BeEmpty())
 
 			// When: The authenticated principal opens the exact broker URL supplied to the client.
 			recoveryURL, err := url.Parse(errorResponse["error_uri"].(string))
 			Expect(err).NotTo(HaveOccurred())
-			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("reconnected-github-access")
+			mockUpstream.WithSuccessfulTokenResponse().
+				WithAccessToken("reconnected-github-access").
+				WithRefreshToken("replacement-github-refresh")
 			start, err := enduserServer.AuthenticatedGET(recoveryURL.RequestURI(), anotherPrincipal)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(start.StatusCode).To(Equal(http.StatusFound))
@@ -1014,6 +1030,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(landingURL.Scheme + "://" + landingURL.Host + landingURL.Path).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 			Expect(landingURL.Query().Get("success")).To(Equal("true"))
 			Expect(callback.Body.Close()).To(Succeed())
+			reconnected, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(anotherPrincipal), githubID)
+			Expect(err).NotTo(HaveOccurred())
+			if existing != nil {
+				Expect(reconnected.ID).To(Equal(existing.ID))
+			}
+			Expect(reconnected.RefreshRejectedAt).To(BeNil())
+			Expect(reconnected.CanRefresh()).To(BeTrue())
 
 			// Then: A current subject token for the same principal can exchange again.
 			adminClaims["iat"] = time.Now().Unix()
@@ -1029,7 +1052,28 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(json.NewDecoder(retry.Body).Decode(&exchangeResponse)).To(Succeed())
 			accessToken, ok := exchangeResponse["access_token"].(string)
 			Expect(ok && accessToken == "reconnected-github-access").To(BeTrue())
-		})
+
+			expired := time.Now().Add(-time.Minute)
+			reconnected.AccessTokenExpiresAt = &expired
+			Expect(testStorage.UserSessions().Create(ctx, reconnected)).To(Succeed())
+			mockUpstream.WithAccessToken("refreshed-reconnected-github-access")
+			refreshed, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = refreshed.Body.Close() }()
+			Expect(refreshed.StatusCode).To(Equal(http.StatusOK))
+			var refreshedResponse map[string]interface{}
+			Expect(json.NewDecoder(refreshed.Body).Decode(&refreshedResponse)).To(Succeed())
+			Expect(refreshedResponse["access_token"]).To(Equal("refreshed-reconnected-github-access"))
+			requests := mockUpstream.GetTokenRequests()
+			Expect(requests).To(HaveLen(2))
+			refreshForm, err := url.ParseQuery(requests[1].Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(refreshForm.Get("grant_type")).To(Equal("refresh_token"))
+			Expect(refreshForm.Get("refresh_token")).To(Equal("replacement-github-refresh"))
+		},
+			Entry("missing session", false),
+			Entry("rejected existing session", true),
+		)
 
 		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md
 		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and stop reusing it", func() {
@@ -1073,13 +1117,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.failure_detail=refresh_rejected"))
 			Expect(logBuf.String()).To(ContainSubstring("token_exchange.recovery_target=provider_session"))
 
-			// And: The stored tokens are unchanged and the refresh token is recorded as expired.
+			// And: The stored tokens are unchanged and the refresh token is recorded as rejected.
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bytes.Equal(after.EncryptedAccessToken, before.EncryptedAccessToken)).To(BeTrue())
 			Expect(bytes.Equal(after.EncryptedRefreshToken, before.EncryptedRefreshToken)).To(BeTrue())
 			Expect(after.AccessTokenExpiresAt).To(Equal(before.AccessTokenExpiresAt))
-			Expect(after.RefreshTokenExpiresAt).NotTo(BeNil())
+			Expect(after.RefreshRejectedAt).NotTo(BeNil())
 			Expect(after.CanRefresh()).To(BeFalse())
 
 			// When: A later exchange arrives, even though the provider would now accept the token

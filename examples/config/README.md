@@ -34,7 +34,7 @@ EXTPROC_CONFIG_PATH=./examples/config/extproc-tool-approvals.yaml ./extproc-toke
 
 ### `extproc-delegation-context.yaml`
 
-This file enables broker delegation context for the standalone ExtProc service (ADR 045). ExtProc discovers the broker's AuthZEN Policy Decision Point at startup and supplies a fresh delegation permit to OPA before every policy decision. It requires `authorization.enabled` and shows the four `delegation_context` keys with their defaults (`enabled: false`, `policy_decision_point` from the origin of `oauth2.token_endpoint`, `request_timeout: 5s`, `max_staleness: 60s`).
+This file enables broker delegation context for the standalone ExtProc service (ADR 047). ExtProc discovers the broker's AuthZEN Policy Decision Point at startup and supplies a fresh delegation permit to OPA before every policy decision. It requires `authorization.enabled` and shows the four `delegation_context` keys with their defaults (`enabled: false`, `policy_decision_point` from the origin of `oauth2.token_endpoint`, `request_timeout: 5s`, `max_staleness: 60s`).
 
 ```bash
 EXTPROC_CONFIG_PATH=./examples/config/extproc-delegation-context.yaml ./extproc-token-exchange
@@ -484,6 +484,16 @@ An active `UserGrant` for `(extracted subject, target agent)` is mandatory for e
 **Usage:**
 ```bash
 ./agentic-identity-broker --config ./examples/config/impersonation.yaml
+```
+
+### `impersonation-agent-subject.yaml` — Signed Self-Agent Issuance
+
+Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human delegation and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects always require active delegation.
+
+Omitting `allowed_subject_categories` means `[human]`; signed exact-target collisions are rejected even with active same-text delegation. An unsigned subject is agent-category only when the rule's predicate binds `subject_token.sub`. The [token-exchange example](token-exchange.yaml) describes default third-party rejection, replacing overrides and their security responsibility.
+
+```bash
+./agentic-identity-broker --config ./examples/config/impersonation-agent-subject.yaml
 ```
 
 ### `trust-anchor-local-jwks.yaml` — Inline and File-Based Trust Anchor Key Sets

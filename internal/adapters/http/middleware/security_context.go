@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -37,7 +38,7 @@ func SecurityContextMiddleware(resolved ports.RequestContextConfig, reuseSpanTra
 			if shouldDeferSecurityContextFinalization(r) {
 				ctx = security.WithCaptureHolder(ctx, security.NewCaptureHolder(capture))
 			} else {
-				ctx = security.WithSecurityContext(ctx, security.NewSecurityContext(capture, actorFromContext(ctx), ""))
+				ctx = security.WithSecurityContext(ctx, security.NewSecurityContext(capture, id.NewPrincipal(actorFromContext(ctx)), ""))
 			}
 
 			if resolved.Trace.ResponseEnabled {
@@ -122,11 +123,11 @@ func actorFromContext(ctx context.Context) string {
 		return security.AnonymousActor
 	}
 
-	return security.NormalizeActor(actor)
+	return security.NormalizeActor(actor.String())
 }
 
 // shouldDeferSecurityContextFinalization selects the machine-facing routes whose verified
-// actor and calling peer are known only after credential validation (ADR 033, ADR 045).
+// actor and calling peer are known only after credential validation (ADR 033, ADR 047).
 func shouldDeferSecurityContextFinalization(r *http.Request) bool {
 	return r.Method == http.MethodPost && (r.URL.Path == "/oauth2/token" || r.URL.Path == "/access/v1/evaluation")
 }

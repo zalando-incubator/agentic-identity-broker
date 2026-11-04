@@ -184,7 +184,7 @@ func recordObservedSecurityContext(observer *SecurityContextObserver, layer stri
 	observer.Record(SecurityContextObservation{
 		Layer:         layer,
 		TraceID:       sc.TraceID,
-		Actor:         sc.Actor,
+		Actor:         sc.Actor.String(),
 		CallingPeer:   sc.CallingPeer,
 		ClientIP:      sc.ClientIP,
 		UserAgent:     sc.UserAgent,

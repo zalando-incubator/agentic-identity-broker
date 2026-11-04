@@ -60,6 +60,10 @@ Never force-add or commit that file. Include only the generated specification
 and checklists in the PR.
 Do not modify the previously selected feature's files.
 
+When calling `create_pull_request`, omit `stack_position` and `stack_root`.
+This is a standalone PR, not a stacked PR. Do not populate unused optional
+fields with zero or empty-string placeholders.
+
 Create a draft PR on `context.branch`. Its body must start with a short summary
 of the feature to be built, not a summary of the automation. Include:
 
@@ -75,7 +79,9 @@ of the feature to be built, not a summary of the automation. Include:
     analyzes, and remediates on its own, and posts one approval comment listing
     the API changes, ADRs, and consequential decisions with links to them.
   - React with 👍 to the approval comment to approve it, then comment
-    `/speckit-implement [guidance]`.
+    `/speckit-implement [guidance]`. If the container tests then fail on the
+    implementation's commit, a repair run starts automatically, up to three
+    times per command.
   - `/speckit-plan <change>` revises the specification and design and replaces
     the approval comment.
   - `/speckit-clarify [focus]` revisits the specification. Once a plan

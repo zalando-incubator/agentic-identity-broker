@@ -13,8 +13,8 @@ Read the suite-specific guidance before you change either test layer.
 | `e2e/` | Ginkgo v2 / Gomega | Full system | In-memory or Docker |
 | `integration/` | Standard `go test` / testify | Component-level | Self-contained or infra-backed |
 
-ExtProc agentgateway E2E tests use Docker. Infra-backed integration tests use PostgreSQL
-and an AWS emulator. They require Docker or Podman.
+ExtProc agentgateway E2E tests and the backend agentgateway scenario use Docker.
+Infra-backed integration tests use PostgreSQL and an AWS emulator. They require Docker or Podman.
 
 Read [007-e2e-testing-with-ginkgo.md](../adrs/007-e2e-testing-with-ginkgo.md). It defines the E2E test architecture.
 

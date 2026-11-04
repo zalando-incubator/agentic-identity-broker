@@ -39,7 +39,7 @@ func NewClientCredentialsHandler(
 func (h *ClientCredentialsHandler) resolveAgentID(ctx context.Context, value string) (id.AgentID, error) {
 	return h.agentService.ResolveID(ctx, value)
 }
-func (h *ClientCredentialsHandler) handleAgentResolutionError(w http.ResponseWriter, err error) {
+func (h *ClientCredentialsHandler) handleAgentResolutionError(ctx context.Context, w http.ResponseWriter, err error) {
 	if ports.IsNotFoundErr(err) {
 		h.writeError(w, http.StatusNotFound, "agent not found", "")
 		return
@@ -49,7 +49,7 @@ func (h *ClientCredentialsHandler) handleAgentResolutionError(w http.ResponseWri
 		h.writeError(w, http.StatusGatewayTimeout, "operation timed out", "")
 		return
 	}
-	h.logger.Error("failed to resolve agent", "error", err)
+	h.logger.ErrorContext(ctx, "failed to resolve agent", "error", err)
 	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 }
 
@@ -81,7 +81,7 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 
 	agentID, err := h.resolveAgentID(r.Context(), agentIDStr)
 	if err != nil {
-		h.handleAgentResolutionError(w, err)
+		h.handleAgentResolutionError(r.Context(), w, err)
 		return
 	}
 
@@ -109,13 +109,13 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if isRotation {
-		h.logger.Info("CredentialRotated",
+		h.logger.InfoContext(r.Context(), "CredentialRotated",
 			"event", "CredentialRotated",
 			"agent_id", agentID,
 			"client_id", credential.AgentID,
 		)
 	} else {
-		h.logger.Info("CredentialGenerated",
+		h.logger.InfoContext(r.Context(), "CredentialGenerated",
 			"event", "CredentialGenerated",
 			"agent_id", agentID,
 			"client_id", credential.AgentID,
@@ -140,7 +140,7 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	agentID, err := h.resolveAgentID(r.Context(), agentIDStr)
 	if err != nil {
-		h.handleAgentResolutionError(w, err)
+		h.handleAgentResolutionError(r.Context(), w, err)
 		return
 	}
 
@@ -150,12 +150,12 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusNotFound, "credentials not found", "")
 			return
 		}
-		h.logger.Error("failed to get credentials", "agent_id", agentID, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to get credentials", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
-	h.logger.Debug("CredentialRetrieved",
+	h.logger.DebugContext(r.Context(), "CredentialRetrieved",
 		"event", "CredentialRetrieved",
 		"agent_id", agentID,
 	)
@@ -183,7 +183,7 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 
 	agentID, err := h.resolveAgentID(r.Context(), agentIDStr)
 	if err != nil {
-		h.handleAgentResolutionError(w, err)
+		h.handleAgentResolutionError(r.Context(), w, err)
 		return
 	}
 
@@ -193,12 +193,12 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 			h.writeError(w, http.StatusNotFound, "credentials not found", "")
 			return
 		}
-		h.logger.Error("failed to revoke credentials", "agent_id", agentID, "error", err)
+		h.logger.ErrorContext(r.Context(), "failed to revoke credentials", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
-	h.logger.Info("CredentialRevoked",
+	h.logger.InfoContext(r.Context(), "CredentialRevoked",
 		"event", "CredentialRevoked",
 		"agent_id", agentID,
 	)

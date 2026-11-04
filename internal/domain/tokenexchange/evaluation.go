@@ -286,7 +286,7 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *Delegation) (*
 	}
 
 	result := &DelegationContext{
-		Subject: DelegationSubject{ID: d.Principal},
+		Subject: DelegationSubject{ID: string(d.Principal)},
 		Agent:   DelegationEntityRef{ID: d.Agent.ID.String(), CanonicalID: deref(d.Agent.CanonicalID)},
 		Resource: DelegationResource{
 			ID:          d.Service.ID.String(),

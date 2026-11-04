@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +33,7 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
 	require.NoError(t, key.Set(jwk.AlgorithmKey, "A256GCM"))
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	encryption := testutil.NewTestEncryptionAdapter(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
 		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(), encryption,
@@ -45,7 +44,7 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 		providerService, sessionRepo, sessionRepo, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
 		encryption, &http.Client{}, domjwe.New(key), oauth2session.DefaultConfig(), logger,
 	)
-	handler := NewHandler(service)
+	handler := NewHandler(service, slog.Default())
 	handler.logger = logger
 	router := chi.NewRouter()
 	router.Use(middleware.OptionalPrincipalMiddleware(ports.AuthenticationConfig{
@@ -109,7 +108,7 @@ func TestHandleCallback_ProviderErrorsRequireValidStateAndNeverReflectRemoteText
 		providerService, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
 		encryption, &http.Client{}, domjwe.New(key), oauth2session.DefaultConfig(), logger,
 	)
-	handler := NewHandler(service)
+	handler := NewHandler(service, slog.Default())
 	handler.logger = logger
 	router := chi.NewRouter()
 	router.Use(middleware.OptionalPrincipalMiddleware(ports.AuthenticationConfig{

@@ -435,7 +435,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 | US2-S2 | same | Requires reauthentication without an upstream call. |
 | US2-S3 | same | Preserves encrypted tokens after provider rejection. |
 | US3-S1 | same | Paginates due rows and excludes healthy and timeless rows. |
-| US3-S2 | same | Counts an expired refresh token as a failure and continues. |
+| US3-S2 | same | Counts a due session without a refresh token as a failure and continues. |
 | US3-S3 | same | Refreshes a shared session once across concurrent replicas. |
 | US3-S4 | same | Counts due rows without provider calls or writes. |
 

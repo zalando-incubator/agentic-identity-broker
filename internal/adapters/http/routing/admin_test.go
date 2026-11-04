@@ -3,7 +3,6 @@ package routing_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -124,7 +124,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/cimd-client-keys", strings.NewReader(`{"algorithm":"ES256"}`))
 		req.Host = "admin.example.com:14000"
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -156,7 +156,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 			if tc.contentType != "" {
 				req.Header.Set("Content-Type", tc.contentType)
 			}
-			req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+			req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusUnsupportedMediaType, rec.Code, rec.Body.String())
@@ -166,7 +166,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/cimd-client-keys/"+keys[0].KID+"/current", nil)
 	req.Host = "admin.example.com:14000"
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -336,7 +336,7 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 		ServiceScopes: []domainstorage.ServiceScope{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: domainstorage.RequirementTypeOptional}},
 	}))
 	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(storage).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {

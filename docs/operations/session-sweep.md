@@ -2,9 +2,9 @@
 
 ## How refresh works
 
-If the access token is still valid, the broker returns it without waiting for a provider response. If that token is close to expiry, the broker attempts a background refresh without delaying the exchange.
+If the access token is still valid, the broker returns it without waiting for a provider response, unless the provider has already rejected the session's refresh token. A recorded rejection refuses the exchange with `invalid_grant` even before the access token expires. If the access token is close to expiry, the broker attempts a background refresh without delaying the exchange.
 
-If the access token has expired, the exchange waits for an on-demand refresh before responding. If the refresh succeeds, the broker updates the existing session and returns the new token. An absent or expired refresh token requires the user to reconnect. A provider response with 4xx `invalid_grant` (other than `429`) also requires reconnection. Other provider errors, including `429` and `5xx`, return `server_error` without requiring user reconnection. The broker does not return the expired access token as a fallback.
+If the access token has expired, the exchange waits for an on-demand refresh before responding. If the refresh succeeds, the broker updates the existing session and returns the new token. An absent refresh token, or one the provider has already rejected, requires the user to reconnect. A provider response with 4xx `invalid_grant` (other than `429`) also requires reconnection, and the broker records it as a rejection. Other provider errors, including `429` and `5xx`, return `server_error` without requiring user reconnection. The broker does not return the expired access token as a fallback.
 
 A sweep selects all sessions due within the lookahead window, including sessions with active exchanges. It also reaches inactive sessions that do not trigger background refresh. Sessions without a recorded access-token expiry are not included. The broker itself does not schedule sweeps. Run them on demand, enable the [chart-managed schedule](#use-the-chart-managed-schedule), or schedule them with another external job.
 
@@ -159,12 +159,14 @@ If metrics are enabled, use the exported OpenTelemetry instruments. The broker d
 |---|---|---|
 | `oauth2_sessions{service_id, expiry, refreshable}` | Gauge | Stored sessions per service, access-token expiry class (`valid`, `expiring`, `expired`, or `unknown`), and whether a usable refresh token exists (`true` or `false`). Every combination is reported for a service with sessions, with zero when empty. |
 | `session_sweep_duration_seconds{outcome, dry_run}` | Histogram | Duration of each sweep request with an operator principal. `outcome` is `completed`, `rejected`, `aborted`, or `canceled`. Its count series counts runs. |
-| `session_sweep_refreshed_total` | Counter | Sessions refreshed by real sweeps. |
+| `session_sweep_refreshed_total{service_id}` | Counter | Sessions refreshed by real sweeps. |
 | `session_sweep_skipped_total` | Counter | Candidates a real sweep skipped because another refresh renewed them or they were deleted. |
-| `session_sweep_failed_total` | Counter | Candidates that failed during real sweeps. |
-| `proactive_refresh_triggered_total` | Counter | Background refresh attempts accepted during token exchange. |
+| `session_sweep_failed_total{service_id, failure_detail}` | Counter | Candidates that failed during real sweeps. `failure_detail` is the detail code that `session.oauth2.refresh_failed` logs, for example `refresh_rejected` or `access_token_expired`. |
+| `proactive_refresh_triggered_total{service_id}` | Counter | Background refresh attempts accepted during token exchange. |
 | `proactive_refresh_dropped_total` | Counter | Background refresh attempts dropped under load. |
-| `proactive_refresh_failed_total` | Counter | Accepted background refresh attempts that failed. |
+| `proactive_refresh_failed_total{service_id, failure_detail}` | Counter | Accepted background refresh attempts that failed, with the same `failure_detail` codes. |
+
+`service_id` is the service's canonical ID when one is set, otherwise its UUID. Canonical IDs are unique and never look like UUIDs, so each value names one service. Earlier releases reported the UUID for every service. Setting or changing a canonical ID starts new series for that service, so a query whose window spans the change sees both values. The counters look the canonical ID up when they record, and the gauge once per export; both use the UUID if that read fails. Logs keep the UUID in `service_id`.
 
 `expiry` is `valid` when the access token expires after now plus `token_refresh.lookahead_duration`, `expiring` when it expires within that window, `expired` when it has already expired, and `unknown` when no expiry is recorded. `refreshable` is `true` when a refresh token is present and not expired. The series to watch is `expiry="expired",refreshable="true"`: these sessions the sweep could renew but has not, and inactive users accumulate there when no sweep runs. `expiry="expired",refreshable="false"` counts users who must reconnect. The sweep never reaches `unknown` sessions.
 
@@ -197,6 +199,21 @@ absent_over_time(oauth2_sessions[15m])
 
 # Sweep failures over a day
 sum(increase(session_sweep_failed_total[1d])) > 0
+
+# Refresh failures per service and reason over the last hour
+sum by (service_id, failure_detail) (
+  increase(session_sweep_failed_total[1h]) or increase(proactive_refresh_failed_total[1h])
+)
+```
+
+A replica creates each counter series, and the histogram's count series, on its first event for those attributes. The first exported value already includes that event. Backends that ignore the OTLP start time use it as the baseline, so `increase()` and `rate()` miss it. A service that starts failing can then show no failures until a sweep runs on the same replica again. In such a backend, subtract the value from an hour ago and count a series that did not exist then from zero:
+
+```promql
+# Sweep failures per service and reason over the last hour, including new series
+sum by (service_id, failure_detail) (
+  max_over_time(session_sweep_failed_total[1h])
+    - (session_sweep_failed_total offset 1h or max_over_time(session_sweep_failed_total[1h]) * 0)
+)
 ```
 
 If your cluster runs kube-state-metrics, the CronJob status gives a second signal that does not depend on the broker:
@@ -206,7 +223,7 @@ time() - kube_cronjob_status_last_successful_time{cronjob=~".*-session-sweep"} >
 kube_job_status_failed{job_name=~".*-session-sweep-.*"} > 0
 ```
 
-If `failed` persists across sweeps, examine the refresh failure logs and provider health. An absent or expired refresh token cannot recover through another sweep. A 4xx provider `invalid_grant` response (other than `429`) also requires user reconnection. Provider rate limits and outages can cause failures without requiring reconnection. Resolve those provider errors before you ask users to reconnect.
+If `failed` persists across sweeps, examine the refresh failure logs and provider health. A session without a refresh token cannot recover through another sweep. A 4xx provider `invalid_grant` response (other than `429`) also requires user reconnection; the broker records the rejection, and later sweeps skip that session instead of counting it again. Provider rate limits and outages can cause failures without requiring reconnection. Resolve those provider errors before you ask users to reconnect.
 
 Users can reconnect through `GET /api/third-party/{serviceId}/oauth2/authorize`. They can end their own session through `DELETE /api/third-party/{serviceId}/session`. Ending a session removes the stored tokens and can interrupt agents. It does not revoke the tokens at the provider.
 

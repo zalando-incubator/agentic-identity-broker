@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -696,12 +697,13 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 
 	// Validate CEL claim extraction expressions by attempting compilation.
 	// This catches syntax/type errors at startup rather than at request time.
+	// The evaluator is discarded, so it never logs.
 	_, err := jwtauth.NewCELEvaluator(jwtauth.CELEvaluatorConfig{
 		PrincipalExpression:   jwt.ClaimExtraction.PrincipalExpression,
 		DisplayNameExpression: jwt.ClaimExtraction.DisplayNameExpression,
 		EmailExpression:       jwt.ClaimExtraction.EmailExpression,
 		PictureURLExpression:  jwt.ClaimExtraction.PictureURLExpression,
-	}, nil)
+	}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		return formatValidationError(
 			prefix+".claim_extraction",
@@ -1045,6 +1047,9 @@ var impersonationRoleKeys = []string{
 // validateImpersonationRule validates a single rule's roles, authorization predicate, and
 // trusted issuers (CR-003, CR-005, CR-007, CR-008).
 func validateImpersonationRule(rule *ports.ImpersonationRuleConfig, rbase string, security *ports.SecurityConfig) error {
+	if _, _, err := impersonation.ParseAllowedSubjectCategories(rule.AllowedSubjectCategories); err != nil {
+		return formatValidationError(rbase+".allowed_subject_categories", "", "1–2 distinct human/agent strings; omit for human only", nil)
+	}
 	validRole := map[string]bool{
 		string(ports.CredentialRoleClientAssertion): true,
 		string(ports.CredentialRoleActor):           true,

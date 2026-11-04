@@ -120,7 +120,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `DelegationResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 045) |
+| `DelegationResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 047) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
@@ -155,7 +155,7 @@ Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 - If a request has a body and OPA is enabled, exchange tokens in `RequestHeaders`. Then evaluate OPA in `RequestBody`.
 - For header-only requests, evaluate first.
 - Run `ApprovalGate` only after OPA returns `approval_required` for a standalone MCP tool call.
-- `DelegationResolver` (ADR 045) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
+- `DelegationResolver` (ADR 047) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
 - Use mock or stub implementations of all four interfaces in tests.
 
 ### 2a. OPA Authorization Pipeline (when enabled)
@@ -187,7 +187,7 @@ RequestHeaders(end_of_stream=true) → validate subject metadata → validate re
                                                                          → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```
 
-With `delegation_context.enabled` (ADR 045 supersedes ADR 028's ordering and input in this mode):
+With `delegation_context.enabled` (ADR 047 supersedes ADR 028's ordering and input in this mode):
 
 ```
 Body-bearing:  RequestHeaders → metadata/protocol/transport checks
@@ -253,6 +253,12 @@ Both header paths must call `extractTokenExchangeInput()` as the single validati
 See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the input trust boundary only. It does not change the standalone-process boundary in ADR 011 or the token cache in ADR 012.
 
 ---
+
+## Logging
+
+Follow `coding-standards/LOGGING.md`. Get the logger with `loggerFromContext`, and log exchange outcomes with `logDiagnostic`. Do not import `internal/domain/id`: log a principal only under a reserved key (`principal`, `operator_principal`, `actor`) so the shared telemetry handler applies the principal policy.
+
+For spans and metrics, follow `coding-standards/OPENTELEMETRY.md`. Use the `extproc` scope, and record exchange diagnostics on spans and metrics only through the bounded `token_exchange.*` attributes. Set a principal on a span only under a key that ends in `.principal`, so the span pipeline from `telemetry.NewProvider` applies the principal policy. Until #356 adds that policy, do not add principal span attributes.
 
 ## Validation Rules
 

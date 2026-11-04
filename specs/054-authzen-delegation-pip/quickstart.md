@@ -14,7 +14,7 @@ Before any implementation, these preconditions must hold:
    [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
-   ADR draft [adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md).
+   ADR draft [adr-047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md).
 2. T001 has recorded only the supplied approval in each covered ADR's Status line and moved the approved draft to `adrs/`. Review direction alone is not sign-off.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
@@ -155,13 +155,13 @@ just verify             # full gate, E2E last
   could not read reaction authors or times through its GitHub tools, so the recorded date is
   2026-10-30, the day of the `/speckit-implement` command
   (<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6520726517>).
-- ADR 045 moved to `adrs/045-authzen-delegation-pip.md` (045 was unused) with
+- ADR 047 moved to `adrs/047-authzen-delegation-pip.md` (renumbered from 045, which main assigned to agent-subject impersonation) with
   `Accepted (approved by mjungsbluth on 2026-10-30: <url>)`. The draft covers every point T001
   lists.
 - **Same-PR revision of API-2 (needs maintainer confirmation in review)**: T013 found that AuthZEN 1.0
   requires receivers to ignore unknown request fields. The user running this session chose
   "follow the standard: ignore unknown members and `properties`" and "keep the approved
-  `ErrorResponse` body". ADR 045 §1, its revision history, the OpenAPI and the docs record this.
+  `ErrorResponse` body". ADR 047 §1, its revision history, the OpenAPI and the docs record this.
   It is user direction in this session, not the pipeline approval. The maintainer confirmed it on
   2026-10-31 (see "Maintainer acceptance" below).
 
@@ -267,9 +267,9 @@ The maintainer accepted the four items raised at the end of the implementation s
 1. The API-2 revision: unknown request members, AuthZEN `properties` and other `context`
    members are ignored per AuthZEN 1.0, and error bodies keep `ErrorResponse`.
 2. Finding F-1: on the body path, consent after a denial takes effect once the existing ADR 012
-   5 s re-consent cooldown lapses; the exchange cache stays unchanged (recorded in ADR 045
+   5 s re-consent cooldown lapses; the exchange cache stays unchanged (recorded in ADR 047
    Consequences).
-3. The approval record in ADR 045 (mjungsbluth, 2026-10-30, approval comment
+3. The approval record in ADR 047 (mjungsbluth, 2026-10-30, approval comment
    `issuecomment-6504077937`).
 4. The Phase 0 resolver extraction as commit `b882d7b` in this PR instead of a separate PR.
 
@@ -308,11 +308,11 @@ remain unfulfilled. No test, check, approval or constitutional requirement was w
 
 The supplied approval identifies `mjungsbluth`, `2026-10-30T10:40:47Z`, and
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>.
-ADR 045 already records that provenance. This run records no new approval and changes neither
+ADR 047 already records that provenance. This run records no new approval and changes neither
 `spec.md` nor `plan.md`.
 
 The inherited API-2 revision and body-path cooldown are recorded as accepted in the historical
-section above and in `adrs/045-authzen-delegation-pip.md:44-49,151-156,162-172`. However, the
+section above and in `adrs/047-authzen-delegation-pip.md:44-49,151-156,162-172`. However, the
 supplied approval list still names a strict-member request contract, while the implementation,
 OpenAPI and revised contract ignore unknown members. The data model §2.5 and research R10
 also retain rejection language. No new slash-command direction or approval for the later

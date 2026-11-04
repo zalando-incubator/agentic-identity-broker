@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -138,7 +137,7 @@ func TestClientKeySetServiceAppliesCurrentSigningAlgorithmToCachedKeys(t *testin
 
 func TestClientKeySetServiceBoundsCacheEntries(t *testing.T) {
 	fetcher := &keySetTestFetcher{result: &ports.CIMDFetchResult{Body: testKeySet(t, testPublicRSAKey(t, 2048, "shared-key"))}}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	service := NewClientKeySetService(fetcher, keySetConfig(), time.Now, logger)
 
 	for index := range 1001 {

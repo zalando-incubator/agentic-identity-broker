@@ -291,8 +291,12 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
-		It("mints a token with sub=subject and act.iss/act.sub identifying the actor", func() {
-			resp := postImpersonation(baseRequest())
+		DescribeTable("mints a token with sub=subject and act.iss/act.sub identifying the actor", func(optional url.Values) {
+			req := baseRequest()
+			for parameter, values := range optional {
+				req[parameter] = values
+			}
+			resp := postImpersonation(req)
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			body := decodeBody(resp)
 
@@ -313,7 +317,12 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(act["sub"]).To(Equal("actor-1"))
 			Expect(act["iss"]).To(Equal(issuer.URL()))
 			Expect(claims["scope"]).To(Equal(""))
-		})
+		},
+			Entry("optional parameters absent", url.Values{}),
+			Entry("empty resource omitted", url.Values{"resource": {""}}),
+			Entry("empty requested token type omitted", url.Values{"requested_token_type": {""}}),
+			Entry("repeated empty optional parameters omitted", url.Values{"resource": {"", ""}, "requested_token_type": {"", ""}}),
+		)
 
 		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
 		It("should mint an equivalent token when the audience addresses the target by canonical ID", func() {

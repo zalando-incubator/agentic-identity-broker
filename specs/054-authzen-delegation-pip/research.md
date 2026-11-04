@@ -579,10 +579,10 @@ planned number is therefore **045**, rechecked when the draft moves to `adrs/`. 
 **Stakeholder**: Maintainer `mjungsbluth` endorsed this ADR decision set in the 2026-10-28
 review ("ADR accepted"). Under the pipeline's sign-off rules, review direction is not the
 approval record. The planning session drafted the ADR as
-[adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md) with status
+[adr-047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md) with status
 **Proposed**, and registered it as approval item ADR-1 in the plan. After the maintainer's 👍 on
 the pipeline's approval comment, T001 records that approval in the Status line and moves the
-draft to `adrs/045-authzen-delegation-pip.md`, rechecking the number. Its OPA input-schema
+draft to `adrs/047-authzen-delegation-pip.md`, rechecking the number. Its OPA input-schema
 section follows R15 as revised after the 2026-10-28 spec clarification. Under Principle II, the
 ADR may be revised in this PR before it merges, and the final ADR and the code must agree. The
 planning session itself accepts nothing.

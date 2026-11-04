@@ -46,7 +46,7 @@ An AI agent attempts a token exchange for a user whose access token has already 
 **Acceptance Scenarios**:
 
 1. **Given** a session with an expired access token and a valid refresh token, **When** an agent exchanges a token, **Then** one synchronous refresh returns a fresh access token. After the update commits, an INFO `session.oauth2.token_refreshed` event contains `session_id` and `triggered_by=on-demand`.
-2. **Given** a session with expired access and refresh tokens, **When** an agent exchanges a token, **Then** the system requires re-authentication without an upstream call or a partial token. One ERROR `session.oauth2.refresh_failed` event contains `session_id` and `triggered_by=on-demand`.
+2. **Given** a session with an expired access token whose refresh token the provider has rejected, **When** an agent exchanges a token, **Then** the system requires re-authentication without an upstream call, a partial token, or a refresh attempt. No `session.oauth2.refresh_failed` event is emitted; the token exchange diagnostic reports `refresh_rejected` (ADR 046).
 3. **Given** the provider rejects a refresh, **When** an agent exchanges a token, **Then** the system returns a re-authentication error without changing stored tokens. One ERROR `session.oauth2.refresh_failed` event contains `session_id` and `triggered_by=on-demand`.
 
 ---
@@ -64,7 +64,8 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 **Acceptance Scenarios**:
 
 1. **Given** the admin sweep endpoint is called with a lookahead window, **When** there are sessions expiring within the window and sessions not expiring within the window, **Then** only the expiring sessions are candidates for the sweep and sessions outside the window do not contribute to `refreshed`, `skipped`, or `failed` counts.
-2. **Given** an expired refresh token and another refreshable session, **When** two sweeps run, **Then** each reports the still-due session in `failed` without requesting its provider's credentials or tokens. The first sweep refreshes the other session. The failed ciphertext and expiry remain unchanged until that user reauthorizes or ends the session.
+2. **Given** a due session without a refresh token and another refreshable session, **When** two sweeps run, **Then** each reports the still-due session in `failed` without requesting its provider's credentials or tokens. The first sweep refreshes the other session. The failed ciphertext and expiry remain unchanged until that user reauthorizes or ends the session.
+5. **Given** a due session whose refresh token the provider has rejected and another refreshable session, **When** a sweep runs, **Then** the rejected session is not a candidate: it contributes to no count, no provider request, and no failure event, while the other session is refreshed (ADR 046).
 3. **Given** multiple broker replicas receive a sweep request for the same session, **When** both process it concurrently, **Then** the final stored session is valid. The row lock and re-check prevent duplicate upstream refreshes and partial updates.
 4. **Given** the sweep endpoint is called with `dry_run: true` in the request body, **When** there are sessions that would be refreshed, **Then** the response returns the count of sessions that would be refreshed but no actual refresh calls are made to upstream providers.
 
@@ -73,7 +74,7 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 ### Edge Cases
 
 - What happens when the upstream OAuth2 provider is unavailable during a background proactive refresh? The background refresh MUST fail silently (log the error), leave the existing token in place, and not affect the current exchange response which already returned a valid token.
-- What happens when all refresh tokens for a given third-party service have expired (e.g., service revoked all tokens)? The sweep MUST report this as a recoverable per-session failure, not abort the entire sweep. Sessions requiring re-authentication are left intact.
+- What happens when a provider rejects every refresh token for a given third-party service (e.g., the service revoked all tokens)? Each rejection is a recoverable per-session failure that is recorded and does not abort the sweep. Recorded rejections leave the sessions intact and exclude them from later sweeps until the user reauthenticates (ADR 046).
 - What happens when a session is deleted (user revoked consent) while a background refresh is in progress? The locked, update-only refresh MUST discard the result without re-creating the session.
 - What happens if the sweep lookahead window is set to a very large value covering all sessions? The sweep MUST paginate its database queries to avoid loading the entire `user_sessions` table into memory at once.
 - What happens if an access token has no expiry set (`access_token_expires_at IS NULL`)? The system treats it as perpetually valid — neither background refresh nor sweep will act on it.
@@ -86,12 +87,12 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 - **FR-002**: When a token exchange is requested and a valid access token is within the configurable lookahead window, the system MUST return that token immediately. If the session has a usable refresh token, the system MUST submit it for background refresh without making the caller wait. If the bounded pool is full, the system drops the refresh and still returns the valid token.
 - **FR-003**: Background refresh MUST use per-replica deduplication (`singleflight` within each broker process). If a refresh is already in progress for a session within the same process, subsequent requests for that session MUST NOT trigger another upstream refresh call. Across replicas, the locked refresh MUST re-check the latest session before an upstream call and update only an existing row.
 - **FR-004**: When a token exchange is requested and the access token has already expired, the system MUST attempt an on-demand synchronous refresh using the stored refresh token before returning a result.
-- **FR-005**: When a refresh token is absent or expired, the system MUST return an error indicating re-authentication is required rather than attempting a refresh.
+- **FR-005**: When a refresh token is absent, or the provider has already rejected it, the system MUST return an error indicating re-authentication is required rather than attempting a refresh. A recorded rejection returns `refresh_rejected` on demand and excludes the session from the sweep (ADR 046).
 - **FR-006**: The admin server MUST expose an endpoint to trigger a sweep of sessions with access tokens expiring within a caller-specified lookahead duration.
 - **FR-007**: The sweep endpoint MUST accept a `dry_run` request body parameter. When `dry_run: true`, it MUST report how many sessions would be refreshed without performing any upstream calls.
 - **FR-008**: The sweep MUST read sessions in keyset pages, not load the entire session table into memory. It MUST retain visited session IDs for one invocation so a refreshed row that moves forward cannot be evaluated twice. The visited set uses O(unique candidates) broker memory, while each page holds at most `page_size` session snapshots.
 - **FR-009**: The sweep MUST be safe to invoke concurrently from multiple broker replicas. A row lock and a re-check of the stored session MUST prevent duplicate upstream refreshes and partial updates. Refresh MUST NOT re-create a deleted session.
-- **FR-010**: The sweep MUST report a per-sweep summary in its response: sessions refreshed, candidate sessions skipped because they no longer require action at evaluation time, sessions failed (refresh token expired or upstream error), and total sessions evaluated.
+- **FR-010**: The sweep MUST report a per-sweep summary in its response: sessions refreshed, candidate sessions skipped because they no longer require action at evaluation time, sessions failed (no refresh token or upstream error), and total sessions evaluated. Sessions whose refresh token the provider rejected are not candidates.
 - **FR-011**: A failed refresh for one session during a sweep MUST NOT abort the sweep — the sweep MUST continue processing remaining sessions.
 - **FR-012**: The proactive refresh lookahead window MUST be configurable via the standard configuration port. The default value is `5m`.
 - **FR-013**: Sessions with no expiry set (`access_token_expires_at IS NULL`) MUST be excluded from both background proactive refresh and admin sweep processing.
@@ -131,7 +132,7 @@ sequenceDiagram
         ThirdPartyOAuth2Provider-->>OAuth2SessionService: new access + refresh tokens
         OAuth2SessionService->>SessionRepository: UPDATE existing locked row only
         OAuth2SessionService-->>TokenExchangeService: plaintext access token
-    else Token expired, refresh token absent/expired
+    else Token expired, refresh token absent or rejected
         OAuth2SessionService-->>TokenExchangeService: error (re-authentication required)
     end
 
@@ -164,7 +165,7 @@ sequenceDiagram
                 SessionSweepService->>ThirdPartyOAuth2Provider: POST refresh_token grant
                 ThirdPartyOAuth2Provider-->>SessionSweepService: new tokens
                 SessionSweepService->>SessionRepository: UPDATE existing locked row only
-            else refresh token absent/expired
+            else refresh token absent
                 SessionSweepService->>SessionSweepService: record as failed, continue
             end
         end
@@ -215,7 +216,7 @@ token_refresh:
 
 - **NFR-001**: The system MUST emit a structured log line at `INFO` level after each committed session refresh. It MUST include the session owner's `principal`, `session_id`, `service_id`, and `triggered_by` (background, on-demand, sweep). It MUST NOT include token material.
 - **NFR-002**: The system MUST emit a structured log line at `WARN` level when a proactive background refresh is dropped because the worker pool is at capacity, including `service_id` and session ID.
-- **NFR-003**: The system MUST emit a structured log line at `WARN` level for each per-session failure during a sweep (refresh token expired, upstream error), and at `ERROR` level for infrastructure failures (database unreachable).
+- **NFR-003**: The system MUST emit a structured log line at `WARN` level for each per-session failure during a sweep (no refresh token, upstream error), and at `ERROR` level for infrastructure failures (database unreachable).
 - **NFR-004**: The system MUST emit OpenTelemetry `Int64` counters through the existing telemetry pipeline (no Prometheus registry, no `/metrics` endpoint, and no `/health` counter surface): `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, `proactive_refresh_failed_total`, `session_sweep_refreshed_total`, `session_sweep_failed_total`. Counters MUST be labeled with `triggered_by` where applicable.
 
 ### Security Requirements
@@ -227,7 +228,7 @@ token_refresh:
 
 ### Key Entities
 
-- **UserSession**: Existing entity. The refresh feature reads and updates `EncryptedAccessToken`, `EncryptedRefreshToken`, `AccessTokenExpiresAt`, `RefreshTokenExpiresAt`. No new fields required.
+- **UserSession**: Existing entity. The refresh feature reads and updates `EncryptedAccessToken`, `EncryptedRefreshToken`, `AccessTokenExpiresAt`, `RefreshRejectedAt`. No new fields required.
 - **SessionExpiryCursor**: Internal keyset value `{AccessTokenExpiresAt time.Time, ID id.SessionID}` for expiry-then-UUID sweep pages. It is not part of the admin API.
 - **SweepResult**: Value object representing the outcome of a sweep operation: `{Refreshed int, Skipped int, Failed int, TotalEvaluated int, DryRun bool}`.
 
