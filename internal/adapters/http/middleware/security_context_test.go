@@ -3,7 +3,6 @@ package middleware_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -505,7 +504,7 @@ func TestNewHandler_AccessEvaluationDefersSecurityContextFinalization(t *testing
 			afterFinalize.sc, afterFinalize.ok = security.FromContext(r.Context())
 			w.WriteHeader(http.StatusNoContent)
 		})
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", nil)
 	res := httptest.NewRecorder()
