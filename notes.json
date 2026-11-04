@@ -2,17 +2,36 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": null
+    "investigation_after": 27
   },
-  "issues": [],
+  "issues": [
+    {
+      "number": 21,
+      "state": "resolution_recommended",
+      "updated_at": "2026-11-04",
+      "note": "Posted source/test evidence that Feature 050 implements all requested discovery capabilities; recommend closure pending maintainer confirmation."
+    },
+    {
+      "number": 27,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-04",
+      "note": "Asked for Agentgateway/extMCP proto revision and authorization-only vs token-exchange scope. Reuse Authorizer; preserve ADR 036 trusted-input boundary."
+    },
+    {
+      "number": 212,
+      "state": "deferred",
+      "updated_at": "2026-11-04",
+      "note": "InitiateFlow still rejects empty redirect_uri. Candidate: configured-public-origin /sessions default, retaining origin validation and consent state. Defer implementation until required TDD/checks can run."
+    }
+  ],
   "fixes": [
     {
       "issue": 367,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-367-authorization-readiness",
+      "pr": 403,
+      "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "open",
-      "updated_at": "2026-11-03",
-      "note": "Shared browser/inbound minting readiness and consent challenge prepared for draft PR. Runtime checks blocked by missing just and Go toolchain TLS failure; CI validation required."
+      "updated_at": "2026-11-04",
+      "note": "Verified live draft PR #403; do not duplicate. Only DCO passed and CodeRabbit skipped among reported checks; Go validation remains pending."
     }
   ],
   "checks": [
@@ -21,8 +40,32 @@
       "checked_at": "2026-11-03",
       "result": "#367: gofmt and whitespace checks passed. Added readiness, challenge, terminal-denial and E2E reconnect coverage; execution blocked by missing just and Go toolchain TLS failure.",
       "follow_up": "Run just check, just build, affected package tests and focused impersonation E2E in CI before approval."
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-04",
+      "result": "just check blocked: just missing. go version blocked: required Go 1.27.3 download fails TLS certificate validation. No bypass attempted.",
+      "follow_up": "Provision supported runner tools; run just check and affected tests before implementation of #212."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-04",
+      "result": "One live Repo Assist PR: #403 for #367; memory updated to actual PR and generated branch. No duplicate fix opened.",
+      "follow_up": "Run required Go static/build/package/E2E validation before approval."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-04",
+      "result": "#21 implementation and E2E assertions cover discovery, CIMD/DCR choice, status and failed-create rejection. #27 lacks extMCP registration and needs protocol/scope decisions.",
+      "follow_up": "Await #21 closure confirmation and #27 contract clarification; resume oldest-first investigation after #27."
     }
   ],
   "completed_actions": [],
-  "priorities": []
+  "priorities": [
+    {
+      "task": 3,
+      "item": "#212 default service authorization return URI",
+      "note": "Implement only once Go/just validation works: update OpenAPI first, add missing/explicit/foreign-origin redirect coverage and full callback-to-sessions journey."
+    }
+  ]
 }
