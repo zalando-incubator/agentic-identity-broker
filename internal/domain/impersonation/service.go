@@ -222,9 +222,22 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 	res.subject = subjectID
-	res.category = classifySubject(subjectUnverified, rule.authz.Binds(celSubjectToken, "sub"), subjectClaims, targetAgent.ID)
+	subBound := rule.authz.Binds(celSubjectToken, "sub")
+	res.category = classifySubject(subjectUnverified, subBound, subjectClaims, targetAgent.ID)
 	if res.category == SubjectCategoryAgent {
 		res.subject = targetAgent.ID.String()
+	}
+	if res.category == SubjectCategoryHuman && (!subjectUnverified || subBound) {
+		crossAgent, err := s.isOtherRegisteredAgent(ctx, subjectClaims, targetAgent.ID)
+		if err != nil {
+			res.abort = originError(ctx, serverError("subject agent lookup failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentRepositoryUnavailable)
+			return res
+		}
+		if crossAgent {
+			res.category = SubjectCategoryAgent
+			res.failure = categoryIneligible()
+			return res
+		}
 	}
 	if !rule.allows(res.category) {
 		res.failure = categoryIneligible()
@@ -393,4 +406,25 @@ func failureAudit(targetAgentID string, res *ruleResult, err *tokenexchange.Toke
 		record.SubjectCategory = res.category
 	}
 	return record
+}
+
+// isOtherRegisteredAgent reports whether the raw sub is the canonical UUID of a registered agent
+// other than the target. Such a cross-agent subject is never eligible and never falls back to
+// human delegation (ADR 045 decision 2b).
+func (s *Service) isOtherRegisteredAgent(ctx context.Context, claims map[string]interface{}, target id.AgentID) (bool, error) {
+	subject, ok := claims["sub"].(string)
+	if !ok {
+		return false, nil
+	}
+	agentID, err := id.ParseAgentID(subject)
+	if err != nil || agentID.String() != subject || agentID == target {
+		return false, nil
+	}
+	if _, err := s.agents.Get(ctx, agentID); err != nil {
+		if ports.IsNotFoundErr(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }

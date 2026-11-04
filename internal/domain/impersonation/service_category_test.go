@@ -2,12 +2,15 @@ package impersonation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -103,6 +106,81 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 						require.Empty(t, exchangeErr.ErrorURI())
 					}
 				}
+			}
+		})
+	}
+}
+
+// A signed (or predicate-bound unverified) subject whose sub is a different registered agent's
+// UUID is a cross-agent request: never eligible, never routed through human delegation (A15).
+func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
+	other := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Other", Description: "Other agent"}
+	for _, tc := range []struct {
+		name         string
+		categories   []string
+		subject      func(target *Target) string
+		unsigned     bool
+		unbound      bool
+		lookupErr    error
+		wantCode     string
+		wantCalls    int
+		wantCategory SubjectCategory
+	}{
+		{name: "dual rule", categories: []string{"human", "agent"}, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "human-only rule", categories: []string{"human"}, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "omitted categories", subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned bound subject", categories: []string{"human", "agent"}, unsigned: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCalls: 1},
+		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "access_denied", wantCalls: 1},
+		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "access_denied", wantCalls: 1},
+		{name: "agent lookup failure fails closed", categories: []string{"human", "agent"}, subject: func(*Target) string { return other.ID.String() }, lookupErr: context.DeadlineExceeded, wantCode: "server_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testImpersonationConfig("only")
+			if tc.unsigned {
+				cfg.Rules[0] = unverifiedSubjectConfig().Rules[0]
+			}
+			cfg.Rules[0].AllowedSubjectCategories = tc.categories
+			cfg.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
+			cfg.Rules[0].Authorization.CEL.Expression = "subject_token.sub != ''"
+			if tc.unbound {
+				cfg.Rules[0].Authorization.CEL.Expression = "client_assertion.sub != '' && !has(subject_token.nonce)"
+			}
+			agents := stubAgentRepository{get: func(_ context.Context, agentID id.AgentID) (*storage.Agent, error) {
+				if tc.lookupErr != nil {
+					return nil, tc.lookupErr
+				}
+				if agentID == other.ID {
+					return other, nil
+				}
+				return nil, ports.ErrNotFound
+			}}
+			key, keyset := signedValidationKey(t, "cross-agent")
+			issuer := &stubIssuer{}
+			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
+			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+				return configurableJWKSProvider{set: keyset}, nil
+			}, agents, issuer, 0, nil, verifier, "https://broker.example.com")
+			require.NoError(t, err)
+			target := testTarget()
+			sign := func(sub string) string {
+				return signedValidationTokenWithSubject(t, jwa.ES256(), key, "https://idp.example.com", "aud", sub, time.Now().Add(time.Hour), time.Now().Add(-time.Minute))
+			}
+			subjectToken := sign(tc.subject(target))
+			if tc.unsigned {
+				subjectToken = unsignedSubjectJWT(t, map[string]any{"sub": tc.subject(target)})
+			}
+			outcome, err := svc.Impersonate(context.Background(), &Request{ClientAssertion: sign("gw"), ActorToken: sign("actor"), SubjectToken: subjectToken, SubjectTokenType: JWTTokenType}, target)
+			require.False(t, issuer.called)
+			require.Equal(t, tc.wantCalls, verifier.calls)
+			var exchangeErr *tokenexchange.TokenExchangeError
+			require.ErrorAs(t, err, &exchangeErr)
+			require.Equal(t, tc.wantCode, exchangeErr.Code())
+			if tc.wantCalls == 0 {
+				require.Empty(t, exchangeErr.ErrorURI())
+			}
+			if tc.wantCategory != "" {
+				require.Equal(t, tc.wantCategory, outcome.Audit.SubjectCategory)
 			}
 		})
 	}

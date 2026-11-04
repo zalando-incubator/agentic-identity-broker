@@ -293,7 +293,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		// US2.3 from specs/054-agent-subject-impersonation/spec.md
 		It("never recovers a missing or expired human delegation by reclassifying", func() {
 			boot(configFor([]string{"human", "agent"}), false)
-			for _, subject := range []string{"alice@example.com", other.ID.String(), strings.ToUpper(target.ID.String()), *target.CanonicalID} {
+			for _, subject := range []string{"alice@example.com", strings.ToUpper(target.ID.String()), *target.CanonicalID} {
 				assertDenied(requestFor(subject), true)
 			}
 			seedGrant("alice@example.com", true)
@@ -310,6 +310,20 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			assertDenied(requestFor(target.ID.String()), false)
 			seedGrant(target.ID.String(), false)
 			assertDenied(requestFor(target.ID.String()), false)
+		})
+		// US2.6 from specs/054-agent-subject-impersonation/spec.md
+		It("denies a signed subject naming a different registered agent without human fallback", func() {
+			for _, categories := range [][]string{nil, {"human"}, {"human", "agent"}} {
+				boot(configFor(categories), false)
+				seedGrant(other.ID.String(), false)
+				assertDenied(requestFor(other.ID.String()), false)
+				assertNoState(target.ID.String())
+				grants, err := store.UserGrants().ListByPrincipalAndAgent(ctx, id.Principal(other.ID.String()), target.ID)
+				Expect(err).NotTo(HaveOccurred())
+				for _, grant := range grants {
+					Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
+				}
+			}
 		})
 		// US2.5 from specs/054-agent-subject-impersonation/spec.md
 		It("rejects invalid category values and YAML shapes before accepting traffic", func() {
