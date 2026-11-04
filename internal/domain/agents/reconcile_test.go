@@ -210,7 +210,6 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 			a.ID = id.NewAgentID()
 			a.CreatedAt = time.Now()
 			a.UpdatedAt = time.Now()
-			a.ClearCanonicalID = true
 		}, true},
 		{"nil empty", func(a *storage.Agent) {
 			a.ClientURIs = []string{}
@@ -277,10 +276,9 @@ func TestSameDefinitionCoversEveryAgentField(t *testing.T) {
 		"ClientURIs":    func(a *storage.Agent) { a.ClientURIs = []string{"https://example.com/client.json"} },
 	}
 	ignored := map[string]string{
-		"ID":               "UUID identity is retained independently of the desired definition",
-		"ClearCanonicalID": "update instruction, not persisted definition state",
-		"CreatedAt":        "creation metadata is retained independently of the desired definition",
-		"UpdatedAt":        "update metadata is assigned only after the definition changes",
+		"ID":        "UUID identity is retained independently of the desired definition",
+		"CreatedAt": "creation metadata is retained independently of the desired definition",
+		"UpdatedAt": "update metadata is assigned only after the definition changes",
 	}
 	agentType := reflect.TypeFor[storage.Agent]()
 	require.Equal(t, agentType.NumField(), len(changes)+len(ignored))

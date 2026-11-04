@@ -96,7 +96,7 @@ last-writer-wins, as the spec's edge cases allow.
 agent field by field: canonical, client, and external IDs; display name; description; the three
 metadata URLs; service requirements (order-sensitive, with `nil` and empty `required_scopes` equal);
 permission declarations (order-sensitive); redirect URIs and allowed scopes (order-sensitive, `nil`
-equals empty); and client URIs as a set. Timestamps and `ClearCanonicalID` are excluded.
+equals empty); and client URIs as a set. Timestamps are excluded.
 
 **Stable ordering (Approved, API-ORDER)**: Sort a copied `client_uris` slice in ascending Go
 string byte order in every Admin Agent response (POST, both PUT forms, single GET, list/filter

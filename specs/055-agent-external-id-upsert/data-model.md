@@ -77,7 +77,7 @@ permission-set resolver injected by the builder (approved remediation F1/F2).
 Compared: canonical, client, and external IDs; display name; description; three metadata URLs;
 service requirements in order (`nil` and empty `required_scopes` equal); permission declarations
 in order; redirect URIs and allowed scopes in order (`nil` equals empty); client URIs as a set.
-Not compared: `ID`, `CreatedAt`, `UpdatedAt`, `ClearCanonicalID`.
+Not compared: `ID`, `CreatedAt`, `UpdatedAt`.
 
 ### Stable Agent presentation (Approved, API-ORDER)
 

@@ -42,7 +42,6 @@ type AgentPermissionSetEntry struct {
 type Agent struct {
 	ID                   id.AgentID                `json:"id" db:"id"`
 	CanonicalID          *string                   `json:"canonical_id,omitempty" db:"canonical_id"`
-	ClearCanonicalID     bool                      `json:"-" db:"-"`
 	ClientID             *id.ClientID              `json:"client_id,omitempty" db:"client_id"`
 	ExternalID           *id.ExternalID            `json:"external_id,omitempty" db:"external_id"`
 	DisplayName          string                    `json:"display_name" db:"display_name"`

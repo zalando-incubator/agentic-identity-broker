@@ -307,15 +307,15 @@ func TestUpdate_ClearsCanonicalID(t *testing.T) {
 	}
 
 	update := &storage.Agent{
-		ClearCanonicalID: true,
-		DisplayName:      "Updated",
-		Description:      "Updated description",
-		PermissionSets:   testPermissionSets(),
-		UpdatedAt:        time.Now().UTC(),
+		DisplayName:    "Updated",
+		Description:    "Updated description",
+		PermissionSets: testPermissionSets(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
-	require.NoError(t, svc.Update(context.Background(), agentID, update, UpdateInput{}))
+	require.NoError(t, svc.Update(context.Background(), agentID, update, UpdateInput{CanonicalIDPresent: true}))
 	assert.Nil(t, update.CanonicalID)
+	assert.Nil(t, repo.agents[agentID].CanonicalID)
 }
 
 func TestUpdate_EnforcesUniquenessOnClientIDChange(t *testing.T) {

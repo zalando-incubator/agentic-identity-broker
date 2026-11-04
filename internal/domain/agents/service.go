@@ -137,12 +137,8 @@ func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage
 
 func (s *Service) updateCandidate(ctx context.Context, existing, desired *storage.Agent, input UpdateInput) (*storage.Agent, error) {
 	agent := desired.Copy()
-	agent.ClearCanonicalID = desired.ClearCanonicalID
 	agent.ID = existing.ID
-	if agent.ClearCanonicalID || input.CanonicalIDPresent && agent.CanonicalID == nil {
-		agent.ClearCanonicalID = true
-		agent.CanonicalID = nil
-	} else if agent.CanonicalID == nil {
+	if agent.CanonicalID == nil && !input.CanonicalIDPresent {
 		agent.CanonicalID = existing.CanonicalID
 	}
 	agent.CreatedAt = existing.CreatedAt
