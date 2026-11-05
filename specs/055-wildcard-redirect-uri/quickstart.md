@@ -12,7 +12,7 @@ This guide validates broker behavior. Applying the registration to an external d
 
 Run focused URI and Agent validation tests:
 
-```fish
+```bash
 go test ./internal/domain/urivalidation ./internal/domain/storage ./internal/domain/oauth2 ./internal/domain/oauth2server
 ```
 
@@ -28,15 +28,15 @@ Expected results:
 
 Run only the feature's HTTP acceptance scenarios:
 
-```fish
-ginkgo -v --focus="Wildcard Redirect URI" ./tests/e2e/
+```bash
+ginkgo -v --focus="Wildcard Redirect URI|CIMD document registers an exact callback and the Agent has a host pattern" ./tests/e2e/
 ```
 
-Expected results: all nine scenarios in [spec.md](spec.md) pass. Matching callbacks receive the authorization result and their own `state`; out-of-scope callbacks receive `invalid_redirect_uri` without a redirect; invalid registration receives the existing validation error.
+Expected results: all eleven scenarios in [spec.md](spec.md) pass. Matching callbacks receive the authorization result and their own `state`; out-of-scope callbacks receive the documented error without a redirect; invalid registration receives `400 validation failed`.
 
 ## Run Required Repository Gates
 
-```fish
+```bash
 just check
 just test
 just test-e2e-backend

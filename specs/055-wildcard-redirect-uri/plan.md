@@ -26,7 +26,7 @@ Extend Agent-configured HTTPS `redirect_uris` with host-label wildcards for prev
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Before proceeding, verify compliance with [.specify/memory/constitution.md](.specify/memory/constitution.md):
+Before proceeding, verify compliance with [.specify/memory/constitution.md](../../.specify/memory/constitution.md):
 
 **Design Preconditions (BLOCKING)**:
 
@@ -40,7 +40,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 - [x] **API Documentation**: Update relevant schemas in `/api/admin/openapi.yaml` and the authorization behavior in `/api/enduser/openapi.yaml`.
 - [x] **API Changes**: The requested behavior change is explicitly authorized; record confirmation with the implementation review.
 - [x] **Database Design**: Not applicable; the existing URI string list and schema remain unchanged.
-- [x] **E2E Acceptance Tests**: Write E2E tests for all nine acceptance scenarios before implementation.
+- [x] **E2E Acceptance Tests**: Write E2E tests for all eleven acceptance scenarios before implementation.
 - [x] **E2E Test Mapping**: Map each acceptance scenario to exactly one `It()` block in `tests/e2e/`.
 - [x] **E2E Red Phase**: Run the focused suite before implementation and verify realistic assertions fail semantically.
 - [x] **Frontend Playwright E2E**: Not applicable; the feature changes no React UI.
@@ -50,7 +50,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 
 - [x] **Security-First**: Validate patterns at registration and again before matching; reject malformed and out-of-bound patterns.
 - [x] **Architecture Docs**: Update the architecture glossary and redirect-validation description.
-- [x] **ADRs**: Add ADR 045 for host wildcard grammar and the public-suffix trust boundary; accept it with the implementation change.
+- [x] **ADRs**: Add ADR 047 for host wildcard grammar and the public-suffix trust boundary; accept it with the implementation change.
 - [x] **Library-First Security**: Use `golang.org/x/net/publicsuffix` and `golang.org/x/net/idna`; do not implement a public suffix list.
 - [x] **API Guidelines**: No endpoint or payload shape is added; retain existing error contracts.
 - [x] **End-User Docs**: Update `docs/api/enduser-api.md` with the authorization callback matching behavior.
@@ -60,7 +60,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 
 *If any BLOCKING check fails, stop and clarify requirements. Implementation cannot begin until all preconditions complete.*
 
-**Post-design recheck**: Pass. Phase 1 adds no new entity, configuration, migration, endpoint, or UI. The contract, URI data model, source-specific matcher decision, ADR, and nine-scenario E2E plan satisfy the security, API-first, and traceability requirements.
+**Post-design recheck**: Pass. Phase 1 adds no new entity, configuration, migration, endpoint, or UI. The contract, URI data model, source-specific matcher decision, ADR, and eleven-scenario E2E plan satisfy the security, API-first, and traceability requirements.
 
 ## Project Structure
 
@@ -97,7 +97,8 @@ api/enduser/openapi.yaml                # OAuth2 authorization contract
 docs/api/enduser-api.md                 # maintained end-user API documentation
 ARCHITECTURE.md                         # domain glossary and architecture notes
 adrs/047-wildcard-web-redirect-uris.md  # security decision
-tests/e2e/wildcard_redirect_uri_test.go # nine spec-mapped HTTP scenarios
+tests/e2e/wildcard_redirect_uri_test.go # nine wildcard-specific HTTP scenarios
+tests/e2e/cimd_authorization_test.go     # two CIMD redirect-source scenarios
 ```
 
 **Structure Decision**: Extend existing domain validation and OAuth2 authorization paths; do not add a package, endpoint, adapter, persisted field, or frontend component. Keep the public-suffix policy in the URI-validation domain package, where the existing redirect parser and matcher already live.
@@ -164,6 +165,8 @@ Phase 1 setup is not required: the required `golang.org/x/net` dependency is alr
 | US2-S2 | `wildcard_redirect_uri_test.go` | Reject scheme and path mismatches |
 | US2-S3 | `wildcard_redirect_uri_test.go` | Reject patterns that wildcard the registrable domain, suffix, or whole host through Agent registration |
 | US2-S4 | `wildcard_redirect_uri_test.go` | Preserve exact callback matching |
+| US2-S5 | `cimd_authorization_test.go` | Accept the exact callback listed by the CIMD document |
+| US2-S6 | `cimd_authorization_test.go` | Reject a callback matched only by the Agent host pattern |
 
 **Red Phase Requirements**:
 - E2E tests MUST compile and contain detailed, realistic expectations
@@ -184,7 +187,7 @@ Phase 1 setup is not required: the required `golang.org/x/net` dependency is alr
 
 **Test Execution Flow**:
 1. **Phase 2f (Design)**: Write E2E tests for all spec scenarios with detailed expectations
-2. **Verify Red Phase**: Run `ginkgo -v --focus="Wildcard Redirect URI" ./tests/e2e/` — the suite must compile and fail semantically for missing wildcard behavior; unchanged exact-callback regression coverage may pass
+2. **Verify Red Phase**: Run `ginkgo -v --focus="Wildcard Redirect URI|CIMD document registers an exact callback and the Agent has a host pattern" ./tests/e2e/` — the suite must compile and fail semantically for missing wildcard behavior; unchanged exact-callback regression coverage may pass
 3. **Implementation**: Implement feature incrementally
 4. **Verify Green Phase**: E2E tests turn GREEN as implementation satisfies acceptance criteria
 5. **Minimal Changes**: Only fixture adjustments during implementation, not test logic
@@ -209,13 +212,13 @@ Not applicable. This feature changes no React UI and requires no frontend screen
 - Strategy: Table-driven TDD; write tests first and verify semantic failures before implementation
 
 **Integration Tests**:
-- Location: `tests/e2e/wildcard_redirect_uri_test.go` for the HTTP-level Agent API and authorization contract
+- Location: `tests/e2e/wildcard_redirect_uri_test.go` for nine wildcard scenarios and `tests/e2e/cimd_authorization_test.go` for two CIMD source-isolation scenarios
 - Coverage: Admin registration, OAuth2 callback selection, exact matching, and fail-closed errors
 - Strategy: Production app bootstrap with isolated in-memory storage; no database adapter change or migration is expected
 
 **Test Coverage Goals**:
 - Unit test coverage: All wildcard parsing, registration, matching, and security-boundary branches
-- Integration test coverage: All nine acceptance scenarios through production HTTP bootstrap
+- Integration test coverage: All eleven acceptance scenarios through production HTTP bootstrap
 - E2E test coverage: 100% of acceptance scenarios from spec.md, with one `It()` per scenario
 - Frontend E2E coverage: Not applicable; no UI changes
 
