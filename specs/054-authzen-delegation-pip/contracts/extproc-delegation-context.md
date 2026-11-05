@@ -104,6 +104,16 @@ Immediately before every OPA evaluation that receives delegation input, ExtProc 
 `now < Deadline`. A permit that expires while ExtProc waits for the concurrent exchange,
 buffers the body, or works through a batch therefore never reaches policy.
 
+**Re-consent after a delegation denial (Proposed D-5)**: The resolver never caches a denial,
+so both paths consult the broker again immediately after consent. Header-only requests can
+permit immediately. The body path concurrently attempts exchange during the denied request;
+that exchange can record the existing ADR 012 re-consent cooldown (5 s). Body-path forwarding
+then resumes once that cooldown lapses, without changing exchange-cache semantics. This is
+not a delegation negative cache. Rationale: preserve the existing exchange cache while
+bounding delegation freshness independently. Alternative: bypass the exchange cooldown in
+enabled mode, which changes ADR 012 semantics. Sign-off is D-5 in the plan; prior contract
+approval does not automatically cover this consequence.
+
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval gate, and policy fail-closed behavior are unchanged and still apply.
 

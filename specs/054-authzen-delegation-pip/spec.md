@@ -46,6 +46,10 @@ These five points record maintainer `mjungsbluth`'s phase guidance in command [6
 
 These points record maintainer `mjungsbluth`'s planning direction in command [6659711535](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6659711535). They do not themselves approve an API change or decision; sign-off remains the approval comment for the plan's Approval Items.
 
+### Task reconciliation
+
+- Q: Does Journey 2 promise immediate body-path forwarding after renewed consent? → A: No. Immediate broker re-evaluation is distinct from downstream forwarding: the header-only path permits immediately, while the body path waits for the unchanged 5 s exchange re-consent cooldown recorded in US3.5. Reason: keep the concrete journey consistent with the 2026-11-05 clarification and Proposed D-5. Main alternative: bypass that cooldown, which changes exchange-cache semantics and remains outside this proposal. No additional scope or approval is implied.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The broker tells an authenticated gateway whether a user's delegation to an agent covers one protected resource. It returns credential-free policy information, not a provider credential or a final decision about a tool invocation. ExtProc can opt into this information independently of its exchanged-token lifetime, so revocations stop informing policy within a bounded freshness window and header-only requests receive the same information as body-bearing requests.
@@ -164,7 +168,7 @@ As an operator, I want startup to reject discovery mix-ups and invalid opt-in se
 
 ## Concrete Example Journeys *(mandatory)*
 
-All identifiers, timestamps, token markers, and claims below are synthetic. Proposed new HTTP representations are review examples, not an approved OpenAPI amendment. The eventual contract must verify AuthZEN 1.0 reason-envelope details before freezing the exact schema. Existing token-exchange and consent contracts are not changed by this draft.
+All identifiers, timestamps, token markers, and claims below are synthetic. HTTP examples follow the feature contract, including its verified denial form (a); `quickstart.md` §7 records API-003 final-standard evidence. Revised API-2 and D-5 remain Proposed for current sign-off. Existing token-exchange and consent contracts are not changed by these examples.
 
 **Shared cast**:
 
@@ -358,7 +362,7 @@ The active grant is removed. This feature changes no consent screen or revocatio
 
 **Step 3 — 10:01:00: the gateway repeats Journey 1's evaluation request with `X-Request-ID: delegation-002`**
 
-Proposed denial representation, subject to AuthZEN reason-envelope verification in API-003:
+Denial form (a), as recorded in the feature contract and API-003 verification:
 
 ```http
 HTTP/1.1 200 OK
@@ -379,9 +383,9 @@ Every other denial-matrix condition substitutes its listed reason without changi
 
 **Step 4 — Alice grants access again, then immediately repeats the request**
 
-Because denials are not cached, the gateway consults the broker and can obtain Journey 1's permit again. No negative-cache wait is imposed.
+Because delegation denials are not cached, the gateway consults the broker and can obtain Journey 1's permit again. No delegation negative-cache wait is imposed. The header-only path can forward immediately after policy and exchange allow. On the body path, a concurrent exchange during the earlier denied request may have recorded the existing ADR 012 exchange re-consent cooldown (5 s); body-path forwarding resumes once that cooldown lapses. This does not delay broker re-consultation or cache a delegation denial (US3.5; Proposed D-5).
 
-**Observable result**: Revocation stops supplying delegation to policy by 10:01:00 despite a usable cached provider token; restored consent is recognized on the next evaluation.
+**Observable result**: Revocation stops supplying delegation to policy by 10:01:00 despite a usable cached provider token; restored consent is recognized on the next evaluation, with immediate header-only forwarding and body-path forwarding after any existing exchange cooldown.
 
 ### Journey 3 — An unauthorized or malformed evaluation never becomes a delegation decision (User Story 2, US2.11–US2.20)
 
@@ -401,11 +405,15 @@ X-Request-ID: delegation-003
 }
 
 HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+WWW-Authenticate: Bearer
 X-Request-ID: delegation-003
 Cache-Control: no-store
+
+{"error":"unauthorized","message":"client authentication required"}
 ```
 
-The request-error body and applicable authentication challenge must be specified in the reviewed OpenAPI design; this status/header excerpt intentionally makes no new OAuth error-body promise.
+This completes the example using the existing feature contract's `ErrorResponse` and missing-credential challenge; it introduces no new error code or response shape.
 
 **Step 2 — The gateway corrects its assertion but submits `subject.type: identity`**
 
@@ -633,4 +641,4 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 ### Clarification handoff
 
-The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. The 2026-10-28 guidance resolves R15's OPA shape, typed mapping, permanent compatibility, availability, and canonical-ID fixture questions in FR-017/FR-018, US3.1/US3.2/US3.6/US3.8/US4.1, Journey 4, and SC-005. FR-019's exchange-response deprecation is unchanged. No further product clarification questions remain. The subsequent planning and tasks phases reconciled R15, data model §3.5, ExtProc contract §4, and the other affected design artifacts, and regenerated the 101-task list; their pre-review input shapes are not implementation authority. Analysis remediation corrected the proposed additive API version to `1.2.0` from the existing `1.1.0` baseline and aligned permit-schema constraints with typed consumer validation. Sign-off on the plan's Approval Items, exact AuthZEN final-standard verification before freezing OpenAPI, and the approval-recording and test-first implementation gates remain open; clarification and design completion imply none of those approvals. The 2026-11-05 planning direction replaced the strict request-member rule with the AuthZEN 1.0 ignore-unknown-fields behavior (FR-003) and recorded the body-path re-consent cooldown in US3.5; both are registered approval items. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.
+The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. The 2026-10-28 guidance resolves R15's OPA shape, typed mapping, permanent compatibility, availability, and canonical-ID fixture questions in FR-017/FR-018, US3.1/US3.2/US3.6/US3.8/US4.1, Journey 4, and SC-005. FR-019's exchange-response deprecation is unchanged. No further product clarification questions remain. The subsequent planning and tasks phases reconciled R15, data model §3.5, ExtProc contract §4, and the other affected design artifacts, and regenerated the 101-task list; their pre-review input shapes are not implementation authority. The current task reconciliation preserves stable task IDs and historical implementation evidence, reopens approval/verification tasks affected by revised API-2 and D-5, and retains missing historical test-first/scaffolding evidence as unfinished. It neither resets working code nor certifies historical compliance. Analysis remediation corrected the proposed additive API version to `1.2.0` from the existing `1.1.0` baseline and aligned permit-schema constraints with typed consumer validation. The final AuthZEN verification is recorded in `quickstart.md` §7; current sign-off, supplied approval recording and unfinished test-first/compliance gates remain open. Clarification and design completion imply no additional approval. The 2026-11-05 planning direction replaced the strict request-member rule with the AuthZEN 1.0 ignore-unknown-fields behavior (FR-003) and recorded the body-path re-consent cooldown in US3.5; both are registered approval items. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.

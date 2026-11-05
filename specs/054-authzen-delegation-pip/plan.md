@@ -113,6 +113,11 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 
 ### Pre-Phase 0 gate: design preconditions
 
+The Pass entries below describe design coverage, not new runtime validation or historical
+test-first compliance. Implementation history and remaining evidence gaps are retained in
+`quickstart.md`; task regeneration does not close them. Current sign-off still gates revised
+API-2 and D-5. Local work must not wait for container-only evidence.
+
 | Check | Status | Plan |
 |---|---|---|
 | Domain model | Pass | The spec defines Delegation Decision and Delegation Context. [data-model.md](./data-model.md) adds `DelegationRequest`, `Delegation`, the outcome variants, and the projection rules. No new aggregate. |
@@ -167,8 +172,9 @@ in the next section are implementation-time gates. They do not block the design.
   ADR 033's token-only finalization seam to evaluation. The maintainer endorsed the decision
   set in review. [ADR 047](../../adrs/047-authzen-delegation-pip.md) records it, and neither
   existing ADR is amended in place.
-- The freshness rules (I1/U1/U2) are decided. The I2 perimeter extension is part of the ADR
-  draft, and it still needs its test-first design and implementation work.
+- The freshness rules (I1/U1/U2) are decided. The I2 perimeter extension is recorded in
+  ADR 047; `quickstart.md` §§7–8 records implementation evidence and remaining historical
+  test-first gaps. Preserve that distinction rather than reopening the settled design.
 
 ## Stakeholder decisions before implementation
 
@@ -184,19 +190,28 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
 - **New ADR**: the R16 decision set is endorsed, including the I2 audit-perimeter extension,
   and recorded in [ADR 047](../../adrs/047-authzen-delegation-pip.md).
 
+Historical implementation approval is recorded in `quickstart.md` §7 and ADR 047. The table
+below remains the current sign-off inventory, including revised API-2 and D-5; historical
+approval is not automatically approval of later revisions. No approval is recorded here.
+
 Review direction is not sign-off. Every consequential item is registered in
 [Approval Items](#approval-items). Implementation proceeds only for the items that the
 maintainer's 👍 on the pipeline's approval comment covers.
 
 Still open:
 
-1. **Sign off the [Approval Items](#approval-items)**. The implementation phase records the
-   approval in the ADR draft and moves it to `adrs/047-authzen-delegation-pip.md`. `tasks.md`
-   T001 performs this step before any other implementation task.
-2. **Run the API-003 Verify checks** against the final AuthZEN 1.0 text before the OpenAPI is
-   frozen: the discovery member names, the path-insertion rule (R8), and the denial envelope
-   (R11). Any conflict with the proposed contract goes back to the stakeholder. The planning
-   sessions could not fetch the standard because TLS verification failed.
+1. **Sign off the current [Approval Items](#approval-items)**, including revised API-2 and
+   D-5. Historical approval provenance for the original decision set is retained in
+   `quickstart.md` §7 and ADR 047; it does not authorize later revisions automatically.
+   T001 is reopened and records only the approval supplied to implementation. ADR 047 has
+   already moved to `adrs/047-authzen-delegation-pip.md`; preserve that history rather than
+   recreating or moving it again. Any future covered feature-local draft is accepted and
+   moved only by implementation with the supplied approval.
+2. **Retain API-003 verification**: `quickstart.md` §7 records verified final-standard
+   evidence for discovery names, path insertion, denial form (a) and ignore-unknown handling.
+   The earlier planning TLS failure is historical, not an unresolved research gate. The
+   revised contract still requires sign-off; a new conflict requires a Proposed approval
+   item rather than an unapproved implementation change.
 3. **Remove `granted_permission_sets` later**: the removal needs a separately approved `2.0.0`
    contract change, one release after the resolver ships (R12, API-006).
 4. **Decide whether to file GitHub issues** for the two deferred findings in [research.md](./research.md).
@@ -205,17 +220,17 @@ Still open:
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-1 | API | Proposed: add `GET /.well-known/authzen-configuration` to the end-user API whenever token exchange is configured, publishing `policy_decision_point` (public URL) and `access_evaluation_endpoint`; no broker configuration key. Alternative: a broker `authzen.enabled` flag (rejected by FR-001). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:22-53` |
-| API-2 | API | Proposed: add `POST /access/v1/evaluation` with bearer client-assertion auth; request members follow the AuthZEN 1.0 HTTPS binding — unknown members, AuthZEN `properties` and `context` members other than `agent` are ignored and never influence the decision, while `subject.type` (JWT token-type URN), `action.name` (token-exchange grant-type URN) and `resource.type` (`protected_resource`) are required exactly and a present `context` must be an object whose optional `agent` is a plain Agent UUID string anchor; the delegation is resolved from the verified subject token alone (R10, ADR 047 §1); permit context with non-empty principal/permission sets and non-empty canonical IDs when present (optional omissions and empty scope/service arrays retained), denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternatives: strict rejection of unknown members (violates AuthZEN 1.0); language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:55-255` |
-| API-3 | API | Proposed: bump end-user API from the current `1.1.0` to `1.2.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: intentionally reuse `1.1.0` (would not distinguish the new additive revision); immediate removal is rejected by FR-019. | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:257-269` |
-| API-4 | API | Proposed: add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:10-50` |
-| API-5 | API | Proposed: ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:81-105` |
-| API-6 | API | Proposed: ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and permanent, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:107-186` |
+| API-1 | API | Proposed: add `GET /.well-known/authzen-configuration` to the end-user API whenever token exchange is configured, publishing `policy_decision_point` (public URL) and `access_evaluation_endpoint`; no broker configuration key. Alternative: a broker `authzen.enabled` flag (rejected by FR-001). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:24-53` |
+| API-2 | API | Proposed: add `POST /access/v1/evaluation` with bearer client-assertion auth; request members follow the AuthZEN 1.0 HTTPS binding — unknown members, AuthZEN `properties` and `context` members other than `agent` are ignored and never influence the decision, while `subject.type` (JWT token-type URN), `action.name` (token-exchange grant-type URN) and `resource.type` (`protected_resource`) are required exactly and a present `context` must be an object whose optional `agent` is a plain Agent UUID string anchor; the delegation is resolved from the verified subject token alone (R10, ADR 047 §1); permit context with non-empty principal/permission sets and non-empty canonical IDs when present (optional omissions and empty scope/service arrays retained), denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternatives: strict rejection of unknown members (violates AuthZEN 1.0); language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:55-254` |
+| API-3 | API | Proposed: bump end-user API from the current `1.1.0` to `1.2.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: intentionally reuse `1.1.0` (would not distinguish the new additive revision); immediate removal is rejected by FR-019. | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:256-269` |
+| API-4 | API | Proposed: add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:13-53` |
+| API-5 | API | Proposed: ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:84-105` |
+| API-6 | API | Proposed: ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and permanent, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:120-199` |
 | ADR-1 | ADR | Proposed ADR 047: AuthZEN delegation PIP — information boundary, CEL reuse, freshness, fourth ExtProc port and ordering, supersession of ADR 028's enabled-mode input schema and ordering, ADR 033 deferred-finalization seam extension to evaluation, opt-in rationale, exchange-field deprecation. Alternative: amend ADR 028 in place (forbidden by Principle II). | `adrs/047-authzen-delegation-pip.md:1-172` |
-| D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:116-133` |
+| D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:118-135` |
 | D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `adrs/047-authzen-delegation-pip.md:60-74` |
 | D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `adrs/047-authzen-delegation-pip.md:108-114` |
-| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:625-628` |
+| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:633-638` |
 | D-5 | Decision | Proposed: on the body-bearing path, consent given after a delegation denial takes effect once the existing ADR 012 exchange re-consent cooldown (5 s) lapses, because the concurrent exchange during the denied request records that cooldown; the exchange cache is unchanged, the header-only path permits immediately, and delegation denials are never cached. Alternative: bypass the re-consent cooldown in enabled mode (changes ADR 012 exchange-cache semantics). | `adrs/047-authzen-delegation-pip.md:152-156` |
 
 ## Project Structure
@@ -417,12 +432,12 @@ After stakeholder confirmation:
 | Phase 6 | US4 (P2): rollout, startup validation, and deprecation | Yes |
 | Phase N | Constitution compliance verification | **Mandatory** |
 
-- [x] **Phase 0 (refactoring)**: **include**. Extracting steps 2–9a is a structural change that
-  reviewers should approve in a separate PR, as required by the constitution's Task List
-  Requirements, with the existing exchange tests unchanged as proof of no behavior change
-  (FR-006). T002–T005 require a maintainer-arranged handoff and its reviewed, integrated
-  revision before dependent feature code. This workflow does not create that separate PR;
-  independent approved documentation and test authoring can continue while it is unavailable.
+- [x] **Phase 0 (refactoring)**: **include**. Extracting steps 2–9a is isolated in a
+  no-behavior-change commit ahead of feature commits in this PR, with unchanged existing
+  test assertions as the regression guard (FR-006; Principles II and VIII). T002–T005
+  retain the already-recorded `b882d7b` extraction and its evidence. The current constitution
+  requires this commit boundary, not a separate PR or maintainer-arranged handoff. Do not
+  repeat the extraction, rewrite history or create another PR.
 - [x] **Phase 2.7 (entity boilerplate)**: **skip**. There is no new entity, repository, or CRUD
   handler.
 
@@ -496,8 +511,16 @@ Verify each of these:
 - The OpenAPI contract, `docs/api/`, and the configuration docs are updated.
 - No credential appears in any response, log, or span. Each relevant test asserts this.
 - The disabled ExtProc mode is unchanged.
-- `just check`, `just test`, `just extproc-test`, `just test-e2e`, and `just verify` pass.
-- All 44 scenarios pass.
+- All non-container recipes required by `just verify` pass, including `just check`,
+  `just test`, `just extproc-test`, `just test-integration`, frontend/CDK/mock tests, docs
+  and non-container E2E as the final guard. Use the workflow-prepared
+  `bash "$SECURITY_SCAN_SCRIPT" .` instead of rebuilding scanners through `just security`.
+- Container-inclusive aggregates (`just verify`, `just test-e2e`) are not invoked in the
+  sandbox. US2.19, infra integration and Agentgateway container suites run downstream on
+  the pushed commit; record them as deferred until results exist.
+- All 44 acceptance scenarios have evidence, separating the 43 local scenarios from
+  US2.19's downstream result. Historical test-first/scaffolding gaps remain explicitly
+  unfinished; later green runs do not establish past sequencing.
 
 ## Testing Strategy
 
@@ -514,7 +537,7 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 - `Label("delegation-context")`: 11 consumer specs
 - `Label("delegation-context-startup")`: 4 ExtProc-suite specs
 
-US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-backend` excludes that label, so it covers only 28 of the 29 broker scenarios; `just test-e2e-docker` supplies the infrastructure gate, and `just test-e2e` includes both recipes. The focused `authzen-delegation` label command in `quickstart.md` runs all 29 only with infrastructure available. An unavailable container runner is a validation blocker, never permission to skip US2.19 or remove its label.
+US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-backend` excludes that label, so it covers only 28 of the 29 broker scenarios; `just test-e2e-docker` supplies the infrastructure gate, and `just test-e2e` includes both recipes. The unfiltered `authzen-delegation` label covers all 29 only with infrastructure available; `quickstart.md` uses the non-container local filter. Container suites run only downstream on the pushed commit; their absence in the sandbox is not a blocker for non-container work and never permission to skip US2.19, remove its label or claim local validation. The local focused broker filter is `authzen-delegation && !docker` (28 scenarios).
 
 **Observation techniques**:
 
@@ -566,7 +589,7 @@ US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-b
 | US3.2 | `tests/e2e/delegation_context_journey_test.go` | `It("resolves before header-only policy with the same direct members and exchanges only after allow")` |
 | US3.3 | `tests/e2e/delegation_context_journey_test.go` | `It("returns 403 access_denied with the consent URL before policy")` |
 | US3.4 | `tests/e2e/delegation_context_journey_test.go` | `It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token")` |
-| US3.5 | `tests/e2e/delegation_context_journey_test.go` | `It("does not cache denials and permits right after consent")` |
+| US3.5 | `tests/e2e/delegation_context_journey_test.go` | One `It()` proves no delegation denial caching: broker re-consultation on both paths, immediate header-only permit and body-path permit after the unchanged 5 s exchange re-consent cooldown (D-5). |
 | US3.6 | `tests/e2e/delegation_context_journey_test.go` | `It("fails closed when the broker is unavailable after permit expiry")` |
 | US3.7 | `tests/e2e/delegation_context_journey_test.go` | `It("isolates the cache per subject and resource and honors max_staleness")` |
 | US3.8 | `tests/e2e/delegation_context_journey_test.go` | `It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs")` |
