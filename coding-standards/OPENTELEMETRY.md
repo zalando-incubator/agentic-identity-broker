@@ -103,8 +103,9 @@ if err != nil {
 ```
 
 - When the operation fails, set `codes.Error` and `error.type`.
-- A result that the caller handles as normal flow is not a failure, for example a lookup that finds no row, a conflict, or rejected input. Do not set `codes.Error` or `error.type`. Record it as `<namespace>.outcome`. Tail-sampling backends can keep every trace that has an error on a `Client` or `Server` span, so a false error also changes which traces are kept.
-- PostgreSQL repositories use `startStorageSpan`, which applies these rules.
+- On a storage `Client` span, a result that the caller handles as normal flow is not a failure: no matching row, a conflict, or rejected input. Do not set `codes.Error` or `error.type`. Record it as `storage.outcome`. PostgreSQL repositories use `startStorageSpan`, which applies this rule.
+  - The OpenTelemetry PostgreSQL conventions treat SQLSTATE class 02 or higher as an error by default. This rule deliberately narrows that default for conflicts and foreign-key violations, because the repository knows that its callers expect them.
+  - Tail-sampling backends can keep every trace that has an error on a `Client` or `Server` span, so a false error also changes which traces are kept.
 - Use a constant status description. Do not use `err.Error()`.
 - Do not call `span.RecordError`. A wrapped cause can contain a URL with its query, a provider body, or a SQL fragment. Record typed metadata instead (section 4).
 - Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code.
