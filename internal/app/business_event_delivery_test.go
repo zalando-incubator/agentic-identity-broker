@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"slices"
 	"sync/atomic"
@@ -21,6 +22,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/otlpfixture"
 	"github.com/stretchr/testify/require"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func deliveryTestReceiver(t *testing.T) *otlpfixture.OTLPReceiver {
@@ -268,7 +271,7 @@ func TestBuilderBusinessEventDeliveryBoundsStorageAndExporterDeadlines(t *testin
 	})
 }
 
-func TestBusinessEventDeliveryInitializationBackoffAndSafeDiagnostics(t *testing.T) {
+func TestBusinessEventDeliveryInitializationWarningRateLimitAndSafeDiagnostics(t *testing.T) {
 	store := businessEventSchemaStorage(t)
 	cfg := deliveryTestBuilder(store, deliveryTestReceiver(t), true).config
 	cfg.Telemetry.Exporter.Protocol = "invalid-protocol-canary"
@@ -289,7 +292,7 @@ func TestBusinessEventDeliveryInitializationBackoffAndSafeDiagnostics(t *testing
 	close(ticks)
 	var logs bytes.Buffer
 	require.NoError(t, runBusinessEventDelivery(t.Context(), store.BusinessEventDelivery(), cfg, ticks, slog.New(slog.NewJSONHandler(&logs, nil))))
-	require.Equal(t, 2, attempts, "initialization must not retry on every delivery scan")
+	require.Equal(t, 4, attempts, "warning suppression must not delay initialization recovery")
 	require.NotContains(t, logs.String(), "canary")
 	decoder := json.NewDecoder(&logs)
 	for range 2 {
@@ -297,6 +300,47 @@ func TestBusinessEventDeliveryInitializationBackoffAndSafeDiagnostics(t *testing
 		require.NoError(t, decoder.Decode(&record))
 		require.Equal(t, "Business event telemetry initialization failed", record["msg"])
 		require.Equal(t, "business event telemetry exporter initialization failed", record["error"])
+	}
+	var extra any
+	require.ErrorIs(t, decoder.Decode(&extra), io.EOF, "suppressed initialization attempts must not emit more warnings")
+}
+
+type failedDispatchRepository struct {
+	ports.BusinessEventDeliveryRepository
+	err error
+}
+
+func (r failedDispatchRepository) DispatchOne(context.Context, model.BusinessEventKey, func(context.Context, *model.BusinessEvent) error) (bool, error) {
+	return false, r.err
+}
+
+func TestBusinessEventDeliveryClassifiesFailuresWithoutExportingCause(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		kind string
+	}{
+		{status.Error(codes.Unavailable, "credential-canary"), "unavailable"},
+		{status.Error(codes.Unauthenticated, "credential-canary"), "unauthenticated"},
+		{status.Error(codes.PermissionDenied, "credential-canary"), "permission_denied"},
+		{status.Error(codes.DeadlineExceeded, "credential-canary"), "deadline_exceeded"},
+		{errors.Join(errors.New("credential-canary"), context.DeadlineExceeded), "deadline_exceeded"},
+		{errors.Join(errors.New("credential-canary"), context.Canceled), "canceled"},
+		{errors.New("credential-canary"), "unclassified"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			store := businessEventSchemaStorage(t)
+			deliveryTestSeed(t, store)
+			cfg := deliveryTestBuilder(store, deliveryTestReceiver(t), true).config
+			ticks := make(chan time.Time)
+			close(ticks)
+			var logs bytes.Buffer
+			repository := failedDispatchRepository{BusinessEventDeliveryRepository: store.BusinessEventDelivery(), err: tc.err}
+			require.NoError(t, runBusinessEventDelivery(t.Context(), repository, cfg, ticks, slog.New(slog.NewJSONHandler(&logs, nil))))
+			require.NotContains(t, logs.String(), "credential-canary")
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+			require.Equal(t, tc.kind, record["error_kind"])
+		})
 	}
 }
 
@@ -324,7 +368,7 @@ func TestBuilderBusinessEventDeliveryRecoversAfterProviderInitializationFailure(
 
 	require.Eventually(t, func() bool {
 		return deliveryTestCount(receiver, queued) == 1 && deliveryTestCount(receiver, recordedDuringFailure) == 1
-	}, 35*time.Second, 10*time.Millisecond, "worker must retry initialization automatically rather than waiting for a restart")
+	}, 4*time.Second, 10*time.Millisecond, "worker must retry initialization automatically rather than waiting for a restart")
 	require.GreaterOrEqual(t, attempts.Load(), int32(2))
 	require.Eventually(t, func() bool { return len(deliveryTestPending(t, store.BusinessEventDelivery())) == 0 },
 		5*time.Second, 10*time.Millisecond)

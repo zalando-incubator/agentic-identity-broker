@@ -9,6 +9,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var newBusinessEventDeliveryProvider = telemetry.NewBusinessEventProvider
@@ -16,7 +18,7 @@ var errBusinessEventDelivery = errors.New("business event storage or exporter op
 
 func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventDeliveryRepository, cfg *ports.Config, ticks <-chan time.Time, logger *slog.Logger) (workerErr error) {
 	var provider *telemetry.BusinessEventProvider
-	var nextInitialization time.Time
+	var nextInitializationWarning time.Time
 	now := time.Now()
 	defer func() {
 		if provider != nil {
@@ -30,13 +32,15 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 			return nil
 		}
 		if cfg.Telemetry.Enabled && cfg.Telemetry.Logs.Enabled && cfg.BusinessEvents.TelemetryCopyEnabled {
-			if provider == nil && !now.Before(nextInitialization) {
+			if provider == nil {
 				initCtx, cancel := context.WithTimeout(ctx, cfg.Telemetry.Exporter.Timeout)
 				initialized, err := newBusinessEventDeliveryProvider(initCtx, cfg.Telemetry)
 				cancel()
 				if err != nil {
-					nextInitialization = time.Now().Add(30 * time.Second)
-					logger.WarnContext(ctx, "Business event telemetry initialization failed", "error", err)
+					if !now.Before(nextInitializationWarning) {
+						nextInitializationWarning = time.Now().Add(30 * time.Second)
+						logger.WarnContext(ctx, "Business event telemetry initialization failed", "error", err)
+					}
 				} else {
 					provider = initialized
 				}
@@ -46,7 +50,7 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 				keys, err := delivery.ListDue(readCtx, 100)
 				cancel()
 				if err != nil {
-					logger.WarnContext(ctx, "Business event delivery scan failed", "error", businessEventDeliveryError(err))
+					logger.WarnContext(ctx, "Business event delivery scan failed", "error", errBusinessEventDelivery, "error_kind", businessEventDeliveryErrorKind(err))
 				} else {
 					for _, key := range keys {
 						if ctx.Err() != nil {
@@ -60,7 +64,7 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 						})
 						cancel()
 						if err != nil && ctx.Err() == nil {
-							logger.WarnContext(ctx, "Business event telemetry delivery failed", "error", businessEventDeliveryError(err))
+							logger.WarnContext(ctx, "Business event telemetry delivery failed", "error", errBusinessEventDelivery, "error_kind", businessEventDeliveryErrorKind(err))
 						}
 					}
 				}
@@ -78,14 +82,37 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 	}
 }
 
-func businessEventDeliveryError(err error) error {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	case errors.Is(err, context.Canceled):
-		return context.Canceled
+type businessEventDeliveryFailure string
+
+const (
+	deliveryUnavailable      businessEventDeliveryFailure = "unavailable"
+	deliveryUnauthenticated  businessEventDeliveryFailure = "unauthenticated"
+	deliveryPermissionDenied businessEventDeliveryFailure = "permission_denied"
+	deliveryDeadlineExceeded businessEventDeliveryFailure = "deadline_exceeded"
+	deliveryCanceled         businessEventDeliveryFailure = "canceled"
+	deliveryUnclassified     businessEventDeliveryFailure = "unclassified"
+)
+
+func businessEventDeliveryErrorKind(err error) businessEventDeliveryFailure {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return deliveryDeadlineExceeded
+	}
+	if errors.Is(err, context.Canceled) {
+		return deliveryCanceled
+	}
+	switch status.Code(err) {
+	case codes.Unavailable:
+		return deliveryUnavailable
+	case codes.Unauthenticated:
+		return deliveryUnauthenticated
+	case codes.PermissionDenied:
+		return deliveryPermissionDenied
+	case codes.DeadlineExceeded:
+		return deliveryDeadlineExceeded
+	case codes.Canceled:
+		return deliveryCanceled
 	default:
-		return errBusinessEventDelivery
+		return deliveryUnclassified
 	}
 }
 
