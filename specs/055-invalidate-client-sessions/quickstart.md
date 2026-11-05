@@ -70,7 +70,7 @@ just test-integration-infra
 just test-e2e-docker
 ```
 
-These commands run in the container-test environment on the pushed commit, not in the agent sandbox. Their absence locally does not block the non-container implementation or count as validation. Record their CI evidence separately.
+`just test-e2e-docker` pulls the pinned prior-release image for AS-1.6; set `CLIENT_IDENTITY_PRIOR_RELEASE_IMAGE` to use a mirror ([research.md](research.md) R12). These commands run in the container-test environment on the pushed commit, not in the agent sandbox. Their absence locally does not block the non-container implementation or count as validation. Record their CI evidence separately.
 
 Expected:
 

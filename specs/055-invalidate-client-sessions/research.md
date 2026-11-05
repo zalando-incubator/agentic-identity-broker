@@ -129,6 +129,14 @@ Token acquisition reads the service through a projection that needs no secret de
 
 **Main alternative**: a preparatory compatibility release with database write fencing and serving admission gates. It adds coordination machinery and still needs filesystem controls. A stop-the-world cutover is rejected by the maintainer; neither schema retention nor revision 0 alone authorizes unaware binaries after activation.
 
+## R12 — Prior-release compatibility evidence
+
+**Decision**: AS-1.6's `docker` variant runs the real prior release as a container next to the revision-aware broker built from the change, against one PostgreSQL database that migrations 047/048 have expanded. The prior release is the published image `ghcr.io/zalando-incubator/agentic-identity-broker:<tag>`, where `<tag>` is the latest release tag preceding the feature (`v0.1.135` when planned; implementation pins the then-latest preceding release). A constant in `tests/e2e/fixtures/client_identity.go` pins it, and the environment variable `CLIENT_IDENTITY_PRIOR_RELEASE_IMAGE` can override it, following the existing `AGENTGATEWAY_IMAGE` test pattern. Both brokers share the mock provider and the credential directory through the existing testcontainers host tunnel. An unavailable image fails the test; it never skips or substitutes the new binary. The migration integration test (T008) separately proves the schema properties: inserts that omit the new columns get revision 0, and updates that do not name them leave evidence unchanged.
+
+**Rationale**: Only the released binary proves the old-reader/writer assumptions in DEC-005. Disabling enforcement in new code would test a binary that is never deployed. The pinned image is the project's own release artifact, pulled only by the container suite, so it adds no runtime dependency.
+
+**Alternatives considered**: building the prior tag from source inside the test (needs release tags in the CI checkout and a workflow change); asserting the prior release's SQL by inspection only (cannot detect behavior such as callback handling of additive state claims).
+
 ## Resolved Technical Context unknowns
 
 None remain open. Performance: one additional indexed service read per token exchange, plus one bounded file read for filesystem services. Scale: invalidation is O(1) per change, with no bulk write.
