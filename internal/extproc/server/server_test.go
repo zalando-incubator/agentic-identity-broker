@@ -2825,6 +2825,7 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 	}
 	assert.Equal(t, "success", outcomeAttr, "span outcome must be 'success' on successful exchange")
 	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code, "successful exchange must leave span status UNSET")
+	assert.Equal(t, trace.SpanKindServer, findTokenExchangeSpan(t, spans).SpanKind())
 }
 
 // Agentgateway injects a fresh "traceparent" entry directly into the gRPC
@@ -2950,7 +2951,7 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 			require.NoError(t, err)
 			assertBrokerErrorResponse(t, resp, tt.wantHTTP, recoveryURL)
 
-			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.status, tt.wantCode, tt.wantOutcome)
+			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.wantHTTP, tt.status, tt.wantCode, tt.wantOutcome)
 		})
 	}
 }
@@ -2992,10 +2993,82 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 					require.NoError(t, err)
 				}
 				assertBrokerErrorResponse(t, resp, wantHTTP, recoveryURL)
-				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), statusCode, code, wantOutcome)
+				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), wantHTTP, statusCode, code, wantOutcome)
 			})
 		}
 	}
+}
+
+// Spec: US1 S4 — Rejected metadata gets a 503 response, so the span records a server error.
+func TestServer_TokenExchangeSpan_RejectedMetadataIsAnError(t *testing.T) {
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		t.Fatal("Exchange must not be called for rejected metadata")
+		return server.ExchangeResult{}, nil
+	}}
+	starters := map[string]func(t *testing.T) (extprocv3.ExternalProcessorClient, func()){
+		"without OPA": func(t *testing.T) (extprocv3.ExternalProcessorClient, func()) {
+			return startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+		},
+		"with OPA": func(t *testing.T) (extprocv3.ExternalProcessorClient, func()) {
+			return startTestServerWithAuthorizerConfig(t, testConfigWithTelemetry(), exchanger, &mockAuthorizer{})
+		},
+	}
+	for name, start := range starters {
+		t.Run(name, func(t *testing.T) {
+			recorder := installSpanRecorder(t)
+			client, cleanup := start(t)
+			defer cleanup()
+
+			resp, err := sendRequestHeadersWithMetadata(t, client, nil, nil, false)
+			require.NoError(t, err)
+			require.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(resp.GetImmediateResponse().GetStatus().GetCode()))
+
+			span := findTokenExchangeSpan(t, recorder.Ended())
+			assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+			assert.Equal(t, otelcodes.Error, span.Status().Code)
+			assert.Equal(t, "rejected", attributeMap(span.Attributes())["error.type"])
+		})
+	}
+}
+
+// coding-standards/OPENTELEMETRY.md section 3.4: caller cancellation is an outcome, not an error.
+func TestServer_TokenExchangeSpan_CallerCancellationIsNotAnError(t *testing.T) {
+	recorder := installSpanRecorder(t)
+	exchangeStarted := make(chan struct{})
+	exchanger := &mockExchanger{exchangeFunc: func(ctx context.Context, _, _ string) (server.ExchangeResult, error) {
+		close(exchangeStarted)
+		<-ctx.Done()
+		return server.ExchangeResult{}, ctx.Err()
+	}}
+	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Process(ctx)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(""),
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: extProcHeaders(nil, false),
+		},
+	}))
+	<-exchangeStarted
+	cancel()
+
+	var span sdktrace.ReadOnlySpan
+	require.Eventually(t, func() bool {
+		for _, ended := range recorder.Ended() {
+			if ended.Name() == "extproc.token_exchange" {
+				span = ended
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "canceled", attributeMap(span.Attributes())["token_exchange.outcome"])
+	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+	assert.Equal(t, otelcodes.Unset, span.Status().Code)
 }
 
 // Spec: US3 S1 — Metrics are recorded with outcome attribute
@@ -3352,8 +3425,8 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 		}
 	}
 	assert.True(t, foundSpan, "OPA header-only deny path must emit extproc.token_exchange span")
-	assert.Equal(t, otelcodes.Error, findTokenExchangeSpan(t, spans).Status().Code)
-	assert.Equal(t, "token exchange failed", findTokenExchangeSpan(t, spans).Status().Description)
+	assert.Equal(t, trace.SpanKindServer, findTokenExchangeSpan(t, spans).SpanKind())
+	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code, "a policy denial is a 403, not a server error")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, metricReader.Collect(context.Background(), &rm))
@@ -3757,10 +3830,15 @@ func assertBrokerErrorResponse(t *testing.T, resp *extprocv3.ProcessingResponse,
 	}
 }
 
-func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCode int, errorCode, wantOutcome string) {
+func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, wantHTTP httpv3.StatusCode, statusCode int, errorCode, wantOutcome string) {
 	t.Helper()
-	assert.Equal(t, otelcodes.Error, span.Status().Code)
-	assert.Equal(t, "token exchange failed", span.Status().Description)
+	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+	if wantHTTP >= httpv3.StatusCode_InternalServerError {
+		assert.Equal(t, otelcodes.Error, span.Status().Code)
+		assert.Equal(t, "token exchange failed", span.Status().Description)
+	} else {
+		assert.Equal(t, otelcodes.Unset, span.Status().Code, "a 4xx response is not a server error")
+	}
 	attrs := make(map[string]attribute.Value, len(span.Attributes()))
 	for _, attr := range span.Attributes() {
 		attrs[string(attr.Key)] = attr.Value

@@ -350,9 +350,12 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+`extproc.token_exchange` spans have span kind `Server`.
+They set the error status only when the client receives a 5xx response, unless the caller canceled the request.
+A 4xx response, such as a re-authentication challenge or a policy denial, leaves the status unset. Use `token_exchange.outcome` to find those requests.
 When the exchange call fails, ExtProc `extproc.token_exchange` spans also carry the attributes below.
 All `extproc.client_assertion.refresh` spans carry them.
-Other `extproc.token_exchange` failures, such as rejected token-exchange metadata, carry only the error status and the diagnostic attributes above.
+Other `extproc.token_exchange` failures carry only the diagnostic attributes above. Rejected token-exchange metadata gets a 503 response, so it also carries the error status and `error.type=rejected`.
 
 | Attribute | Values |
 |---|---|

@@ -20,9 +20,10 @@ A platform operator wants to trace a request as it travels from agentgateway thr
 1. **Given** OpenTelemetry is enabled on ExtProc with a valid OTLP endpoint, **When** a request with W3C `traceparent` headers arrives from agentgateway, **Then** ExtProc exports a span that is a child of the incoming trace, allowing operators to view the complete request path in a single trace.
 2. **Given** OpenTelemetry is enabled on ExtProc, **When** a request with a W3C `traceparent` header arrives and ExtProc forwards a token exchange request to a mock broker, **Then** the in-process `SpanRecorder` captures an `extproc.token_exchange` span that is a child of the incoming trace, and separately captures an HTTP client span (created by `telemetryhttp.NewTransport`) that is a child of `extproc.token_exchange`. The mock broker receives outbound headers containing a `traceparent` whose trace ID matches the incoming trace, proving two-hop propagation (ExtProc → broker). Full three-hop verification (agentgateway → ExtProc → broker) is an integration-environment concern outside the scope of automated E2E tests.
 3. **Given** OpenTelemetry is enabled, **When** ExtProc performs a token exchange against the Identity Broker, **Then** the outbound HTTP request to the broker carries the active trace context, enabling end-to-end trace continuity all the way to the broker.
-4. **Given** OpenTelemetry is enabled and a token exchange fails, **When** the failure span is exported, **Then** the span contains the error status and a non-sensitive description, allowing operators to identify the failure cause without consulting logs.
+4. **Given** OpenTelemetry is enabled and a token exchange fails so that the client receives a 5xx response, **When** the failure span is exported, **Then** the `extproc.token_exchange` span has span kind `SERVER` and contains the error status and a non-sensitive description, allowing operators to identify the failure cause without consulting logs.
 5. **Given** OpenTelemetry is disabled (default), **When** a request is processed, **Then** no telemetry data is emitted and no performance overhead is incurred beyond a no-op check.
 6. **Given** `telemetry.enabled` is `true` but `telemetry.traces.enabled` is `false`, **When** a request with a W3C `traceparent` header arrives and ExtProc forwards a token exchange request to a mock broker, **Then** no ExtProc spans are recorded in the `SpanRecorder`, but the mock broker receives outbound headers containing a `traceparent` that preserves the incoming trace context — proving transparent context forwarding without local span creation.
+7. **Given** OpenTelemetry is enabled and a request ends with a 4xx response, such as a re-authentication challenge or a policy denial, **When** the span is exported, **Then** the `extproc.token_exchange` span has span kind `SERVER`, leaves the status unset, and carries the diagnostic attributes, so operators read the result from `token_exchange.outcome`.
 
 ---
 
@@ -102,6 +103,84 @@ As an operator, I need structured log entries emitted by the ExtProc service to 
 - What happens when `telemetry.exporter.insecure` is `true` with protocol `grpc`? The service logs a security warning and proceeds — insecure mode is a deliberate developer opt-in, not an error.
 - What happens when the incoming request carries no trace context headers? ExtProc starts a new root span and continues normally; trace propagation is only possible when the upstream sends context.
 
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — An operator tells a re-authentication challenge from a broker failure (User Story 1, Scenarios 4 and 7)
+
+**Cast**: Sam, an operator who reads traces in a tracing backend; an MCP client that calls `https://gateway.example.com/mcp` through agentgateway; the broker at `broker.example.com`; service *GitHub* (`880e8400-e29b-41d4-a716-446655440010`). All times are 2026-11-05 UTC. All IDs and tokens are synthetic.
+
+**Configuration**: ExtProc exports traces.
+
+```yaml
+telemetry:
+  enabled: true
+  traces:
+    enabled: true
+  exporter:
+    protocol: grpc
+    endpoint: "localhost:4317"
+```
+
+**Step 1 — 10:00:00: the broker asks for re-authentication, and the client receives a 4xx response (Scenario 7)**
+
+The MCP client sends a request. Agentgateway passes it to ExtProc, which calls the broker.
+
+```http
+POST /mcp HTTP/1.1
+Host: gateway.example.com
+Authorization: Bearer synthetic-user-token
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+```
+
+The broker answers with HTTP 400, `invalid_grant`, and a recovery `error_uri`. ExtProc turns this into a challenge, which is the normal way to ask the user to reconnect.
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="Session expired", error_uri="https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize"
+
+{"jsonrpc":"2.0",...,"error":{"code":-32042,"message":"Session expired",...}}
+```
+
+The exported `extproc.token_exchange` span:
+
+| Field | Value |
+|---|---|
+| Span kind | `SERVER` |
+| Status | Unset |
+| `token_exchange.outcome` | `reauth_required` |
+| `token_exchange.failure_stage` | `exchange_routing` |
+| `token_exchange.broker_status_code` | `400` |
+| `token_exchange.oauth_error_code` | `invalid_grant` |
+
+**Step 2 — 10:05:00: the broker rejects the exchange without a recovery URI, and the client receives a 5xx response (Scenario 4)**
+
+The same request reaches ExtProc. The broker answers with HTTP 400 and `invalid_grant`, but with no `error_uri`, so the client has no way to recover.
+
+```http
+HTTP/1.1 500 Internal Server Error
+Content-Type: application/json
+
+{"error":"token_exchange_failed","error_description":"token exchange request failed"}
+```
+
+The exported `extproc.token_exchange` span:
+
+| Field | Value |
+|---|---|
+| Span kind | `SERVER` |
+| Status | Error, `token exchange failed` |
+| `error.type` | `rejected` |
+| `token_exchange.outcome` | `authentication_failed` |
+| `token_exchange.failure_detail` | `credential_rejected` |
+| `token_exchange.broker_status_code` | `400` |
+
+**Step 3 — 10:10:00: Sam reads the traces**
+
+Sam filters `extproc.token_exchange` spans on error status and finds only the 10:05:00 span. That request is a server failure. To find the requests that need the user to reconnect, Sam filters on `token_exchange.outcome=reauth_required` and finds the 10:00:00 span.
+
 ## Clarifications
 
 ### Session 2026-04-20
@@ -111,6 +190,10 @@ As an operator, I need structured log entries emitted by the ExtProc service to 
 - Q: What is the maximum time to wait for telemetry flush during graceful shutdown (FR-007)? → A: 5 seconds — a fixed 5s context deadline for `telemetryShutdown(ctx)`, applied after `GracefulStop()` completes.
 - Q: Where should the mapping from extproc's `TelemetryConfig` to `ports.TelemetryConfig` live? → A: Mirror type defined in `internal/extproc/config`; mapper function lives in `cmd/extproc-token-exchange/root.go`, keeping the config package free of `internal/ports` imports.
 - Q: What span attributes should token-exchange spans carry? → A: Bounded `token_exchange.outcome`, failure stage/detail, recovery action/target, and exchange kind. Success logs/spans omit failure-only fields; successful metric observations use `none`. Requested resource URIs and credential-bearing text are never recorded.
+
+### Session 2026-11-05
+
+- Q: Which requests set the error status on the `extproc.token_exchange` span? → A: Only requests that end with a 5xx response. `coding-standards/OPENTELEMETRY.md` sections 3.3 and 3.4 make this a `Server` span and leave client errors (4xx) unset, and they record caller cancellation as an outcome. Tail-sampling backends can keep every trace that has an error on a `Server` span, so marking client errors would change which traces are kept and would report denied requests as server failures.
 
 ## Requirements *(mandatory)*
 
