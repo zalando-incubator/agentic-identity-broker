@@ -44,13 +44,17 @@ verify_tool() {
     fi
 }
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-cd "$script_dir/.."
-
 if ! $verify; then
     mkdir -p "$tools_dir"
 fi
+if [[ ! -d "$tools_dir" ]]; then
+    echo "security scanner directory does not exist: $tools_dir" >&2
+    exit 1
+fi
 tools_dir="$(cd "$tools_dir" && pwd -P)"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$script_dir/.."
 
 for tool in "${tools[@]}"; do
     package="${tool%@*}"

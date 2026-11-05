@@ -14,6 +14,17 @@ if [[ ! -d "$scan_root_input" ]]; then
 fi
 scan_root="$(cd "$scan_root_input" && pwd -P)"
 
+# SECURITY_SCAN_TOOLS_DIR names scanners built before an environment that cannot
+# compile them, such as the agent sandbox; they must match the pinned builds.
+prebuilt_tools=""
+if [[ -n "${SECURITY_SCAN_TOOLS_DIR:-}" ]]; then
+    if [[ ! -d "$SECURITY_SCAN_TOOLS_DIR" ]]; then
+        echo "SECURITY_SCAN_TOOLS_DIR must be an existing directory: $SECURITY_SCAN_TOOLS_DIR" >&2
+        exit 2
+    fi
+    prebuilt_tools="$(cd "$SECURITY_SCAN_TOOLS_DIR" && pwd -P)"
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 trusted_root="$(cd "$script_dir/.." && pwd -P)"
 scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/security-scan.XXXXXX")"
@@ -21,10 +32,8 @@ trap 'rm -rf "$scratch_dir"' EXIT
 
 cd "$trusted_root"
 
-# SECURITY_SCAN_TOOLS_DIR names scanners built before an environment that cannot
-# compile them, such as the agent sandbox; they must match the pinned builds.
-if [[ -n "${SECURITY_SCAN_TOOLS_DIR:-}" ]]; then
-    tool_gobin="$SECURITY_SCAN_TOOLS_DIR"
+if [[ -n "$prebuilt_tools" ]]; then
+    tool_gobin="$prebuilt_tools"
     bash "$script_dir/install-security-tools.sh" --verify "$tool_gobin"
 else
     tool_gobin="$scratch_dir/bin"
