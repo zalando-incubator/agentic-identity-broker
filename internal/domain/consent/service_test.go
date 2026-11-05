@@ -2636,11 +2636,3 @@ func (m *mockAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*
 func (m *mockGrantRepo) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
 }
-
-func (m *mockUserSessionRepo) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
-	return m.FindByPrincipalAndService(ctx, principal, serviceID)
-}
-
-func (m *mockSessionRepo) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
-	return m.FindByPrincipalAndService(ctx, principal, serviceID)
-}

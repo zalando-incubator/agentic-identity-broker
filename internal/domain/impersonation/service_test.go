@@ -793,7 +793,3 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 		})
 	}
 }
-
-func (s stubAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return s.Get(ctx, agentID)
-}

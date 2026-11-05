@@ -158,7 +158,3 @@ func TestExchangeHumanStateObservation(t *testing.T) {
 		})
 	}
 }
-
-func (r *observingGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
-	return r.FindByPrincipalAndAgent(ctx, principal, agentID)
-}

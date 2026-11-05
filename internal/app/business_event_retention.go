@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -35,7 +36,11 @@ func runMemoryBusinessEventRetention(ctx context.Context, lifecycle ports.Busine
 	}
 }
 
-func startMemoryBusinessEventRetention(lifecycle ports.BusinessEventRetentionRepository, timeout time.Duration, logger *slog.Logger) (func(context.Context) error, error) {
+func startMemoryBusinessEventRetention(lifecycle ports.BusinessEventLifecycleRepository, timeout time.Duration, logger *slog.Logger) (func(context.Context) error, error) {
+	retention, ok := lifecycle.(ports.BusinessEventRetentionRepository)
+	if !ok {
+		return nil, errors.New("memory business event retention repository is required")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan error, 1)
 	finished := make(chan struct{})
@@ -44,7 +49,7 @@ func startMemoryBusinessEventRetention(lifecycle ports.BusinessEventRetentionRep
 	go func() {
 		defer close(finished)
 		defer ticker.Stop()
-		workerErr = runMemoryBusinessEventRetention(ctx, lifecycle, ticker.C, started)
+		workerErr = runMemoryBusinessEventRetention(ctx, retention, ticker.C, started)
 		if workerErr != nil {
 			logger.Warn("Business event retention worker stopped")
 		}

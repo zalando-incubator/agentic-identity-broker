@@ -120,11 +120,3 @@ func TestExchangeCallerCancellationDuringGrantLookupPreservesStage(t *testing.T)
 	assert.Equal(t, StageGrantAuthorization, failure.Diagnostic().Stage())
 	assert.Equal(t, DetailCallerCanceled, failure.Diagnostic().Detail())
 }
-
-func (r failingClassificationAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return r.Get(ctx, agentID)
-}
-
-func (r cancelingClassificationGrantRepo) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
-	return r.FindByPrincipalAndAgent(ctx, principal, agentID)
-}

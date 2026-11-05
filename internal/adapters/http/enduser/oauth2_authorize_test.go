@@ -912,22 +912,6 @@ func TestOAuth2AuthorizeHandler_LogsAuthorizationRequestFailed(t *testing.T) {
 	assert.Contains(t, buf.String(), "authorization_request_failed")
 }
 
-func (m *mockAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return m.Get(ctx, agentID)
-}
-
-func (r *errorAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return r.Get(ctx, agentID)
-}
-
 func (m *mockGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
-}
-
-func (c *connectedSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
-	return c.FindByPrincipalAndService(ctx, principal, serviceID)
-}
-
-func (n *noopSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
-	return n.FindByPrincipalAndService(ctx, principal, serviceID)
 }

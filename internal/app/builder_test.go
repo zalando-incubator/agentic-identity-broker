@@ -2209,7 +2209,3 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		})
 	}
 }
-
-func (r *builderTestAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*domstorage.Agent, error) {
-	return r.Get(ctx, agentID)
-}

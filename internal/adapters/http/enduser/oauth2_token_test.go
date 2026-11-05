@@ -2878,7 +2878,3 @@ func TestTokenExchangeEarlyAndImpersonationObservationsHaveNoAuthorization(t *te
 		})
 	}
 }
-
-func (r *stubAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return r.Get(ctx, agentID)
-}

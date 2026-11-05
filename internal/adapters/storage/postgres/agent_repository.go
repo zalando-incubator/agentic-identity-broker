@@ -229,14 +229,18 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 // Get retrieves an agent entity by ID from PostgreSQL.
 // Returns StorageError with Kind=NotFound if agent not found.
 func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return r.get(ctx, agentID, false)
+	lock := ""
+	if _, ambient := storageTransaction(ctx); ambient {
+		lock = " FOR KEY SHARE"
+	}
+	return r.get(ctx, agentID, lock)
 }
 
 func (r *AgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	return r.get(ctx, agentID, true)
+	return r.get(ctx, agentID, " FOR UPDATE")
 }
 
-func (r *AgentRepository) get(ctx context.Context, agentID id.AgentID, forUpdate bool) (*storage.Agent, error) {
+func (r *AgentRepository) get(ctx context.Context, agentID id.AgentID, lock string) (*storage.Agent, error) {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.get.agent")
 	defer span.End()
 	span.SetAttributes(
@@ -271,12 +275,7 @@ func (r *AgentRepository) get(ctx context.Context, agentID id.AgentID, forUpdate
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
 	 FROM agents
-	 WHERE id = $1`
-	if forUpdate {
-		query += " FOR UPDATE"
-	} else if _, ambient := storageTransaction(ctx); ambient {
-		query += " FOR KEY SHARE"
-	}
+	 WHERE id = $1` + lock
 	agent := &storage.Agent{}
 	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, query, agentID).Scan(
 		&agent.ID, &agent.CanonicalID, &agent.ClientID, &agent.ExternalID,
