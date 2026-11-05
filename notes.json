@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 56
+    "investigation_after": 59
   },
   "issues": [
     {
@@ -22,6 +22,12 @@
       "state": "deferred",
       "updated_at": "2026-11-04",
       "note": "Agent.ValidatePermissionSets and TestAgent_ValidatePermissionSets_RejectsEmpty deliberately reject identity-only agents. Scope a contract/domain/UI change with a client-credentials journey, rather than only relaxing HTTP parsing."
+    },
+    {
+      "number": 59,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-05",
+      "note": "Current guide/ADR 036 document metadata contract. Asked for credential-free Envoy Gateway v1.4.6 filter/extension policy and forwarding config before adding a verified non-Agentgateway producer example."
     }
   ],
   "fixes": [
@@ -31,48 +37,26 @@
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "open",
       "updated_at": "2026-11-04",
-      "note": "Verified live draft PR #403; do not duplicate. Only DCO passed and CodeRabbit skipped among reported checks; Go validation remains pending."
+      "note": "Live draft #403: unit/integration/backend/ExtProc/frontend pipeline statuses passed. Remaining CI failure is required PR classification label; permitted safe-output labels cannot supply bugfix/minor."
     },
     {
       "issue": 212,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-212-default-session-redirect",
+      "pr": 424,
+      "branch": "repo-assist/fix-issue-212-default-session-redirect-07d7cd244add9c6e",
       "status": "open",
       "updated_at": "2026-11-05",
-      "note": "Committed tested fix ca537fa8; draft submission planned this run. Query PRs linked to #212 before any retry; safe-output publishing may suffix the local branch name."
+      "note": "Live #424 is non-draft (maintainer changed readiness); pipeline and unit/integration/E2E statuses passed. Do not duplicate."
+    },
+    {
+      "issue": 416,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-416-broker-access-denied",
+      "status": "open",
+      "updated_at": "2026-11-05",
+      "note": "Committed 9dba446b; final draft submission uses #432. Verify published PR/branch before retry. Preserves transient/recovery handling; INFO denial logged only at server."
     }
   ],
   "checks": [
-    {
-      "area": "code",
-      "checked_at": "2026-11-05",
-      "result": "Implemented #212 on ca537fa8: GET empty/missing redirect defaults in session domain; explicit configured-origin validation and POST consent requirements preserved. OpenAPI, ADR 047, architecture and US2-S12 journey updated.",
-      "follow_up": "Query the new draft linked to #212 before duplicating this fix."
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-05",
-      "result": "just build passed for the #212 fix.",
-      "follow_up": null
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-05",
-      "result": "#212 unit and E2E tests failed semantically first. just test passed; affected session/handler race tests passed; all 5 session-reliability E2E scenarios passed, including missing/empty GET callback journeys.",
-      "follow_up": "Full E2E and infrastructure suites were not run; normal CI remains required."
-    },
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-05",
-      "result": "Go 1.27.3 and just work. just check passed (format/vet/lint, 0 issues). Ginkgo CLI absent; focused E2E ran through go test with Ginkgo flags.",
-      "follow_up": null
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-05",
-      "result": "New ADR 047 Markdown lint passed. just docs-lint fails on pre-existing violations; no errors in the new enduser-api section. git diff --check passed.",
-      "follow_up": "Do not bundle broad Markdown reformatting into #212."
-    },
     {
       "area": "hygiene",
       "checked_at": "2026-11-05",
@@ -86,16 +70,46 @@
       "follow_up": "Await maintainer review; do not duplicate snapshot-index work."
     },
     {
+      "area": "code",
+      "checked_at": "2026-11-05",
+      "result": "#416: added narrow access_denied mapping using existing accessDeniedResponse; no unrelated cleanup. Added scoped superseding ADR 048, updated response contracts and US4-S1 journey.",
+      "follow_up": "Track published draft; no duplicate fix."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-05",
+      "result": "#416 just build and just extproc-build passed.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-05",
+      "result": "#416 regression unit/E2E tests failed semantically first. Final just test and just extproc-test (race) passed. Focused E2E: 5/5 passed, 113 unselected.",
+      "follow_up": "Full E2E/container suites not run; require normal CI."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-05",
+      "result": "just docs-build passed. ADR 048 lint and whitespace checks passed. just docs-lint still fails on existing Markdown issues; modified gateway-guide paragraph has no new violations.",
+      "follow_up": "No broad Markdown cleanup; restored npm-generated lockfile drift."
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-05",
+      "result": "just check passed with 0 lint issues. Ginkgo CLI absent; focused suite ran via go test and Ginkgo flags.",
+      "follow_up": null
+    },
+    {
       "area": "repo_assist_prs",
       "checked_at": "2026-11-05",
-      "result": "Verified drafts #403 and #420 open. Prepared one new tested #212 draft, below new_pr_limit=4. Existing author chart fixes #61/#62 still cover #55/#57.",
-      "follow_up": "#403 still needs its own validation with restored tooling; passing main/#212 tests do not validate that branch."
+      "result": "Read check runs and commit statuses: #403/#420/#424 pipelines passed. #403/#420 remain drafts with required classification-label failure; #424 non-draft. Preparing one #416 draft (limit 4).",
+      "follow_up": "Maintainers must apply required label to #403/#420; bugfix/minor are not allowed safe-output labels."
     },
     {
       "area": "release",
       "checked_at": "2026-11-05",
-      "result": "Latest release remains v0.1.133. Existing #421 addresses release-version collisions. No separate release PR needed for this focused, unmerged fix.",
-      "follow_up": "Maintainers decide release timing after feature and release-workflow reviews."
+      "result": "Latest release v0.1.136 published today. No separate release PR justified by this unmerged ExtProc fix.",
+      "follow_up": null
     }
   ],
   "completed_actions": [
@@ -110,9 +124,9 @@
   ],
   "priorities": [
     {
-      "task": 6,
-      "item": "Validate existing draft #403 with restored tooling",
-      "note": "Run its affected checks/tests and inspect review feedback on its own branch; do not infer passing status from main or #212. Preserve append-only history."
+      "task": 2,
+      "item": "Resume investigation after #59",
+      "note": "Await #27/#37/#59 clarification. #56 needs an API/domain/UI design, not a relaxed parser. Confirm #416 published draft before more fix work."
     }
   ]
 }
