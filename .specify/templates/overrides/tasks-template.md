@@ -200,10 +200,13 @@ implementation; frontend Playwright tests added/amended and screenshots configur
 **Required Tasks** (if the feature adds or changes log events, spans, or metric instruments):
 - [ ] T010k Read `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`, then list
       the log events (`event` identifiers), spans, span attributes, and metric instruments the
-      feature adds or changes
+      feature adds or changes. Document each span attribute family and its value set in the
+      feature's reference document or observability contract (`OPENTELEMETRY.md` section 4.2)
 - [ ] T010l [P] List each new metric instrument in `specs/[###-feature-name]/contracts/observability.md`
-      with its name, kind, unit, scope, and attribute value sets (`OPENTELEMETRY.md` section 5.4)
-- [ ] T010m [P] Add each new span attribute namespace to the table in `OPENTELEMETRY.md` section 4.1
+      with its name, kind, unit, scope, attribute value sets, and when it changes
+      (`OPENTELEMETRY.md` section 5.4)
+- [ ] T010m [P] Add each new span attribute namespace to the table in `OPENTELEMETRY.md` section 4.1,
+      and state that change to the standard and its rationale in the PR description (Principle XV)
 - [ ] T010n Identify each credential-handling path and each logged or span principal that needs a
       safety test (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7)
 
@@ -448,8 +451,8 @@ yet — ready for incremental user story implementation
       and satisfies its review checklist
 - [ ] TXXX Verify the tests, contracts, and registry entries the applicable standards require are
       present (for example, credentials absent from logs and spans, metric attribute sets asserted)
-- [ ] TXXX Verify no automated standard check is disabled or suppressed, and each deviation is an
-      amendment to the standard with rationale
+- [ ] TXXX Verify no automated standard check is disabled or suppressed, and each deviation is
+      covered by a scoped rule or exception in an amendment to the standard, with rationale
 
 **Architecture Patterns** (Principle VI):
 - [ ] TXXX Verify domain logic uses ports (interfaces) and adapters

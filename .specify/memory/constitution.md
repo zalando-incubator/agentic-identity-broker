@@ -625,8 +625,8 @@ unrelated findings without silently enlarging the feature.
       satisfies its review checklist (Principle XV)
 - [ ] Tests, contracts, and registry entries required by the applicable coding standards are
       present (Principle XV)
-- [ ] No automated standard check is disabled or suppressed. Each deviation is an amendment to the
-      standard with rationale (Principle XV)
+- [ ] No automated standard check is disabled or suppressed. Each deviation is covered by a scoped
+      rule or exception in an amendment to the standard, with rationale (Principle XV)
 - [ ] **Unit tests written FIRST, compile successfully, and fail semantically before implementation (red phase - Principle VIII)**
 - [ ] **Unit tests drive design: implementation emerges from test requirements (Principle VIII)**
 - [ ] **Unit tests change minimally during implementation (Principle VIII)**
@@ -775,8 +775,8 @@ If Principle XV (Binding Coding Standards) cannot be satisfied:
   without exposing real secrets (Principle XIV)
 - Reviewers MUST verify that added or modified code follows each applicable standard in
   `coding-standards/` and satisfies its review checklist. Reviewers MUST also verify that the
-  tests the standard requires exist and that each deviation is an amendment to the standard with
-  rationale (Principle XV)
+  tests the standard requires exist and that each deviation is covered by a scoped rule or
+  exception in an amendment to the standard, with rationale (Principle XV)
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
 - Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
   failing, not trivial always-fail placeholders (Principle XIII)

@@ -794,11 +794,14 @@ request adds, modifies, or removes. Run
 and removed lines that create a logger or a log record (`slog.`, `Logger`, `Context(`,
 `LogAttrs`), a span (`otel.Tracer`, `.Start(`, `SetAttributes`, `SetStatus`,
 `AddEvent`, `RecordError`), or a metric instrument (`otel.Meter`, `Counter`,
-`Histogram`, `Gauge`, `.Add(`, `.Record(`). Also include unchanged log calls
-and spans that now emit a value this pull request introduces or changes: a
-new field on a type logged with `slog.Any`, a changed `LogValue`, `String`, or
-`GoString` method, a value newly wrapped into a logged error, or a new caller
-that passes credential-bearing data to an existing log helper.
+`Histogram`, `Gauge`, `.Add(`, `.Record(`). Also include unchanged log calls,
+spans, and metric recordings that now emit a value this pull request
+introduces or changes: a new field on a type logged with `slog.Any`, a changed
+`LogValue`, `String`, or `GoString` method, a value newly wrapped into a logged
+error, a new caller that passes credential-bearing data to an existing log
+helper, or a changed value or attribute source for an existing `.Add(` or
+`.Record(` call, including the helper that produces it. Check such a metric
+for never-record data and for attributes outside a closed value set.
 
 Check each construct against every applicable rule. Use the review
 checklists in `LOGGING.md` section 10 and `OPENTELEMETRY.md` section 8 as the
@@ -862,11 +865,13 @@ separately visible domain operation without the span `OPENTELEMETRY.md`
 section 3.1 requires, and a log record, span, or metric instrument that the
 pull request removes without an equivalent replacement.
 
-Report only the constructs this pull request adds, modifies, or removes, the
-unchanged constructs whose emitted values it changes, and the required
-records and spans missing from changed paths. Principle XV treats other
-pre-existing non-compliance as an out-of-scope finding: mention it at most
-once, as a 🟢 observation.
+Report findings on the constructs this pull request adds, modifies, or
+removes, on the unchanged constructs whose emitted values it changes, on the
+required records and spans missing from changed paths, and on the tests,
+registry entries, and observability contract entries those constructs
+require. Exclude only pre-existing non-compliance unrelated to these changes:
+Principle XV treats it as an out-of-scope finding, so mention it at most once,
+as a 🟢 observation.
 
 **C. Standards and their enforcement.** Flag every change that weakens a
 standard or a check that enforces one:
