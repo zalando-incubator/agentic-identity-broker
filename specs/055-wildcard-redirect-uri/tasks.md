@@ -11,7 +11,7 @@
 ## Feature Scope
 
 - Implement only bounded HTTPS host wildcards for Agent-configured `redirect_uris`.
-- Keep CIMD callbacks exact-match, private-use callbacks byte-for-byte exact, and loopback HTTP port matching unchanged.
+- Keep CIMD callbacks exact-match, private-use callbacks byte-for-byte exact, and loopback web callback port matching unchanged.
 - Do not add a runtime setting, API endpoint or field, persisted field, migration, frontend change, or external deployment configuration to this repository.
 - The external test deployment must separately apply and reconcile the callback registration for existing and newly created test Agents before preview validation. This is a release dependency, not an AIB code task.
 
@@ -47,9 +47,9 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Phase 2f: E2E Acceptance Test Design
 
-- [X] T010 Review the concrete journeys and verify all nine scenarios map to observable HTTP outcomes in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
-- [X] T010a Write all nine production-bootstrap Ginkgo acceptance tests in `tests/e2e/wildcard_redirect_uri_test.go`, one `It()` per scenario, using existing fixtures and scenario comments (Principle XIII).
-- [X] T010b Run the new E2E tests and verify they compile and that wildcard behavior scenarios fail semantically before implementation; unchanged exact-callback regression tests may pass (Principle XIII).
+- [X] T010 Review the concrete journeys and verify all eleven scenarios map to observable HTTP outcomes in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
+- [X] T010a Write all eleven production-bootstrap Ginkgo acceptance tests, one `It()` per scenario: nine in `tests/e2e/wildcard_redirect_uri_test.go` and two in `tests/e2e/cimd_authorization_test.go` (Principle XIII).
+- [X] T010b Run the focused E2E command in `specs/055-wildcard-redirect-uri/quickstart.md`; verify the tests compile and wildcard behavior fails semantically before implementation (Principle XIII).
 
 **Checkpoint**: Complete the design tasks before feature implementation. Confirm no configuration, database, or frontend work is required.
 
@@ -95,9 +95,9 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 ### Verification for User Story 2
 
-- [X] T018 [US2] Rerun the prewritten Agent/OAuth2 unit tests and US2-S1 through US2-S4 E2E scenarios; verify invalid callbacks have no redirect and existing exact callbacks still work (FR-007-FR-010, SC-003-SC-005).
+- [X] T018 [US2] Rerun the prewritten Agent/OAuth2 unit tests and US2-S1 through US2-S6 E2E scenarios; verify invalid callbacks have no redirect and exact Agent and CIMD callbacks still work (FR-007-FR-010, SC-003-SC-005).
 
-**Checkpoint**: US2-S1 through US2-S4 pass; invalid registrations are rejected, no unregistered callback receives a redirect, and exact/private-use/loopback behavior is unchanged.
+**Checkpoint**: US2-S1 through US2-S6 pass; invalid registrations are rejected, no unregistered callback receives a redirect, and exact/private-use/loopback behavior is unchanged.
 
 ## Phase 5: Polish and Cross-Cutting Verification
 
@@ -114,13 +114,13 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 - [X] T024 Verify the domain model and new glossary term are documented in `specs/055-wildcard-redirect-uri/data-model.md` and `ARCHITECTURE.md` (Principles II and V).
 - [X] T025 Verify API contracts and examples are documented and stakeholder confirmation is recorded in `api/admin/openapi.yaml`, `api/enduser/openapi.yaml`, `docs/api/enduser-api.md`, and `specs/055-wildcard-redirect-uri/contracts/redirect-uri.md` (Principles IV and X).
 - [X] T026 Verify the no-configuration, no-Helm, and no-database-change decisions are documented in `specs/055-wildcard-redirect-uri/plan.md` and `specs/055-wildcard-redirect-uri/data-model.md` (Principles VII and IX).
-- [X] T027 Verify the concrete journeys and all nine scenario-to-test mappings remain aligned in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
+- [X] T027 Verify the concrete journeys and all eleven scenario-to-test mappings remain aligned in `specs/055-wildcard-redirect-uri/spec.md` and `specs/055-wildcard-redirect-uri/plan.md` (Principles XIII-XIV).
 
 ### Implementation Phase Verification
 
 - [X] T028 Review `internal/domain/urivalidation/redirect.go`, `internal/domain/oauth2/service.go`, and `internal/domain/oauth2server/provider.go` to confirm PSL-boundary enforcement, exact non-host components, source-specific matching, and fail-closed behavior (FR-003-FR-010, SR-001-SR-004).
 - [X] T029 Verify unit tests were written first, failed semantically, and then passed in `internal/domain/urivalidation/redirect_test.go`, `internal/domain/urivalidation/redirect_wildcard_security_test.go`, `internal/domain/storage/agent_test.go`, `internal/domain/oauth2/service_test.go`, and `internal/domain/oauth2server/provider_test.go` (Principle VIII).
-- [X] T030 Verify all nine acceptance scenarios have exactly one Ginkgo `It()` with a spec reference and now pass in `tests/e2e/wildcard_redirect_uri_test.go` (Principle XIII).
+- [X] T030 Verify all eleven acceptance scenarios have exactly one Ginkgo `It()` with a spec reference and now pass across `tests/e2e/wildcard_redirect_uri_test.go` and `tests/e2e/cimd_authorization_test.go` (Principle XIII).
 - [X] T031 Verify no frontend changes, unrelated remediations, or deployment-specific configuration were added; check the scope recorded in `specs/055-wildcard-redirect-uri/plan.md` (FR-011, SC-006).
 - [X] T032 Run `just check` from `justfile` and resolve formatting, vet, and lint failures (Principle VIII).
 - [X] T033 Run `just test` from `justfile` and resolve Go test failures (Principle VIII).
@@ -133,7 +133,7 @@ Not applicable. This feature changes no React UI or frontend design-system compo
 
 - Phase 1 setup completes before Phase 2 design confirmation.
 - Phase 2a-2f are blocking design preconditions. Their independent documentation tasks can proceed in parallel where marked `[P]`.
-- Phase 2f writes and verifies all nine E2E tests before implementation. Phase 2.5 writes and verifies all domain tests before T013.
+- Phase 2f writes and verifies all eleven E2E tests before implementation. Phase 2.5 writes and verifies all domain tests before T013.
 - Phase 2.5 implementation depends on Phase 2f and its failing tests. It blocks both user stories because both depend on the URI-pattern validator and matcher.
 - US1 and US2 are both P1. Their test code is complete before implementation; US2 verification follows the shared Agent-only matching work. Both stories are required before release.
 - Phase 5 and Phase N follow both user stories. External test deployment reconciliation is required only before preview-environment validation, not for local broker tests.

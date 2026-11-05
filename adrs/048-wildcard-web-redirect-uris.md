@@ -24,7 +24,7 @@ The broker already supports wildcards for CIMD `client_uris`, but those are path
 ## Consequences
 
 - Operators can register one bounded callback pattern for a family of preview hosts.
-- Existing exact HTTPS, loopback HTTP, CIMD, and private-use callback behaviors remain unchanged.
+- Existing exact HTTPS, loopback web, CIMD, and private-use callback behaviors remain unchanged.
 - The domain layer gains a dependency on the existing `golang.org/x/net/idna` and `golang.org/x/net/publicsuffix` packages; no new dependency, configuration setting, API endpoint, database field, or migration is required.
 - The bundled Public Suffix List changes only when the project updates `golang.org/x/net`.
 - Wildcard patterns that cannot be classified safely are rejected rather than matched with a fallback rule.
