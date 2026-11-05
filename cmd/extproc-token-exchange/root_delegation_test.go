@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -96,6 +98,51 @@ func TestRun_DelegationContextStartupFailures(t *testing.T) {
 			require.NoError(t, listener.Close())
 		})
 	}
+}
+
+func TestRun_DelegationContextLifecycleEvent(t *testing.T) {
+	broker := &delegationBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
+		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
+	}}
+	srv := broker.start(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
+	enableDelegationRun(t)
+	t.Setenv("EXTPROC_LOG_FORMAT", "json")
+
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	originalStdout := os.Stdout
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = originalStdout })
+	var logs bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&logs, reader)
+		done <- err
+	}()
+	err = run(rootCmd, nil)
+	os.Stdout = originalStdout
+	require.NoError(t, writer.Close())
+	require.NoError(t, <-done)
+	require.NoError(t, reader.Close())
+	require.ErrorContains(t, err, "failed to listen")
+
+	found := false
+	for _, line := range bytes.Split(logs.Bytes(), []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(line, &record))
+		if record["event"] == "extproc.delegation_context.enabled" {
+			found = true
+			assert.Equal(t, "INFO", record["level"])
+		}
+	}
+	assert.True(t, found, "successful delegation discovery must emit a lifecycle event")
 }
 
 func TestRun_DelegationContextRequiresAuthorization(t *testing.T) {

@@ -223,7 +223,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		}
 		defer resolver.Shutdown()
 		svc.WithDelegationResolver(resolver)
-		logger.Info("Delegation context enabled", "policy_decision_point", cfg.DelegationContext.PolicyDecisionPoint)
+		logger.InfoContext(sigCtx, "delegation context enabled", "event", "extproc.delegation_context.enabled", "policy_decision_point", cfg.DelegationContext.PolicyDecisionPoint)
 	}
 	var stopApprovalSyncer func()
 	if approvalSync != nil {
