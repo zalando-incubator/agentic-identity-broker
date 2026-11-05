@@ -281,7 +281,7 @@ Produce a **single markdown body** for a GitHub PR comment:
 (Rank by architectural severity. Report only the findings that actually exist, up to a maximum of 7. If no architectural concerns are identified, explicitly state "No architectural concerns identified.")
 
 **Severity criteria**:
-- 🔴 = Violates established ADR, breaks hexagonal boundary, missing true e2e coverage for critical path, or lets never-log data or an unpolicied principal into logs, spans, or metrics
+- 🔴 = Violates established ADR, breaks hexagonal boundary, missing true e2e coverage for critical path, lets never-log data or an unpolicied principal into logs, spans, or metrics, or leaves a security-critical operation without its audit record
 - 🟡 = Inconsistency, conceptual drift, or pattern divergence worth discussing before merge
 - 🟢 = Observation for awareness (use sparingly)
 
@@ -783,14 +783,15 @@ code in the same package:
 - Flag asymmetric treatment: "existing handler X has OTel spans, but new
   handler Y in the same package does not."
 
-A package with no instrumentation anywhere is parity, not a gap; say so.
+A package with no instrumentation anywhere is parity, not a parity gap; say
+so. Check B still applies the records and spans the standards require.
 Parity never justifies a standard violation: when adjacent code breaks a
 standard, the new code must follow the standard, not its neighbour.
 
 **B. Standards compliance.** List the telemetry constructs that the pull
-request adds or modifies. Run
+request adds, modifies, or removes. Run
 `git diff -U0 <baseRefOid> <headRefOid> -- cmd internal` and read the added
-lines that create a logger or a log record (`slog.`, `Logger`, `Context(`,
+and removed lines that create a logger or a log record (`slog.`, `Logger`, `Context(`,
 `LogAttrs`), a span (`otel.Tracer`, `.Start(`, `SetAttributes`, `SetStatus`,
 `AddEvent`, `RecordError`), or a metric instrument (`otel.Meter`, `Counter`,
 `Histogram`, `Gauge`, `.Add(`, `.Record(`). Also include unchanged log calls
@@ -854,10 +855,18 @@ Then check what the standards require beyond the code:
   and attribute value sets. When the brief names no Spec Kit feature, report
   a new instrument without a contract as a question for the author.
 
-Report only the constructs this pull request adds or modifies and the
-unchanged constructs whose emitted values it changes. Principle XV treats
-other pre-existing non-compliance as an out-of-scope finding: mention it at
-most once, as a 🟢 observation.
+Also check what is missing on the paths the pull request adds or changes,
+whatever adjacent code does: a security-critical operation without the audit
+record `LOGGING.md` section 8 requires, a call that leaves the process or a
+separately visible domain operation without the span `OPENTELEMETRY.md`
+section 3.1 requires, and a log record, span, or metric instrument that the
+pull request removes without an equivalent replacement.
+
+Report only the constructs this pull request adds, modifies, or removes, the
+unchanged constructs whose emitted values it changes, and the required
+records and spans missing from changed paths. Principle XV treats other
+pre-existing non-compliance as an out-of-scope finding: mention it at most
+once, as a 🟢 observation.
 
 **C. Standards and their enforcement.** Flag every change that weakens a
 standard or a check that enforces one:
@@ -895,14 +904,17 @@ finding per violated rule, cite the standard and section (for example
 the first. Do not report typos or style that no standard rule covers.
 
 - `RED` (🔴): never-log or never-record data reaches a log record, span, or
-  metric; a principal bypasses the central policy; an import boundary of
-  `OPENTELEMETRY.md` section 1 is broken; an enforcing check is weakened
+  metric; a principal bypasses the central policy; a security-critical
+  operation on a changed path has no audit record, including one the pull
+  request removes; an import boundary of `OPENTELEMETRY.md` section 1 is
+  broken; an enforcing check is weakened
   without a documented amendment; or a standard amendment contradicts the
   constitution or an Accepted ADR.
-- `YELLOW` (🟡): any other violated standard rule; a missing required test,
-  registry entry, or observability contract entry; a breaking rename; a
-  relaxing standard amendment; or an instrumentation gap between a new and an
-  existing file of the same package.
+- `YELLOW` (🟡): any other violated standard rule; a required span missing
+  from a changed path; a removed log record, span, or instrument without a
+  replacement; a missing required test, registry entry, or observability
+  contract entry; a breaking rename; a relaxing standard amendment; or an
+  instrumentation gap between a new and an existing file of the same package.
 - `GREEN` (🟢): an observation for awareness, used sparingly.
 
 Be concise: each finding is 1-3 sentences plus one file link in the form
