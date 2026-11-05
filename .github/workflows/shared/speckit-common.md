@@ -87,12 +87,18 @@ steps:
       if [ -d "$HOME/go/bin" ]; then cp -a "$HOME/go/bin/." "$GOBIN/"; fi
       just install-tools
   # Compiling the scanners' AI SDK dependencies exceeds the agent sandbox's memory, so
-  # `just security` verifies and runs these pinned builds instead of compiling its own.
+  # the scanners are built here. The agent runs this default-branch copy of the scan,
+  # so a pull request's own scan script, pins or osv-scanner ignores do not apply.
   - name: Build security scanners
     if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
-      bash scripts/install-security-tools.sh /tmp/gh-aw/security-scan-tools
-      echo "SECURITY_SCAN_TOOLS_DIR=/tmp/gh-aw/security-scan-tools" >> "$GITHUB_ENV"
+      scan_dir=/tmp/gh-aw/security-scan
+      mkdir -p "$scan_dir/scripts"
+      cp scripts/security-scan.sh scripts/install-security-tools.sh "$scan_dir/scripts/"
+      if [ -f osv-scanner.toml ]; then cp osv-scanner.toml "$scan_dir/"; fi
+      bash "$scan_dir/scripts/install-security-tools.sh" "$scan_dir/bin"
+      echo "SECURITY_SCAN_TOOLS_DIR=$scan_dir/bin" >> "$GITHUB_ENV"
+      echo "SECURITY_SCAN_SCRIPT=$scan_dir/scripts/security-scan.sh" >> "$GITHUB_ENV"
   # A cache hit skips `playwright install --with-deps`, and the cache holds no system packages.
   - name: Install Playwright system dependencies
     if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)

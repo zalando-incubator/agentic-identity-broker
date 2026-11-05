@@ -148,8 +148,11 @@ versions. The sandbox has no root access, so a missing system dependency is a
 blocker to report, not something to work around. Run `just check`, the
 smallest matching `just` test suites, and the feature's complete E2E
 acceptance journeys. When the feature requires the full verification gate,
-run every recipe of `just verify` that needs no container. Resolve failures
-caused by the change, and mark only completed tasks `[X]`.
+run every recipe of `just verify` that needs no container. In place of
+`just security`, run `bash "$SECURITY_SCAN_SCRIPT" .` from the repository
+root: the workflow prepared the default branch's scan with prebuilt scanners
+before this session, and the branch's own recipe cannot build them here.
+Resolve failures caused by the change, and mark only completed tasks `[X]`.
 
 The sandbox has no Docker or Podman, by design. Do not run or try to enable
 container-backed suites, such as `just test-integration-infra` and
