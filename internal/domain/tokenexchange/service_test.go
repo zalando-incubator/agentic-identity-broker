@@ -2614,6 +2614,9 @@ func TestExchange_UnresolvedAgentDoesNotExportCandidateIdentity(t *testing.T) {
 			sessionRepo := &MockSessionRepository{}
 			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
 			fixture.svc.agentRepository.(*singleAgentRepo).err = tc.repoErr
+			require.NotNil(t, fixture.grantRepo.grant, "an unresolved agent must hide even a still-stored grant")
+			require.Equal(t, fixture.agentID, fixture.grantRepo.grant.AgentID)
+			require.False(t, fixture.grantRepo.grant.ID.IsZero())
 			if tc.agentExpression != "" {
 				evaluator, err := NewCELEvaluator(CELEvaluatorConfig{
 					PrincipalExpression:     "subject_token.sub",
