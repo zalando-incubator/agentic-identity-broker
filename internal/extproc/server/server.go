@@ -564,7 +564,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID, Principal: state.principal, AgentID: state.agentID})
 	if buildErr != nil {
 		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -678,7 +678,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
-	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID, Principal: state.principal, AgentID: state.agentID})
 	if err != nil {
 		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
