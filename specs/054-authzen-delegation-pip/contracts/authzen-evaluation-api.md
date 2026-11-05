@@ -4,11 +4,13 @@
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>) and
 applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification against the AuthZEN 1.0
 source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
-requires receivers to ignore unknown request fields. Following the user's direction in the
-implementation session, unknown members, `properties` and other `context` members are ignored
-instead of rejected (ADR 047 §1). Error bodies keep `ErrorResponse`. The maintainer confirmed that revision
-of API-2 on 2026-10-31. The schemas below keep the original proposal for
-traceability; the OpenAPI is authoritative.
+requires receivers to ignore unknown request fields. The request contract in §2.1 therefore
+follows the AuthZEN 1.0 HTTPS binding (ADR 047 §1, research R10): unknown members, AuthZEN
+`properties` and `context` members other than `agent` are ignored and never influence the
+decision. Error bodies keep `ErrorResponse`. The maintainer confirmed this revision of API-2 on
+2026-10-31 and directed the artifacts to agree with it on 2026-11-05; the revised API-2 row is
+registered for sign-off in the plan's Approval Items. This document and
+`api/enduser/openapi.yaml` agree.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
@@ -65,42 +67,55 @@ AuthZENConfiguration:
 AccessEvaluationRequest:
   type: object
   required: [subject, action, resource]
-  additionalProperties: false            # proposed strictness (research R10); review item
+  description: Unknown members are ignored (AuthZEN 1.0 HTTPS binding).
   properties:
     subject:
       type: object
       required: [type, id]
-      additionalProperties: false
       properties:
         type: { type: string, enum: ["urn:ietf:params:oauth:token-type:jwt"] }
-        id:   { type: string, minLength: 1, description: Signed subject JWT. Never echoed. }
+        id:   { type: string, minLength: 1, description: Signed subject JWT. Never echoed or logged. }
     action:
       type: object
       required: [name]
-      additionalProperties: false
       properties:
         name: { type: string, enum: ["urn:ietf:params:oauth:grant-type:token-exchange"] }
     resource:
       type: object
       required: [type, id]
-      additionalProperties: false
       properties:
         type: { type: string, enum: ["protected_resource"] }
         id:   { type: string, format: uri, description: Protected-resource URI, normalized as in token exchange. }
     context:
       type: object
-      additionalProperties: false
       properties:
         agent:
           type: string
           format: uuid
           description: Optional consistency anchor. Must equal the agent resolved from the verified subject
-            token; a mismatch returns 400. Never replaces token-derived resolution.
+            token; a mismatch returns 400 before any grant is read.
 ```
 
-**Review item**: The anchor representation is a plain Agent UUID string. Accepting a canonical
-ID as an anchor is **not** proposed. With strict members (R10), AuthZEN `properties` objects
-and `context.actor` are rejected. The stakeholder may relax this before the contract is frozen.
+**Request member handling** (research R10, ADR 047 §1):
+
+- Receivers ignore unknown fields, as the AuthZEN 1.0 HTTPS binding requires. Unknown top-level
+  members, unknown members of `subject`, `action` and `resource`, AuthZEN `properties` objects at
+  any level, and `context` members other than `agent` (for example `context.actor`) are ignored.
+  An ignored member never influences the decision, the caller-policy input, or the response.
+- The supported values are still required exactly: `subject.type` is
+  `urn:ietf:params:oauth:token-type:jwt`, `action.name` is
+  `urn:ietf:params:oauth:grant-type:token-exchange`, and `resource.type` is
+  `protected_resource`. A missing required member, a wrong JSON type, or any other value returns
+  400.
+- `context` may be absent. A present `context` must be a JSON object (`null` or any other type
+  returns 400). `context.agent`, when present, must be an Agent UUID string; `null` or another
+  type returns 400.
+- The delegation is always resolved from the verified subject token alone. `context.agent` only
+  checks consistency with the token-derived agent, and no ignored member can supply or replace a
+  principal, agent, actor, or resource.
+
+**Anchor**: The anchor representation is a plain Agent UUID string. A canonical ID is not
+accepted as an anchor.
 
 ### 2.2 Responses
 
@@ -111,7 +126,7 @@ provider tokens, secrets, raw claims, or internal error text.
 |---|---|---|---|
 | 200 | Permit | `private, max-age=<0..60>` | `AccessEvaluationPermit` |
 | 200 | Grant denial (US2.1–US2.10) | `no-store` | `AccessEvaluationDenial` |
-| 400 | Malformed or oversized body; unsupported or missing member; invalid or expired subject; anchor mismatch; unregistered or invalid resource | `no-store` | `ErrorResponse` (`error: invalid_request`) |
+| 400 | Malformed or oversized body; missing required member, wrong member type, or unsupported `subject.type`/`action.name`/`resource.type` value; `context` present but not an object; non-string `context.agent`; invalid or expired subject; anchor mismatch; unregistered or invalid resource | `no-store` | `ErrorResponse` (`error: invalid_request`) |
 | 401 | Missing, invalid, or expired client assertion. Adds `WWW-Authenticate: Bearer` and, for an invalid credential, `error="invalid_token"`. | `no-store` | `ErrorResponse` (`error: unauthorized`) |
 | 403 | Caller CEL policy denies | `no-store` | `ErrorResponse` (`error: forbidden`) |
 | 500 | Configuration or dependency failure (agent missing or invalid, resource ambiguous, JWKS, CEL, repositories, canonical-ID lookup) | `no-store` | `ErrorResponse` (`error: server_error`) |
