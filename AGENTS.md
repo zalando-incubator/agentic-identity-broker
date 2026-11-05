@@ -270,8 +270,10 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 ## Database Migrations
 
 Use `NNN_description.{up,down}.sql` in `migrations/`. Test both directions against PostgreSQL with the production migrations.
-For large-table indexes, use `CREATE INDEX CONCURRENTLY` outside a transaction.
-`migrations/030_cimd_client_uri_pattern_index.up.sql` is the existing example.
+Each migration must be atomic, as required by Constitution Principle IX. Non-atomic migrations require an accepted ADR exception.
+`adrs/039-concurrent-session-expiry-index.md` permits concurrent index creation and removal only for migration `037`.
+Keep its first-line `-- migrate:no-transaction` comment in both directions. The comment is informational, not enforced by the migration runners.
+Migration `030` is historical, not an approved template for new non-atomic migrations.
 Read `tests/integration/AGENTS.md` for migration tests.
 
 ## Active Technologies
