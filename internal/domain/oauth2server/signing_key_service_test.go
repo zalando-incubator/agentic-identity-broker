@@ -135,33 +135,19 @@ func (c *postCallbackErrorBootstrapCoordinator) WithBootstrapLock(ctx context.Co
 	return c.err
 }
 
-type recoveryCountContextRepo struct {
-	*testSigningKeyStore
-	rejectCanceledCountContext bool
-	sawRecoveryCount           bool
-}
-
-func (r *recoveryCountContextRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
-	if r.rejectCanceledCountContext {
-		r.sawRecoveryCount = true
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-	}
-	return r.testSigningKeyStore.CountActiveInDomain(ctx, domain)
-}
-
 type recoveryCountProbeRepo struct {
 	*testSigningKeyStore
-	countCalls               int
+	recovering               bool
 	sawRecoveryCount         bool
 	recoveryCountHasDeadline bool
 	recoveryCountErr         error
 }
 
 func (r *recoveryCountProbeRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
-	r.countCalls++
-	if r.countCalls > 2 {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if r.recovering {
 		r.sawRecoveryCount = true
 		_, r.recoveryCountHasDeadline = ctx.Deadline()
 		if r.recoveryCountErr != nil {
@@ -1592,11 +1578,11 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 	t.Run("recovers when bootstrap lock times out after the key is persisted", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		var logBuf bytes.Buffer
-		repo := &recoveryCountContextRepo{testSigningKeyStore: newTestSigningKeyStore()}
+		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
 		coordinator := &postCallbackErrorBootstrapCoordinator{
 			err: context.DeadlineExceeded,
 			afterSuccess: func() {
-				repo.rejectCanceledCountContext = true
+				repo.recovering = true
 				cancel()
 			},
 		}
@@ -1617,7 +1603,10 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 
 	t.Run("uses a bounded timeout for the recovery count probe", func(t *testing.T) {
 		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		svc := NewSigningKeyService(repo, &postCallbackErrorBootstrapCoordinator{err: context.DeadlineExceeded}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+		coordinator := &postCallbackErrorBootstrapCoordinator{
+			err: context.DeadlineExceeded, afterSuccess: func() { repo.recovering = true },
+		}
+		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.NoError(t, err)
@@ -1638,6 +1627,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 				errors.New("lock timed out after callback"),
 				"operation exceeded timeout",
 			),
+			afterSuccess: func() { repo.recovering = true },
 		}, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
@@ -1655,7 +1645,10 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 			recoveryCountErr:    errors.New("count failed"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		svc := NewSigningKeyService(repo, &postCallbackErrorBootstrapCoordinator{err: context.DeadlineExceeded}, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
+		coordinator := &postCallbackErrorBootstrapCoordinator{
+			err: context.DeadlineExceeded, afterSuccess: func() { repo.recovering = true },
+		}
+		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -1677,6 +1670,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 				errors.New("commit failed"),
 				"failed to commit transaction",
 			),
+			afterSuccess: func() { repo.recovering = true },
 		}, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
@@ -2530,6 +2524,9 @@ func TestSigningKeyService_PromoteKey(t *testing.T) {
 		assert.True(t, promoted.IsCurrent)
 		assert.False(t, promoted.ActivatesAt.Before(before))
 		assert.False(t, promoted.ActivatesAt.After(after))
+		storedPromoted, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, candidate.KID)
+		require.NoError(t, err)
+		assert.Equal(t, storedPromoted, promoted, "promotion must return the persisted metadata")
 
 		storedCurrent, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, current.KID)
 		require.NoError(t, err)

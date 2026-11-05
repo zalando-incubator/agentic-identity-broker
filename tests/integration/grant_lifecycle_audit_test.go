@@ -26,6 +26,8 @@ type grantAuditWrites struct {
 	ports.UserGrantRepository
 	mu        sync.Mutex
 	committed map[string]*storage.UserGrant
+	written   chan struct{}
+	release   chan struct{}
 }
 
 func (r *grantAuditWrites) Create(ctx context.Context, grant *storage.UserGrant) error {
@@ -35,6 +37,12 @@ func (r *grantAuditWrites) Create(ctx context.Context, grant *storage.UserGrant)
 	r.mu.Lock()
 	r.committed["grant_created"] = grant.Copy()
 	r.mu.Unlock()
+	close(r.written)
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -46,6 +54,25 @@ func (r *grantAuditWrites) Update(ctx context.Context, grant *storage.UserGrant)
 	r.committed["grant_updated"] = grant.Copy()
 	r.mu.Unlock()
 	return nil
+}
+
+type grantAuditAgents struct {
+	ports.AgentRepository
+	entered chan struct{}
+}
+
+func (r *grantAuditAgents) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	r.entered <- struct{}{}
+	return r.AgentRepository.Get(ctx, agentID)
+}
+
+func awaitGrantAuditSignal(t *testing.T, ctx context.Context, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatal("concurrent consent did not reach the expected barrier")
+	}
 }
 
 func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
@@ -66,8 +93,12 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 			registry, err := ledger.NewRegistry(eventschemas.Schemas)
 			require.NoError(t, err)
 			events := memory.NewBusinessEventRepository(transactions, registry)
+			agentProbe := &grantAuditAgents{AgentRepository: agents, entered: make(chan struct{}, 2)}
 			recorder := ledger.NewService(registry, events, events, transactions, false)
-			writes := &grantAuditWrites{UserGrantRepository: grants, committed: make(map[string]*storage.UserGrant)}
+			writes := &grantAuditWrites{
+				UserGrantRepository: grants, committed: make(map[string]*storage.UserGrant),
+				written: make(chan struct{}), release: make(chan struct{}),
+			}
 			principal := id.Principal("grant-race-owner")
 			agentID, psID, serviceID := id.NewAgentID(), id.NewPermissionSetID(), id.NewServiceID()
 			require.NoError(t, agents.Create(ctx, &storage.Agent{
@@ -81,7 +112,7 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 			require.NoError(t, sessions.Create(ctx, fixtures.SessionForServiceWithScopes(principal.String(), serviceID.String(), []string{"read"})))
 			psService := permissionset.NewPermissionSetService(permissionSets, grants, logger)
 			t.Cleanup(psService.Close)
-			svc := consent.NewService(agents, nil, writes, sessions, memory.NewRefreshTokenSessionStore(transactions), psService, logger, recorder)
+			svc := consent.NewService(agentProbe, nil, writes, sessions, memory.NewRefreshTokenSessionStore(transactions), psService, logger, recorder)
 			type mutationResult struct {
 				grant *storage.UserGrant
 				err   error
@@ -103,8 +134,16 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 					grant, err := svc.GrantConsent(ctx, request)
 					results <- mutationResult{grant: grant, err: err}
 				}()
+				if i == 0 {
+					close(start)
+					awaitGrantAuditSignal(t, ctx, writes.written)
+				}
 			}
-			close(start)
+			for range 2 {
+				awaitGrantAuditSignal(t, ctx, agentProbe.entered)
+			}
+			require.Empty(t, results, "consent must not return before the first transaction is released")
+			close(writes.release)
 			var committed []*storage.UserGrant
 			for range 2 {
 				select {

@@ -156,6 +156,66 @@ func TestSigningKeyRepo_TransactionalSelectionRemainsStableUntilCommit(t *testin
 	require.NoError(t, err)
 }
 
+func TestSigningKeyRepo_MutationsLockActiveKeysBeforeTheirTarget(t *testing.T) {
+	for _, operation := range []string{"promote", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			adapter, cleanup := setupSigningKeyTestDB(t)
+			defer cleanup()
+			repo := NewSigningKeyRepo(adapter)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			target := testSigningKeyInDomain("b-target", storage.KeyDomainTokenSigning, false)
+			current := testSigningKeyInDomain("a-current", storage.KeyDomainTokenSigning, true)
+			require.NoError(t, repo.Create(ctx, target))
+			require.NoError(t, repo.Create(ctx, current))
+			blocker, err := adapter.db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer func() { _ = blocker.Rollback() }()
+			var blockerPID, mutationPID int
+			require.NoError(t, blocker.GetContext(ctx, &blockerPID, `SELECT pg_backend_pid()`))
+			var locked id.KeyID
+			require.NoError(t, blocker.GetContext(ctx, &locked, `SELECT kid FROM signing_keys WHERE kid = $1 FOR UPDATE`, current.KID))
+			mutationCtx, err := adapter.BeginTX(ctx)
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(mutationCtx) }()
+			require.NoError(t, adapter.storageExecutor(mutationCtx).GetContext(mutationCtx, &mutationPID, `SELECT pg_backend_pid()`))
+			finished := make(chan error, 1)
+			go func() {
+				if operation == "promote" {
+					_, err := repo.SetCurrentInDomain(mutationCtx, target.KeyDomain, target.KID, time.Now().UTC())
+					finished <- err
+				} else {
+					finished <- repo.DeleteInDomain(mutationCtx, target.KeyDomain, target.KID)
+				}
+			}()
+			require.Eventually(t, func() bool {
+				var blocked bool
+				err := adapter.db.GetContext(ctx, &blocked, `SELECT $1::int = ANY(pg_blocking_pids($2))`, blockerPID, mutationPID)
+				return err == nil && blocked
+			}, time.Second, time.Millisecond, "mutation must wait for the first active key")
+			probe, err := adapter.db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer func() { _ = probe.Rollback() }()
+			require.NoError(t, probe.GetContext(ctx, &locked, `SELECT kid FROM signing_keys WHERE kid = $1 FOR UPDATE NOWAIT`, target.KID), "mutation must not lock its target before earlier keys")
+			require.NoError(t, probe.Rollback())
+			require.NoError(t, blocker.Rollback())
+			require.NoError(t, <-finished)
+			require.NoError(t, adapter.Commit(mutationCtx))
+			if operation == "promote" {
+				selected, err := repo.GetCurrentInDomain(ctx, target.KeyDomain)
+				require.NoError(t, err)
+				require.Equal(t, target.KID, selected.KID)
+			} else {
+				_, err := repo.GetByKIDInDomain(ctx, target.KeyDomain, target.KID)
+				require.True(t, ports.IsNotFoundErr(err))
+				selected, err := repo.GetCurrentInDomain(ctx, current.KeyDomain)
+				require.NoError(t, err)
+				require.Equal(t, current.KID, selected.KID)
+			}
+		})
+	}
+}
+
 func TestSigningKeyRepo_CreateRejectsSecondActiveCurrentKey(t *testing.T) {
 	adapter, cleanup := setupSigningKeyTestDB(t)
 	defer cleanup()
