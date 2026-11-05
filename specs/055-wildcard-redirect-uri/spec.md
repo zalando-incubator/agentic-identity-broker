@@ -29,7 +29,7 @@ An operator can rely on a wildcard registration to accept only HTTPS callbacks i
 
 **Why this priority**: A wildcard callback must not let an attacker redirect authorization results to an unrelated host or weaken existing callback protections.
 
-**Independent Test**: Submit authorization requests with a host outside the pattern, a changed scheme, or a changed path; verify each is rejected without a redirect. Then verify an existing exact callback still succeeds.
+**Independent Test**: Submit an unsafe wildcard registration and authorization requests with an unregistered host, changed scheme, or changed path. Confirm that registration and requests fail without a redirect. Then confirm that an exact callback still succeeds.
 
 **Acceptance Scenarios**:
 
@@ -45,10 +45,10 @@ An operator can rely on a wildcard registration to accept only HTTPS callbacks i
 - A wildcard matches characters inside one hostname label only; it never matches a dot or crosses into another label.
 - A wildcard may appear in more than one subdomain label, as in `preview*.app-*.example.com`. The expected preview host shape is `preview-pr-<number>.app-test.example.com`.
 - The wildcard portion of a complete hostname label must produce a valid, non-empty DNS label. A partial wildcard may match zero characters when the remaining literal characters form a valid label.
-- The scheme, port, path, query, and other URI components remain fixed by the registered callback. For the preview callback, the scheme is HTTPS and the path is `/api/oidc/callback`. Wildcards in other URI components are rejected.
+- The scheme, port, path, query, and other URI components remain fixed by the registered callback. For the preview callback, the scheme is HTTPS and the path is `/api/oidc/callback`. A `*` in a non-host component of a registration without a host wildcard remains literal and follows exact-match behavior.
 - The registrable domain and public suffix must remain literal. Patterns such as `https://preview*.app-*.example.*/api/oidc/callback` and `https://preview*.app-*.*.com/api/oidc/callback` are invalid.
 - Private-use scheme callbacks remain exact-match only and retain their existing allowlisting rules.
-- Existing exact-match callbacks, loopback HTTP port behavior, and error responses remain unchanged.
+- Existing exact-match callbacks, loopback web callback port behavior, and error responses remain unchanged.
 - Redirect URIs supplied by a CIMD document remain exact-match-only in this feature.
 
 ## Concrete Example Journeys *(mandatory)*
@@ -79,16 +79,24 @@ Location: https://preview-pr-123.app-test.example.com/api/oidc/callback?code=aut
 
 ### Journey 2 - Reject a callback outside the registration (User Story 2, Scenarios 1-3)
 
-**Cast**: Alice and the same test Agent. The test Agent has the preview callback pattern and Alice has an active grant.
+**Cast**: An operator, Alice, and the test Agent. The Agent has the preview callback pattern, and Alice has an active grant.
 
-**Step 1 - Request an unregistered callback**: A client requests authorization using an unrelated hostname or changes the registered scheme or path.
+**Step 1 - Reject an unsafe registration**: The operator submits an Agent create request to `POST /api/agents` with `redirect_uris` set to `https://preview*.app-*.*.com/api/oidc/callback`.
+
+```http
+HTTP/1.1 400 Bad Request
+```
+
+The broker returns `400 validation failed` and does not create the Agent.
+
+**Step 2 - Request an unregistered callback**: Alice's client requests authorization with an unrelated hostname or a changed scheme or path.
 
 ```http
 GET /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fpreview-pr-123.app-test.example.net%2Fapi%2Foidc%2Fcallback&state=outside-scope HTTP/1.1
 Host: broker.example.test
 ```
 
-**Step 2 - Reject the request**: The broker does not redirect to the supplied callback.
+**Step 3 - Reject the request**: The broker does not redirect to the supplied callback.
 
 **Observable result**: The broker returns the existing `invalid_redirect_uri` error response. No authorization code or error response is sent to the unregistered callback.
 
@@ -115,7 +123,7 @@ Host: broker.example.test
 - **FR-002**: The system MUST support the preview pattern `https://preview*.app-*.example.com/api/oidc/callback` for pull-request previews, the stable test host, and sandbox and staging hosts represented by that pattern.
 - **FR-003**: A `*` MUST match characters only within one hostname label and MUST NOT match a dot or span multiple labels. Multiple subdomain labels may contain wildcards.
 - **FR-004**: The system MUST require the registrable domain and public suffix to be literal in every wildcard pattern. It MUST reject a wildcard that replaces either portion or the entire hostname.
-- **FR-005**: The scheme, port, path, query, and other non-host URI components MUST match the registered value under the existing redirect URI rules. The system MUST reject wildcards outside the hostname.
+- **FR-005**: The system MUST treat `*` as a wildcard only in the HTTPS hostname. A `*` in another URI component of a registration without a host wildcard MUST remain literal under existing exact-match behavior.
 - **FR-006**: When a wildcard pattern matches, the system MUST redirect only to the concrete `redirect_uri` supplied in the authorization request, never to the registered pattern.
 - **FR-007**: A callback that does not match a registered exact URI or valid wildcard pattern MUST be rejected with the existing redirect URI error behavior and MUST NOT receive an authorization code or redirect.
 - **FR-008**: Existing exact callback registrations MUST continue to work without requiring changes.

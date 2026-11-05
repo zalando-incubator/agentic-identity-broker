@@ -98,6 +98,7 @@ docs/api/enduser-api.md                 # maintained end-user API documentation
 ARCHITECTURE.md                         # domain glossary and architecture notes
 adrs/048-wildcard-web-redirect-uris.md  # security decision
 tests/e2e/wildcard_redirect_uri_test.go # nine spec-mapped HTTP scenarios
+tests/e2e/cimd_authorization_test.go     # two CIMD redirect-source scenarios
 ```
 
 **Structure Decision**: Extend existing domain validation and OAuth2 authorization paths; do not add a package, endpoint, adapter, persisted field, or frontend component. Keep the public-suffix policy in the URI-validation domain package, where the existing redirect parser and matcher already live.
