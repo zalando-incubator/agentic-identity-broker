@@ -92,6 +92,10 @@ if err != nil {
     if errors.As(err, &storageErr) {
         kind = storageErr.Kind
     }
+    if kind == storage.ErrorKindNotFound {
+        span.SetAttributes(attribute.String("storage.outcome", string(kind)))
+        return nil, err
+    }
     span.SetAttributes(attribute.String("error.type", string(kind)))
     span.SetStatus(codes.Error, "agent lookup failed")
     return nil, err
@@ -99,6 +103,8 @@ if err != nil {
 ```
 
 - When the operation fails, set `codes.Error` and `error.type`.
+- A result that the caller handles as normal flow is not a failure, for example a lookup that finds no row, a conflict, or rejected input. Do not set `codes.Error` or `error.type`. Record it as `<namespace>.outcome`. Tail-sampling backends can keep every trace that has an error on a `Client` or `Server` span, so a false error also changes which traces are kept.
+- PostgreSQL repositories use `startStorageSpan`, which applies these rules.
 - Use a constant status description. Do not use `err.Error()`.
 - Do not call `span.RecordError`. A wrapped cause can contain a URL with its query, a provider body, or a SQL fragment. Record typed metadata instead (section 4).
 - Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code.
@@ -132,6 +138,7 @@ if err != nil {
 | `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
+| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
