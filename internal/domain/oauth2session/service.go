@@ -874,8 +874,7 @@ func (s *OAuth2SessionService) createSession(
 		tokenType = "Bearer"
 	}
 
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	hints := ledger.SubjectHints(ctx, &principal)
 	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
 		if current == nil || current.ID != claims.SessionID || current.CallbackID != claims.SessionCallbackID {
 			return nil
@@ -1555,8 +1554,7 @@ func (s *OAuth2SessionService) TerminateSession(
 	}
 
 	// Step 3: Delete the session and record the fact in one subject-gated transaction
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	hints := ledger.SubjectHints(ctx, &principal)
 	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
 		current, err := s.sessionRepo.FindByPrincipalAndServiceForUpdate(txCtx, principal, serviceID)
 		if err != nil {
@@ -1917,8 +1915,7 @@ func (s *OAuth2SessionService) withTransaction(ctx context.Context, hints ports.
 // An unsuccessful commit or rollback may be indeterminate: callers must not emit a
 // contradictory terminal failure fact in that case.
 func (s *OAuth2SessionService) persistRefreshedSession(ctx context.Context, principal id.Principal, previous, current *storage.UserSession, event, reasonCode string) (indeterminate bool, err error) {
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	hints := ledger.SubjectHints(ctx, &principal)
 	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
 	if err != nil {
 		return false, err
@@ -1982,13 +1979,9 @@ func (s *OAuth2SessionService) recordSession(ctx context.Context, name string, s
 	if reasonCode != "" {
 		data["reason_code"] = reasonCode
 	}
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+name, model.BusinessEvent{OccurredAt: time.Now().UTC(),
+	return s.ledger.RecordFacts(ctx, name, model.BusinessEvent{OccurredAt: time.Now().UTC(),
 		Subject: &principal, Actor: actor, GatewayClientID: gatewayClientID,
 		ServiceID: session.ServiceID, SessionID: session.ID, Data: data})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }
 
 func refreshUnavailableError(ctx context.Context, current *storage.UserSession, threshold *time.Time) error {

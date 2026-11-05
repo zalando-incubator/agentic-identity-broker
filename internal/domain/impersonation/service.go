@@ -494,11 +494,7 @@ func impersonationFacts(targetID id.AgentID, res *ruleResult) model.BusinessEven
 
 func (s *Service) recordFact(ctx context.Context, eventType string, facts model.BusinessEvent, data map[string]any) error {
 	facts.OccurredAt, facts.Data = time.Now().UTC(), data
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
+	return s.ledger.RecordFacts(ctx, eventType, facts)
 }
 
 func (s *Service) completeImpersonation(ctx context.Context, targetID id.AgentID, res *ruleResult, requestErr error) error {
@@ -531,10 +527,7 @@ func (s *Service) completeImpersonation(ctx context.Context, targetID id.AgentID
 	if res != nil && res.actor != "" {
 		decisionData["delegating_actor_id"] = res.actor
 	}
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	if facts.Subject != nil {
-		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *facts.Subject})
-	}
+	hints := ledger.SubjectHints(ctx, facts.Subject)
 	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		if err := s.recordFact(txCtx, "impersonation-denied", facts, decisionData); err != nil {
 			return err

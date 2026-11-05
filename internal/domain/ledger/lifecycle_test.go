@@ -26,11 +26,6 @@ func (r forbiddenLifecycleRepository) SetRetentionPolicy(context.Context, time.D
 	return nil
 }
 
-func (r forbiddenLifecycleRepository) ApplyRetention(context.Context) error {
-	r.t.Fatal("invalid lifecycle request reached storage")
-	return nil
-}
-
 func TestLifecycleServiceRejectsEmptySubjectBeforeErasure(t *testing.T) {
 	service := ledger.NewService(nil, nil, forbiddenLifecycleRepository{t}, nil, false)
 	count, err := service.EraseSubject(t.Context(), id.NewPrincipal(""))

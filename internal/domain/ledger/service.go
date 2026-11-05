@@ -41,6 +41,22 @@ func (s *Service) NewEvent(ctx context.Context, eventType string, facts model.Bu
 	return &facts, nil
 }
 
+func (s *Service) RecordFacts(ctx context.Context, name string, facts model.BusinessEvent) error {
+	event, err := s.NewEvent(ctx, model.BusinessEventTypePrefix+name, facts)
+	if err != nil {
+		return err
+	}
+	return s.Record(ctx, event)
+}
+
+func SubjectHints(ctx context.Context, principal *id.Principal) ports.StorageTransactionHints {
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	if principal != nil {
+		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *principal})
+	}
+	return hints
+}
+
 func (s *Service) Record(ctx context.Context, event *model.BusinessEvent) error {
 	if event == nil {
 		return errInvalidEvent
@@ -52,10 +68,7 @@ func (s *Service) Record(ctx context.Context, event *model.BusinessEvent) error 
 	if err := s.Validate(&candidate); err != nil {
 		return err
 	}
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	if event.Subject != nil {
-		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *event.Subject})
-	}
+	hints := SubjectHints(ctx, event.Subject)
 	return s.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		return s.events.Append(txCtx, event, s.copyEnabled)
 	})

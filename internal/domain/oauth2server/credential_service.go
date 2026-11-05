@@ -104,12 +104,8 @@ func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) erro
 }
 
 func (s *CredentialService) recordCredential(ctx context.Context, eventType string, credential *storage.ClientCredential) error {
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, model.BusinessEvent{
+	return s.ledger.RecordFacts(ctx, eventType, model.BusinessEvent{
 		OccurredAt: time.Now().UTC(), AgentID: credential.AgentID,
 		Actor: model.BusinessEventActor{Kind: "admin"}, Data: map[string]any{"credential_id": credential.ID.String()},
 	})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }

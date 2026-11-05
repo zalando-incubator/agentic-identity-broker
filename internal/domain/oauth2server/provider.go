@@ -373,8 +373,7 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 	}
 	subject := id.Principal(req.GetSession().GetSubject())
 	prepared, preparationErr := p.accessStrategy.prepareSigningMaterial(ctx)
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: subject})
+	hints := ledger.SubjectHints(ctx, &subject)
 	var validationErr error
 	var response *ports.TokenResponse
 	err = p.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
@@ -508,10 +507,7 @@ func (p *Provider) issueToken(ctx context.Context, req fosite.AccessRequester, f
 // commits Fosite's mutations and the issuance fact before releasing any token.
 func (p *Provider) persistTokenResponse(ctx context.Context, req fosite.AccessRequester, facts model.BusinessEvent, prepared *cachedSigningKey, populate func(context.Context, fosite.AccessResponder) error) (*ports.TokenResponse, error) {
 	response := fosite.NewAccessResponse()
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	if facts.Subject != nil {
-		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *facts.Subject})
-	}
+	hints := ledger.SubjectHints(ctx, facts.Subject)
 	err := p.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		populateCtx := context.WithValue(txCtx, preparedSigningMaterialContextKey{}, prepared)
 		if err := populate(populateCtx, response); err != nil {
@@ -538,11 +534,7 @@ func (p *Provider) recordTokenOutcome(ctx context.Context, eventType string, fac
 	if facts.Data == nil {
 		facts.Data = map[string]any{}
 	}
-	event, err := p.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
-	if err != nil {
-		return err
-	}
-	return p.ledger.Record(ctx, event)
+	return p.ledger.RecordFacts(ctx, eventType, facts)
 }
 
 func (p *Provider) finishTokenRequest(ctx context.Context, facts *model.BusinessEvent, requestErr *error) {

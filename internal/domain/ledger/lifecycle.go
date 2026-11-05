@@ -34,10 +34,6 @@ func (s *Service) EraseSubject(ctx context.Context, subject id.Principal) (int64
 	return s.lifecycle.EraseSubject(ctx, subject)
 }
 
-func (s *Service) ApplyRetention(ctx context.Context) error {
-	return s.lifecycle.ApplyRetention(ctx)
-}
-
 func (s *Service) SetRetentionPolicy(ctx context.Context, retention time.Duration) error {
 	normalized, err := NormalizeRetention(retention)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-func runMemoryBusinessEventRetention(ctx context.Context, lifecycle ports.BusinessEventLifecycleRepository, ticks <-chan time.Time, started chan<- error) error {
+func runMemoryBusinessEventRetention(ctx context.Context, lifecycle ports.BusinessEventRetentionRepository, ticks <-chan time.Time, started chan<- error) error {
 	err := lifecycle.ApplyRetention(ctx)
 	started <- err
 	if ctx.Err() != nil {
@@ -35,7 +35,7 @@ func runMemoryBusinessEventRetention(ctx context.Context, lifecycle ports.Busine
 	}
 }
 
-func startMemoryBusinessEventRetention(lifecycle ports.BusinessEventLifecycleRepository, timeout time.Duration, logger *slog.Logger) (func(context.Context) error, error) {
+func startMemoryBusinessEventRetention(lifecycle ports.BusinessEventRetentionRepository, timeout time.Duration, logger *slog.Logger) (func(context.Context) error, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan error, 1)
 	finished := make(chan struct{})

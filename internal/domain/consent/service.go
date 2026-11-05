@@ -356,8 +356,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	var grant *storage.UserGrant
 	var previousFields []any
 	var action, message string
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: req.Principal})
+	hints := ledger.SubjectHints(ctx, &req.Principal)
 	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		if _, err := s.agentRepo.GetForUpdate(txCtx, req.AgentID); err != nil {
 			if ports.IsNotFoundErr(err) {
@@ -641,8 +640,7 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
 	if errors.Is(err, ErrGrantNotFound) {
-		hints := ports.StorageTransactionHintsFromContext(ctx)
-		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+		hints := ledger.SubjectHints(ctx, &principal)
 		return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 			return s.revokeRefreshSessions(txCtx, ctx, principal, agentID, "consent_revoked")
 		})
@@ -689,8 +687,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 
 func (s *Service) revokeGrant(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	var grant *storage.UserGrant
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	hints := ledger.SubjectHints(ctx, &principal)
 	err := s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		if _, err := s.agentRepo.GetForUpdate(txCtx, agentID); err != nil && !ports.IsNotFoundErr(err) {
 			return fmt.Errorf("failed to get agent: %w", err)
@@ -732,14 +729,10 @@ func (s *Service) recordGrant(ctx context.Context, name string, grant *storage.U
 	for i, entry := range grant.GrantedPermissionSets {
 		permissionIDs[i] = entry.PermissionSetID
 	}
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+name, model.BusinessEvent{
+	return s.ledger.RecordFacts(ctx, name, model.BusinessEvent{
 		OccurredAt: occurredAt.UTC(), Subject: &principal, Actor: actor,
 		AgentID: grant.AgentID, GrantID: grant.ID, PermissionSetIDs: permissionIDs, Data: map[string]any{},
 	})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }
 
 func (s *Service) RecognizeGrantExpiration(ctx context.Context, grant *storage.UserGrant) error {
@@ -749,8 +742,7 @@ func (s *Service) RecognizeGrantExpiration(ctx context.Context, grant *storage.U
 	if s.expirations == nil {
 		return errors.New("grant expiration repository is required")
 	}
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: grant.Principal})
+	hints := ledger.SubjectHints(ctx, &grant.Principal)
 	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		current, err := s.grantRepo.FindByPrincipalAndAgentForUpdate(txCtx, grant.Principal, grant.AgentID)
 		if ports.IsNotFoundErr(err) {

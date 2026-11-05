@@ -51,7 +51,6 @@ func TestBusinessEventLifecycle_RejectsInvalidPolicyBeforeDatabaseAccess(t *test
 		})
 	}
 	requireSafeLifecycleStorageError(t, repo.SetRetentionPolicy(context.Background(), time.Nanosecond), storage.ErrorKindConnection)
-	requireSafeLifecycleStorageError(t, repo.ApplyRetention(context.Background()), storage.ErrorKindConnection)
 }
 
 func TestBusinessEventLifecycle_MapsStorageFailuresWithoutEventValues(t *testing.T) {

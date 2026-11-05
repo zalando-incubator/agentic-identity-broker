@@ -1149,6 +1149,9 @@ Pre-authentication token input errors preserve their existing HTTP responses wit
 - Intentional replay-detection revocations retain their independent commit boundary.
 - Memory uses one visibility gate and a touched-record/index undo journal, not whole-store snapshots.
 - Memory completion rejects new operations and waits for admitted guards before undo, visibility release, or commit effects.
+- PostgreSQL mutation paths request update locks explicitly. Ordinary joined agent lookups use compatible key-share locks; issuance grant checks do not acquire consent's exclusive pair lock.
+- Domain producers share ledger fact recording and subject-hint construction. The published schemas are the source of fixed outcomes and reason sentences.
+- Only memory exposes logical retention through the separate retention facet. PostgreSQL partition maintenance remains migration-owner SQL, outside the runtime adapter.
 - Commit releases notifications and cache invalidations. The broker does not automatically retry external operations.
 - Agent deletion restarts only its local owner when locked discovery reveals another subject. Failed rollback, cancellation, or joined ownership stops the restart.
 

@@ -233,34 +233,25 @@ func TestPostgresBusinessEventLifecycle_ArmsStatementDeadlineBeforeOperationalCa
 	adapter, _ := setupPostgresBusinessEventAdapter(t)
 	lifecycle := NewBusinessEventLifecycleRepository(adapter)
 	subject := id.NewPrincipal("repository-deadline")
-	for _, operation := range []string{"erase", "maintenance"} {
-		for _, timeout := range []struct{ configured, expected string }{
-			{configured: "0", expected: "30s"},
-			{configured: "31s", expected: "30s"},
-			{configured: "5s", expected: "5s"},
-		} {
-			t.Run(operation+"/"+timeout.configured, func(t *testing.T) {
-				hints := ports.StorageTransactionHints{Lifecycle: ports.StorageLifecycleExclusive}
-				if operation == "erase" {
-					hints.Subjects = []ports.StorageSubjectGate{{Principal: subject, Exclusive: true}}
-				}
-				owner, err := adapter.BeginTX(ports.WithStorageTransactionHints(context.Background(), hints))
-				require.NoError(t, err)
-				defer func() { _ = adapter.Rollback(owner) }()
-				scope, _ := storageTransaction(owner)
-				_, err = scope.ExecContext(owner, `SELECT set_config('statement_timeout',$1,true)`, timeout.configured)
-				require.NoError(t, err)
-				if operation == "erase" {
-					_, err = lifecycle.EraseSubject(owner, subject)
-				} else {
-					err = lifecycle.ApplyRetention(owner)
-				}
-				require.NoError(t, err, "the repository must meet the SQL function's deadline precondition")
-				var configured string
-				require.NoError(t, scope.GetContext(owner, &configured, `SHOW statement_timeout`))
-				require.Equal(t, timeout.expected, configured, "repository deadline must not extend a tighter caller deadline")
-			})
-		}
+	for _, timeout := range []struct{ configured, expected string }{
+		{configured: "0", expected: "30s"},
+		{configured: "31s", expected: "30s"},
+		{configured: "5s", expected: "5s"},
+	} {
+		t.Run(timeout.configured, func(t *testing.T) {
+			hints := ports.StorageTransactionHints{Subjects: []ports.StorageSubjectGate{{Principal: subject, Exclusive: true}}}
+			owner, err := adapter.BeginTX(ports.WithStorageTransactionHints(context.Background(), hints))
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(owner) }()
+			scope, _ := storageTransaction(owner)
+			_, err = scope.ExecContext(owner, `SELECT set_config('statement_timeout',$1,true)`, timeout.configured)
+			require.NoError(t, err)
+			_, err = lifecycle.EraseSubject(owner, subject)
+			require.NoError(t, err, "the repository must meet the SQL function's deadline precondition")
+			var configured string
+			require.NoError(t, scope.GetContext(owner, &configured, `SHOW statement_timeout`))
+			require.Equal(t, timeout.expected, configured, "repository deadline must not extend a tighter caller deadline")
+		})
 	}
 }
 

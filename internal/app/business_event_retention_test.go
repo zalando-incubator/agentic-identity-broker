@@ -178,7 +178,9 @@ func TestMemoryRetentionWorkerHandlesStartupTicksAndCancellation(t *testing.T) {
 		defer cancel()
 		ticks := make(chan time.Time, 1)
 		done := make(chan error, 1)
-		go func() { done <- runMemoryBusinessEventRetention(ctx, lifecycle, ticks, make(chan error, 1)) }()
+		go func() {
+			done <- runMemoryBusinessEventRetention(ctx, lifecycle.(ports.BusinessEventRetentionRepository), ticks, make(chan error, 1))
+		}()
 		synctest.Wait()
 		requireRetentionEvent(t, store, old, false)
 		requireRetentionEvent(t, store, fresh, true)
@@ -216,7 +218,7 @@ func TestBuilderShutdownStopsRetentionMaintenance(t *testing.T) {
 		time.Sleep(time.Until(retentionWindowEnd(key.RecordedAt).Add(time.Hour).Add(10 * time.Minute)))
 		synctest.Wait()
 		requireRetentionEvent(t, store, key, true)
-		require.NoError(t, store.BusinessEventLifecycle().ApplyRetention(t.Context()))
+		require.NoError(t, store.BusinessEventLifecycle().(ports.BusinessEventRetentionRepository).ApplyRetention(t.Context()))
 		requireRetentionEvent(t, store, key, false)
 	})
 }
@@ -257,7 +259,7 @@ func TestBuilderShutdownCancelsSweepWaitingOnLifecycleBarrier(t *testing.T) {
 		require.NoError(t, shutdownErr)
 		require.True(t, stoppedWhileLocked, "shutdown must cancel a blocked sweep instead of waiting for an unrelated transaction")
 		requireRetentionEvent(t, store, key, true)
-		require.NoError(t, store.BusinessEventLifecycle().ApplyRetention(t.Context()))
+		require.NoError(t, store.BusinessEventLifecycle().(ports.BusinessEventRetentionRepository).ApplyRetention(t.Context()))
 		requireRetentionEvent(t, store, key, false)
 	})
 }
@@ -273,11 +275,11 @@ func TestBuilderRetentionPolicyRoundsUpBeforeMemoryMaintenance(t *testing.T) {
 
 		time.Sleep(time.Until(windowEnd.Add(time.Microsecond)))
 		synctest.Wait()
-		require.NoError(t, store.BusinessEventLifecycle().ApplyRetention(t.Context()))
+		require.NoError(t, store.BusinessEventLifecycle().(ports.BusinessEventRetentionRepository).ApplyRetention(t.Context()))
 		requireRetentionEvent(t, store, key, true)
 
 		time.Sleep(time.Microsecond)
-		require.NoError(t, store.BusinessEventLifecycle().ApplyRetention(t.Context()))
+		require.NoError(t, store.BusinessEventLifecycle().(ports.BusinessEventRetentionRepository).ApplyRetention(t.Context()))
 		requireRetentionEvent(t, store, key, false)
 	})
 }

@@ -1055,11 +1055,7 @@ func (s *Service) recordApproval(ctx context.Context, eventType string, approval
 	if eventType == "approval-denied" {
 		facts.Data["reason_code"] = "user_denied"
 	}
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
+	return s.ledger.RecordFacts(ctx, eventType, facts)
 }
 
 func afterApprovalCommit(ctx context.Context, signal func()) error {
@@ -1072,8 +1068,7 @@ func afterApprovalCommit(ctx context.Context, signal func()) error {
 
 func approvalTransaction[T any](ctx context.Context, recorder *ledger.Service, principal id.Principal, work func(context.Context) (T, error)) (T, error) {
 	var result T
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	hints := ledger.SubjectHints(ctx, &principal)
 	err := recorder.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		var err error
 		result, err = work(txCtx)
@@ -1093,8 +1088,7 @@ func (s *Service) recognizeApprovalExpiration(ctx context.Context, approval *sto
 	if s.expirations == nil {
 		return errors.New("approval expiration repository is required")
 	}
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: approval.Principal})
+	hints := ledger.SubjectHints(ctx, &approval.Principal)
 	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		current, err := s.approvals.Get(txCtx, approval.ID)
 		if ports.IsNotFoundErr(err) {

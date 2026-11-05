@@ -116,11 +116,7 @@ func (s *TokenOutcomeService) RecordFailure(ctx context.Context, failure ports.T
 }
 
 func (s *TokenOutcomeService) recordOutcome(ctx context.Context, eventType string, agentID id.AgentID, data map[string]any) error {
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, model.BusinessEvent{
+	return s.ledger.RecordFacts(ctx, eventType, model.BusinessEvent{
 		OccurredAt: time.Now().UTC(), AgentID: agentID, Actor: model.BusinessEventActor{Kind: "agent"}, Data: data,
 	})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }

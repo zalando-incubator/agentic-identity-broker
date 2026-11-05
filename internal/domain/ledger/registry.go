@@ -204,9 +204,6 @@ func registerEvent(name string, schema *jsonschema.Schema, resolved *jsonschema.
 	if !fixedSentence(event.reasonUser) || !fixedSentence(event.reasonAdmin) {
 		return event, errInvalidSchema
 	}
-	if recipe, catalogue := catalogueRecipes[name]; catalogue && (event.outcome != recipe.outcome || event.reasonUser != recipe.reason || event.reasonAdmin != recipe.reason) {
-		return event, errInvalidSchema
-	}
 	event.schema = resolved
 	return event, nil
 }

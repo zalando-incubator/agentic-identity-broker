@@ -138,8 +138,11 @@ type BusinessEventRepository interface {
 type BusinessEventLifecycleRepository interface {
 	// Erasure is exact-subject and commits event/reference deletion together; it never records a replacement fact.
 	EraseSubject(ctx context.Context, subject id.Principal) (int64, error)
-	ApplyRetention(ctx context.Context) error
 	SetRetentionPolicy(ctx context.Context, retention time.Duration) error
+}
+
+type BusinessEventRetentionRepository interface {
+	ApplyRetention(ctx context.Context) error
 }
 
 type BusinessEventDeliveryRepository interface {

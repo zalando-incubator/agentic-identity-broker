@@ -108,14 +108,10 @@ func NewAuthorizationService(
 
 func (s *AuthorizationService) recordAuthorization(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	actorID := principal.String()
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+"authorization-requested", model.BusinessEvent{
+	return s.ledger.RecordFacts(ctx, "authorization-requested", model.BusinessEvent{
 		OccurredAt: time.Now().UTC(), Subject: &principal, Actor: model.BusinessEventActor{Kind: "user", ID: &actorID},
 		AgentID: agentID, Data: map[string]any{},
 	})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }
 
 // ResolveForTokenGrant resolves the client_id, classifies the agent, and enforces

@@ -1506,7 +1506,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		}
 	}
 	if b.config.Storage.Backend == "memory" {
-		stopRetention, err := startMemoryBusinessEventRetention(app.LedgerService, b.config.Storage.Timeouts.Write, b.logger)
+		retention, ok := b.storage.BusinessEventLifecycle().(ports.BusinessEventRetentionRepository)
+		if !ok {
+			return nil, fmt.Errorf("memory business event retention repository is required")
+		}
+		stopRetention, err := startMemoryBusinessEventRetention(retention, b.config.Storage.Timeouts.Write, b.logger)
 		if err != nil {
 			if app.Shutdown != nil {
 				_ = app.Shutdown(context.Background())

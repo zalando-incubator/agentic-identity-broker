@@ -506,10 +506,7 @@ func (s *TokenExchangeService) completeExchange(ctx context.Context, facts model
 		}
 		facts.Data["reason_code"] = failureReason
 	}
-	event, recordErr := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
-	if recordErr == nil {
-		recordErr = s.ledger.Record(ctx, event)
-	}
+	recordErr := s.ledger.RecordFacts(ctx, eventType, facts)
 	if recordErr != nil {
 		*response = nil
 		failure := NewServerErrorWithCause("failed to record token exchange outcome", errors.Join(*requestErr, recordErr))

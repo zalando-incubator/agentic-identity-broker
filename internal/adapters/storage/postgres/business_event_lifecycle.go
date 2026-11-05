@@ -52,36 +52,6 @@ func (r *BusinessEventLifecycleRepository) EraseSubject(ctx context.Context, sub
 	return deleted, nil
 }
 
-func (r *BusinessEventLifecycleRepository) ApplyRetention(ctx context.Context) error {
-	const operation = "BusinessEventLifecycle.ApplyRetention"
-	if err := r.requireDB(operation); err != nil {
-		return err
-	}
-	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-	defer cancel()
-	hints := ports.StorageTransactionHintsFromContext(execCtx)
-	if err := requireLifecycleReadCommitted(execCtx, operation); err != nil {
-		return err
-	}
-	hints.Lifecycle = ports.StorageLifecycleExclusive
-	txCtx, err := r.adapter.BeginTX(ports.WithStorageTransactionHints(execCtx, hints))
-	if err != nil {
-		return businessEventStorageError(operation, err)
-	}
-	defer func() { _ = r.adapter.Rollback(txCtx) }()
-	if err := r.setStatementTimeout(txCtx); err != nil {
-		return businessEventStorageError(operation, err)
-	}
-	_, err = r.adapter.storageExecutor(txCtx).ExecContext(txCtx, `SELECT public.business_event_maintain_partitions()`)
-	if err != nil {
-		return businessEventStorageError(operation, err)
-	}
-	if err := r.adapter.Commit(txCtx); err != nil {
-		return businessEventStorageError(operation, err)
-	}
-	return nil
-}
-
 func (r *BusinessEventLifecycleRepository) SetRetentionPolicy(ctx context.Context, retention time.Duration) error {
 	const operation = "BusinessEventLifecycle.SetRetentionPolicy"
 	normalized, err := ledger.NormalizeRetention(retention)

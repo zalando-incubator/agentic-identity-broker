@@ -218,10 +218,9 @@ func TestBusinessEventLifecycle_RetentionRejectsSnapshotIsolation(t *testing.T) 
 	for _, isolation := range []struct {
 		name string
 		sql  sql.IsolationLevel
-		hint ports.StorageTransactionIsolation
 	}{
-		{"repeatable read", sql.LevelRepeatableRead, ports.StorageRepeatableRead},
-		{"serializable", sql.LevelSerializable, ports.StorageSerializable},
+		{"repeatable read", sql.LevelRepeatableRead},
+		{"serializable", sql.LevelSerializable},
 	} {
 		t.Run(isolation.name, func(t *testing.T) {
 			require.NoError(t, adapter.BusinessEventLifecycle().SetRetentionPolicy(ctx, 720*time.Hour))
@@ -238,14 +237,6 @@ func TestBusinessEventLifecycle_RetentionRejectsSnapshotIsolation(t *testing.T) 
 			require.Equal(t, "25001", pgErr.Code)
 			require.NoError(t, operational.Rollback())
 
-			strong := ports.WithStorageTransactionHints(ctx, ports.StorageTransactionHints{Isolation: isolation.hint, Lifecycle: ports.StorageLifecycleExclusive})
-			require.Error(t, adapter.BusinessEventLifecycle().ApplyRetention(strong))
-			owner, err := adapter.BeginTX(strong)
-			require.NoError(t, err)
-			defer func() { _ = adapter.Rollback(owner) }()
-			joined := ports.WithStorageTransactionHints(owner, ports.StorageTransactionHints{Lifecycle: ports.StorageLifecycleExclusive})
-			require.Error(t, adapter.BusinessEventLifecycle().ApplyRetention(joined), "weaker hints do not replace the actual owner isolation")
-			require.NoError(t, adapter.Rollback(owner))
 			events, references := lifecycleCounts(t, db, history)
 			require.Equal(t, 1, events)
 			require.Equal(t, 1, references)

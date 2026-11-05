@@ -776,12 +776,8 @@ func (s *SigningKeyService) recordPromotion(ctx context.Context, key *storage.Si
 		systemID := "broker-lifecycle"
 		actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
 	}
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+"signing-key-promoted", model.BusinessEvent{
+	return s.ledger.RecordFacts(ctx, "signing-key-promoted", model.BusinessEvent{
 		OccurredAt: time.Now().UTC(), Actor: actor,
 		Data: map[string]any{"signing_key_id": key.ID.String(), "activates_at": key.ActivatesAt.UTC().Format(time.RFC3339Nano)},
 	})
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
 }

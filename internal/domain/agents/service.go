@@ -403,9 +403,5 @@ func (s *Service) recordDependent(ctx context.Context, eventType string, facts m
 	if facts.Data == nil {
 		facts.Data = map[string]any{}
 	}
-	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
-	if err != nil {
-		return err
-	}
-	return s.ledger.Record(ctx, event)
+	return s.ledger.RecordFacts(ctx, eventType, facts)
 }
