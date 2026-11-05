@@ -177,8 +177,9 @@ func ValidateAgentRedirectURIRegistration(raw string) error {
 		return fmt.Errorf("wildcard redirect URI hostname is invalid: %w", err)
 	}
 	asciiHost = strings.ToLower(asciiHost)
-	if _, err := netip.ParseAddr(asciiHost); err == nil {
-		return errors.New("wildcard redirect URI cannot use an IP literal hostname")
+	lastLabel := patternLabels[len(patternLabels)-1]
+	if len(lastLabel.parts) == 1 && isWHATWGIPv4Number(lastLabel.parts[0]) {
+		return errors.New("wildcard redirect URI cannot use an IP-shaped hostname")
 	}
 	registrableDomain, err := publicsuffix.EffectiveTLDPlusOne(asciiHost)
 	if err != nil {
@@ -221,6 +222,9 @@ func MatchesAgentRedirectURI(registered, incoming string) bool {
 	if !incomingOK || registeredURL.Scheme != "https" || incomingURL.Scheme != "https" {
 		return false
 	}
+	if _, err := netip.ParseAddr(incomingURL.Hostname()); err == nil {
+		return false
+	}
 	if registeredURL.Port() != incomingURL.Port() {
 		return false
 	}
@@ -232,11 +236,16 @@ func MatchesAgentRedirectURI(registered, incoming string) bool {
 		return false
 	}
 
-	registeredLabels, err := normalizedWildcardLabels(registeredURL.Hostname(), true)
-	if err != nil {
+	incomingLabels, err := normalizedWildcardLabels(incomingURL.Hostname(), false)
+	if err != nil || len(incomingLabels) == 0 {
 		return false
 	}
-	incomingLabels, err := normalizedWildcardLabels(incomingURL.Hostname(), false)
+	incomingLastLabel := incomingLabels[len(incomingLabels)-1]
+	if len(incomingLastLabel.parts) != 1 || isWHATWGIPv4Number(incomingLastLabel.parts[0]) {
+		return false
+	}
+
+	registeredLabels, err := normalizedWildcardLabels(registeredURL.Hostname(), true)
 	if err != nil || len(registeredLabels) != len(incomingLabels) {
 		return false
 	}
@@ -291,6 +300,36 @@ func wildcardMarker(host string) string {
 		marker = "aibwildcardmarker" + strconv.Itoa(suffix)
 	}
 	return marker
+}
+
+func isWHATWGIPv4Number(label string) bool {
+	base := 10
+	digits := label
+	if strings.HasPrefix(strings.ToLower(label), "0x") {
+		base = 16
+		digits = label[2:]
+	} else if len(label) > 1 && label[0] == '0' {
+		base = 8
+		digits = label[1:]
+	}
+	if digits == "" {
+		return label != ""
+	}
+	for _, digit := range digits {
+		value := -1
+		switch {
+		case digit >= '0' && digit <= '9':
+			value = int(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value = int(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value = int(digit-'A') + 10
+		}
+		if value < 0 || value >= base {
+			return false
+		}
+	}
+	return true
 }
 
 func asciiDNSHostname(host string) (string, error) {

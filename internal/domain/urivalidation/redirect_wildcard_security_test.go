@@ -18,6 +18,8 @@ func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 		{"preserves private-use registration", "com.example.app:/oauth2redirect/callback", false},
 		{"rejects wildcard in public suffix", "https://preview*.app-*.example.*/api/oidc/callback", true},
 		{"rejects wildcard in effective registrable domain", "https://preview*.app-*.*.com/api/oidc/callback", true},
+		{"rejects wildcard with numeric final hostname label", "https://*.168.1.1/api/oidc/callback", true},
+		{"rejects wildcard with hexadecimal IPv4 labels", "https://*.0xa8.0x1.0x1/callback", true},
 		{"rejects wildcard replacing entire host", "https://*/api/oidc/callback", true},
 		{"rejects wildcard in IP-shaped hostname", "https://192.0.2.*/api/oidc/callback", true},
 		{"rejects empty hostname label", "https://preview*.app-*.example..com/api/oidc/callback", true},
@@ -41,6 +43,22 @@ func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = %v, want nil", test.uri, err)
 			}
 		})
+	}
+}
+
+func TestMatchesAgentRedirectURIRejectsIPLiteralCallback(t *testing.T) {
+	registered := "https://*.168.1.1/callback"
+	incoming := "https://192.168.1.1/callback"
+	if MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", registered, incoming)
+	}
+}
+
+func TestMatchesAgentRedirectURIRejectsHexadecimalIPv4Callback(t *testing.T) {
+	registered := "https://*.0xa8.0x1.0x1/callback"
+	incoming := "https://0xc0.0xa8.0x1.0x1/callback"
+	if MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", registered, incoming)
 	}
 }
 
