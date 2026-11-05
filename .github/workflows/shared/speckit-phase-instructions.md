@@ -52,6 +52,11 @@ approval yourself. The maintainer approves with a 👍 on the pipeline's approva
 comment, and implementation records that approval. Never edit an ADR under
 `adrs/` that exists on the default branch.
 
+Prefer the option that changes no externally visible contract. If a requirement
+can be met within the existing contract, meet it there. Do not add a contract
+guarantee that the issue does not ask for. When a contract change is unavoidable,
+propose the smallest one.
+
 Report `blocked` only when no option satisfies both the constitution and the
 maintainer's input, or a technical failure prevents the phase. Then state in
 `next_step` exactly what the maintainer must decide or do, with `path:line`
@@ -114,7 +119,9 @@ approved. Each item names the decision in one line and points `location` at its
 authoritative details as `path:line` or `path:start-end`, relative to the
 repository root and inside `context.feature`, `adrs/`, or `api/`. Check every
 line range with `grep -n` or `sed -n`. A title states the decision as the
-artifacts record it. Never put open work or finding IDs in a title; report a
+artifacts record it. Start a title with `Not in issue:` when the item adds a
+contract change or scope that neither the issue nor the maintainer's input asked
+for. Never put open work or finding IDs in a title; report a
 gap as a finding. A consequential change missing from `## Approval Items` is a
 MEDIUM finding. An ADR draft marked Accepted without a cited maintainer approval
 is a HIGH finding. The need for sign-off is not a finding by itself.
