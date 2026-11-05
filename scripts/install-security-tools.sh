@@ -4,6 +4,8 @@
 # directory already holds exactly those builds. security-scan.sh uses the same pins.
 
 set -euo pipefail
+# An exported CDPATH makes `cd` print the directory, corrupting resolved paths.
+unset CDPATH
 
 tools=(
     "github.com/securego/gosec/v2/cmd/gosec@v2.30.0"

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+# An exported CDPATH makes `cd` print the directory, corrupting resolved paths.
+unset CDPATH
 
 if (( $# > 1 )); then
     echo "usage: $0 [scan-root]" >&2
