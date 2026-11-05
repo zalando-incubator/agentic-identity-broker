@@ -140,6 +140,26 @@ Authorization policies that scope permissions per downstream MCP server (for exa
 
 ---
 
+## Amendment (2026-10-29): Verified Principal and Agent ID in `context`
+
+Spec 020 SR-005 passed the Bearer token to OPA so that policies could identify the user and agent. Since ADR 036, the gateway strips the `Authorization` header and hands the subject token to ExtProc in metadata, so policies can no longer see who is calling. This amendment adds `context.principal` and `context.agent_id` ([spec 055](../specs/055-extproc-opa-identity-context/spec.md)).
+
+### Extension
+
+Both fields are copied unmodified from the `principal` and `agent_id` on the broker's token-exchange response for the same request (spec 026 FR-017). They are set on every evaluation after token exchange, including each element of a JSON-RPC batch. They are omitted when the response does not carry them, and on header-only evaluations, which run before token exchange.
+
+### Rationale
+
+The broker extracts both values from the signature-verified subject token, and ExtProc authenticates the exchange with its client assertion. ExtProc has no JWKS client of its own. Parsing the subject token would let a forged claim choose the identity a policy sees. The fields live in `context` because they are token-bound authorization context, like `granted_permission_sets` and `agent_session_id`, not request attributes.
+
+### Impact
+
+- `ContextInput` gains `Principal` and `AgentID`, both `omitempty`.
+- Policies that do not read the fields see no change.
+- Header-only evaluation keeps its order. A policy that needs the caller's identity can only apply it to body-bearing requests.
+
+---
+
 ## Consequences
 
 - **Latency**: OPA evaluation adds <1ms p99 for compiled policies (PreparedEvalQuery). SDK mode with bundle pulling may add up to ~5ms for the first evaluation after a bundle refresh.
