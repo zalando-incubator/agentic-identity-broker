@@ -2730,14 +2730,14 @@ func TestServer_OPA_NonMCPReauth_ReturnsChallenge(t *testing.T) {
 	assert.Equal(t, `Bearer error="insufficient_scope", error_description="session expired", error_uri="https://idp.example.com/reauth"`, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
-// Spec: BrokerExchangeError without ErrorURI still returns 500 (no elicitation).
+// Other broker errors without recovery retain their 500 response.
 func TestServer_Process_BrokerErrorWithoutURI_Returns500(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
-				StatusCode:  403,
-				Code:        "access_denied",
-				Description: "agent does not have a grant",
+				StatusCode:  400,
+				Code:        "invalid_scope",
+				Description: "scope is not supported",
 				// ErrorURI intentionally empty
 			}
 		},
@@ -2929,7 +2929,10 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 		{name: "unsupported_grant_type", code: "unsupported_grant_type", wantCode: "unsupported_grant_type", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
 		{name: "invalid_scope", code: "invalid_scope", wantCode: "invalid_scope", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
 		{name: "invalid_target", code: "invalid_target", wantCode: "invalid_target", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
-		{name: "access_denied", code: "access_denied", wantCode: "access_denied", status: 403, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "authorization_denied"},
+		{name: "access_denied", code: "access_denied", wantCode: "access_denied", status: 403, wantHTTP: httpv3.StatusCode_Forbidden, wantOutcome: "authorization_denied"},
+		{name: "access_denied with recovery URI", code: "access_denied", wantCode: "access_denied", uri: recoveryURL, status: 403, wantHTTP: httpv3.StatusCode_Forbidden, wantOutcome: "authorization_denied"},
+		{name: "transient access_denied", code: "access_denied", wantCode: "access_denied", status: 500, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
+		{name: "throttled access_denied", code: "access_denied", wantCode: "access_denied", status: 429, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
 		{name: "untrusted code", code: "secret-from-provider", wantCode: "unknown", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
 		{name: "empty code", code: "", wantCode: "unknown", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
 	}
@@ -2948,9 +2951,67 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 
 			resp, err := sendRequestHeadersWithProtocol(t, client, nil, "mcp")
 			require.NoError(t, err)
-			assertBrokerErrorResponse(t, resp, tt.wantHTTP, recoveryURL)
+			assertBrokerErrorResponse(t, resp, tt.wantHTTP, tt.uri)
 
 			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.status, tt.wantCode, tt.wantOutcome)
+		})
+	}
+}
+
+func TestServer_BrokerAccessDenied_LogsBoundedDenial(t *testing.T) {
+	const description = "broker description with private diagnostic data"
+	for _, phase := range []string{"token-only", "body-bearing", "header-only"} {
+		t.Run(phase, func(t *testing.T) {
+			logger, capture := newJSONTestLogger()
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{}, fmt.Errorf("wrapped credential-bearing cause: %w", &server.BrokerExchangeError{
+					StatusCode: 403, Code: "access_denied", Description: description,
+				})
+			}}
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				return &authorization.OPADecision{Action: "allow"}, nil
+			}}
+			var client extprocv3.ExternalProcessorClient
+			var cleanup func()
+			if phase == "token-only" {
+				client, cleanup = startTestServerWithConfigAndLogger(t, testConfig(), exchanger, logger)
+			} else {
+				client, cleanup = startTestServerWithAuthorizerConfigAndLogger(t, testConfig(), exchanger, auth, logger)
+			}
+			defer cleanup()
+			var resp *extprocv3.ProcessingResponse
+			if phase == "body-bearing" {
+				var bodyResp *extprocv3.ProcessingResponse
+				resp, bodyResp = sendHeadersThenBodyWithMetadata(t, client, map[string]string{":method": "POST"},
+					tokenExchangeMetadataWithMCPServer("mcp"), []byte(`{"jsonrpc":"2.0","method":"tools/list"}`))
+				assert.Nil(t, bodyResp)
+			} else {
+				var err error
+				resp, err = sendRequestHeadersWithMetadata(t, client, map[string]string{":method": "GET"},
+					tokenExchangeMetadataWithMCPServer("mcp"), true)
+				require.NoError(t, err)
+			}
+			assertBrokerErrorResponse(t, resp, httpv3.StatusCode_Forbidden, "")
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(resp.GetImmediateResponse().Body, &body))
+			assert.Equal(t, description, body["error_description"])
+			records := capture.records(t)
+			denials := 0
+			for _, record := range records {
+				assert.NotEqual(t, "ERROR", record["level"])
+				if record["event"] == "extproc.token_exchange.denied" {
+					denials++
+					assert.Equal(t, "INFO", record["level"])
+					assert.Equal(t, "authorization_denied", record["token_exchange.outcome"])
+					assert.Equal(t, "access_denied", record["oauth_error_code"])
+				}
+			}
+			assert.Equal(t, 1, denials)
+			encoded, err := json.Marshal(records)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), description)
+			assert.NotContains(t, string(encoded), "wrapped credential-bearing cause")
+			assert.NotContains(t, string(encoded), testSubjectToken)
 		})
 	}
 }
@@ -2958,13 +3019,19 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 	const recoveryURL = "https://broker.example.test/reauth"
 	for _, phase := range []string{"body-bearing", "header-only"} {
-		for _, statusCode := range []int{400, 500} {
+		for _, statusCode := range []int{400, 403, 500} {
 			t.Run(fmt.Sprintf("%s/broker-%d", phase, statusCode), func(t *testing.T) {
 				recorder := installSpanRecorder(t)
 
 				code := "invalid_grant"
 				wantHTTP := httpv3.StatusCode_Forbidden
 				wantOutcome := "reauth_required"
+				uri := recoveryURL
+				if statusCode == 403 {
+					code = "access_denied"
+					wantOutcome = "authorization_denied"
+					uri = ""
+				}
 				if statusCode == 500 {
 					code = "server_error"
 					wantHTTP = httpv3.StatusCode_InternalServerError
@@ -2974,7 +3041,7 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 					return &authorization.OPADecision{Action: "allow"}, nil
 				}}
 				exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
-					return server.ExchangeResult{}, &server.BrokerExchangeError{StatusCode: statusCode, Code: code, ErrorURI: recoveryURL}
+					return server.ExchangeResult{}, &server.BrokerExchangeError{StatusCode: statusCode, Code: code, ErrorURI: uri}
 				}}
 				client, cleanup := startTestServerWithAuthorizerConfig(t, testConfigWithTelemetry(), exchanger, auth)
 				defer cleanup()
@@ -2991,7 +3058,7 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 						tokenExchangeMetadataWithMCPServer("mcp"), true)
 					require.NoError(t, err)
 				}
-				assertBrokerErrorResponse(t, resp, wantHTTP, recoveryURL)
+				assertBrokerErrorResponse(t, resp, wantHTTP, uri)
 				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), statusCode, code, wantOutcome)
 			})
 		}
@@ -3747,13 +3814,20 @@ func assertBrokerErrorResponse(t *testing.T, resp *extprocv3.ProcessingResponse,
 	require.NotNil(t, immediate)
 	assert.Equal(t, int32(wantHTTP), int32(immediate.Status.Code))
 	assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
-	if wantHTTP == httpv3.StatusCode_Forbidden {
+	if wantHTTP == httpv3.StatusCode_Forbidden && recoveryURL != "" {
 		assert.Contains(t, string(immediate.Body), `"code":-32042`)
 		assert.Contains(t, string(immediate.Body), recoveryURL)
 		assert.Contains(t, headerMutationValue(immediate.Headers, "www-authenticate"), `error_uri="`+recoveryURL+`"`)
 	} else {
-		assert.NotContains(t, string(immediate.Body), recoveryURL)
+		if recoveryURL != "" {
+			assert.NotContains(t, string(immediate.Body), recoveryURL)
+		}
 		assert.Empty(t, headerMutationValue(immediate.Headers, "www-authenticate"))
+		if wantHTTP == httpv3.StatusCode_Forbidden {
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(immediate.Body, &body))
+			assert.Equal(t, "access_denied", body["error"])
+		}
 	}
 }
 
@@ -3770,7 +3844,7 @@ func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCo
 	assert.Equal(t, "unknown", attrs["token_exchange.exchange_kind"].AsString())
 	assert.NotContains(t, attrs, "outcome")
 	wantErrorType := "rejected"
-	if statusCode >= 500 {
+	if statusCode == 429 || statusCode >= 500 {
 		wantErrorType = "unavailable"
 	}
 	assert.Equal(t, "exchange", attrs["token_exchange.operation"].AsString())

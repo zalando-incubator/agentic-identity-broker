@@ -14,10 +14,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTokenExchanger_DoExchangeUsesRequestLogger(t *testing.T) {
+func TestTokenExchanger_DoExchangeDefersAccessDeniedLogging(t *testing.T) {
 	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":"access_denied"}`))
+		_, _ = w.Write([]byte(`{"error":"access_denied","error_description":"private broker description"}`))
+	}))
+	defer broker.Close()
+
+	var logs bytes.Buffer
+	exchanger := &TokenExchanger{
+		cfg: &extprocconfig.Config{OAuth2: extprocconfig.OAuth2Config{
+			TokenEndpoint: broker.URL, ExchangeTimeout: time.Second,
+		}},
+		client: broker.Client(),
+		logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	}
+	exchanger.assertion.Store(&assertionState{value: "assertion", expiresAt: time.Now().Add(time.Hour)})
+
+	_, _, err := exchanger.doExchange(context.Background(), "subject-token", "https://api.example.com/resource")
+
+	var brokerErr *BrokerExchangeError
+	require.ErrorAs(t, err, &brokerErr)
+	assert.Equal(t, "access_denied", brokerErr.Code)
+	assert.Equal(t, "private broker description", brokerErr.Description)
+	assert.Empty(t, logs.String(), "the handling server owns the denial log")
+}
+
+func TestTokenExchanger_DoExchangeUsesRequestLogger(t *testing.T) {
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 	}))
 	defer broker.Close()
 

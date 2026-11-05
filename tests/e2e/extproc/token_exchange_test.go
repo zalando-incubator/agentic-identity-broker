@@ -133,8 +133,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 		It("should reject with failure response when token exchange fails", func() {
 			// Spec: US1 Scenario 3
 
-			// Given: Token exchange endpoint returns 403 access_denied
-			env.MockTokenExchange.WithError(403, "access_denied")
+			// Given: Token exchange endpoint returns 400 invalid_target
+			env.MockTokenExchange.WithError(400, "invalid_target")
 
 			// When: ExtProc processes a request with token-exchange metadata
 			req := helpers.NewRequestHeaders().

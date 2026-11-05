@@ -854,7 +854,7 @@ func decodeJSONBatch(body []byte) ([]decodedBatchMessage, error) {
 
 // tokenExchangeErrorResponse maps a token exchange error to the appropriate ImmediateResponse.
 // Handles ErrAssertionExpired (503), ErrCircuitOpen (503), and generic failures (500).
-// BrokerExchangeError with error_uri is handled by callers before reaching this function.
+// Recovery challenges and authoritative access denials are handled by callers.
 func (s *Server) tokenExchangeErrorResponse(ctx context.Context, err error) *extprocv3.ProcessingResponse {
 	logger := loggerFromContext(ctx, s.logger)
 	metadata := metadataFromError(ctx, err)
@@ -905,6 +905,10 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extproc
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
 		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic)
 		return reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description), diagnostic
+	}
+	if hasBrokerError && brokerErr.Code == "access_denied" && !isTransientBrokerError(err) {
+		logOperationError(ctx, logger.With("event", "extproc.token_exchange.denied"), slog.LevelInfo, "token exchange denied", metadata, diagnostic)
+		return accessDeniedResponse([]string{brokerErr.Description}), diagnostic
 	}
 
 	return s.tokenExchangeErrorResponse(ctx, err), diagnostic

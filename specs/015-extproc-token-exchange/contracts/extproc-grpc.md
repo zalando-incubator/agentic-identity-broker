@@ -75,7 +75,7 @@ ProcessingResponse{
 
 **Scenario 3: Token Exchange Failure → Immediate 500 Response**
 
-Ordinary exchange errors use this response:
+Ordinary exchange errors, excluding the authoritative denial below, use this response:
 
 ```
 ProcessingResponse{
@@ -98,7 +98,16 @@ ProcessingResponse{
 }
 ```
 
-Feature 043 defines the `error_uri`, expired-assertion, and circuit-open exceptions. No failure response emits an authorization mutation.
+Feature 043 defines the `error_uri`, expired-assertion, and circuit-open exceptions. [ADR 048](../../../adrs/048-extproc-authoritative-access-denial.md) additionally maps non-transient broker `access_denied` without `error_uri` to HTTP 403, for every protocol and OPA mode:
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{"error":"access_denied","error_description":"<broker description>"}
+```
+
+This denial has no `WWW-Authenticate` header or JSON-RPC elicitation. Existing bounded diagnostics and span attributes remain unchanged; the denial log uses INFO and event `extproc.token_exchange.denied`, without the broker description. Transient 429 and 5xx errors remain 500 even when their OAuth code is `access_denied`. No failure response emits an authorization mutation.
 
 
 **Scenario 4: Invalid Metadata → Immediate 503 Response**

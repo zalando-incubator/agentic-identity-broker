@@ -110,7 +110,17 @@ The sidecar rejects the request if either required metadata field is absent, emp
 It validates `subject_token` before `resource_uri`. If both are invalid, it returns `invalid_subject_token`.
 The response is a 503 JSON immediate response. Diagnostics never contain the subject credential or rejected resource URI.
 
-If exchange fails, the sidecar does not forward the original credential. Generic errors, broker 4xx responses without `error_uri` (including 429), 5xx errors, network errors, and timeouts return HTTP 500. The body is `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
+If exchange fails, the sidecar does not forward the original credential. A
+non-transient broker `access_denied` without `error_uri` returns HTTP 403 with
+JSON `error: access_denied` and the broker description in `error_description`.
+It has no `WWW-Authenticate` header or URL elicitation: the broker has not offered
+a recovery flow. The denial is logged at INFO with bounded diagnostics, never
+the broker description.
+
+Generic errors, other broker 4xx responses without `error_uri` (including 429),
+5xx errors, network errors, and timeouts return HTTP 500. The JSON body contains
+`error: token_exchange_failed` and `error_description: token exchange request
+failed`.
 
 If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It forwards the broker URI unchanged in the RFC 6750 challenge and JSON-RPC `-32042` URL elicitation body (`id: null`). For provider-session recovery, the broker URI starts that service's third-party OAuth2 authorization with PKCE and returns to `/sessions` after the provider callback.
 

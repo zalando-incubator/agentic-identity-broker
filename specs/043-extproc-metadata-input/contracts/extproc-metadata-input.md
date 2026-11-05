@@ -155,7 +155,8 @@ Amended 2026-10-26 by the [Feature 023 User Story 1 Amendment](../../023-extproc
 
 | Condition | Response |
 |---|---|
-| Generic exchange error, broker 4xx without `error_uri`, transient 429 or 5xx, network error, or timeout | HTTP 500, `content-type: application/json`, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}` |
+| Nontransient broker `access_denied` without `error_uri`, any protocol | HTTP 403, `content-type: application/json`, JSON `{"error":"access_denied","error_description":"<broker description>"}`; no challenge or elicitation |
+| Generic exchange error, other broker 4xx without `error_uri`, transient 429 or 5xx, network error, or timeout | HTTP 500, `content-type: application/json`, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}` |
 | `ErrAssertionExpired` | HTTP 503, `{"error":"service_unavailable","error_description":"client assertion expired"}` |
 | `ErrCircuitOpen` | HTTP 503, `{"error":"service_unavailable","error_description":"circuit breaker is open"}` |
 | Nontransient broker error with `error_uri`, any protocol | HTTP 403, `content-type: application/json`, `WWW-Authenticate: Bearer error="insufficient_scope"` (plus `error_description`/`error_uri` when RFC 6750-valid), JSON-RPC 2.0 URL elicitation body with code `-32042` and `"id": null` |

@@ -172,6 +172,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
+| 048 | `adrs/048-extproc-authoritative-access-denial.md` | Non-transient broker `access_denied` without recovery remains HTTP 403 at ExtProc |
 
 ## Domain Glossary
 

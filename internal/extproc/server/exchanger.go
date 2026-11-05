@@ -462,7 +462,9 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 		var errBody brokerErrorBody
 		_ = json.Unmarshal(body, &errBody)
 		brokerErr := &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
-		logOperationError(ctx, logger, slog.LevelWarn, "token exchange returned broker error", brokerErr.Metadata(), brokerErr.Diagnostic())
+		if brokerErr.Code != "access_denied" || brokerErr.ErrorURI != "" || isTransientBrokerError(brokerErr) {
+			logOperationError(ctx, logger, slog.LevelWarn, "token exchange returned broker error", brokerErr.Metadata(), brokerErr.Diagnostic())
+		}
 		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(brokerErr.Metadata(), brokerErr)
 	}
 	var response tokenExchangeResponse

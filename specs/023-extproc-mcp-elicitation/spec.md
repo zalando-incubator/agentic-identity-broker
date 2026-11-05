@@ -18,6 +18,8 @@ As a prerequisite improvement, JWT validation error messages are also made more 
 
 ## User Scenarios & Testing
 
+> **No-recovery denial amendment (2026-11-05):** [ADR 048](../../adrs/048-extproc-authoritative-access-denial.md) and [Feature 043 US4-S1](../043-extproc-metadata-input/spec.md#user-story-4---preserve-authoritative-broker-denials-priority-p1) supersede this document's 500 outcome only for non-transient broker `access_denied` without `error_uri`. Such denials return plain JSON HTTP 403 with no challenge or elicitation. Other no-recovery errors retain their existing handling.
+
 ### User Story 1 — Agent Receives Actionable Re-Auth Signal (Priority: P1)
 
 An AI agent makes an MCP tool call via agentgateway. The user's delegated OAuth2 session to the third-party service has expired. Instead of receiving a generic failure, the agent receives a structured error containing the URL the user must visit to re-authorise.

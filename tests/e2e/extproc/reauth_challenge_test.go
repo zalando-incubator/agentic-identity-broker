@@ -2,6 +2,7 @@ package extproc_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -36,6 +37,37 @@ var _ = Describe("ExtProc Re-authentication Challenge", func() {
 			env.Stop()
 		}
 	})
+
+	// US4-S1 from specs/043-extproc-metadata-input/spec.md
+	DescribeTable("preserves broker access_denied without recovery and permits an authorized retry",
+		func(protocol string) {
+			env.MockTokenExchange.WithError(http.StatusForbidden, "access_denied")
+			req := helpers.NewRequestHeaders().
+				WithoutAuthorizationHeader().
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				WithAgentgatewayProtocol(protocol).
+				BuildWithMetadata()
+
+			resp := helpers.SendRequestHeaders(context.Background(), client, req)
+			Expect(resp).To(helpers.HaveImmediateResponseWithStatus(http.StatusForbidden))
+			Expect(helpers.ExtractImmediateResponseHeader(resp, "www-authenticate")).To(BeEmpty())
+			Expect(helpers.ExtractMutatedAuthorizationHeader(resp)).To(BeEmpty())
+			var body map[string]string
+			Expect(json.Unmarshal([]byte(helpers.ExtractImmediateResponseBody(resp)), &body)).To(Succeed())
+			Expect(body).To(Equal(map[string]string{
+				"error": "access_denied", "error_description": "mock exchange error",
+			}))
+			Expect(env.MockTokenExchange.CallCount()).To(Equal(1))
+
+			env.MockTokenExchange.WithError(http.StatusOK, "").WithExchangedToken(fixtures.FreshExchangedToken)
+			resp = helpers.SendRequestHeaders(context.Background(), client, req)
+			Expect(resp).To(helpers.HaveReplacedAuthorizationHeader("Bearer " + fixtures.FreshExchangedToken))
+			Expect(env.MockTokenExchange.CallCount()).To(Equal(2))
+		},
+		Entry("MCP", "mcp"),
+		Entry("A2A", "a2a"),
+		Entry("unknown protocol", "custom"),
+	)
 
 	// Feature 023 User Story 1 Amendment, Scenario 4 (specs/023-extproc-mcp-elicitation/spec.md): Non-MCP protocol
 	It("returns the 403 insufficient_scope challenge instead of 503 for non-MCP protocol metadata", func() {
