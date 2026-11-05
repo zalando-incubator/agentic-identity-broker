@@ -772,7 +772,8 @@ paths:
         Starts third-party OAuth2 authorization for the specified service with PKCE.
         It redirects the browser to that service's provider, not the broker's
         `/oauth2/authorize` endpoint. A successful provider callback returns
-        to the validated `redirect_uri`. RFC 8693 recoverable session errors
+        to the validated `redirect_uri`, or to the configured public URL's `/sessions`
+        page when `redirect_uri` is omitted or empty. RFC 8693 recoverable session errors
         link to this GET with `redirect_uri` set to the configured public URL's
         `/sessions` page. For example:
         `https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
@@ -786,10 +787,11 @@ paths:
       parameters:
         - name: redirect_uri
           in: query
-          required: true
+          required: false
           description: |
-            URI to redirect user after OAuth2 flow completes.
-            Must match the configured public origin. The resulting provider-facing state
+            URI to redirect user after OAuth2 flow completes. When omitted or empty,
+            defaults to the configured public URL's `/sessions` page, never the request Host.
+            An explicit URI must match the configured public origin. The resulting provider-facing state
             must be shorter than 6,000 bytes; oversized requests receive a 400 response.
           schema:
             type: string
@@ -805,7 +807,7 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request (missing redirect_uri, origin mismatch, or oversized state)
+          description: Invalid request (malformed redirect_uri, origin mismatch, or oversized state)
           content:
             application/json:
               schema:
