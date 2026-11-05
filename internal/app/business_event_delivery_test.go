@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -266,6 +268,38 @@ func TestBuilderBusinessEventDeliveryBoundsStorageAndExporterDeadlines(t *testin
 	})
 }
 
+func TestBusinessEventDeliveryInitializationBackoffAndSafeDiagnostics(t *testing.T) {
+	store := businessEventSchemaStorage(t)
+	cfg := deliveryTestBuilder(store, deliveryTestReceiver(t), true).config
+	cfg.Telemetry.Exporter.Protocol = "invalid-protocol-canary"
+	cfg.Telemetry.Exporter.Endpoint = "https://endpoint-secret-canary.invalid"
+	cfg.Telemetry.Exporter.Headers = map[string]string{"Authorization": "header-secret-canary"}
+	previous := newBusinessEventDeliveryProvider
+	attempts := 0
+	newBusinessEventDeliveryProvider = func(ctx context.Context, config ports.TelemetryConfig) (*telemetry.BusinessEventProvider, error) {
+		attempts++
+		return telemetry.NewBusinessEventProvider(ctx, config)
+	}
+	t.Cleanup(func() { newBusinessEventDeliveryProvider = previous })
+	ticks := make(chan time.Time, 3)
+	now := time.Now()
+	ticks <- now.Add(time.Second)
+	ticks <- now.Add(29 * time.Second)
+	ticks <- now.Add(31 * time.Second)
+	close(ticks)
+	var logs bytes.Buffer
+	require.NoError(t, runBusinessEventDelivery(t.Context(), store.BusinessEventDelivery(), cfg, ticks, slog.New(slog.NewJSONHandler(&logs, nil))))
+	require.Equal(t, 2, attempts, "initialization must not retry on every delivery scan")
+	require.NotContains(t, logs.String(), "canary")
+	decoder := json.NewDecoder(&logs)
+	for range 2 {
+		var record map[string]any
+		require.NoError(t, decoder.Decode(&record))
+		require.Equal(t, "Business event telemetry initialization failed", record["msg"])
+		require.Equal(t, "business event telemetry exporter initialization failed", record["error"])
+	}
+}
+
 func TestBuilderBusinessEventDeliveryRecoversAfterProviderInitializationFailure(t *testing.T) {
 	store := businessEventSchemaStorage(t)
 	receiver := deliveryTestReceiver(t)
@@ -290,7 +324,7 @@ func TestBuilderBusinessEventDeliveryRecoversAfterProviderInitializationFailure(
 
 	require.Eventually(t, func() bool {
 		return deliveryTestCount(receiver, queued) == 1 && deliveryTestCount(receiver, recordedDuringFailure) == 1
-	}, 4*time.Second, 10*time.Millisecond, "worker must retry initialization automatically rather than waiting for a restart")
+	}, 35*time.Second, 10*time.Millisecond, "worker must retry initialization automatically rather than waiting for a restart")
 	require.GreaterOrEqual(t, attempts.Load(), int32(2))
 	require.Eventually(t, func() bool { return len(deliveryTestPending(t, store.BusinessEventDelivery())) == 0 },
 		5*time.Second, 10*time.Millisecond)

@@ -21,6 +21,8 @@ type BusinessEventProvider struct {
 const businessEventScope = "agentic-identity-broker.ledger"
 
 var errBusinessEventExport = errors.New("business event telemetry export was not acknowledged")
+var errBusinessEventResource = errors.New("business event telemetry resource initialization failed")
+var errBusinessEventExporter = errors.New("business event telemetry exporter initialization failed")
 
 type businessEventProcessor struct{ sdklog.Processor }
 
@@ -62,11 +64,11 @@ func (p *businessEventProcessor) OnEmit(ctx context.Context, record *sdklog.Reco
 func NewBusinessEventProvider(ctx context.Context, cfg ports.TelemetryConfig) (*BusinessEventProvider, error) {
 	res, err := buildResource(ctx, cfg)
 	if err != nil {
-		return nil, errBusinessEventExport
+		return nil, errBusinessEventResource
 	}
 	exporter, err := buildLogExporter(ctx, cfg, nil)
 	if err != nil {
-		return nil, errBusinessEventExport
+		return nil, errBusinessEventExporter
 	}
 	return newBusinessEventProvider(exporter, res), nil
 }

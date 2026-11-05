@@ -242,7 +242,7 @@ The pre-upgrade Job only provisions partitions. It never sweeps under the supers
 
 ## Verify outage recovery
 
-The copy worker uses the existing telemetry destination. It scans retained references at startup and every second, with at most 100 candidates. Collector work remains outside business commits. Failed initialization retries automatically. Failed exports retry after 30 seconds with the original ID.
+The copy worker uses the existing telemetry destination. It scans retained references at startup and every second, with at most 100 candidates. Collector work remains outside business commits. Failed initialization retries after 30 seconds and reports a credential-free resource or exporter initialization error. Scan and delivery warnings distinguish cancellation and deadline expiry without exposing storage or exporter error text. Failed exports retry after 30 seconds with the original ID.
 PostgreSQL uses a stable statement-time cutoff to bound the due index scan. A restarted worker honors persisted retry deadlines; allow the stored backoff to elapse before expecting recovery.
 
 An exporter deadline also counts as a failed attempt. PostgreSQL keeps the deletion barriers through a bounded one-second cleanup for the retry write. Then it releases the barriers for erasure and maintenance. A hanging collector must not leave its reference immediately due on every one-second worker scan.

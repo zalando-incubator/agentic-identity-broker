@@ -12,9 +12,12 @@ import (
 )
 
 var newBusinessEventDeliveryProvider = telemetry.NewBusinessEventProvider
+var errBusinessEventDelivery = errors.New("business event storage or exporter operation failed")
 
 func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventDeliveryRepository, cfg *ports.Config, ticks <-chan time.Time, logger *slog.Logger) (workerErr error) {
 	var provider *telemetry.BusinessEventProvider
+	var nextInitialization time.Time
+	now := time.Now()
 	defer func() {
 		if provider != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Telemetry.Exporter.Timeout)
@@ -27,12 +30,13 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 			return nil
 		}
 		if cfg.Telemetry.Enabled && cfg.Telemetry.Logs.Enabled && cfg.BusinessEvents.TelemetryCopyEnabled {
-			if provider == nil {
+			if provider == nil && !now.Before(nextInitialization) {
 				initCtx, cancel := context.WithTimeout(ctx, cfg.Telemetry.Exporter.Timeout)
 				initialized, err := newBusinessEventDeliveryProvider(initCtx, cfg.Telemetry)
 				cancel()
 				if err != nil {
-					logger.WarnContext(ctx, "Business event telemetry initialization failed")
+					nextInitialization = time.Now().Add(30 * time.Second)
+					logger.WarnContext(ctx, "Business event telemetry initialization failed", "error", err)
 				} else {
 					provider = initialized
 				}
@@ -42,7 +46,7 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 				keys, err := delivery.ListDue(readCtx, 100)
 				cancel()
 				if err != nil {
-					logger.WarnContext(ctx, "Business event delivery scan failed")
+					logger.WarnContext(ctx, "Business event delivery scan failed", "error", businessEventDeliveryError(err))
 				} else {
 					for _, key := range keys {
 						if ctx.Err() != nil {
@@ -56,7 +60,7 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 						})
 						cancel()
 						if err != nil && ctx.Err() == nil {
-							logger.WarnContext(ctx, "Business event telemetry delivery failed")
+							logger.WarnContext(ctx, "Business event telemetry delivery failed", "error", businessEventDeliveryError(err))
 						}
 					}
 				}
@@ -65,11 +69,23 @@ func runBusinessEventDelivery(ctx context.Context, delivery ports.BusinessEventD
 		select {
 		case <-ctx.Done():
 			return nil
-		case _, open := <-ticks:
+		case tick, open := <-ticks:
 			if !open {
 				return nil
 			}
+			now = tick
 		}
+	}
+}
+
+func businessEventDeliveryError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	default:
+		return errBusinessEventDelivery
 	}
 }
 
