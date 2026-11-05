@@ -296,7 +296,7 @@ jobs:
           path: test-results/
           if-no-files-found: warn
 
-  # The Docker-backed suites live in their own workflow so the Spec Kit pipeline can dispatch them alone.
+  # Docker-labelled suites have their own workflow; backend ledger acceptance also uses PostgreSQL containers.
   containers:
     name: Container tests
     needs: changes

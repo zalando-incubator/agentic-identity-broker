@@ -24,12 +24,13 @@ Refresh does not hold ledger lifecycle or subject gates during provider I/O. It 
 
 Unlock uses the storage write timeout on a separate cleanup context. If acquisition is uncertain or unlock fails, the broker discards the connection. This cleanup cannot make transaction-mode pooling safe. The pooler can retain a different locked backend.
 
+The lifecycle and subject gates are transaction-scoped. They do not impose this pooling restriction; the refresh coordination lock does.
 
 ## Install the scheduler
 
 ### Helm
 
-For PostgreSQL with `migration.enabled: true`, the chart renders a maintenance CronJob. It uses `migration.grants.image`, migration credentials, and the migration ServiceAccount. Its schedule is `*/5 * * * *`, with `Forbid` concurrency. Each Job has a 120-second deadline and at most two retries. Resources and SSL connectivity use the migration configuration.
+For PostgreSQL with `migration.enabled: true`, the chart renders a maintenance CronJob. It uses `migration.grants.image`, migration credentials, and the migration ServiceAccount. Its schedule is `*/5 * * * *`, with a 300-second starting deadline and `Forbid` concurrency. The starting deadline bounds missed-schedule lookback after suspension or a controller outage. Each Job has a 120-second deadline and at most two retries. Resources and SSL connectivity use the migration configuration.
 
 The pre-install/pre-upgrade Job runs schema migrations, then provisioning without partition deletion. Optional grants run only with `migration.grants.enabled` set to true. Disabled optional grants do not disable provisioning or maintenance. If `migration.enabled` is disabled, the chart removes both Jobs. An external scheduler and migration procedure then become mandatory.
 
@@ -45,6 +46,8 @@ Set it on the connection or in a separate command before the function call.
 A function-local setting cannot start the deadline for its caller statement.
 `lock_timeout` bounds lock waits, not total execution.
 Maintenance also requires `READ COMMITTED` isolation. It rejects fixed transaction snapshots so a sweep reads the policy committed before it acquires the lifecycle gate.
+
+Every owning broker transaction takes the shared lifecycle gate. Each maintenance attempt requests it exclusively, so new transactions can queue behind maintenance while it waits, up to its five-second lock timeout. Once acquired, maintenance holds the gate through its bounded statement and commit. Partition DDL also locks the ledger parent tables. Account for this contention when choosing database and request deadlines.
 
 The template does not render `spec.suspend`. Thus, an operator suspension survives `helm upgrade`.
 
@@ -243,6 +246,8 @@ The copy worker uses the existing telemetry destination. It scans retained refer
 PostgreSQL uses a stable statement-time cutoff to bound the due index scan. A restarted worker honors persisted retry deadlines; allow the stored backoff to elapse before expecting recovery.
 
 An exporter deadline also counts as a failed attempt. PostgreSQL keeps the deletion barriers through a bounded one-second cleanup for the retry write. Then it releases the barriers for erasure and maintenance. A hanging collector must not leave its reference immediately due on every one-second worker scan.
+
+One dispatch attempt can hold the shared lifecycle gate for the storage write timeout plus one second. If this exceeds maintenance's five-second lock timeout, slow exports can cause repeated maintenance failures. Alert on failed or absent maintenance runs and repair them before the roughly eight days of pre-provisioned partitions run out; recording fails closed when the current partition pair is unavailable.
 
 For a disposable PostgreSQL dataset, stop the collector. Complete a real broker workflow. With operational credentials, query the event and its payload-free pending reference:
 

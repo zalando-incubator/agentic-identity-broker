@@ -531,7 +531,7 @@ Both images share the same version tag to ensure consistency between migrations 
 
 When a deployment uses PostgreSQL with `migration.enabled: true`, the chart installs migration-owned maintenance every five minutes.
 Maintenance is independent of telemetry.
-It uses a CronJob with schedule `*/5 * * * *` and `concurrencyPolicy: Forbid`.
+It uses a CronJob with schedule `*/5 * * * *`, a 300-second starting deadline, and `concurrencyPolicy: Forbid`.
 The Job runs `SELECT public.business_event_maintain_partitions();` through `psql -v ON_ERROR_STOP=1`.
 
 It reuses `migration.grants.image`, the migration ServiceAccount, migration credentials, and the trusted database endpoint and SSL configuration.

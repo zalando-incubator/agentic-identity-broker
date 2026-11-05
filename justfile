@@ -441,7 +441,7 @@ _integration-tier-junit tier args:
 # Run the backend E2E acceptance suite and publish its reports
 verify-e2e-backend-junit: verify-e2e-backend-default-junit verify-e2e-docker-junit
 
-# Run the backend E2E suite without container-backed scenarios and publish its reports
+# Run backend acceptance, including PostgreSQL ledger scenarios, without docker-labelled suites
 verify-e2e-backend-default-junit: _e2e-backend-web-build
     #!/usr/bin/env bash
     set -euo pipefail

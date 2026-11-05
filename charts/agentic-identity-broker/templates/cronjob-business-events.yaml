@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/component: business-event-maintenance
 spec:
   schedule: "*/5 * * * *"
+  startingDeadlineSeconds: 300
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
