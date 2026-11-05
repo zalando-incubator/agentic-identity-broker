@@ -8,18 +8,18 @@ Every unknown in the plan's Technical Context is resolved here. Each entry gives
 
 | Area | Source | Finding |
 |---|---|---|
-| Token acquisition | `internal/domain/oauth2session/service.go` `GetValidAccessToken` | If `session.HasValidAccessToken()` is true, the method decrypts and returns the token without loading the service or comparing identity (ADR 038). This is the main gap for FR-002. |
+| Token acquisition | `internal/domain/oauth2session/service.go` `GetValidAccessToken` | ADR 046 already blocks issuance after recorded refresh rejection. Otherwise the valid-access-token path does not compare current service identity (ADR 038); that is the remaining FR-002 gap. |
 | Credential selection | `internal/domain/oauth2session/credentials.go` `selectCredentials` | Exchange and refresh compare the established `UpstreamClientID` with the selected client ID. They do so only when `credentialSourceEligible` (not public, not CIMD confidential, not Google). Missing identity passes only for stored services that never transitioned. |
 | Initiation | `service.go` `initiateOAuth2Flow` | Seals `UpstreamClientID` in the JWE state only for eligible services. |
 | Session write | `service.go` `createSession` | A locked compare-and-set on session ID and `CallbackID` already prevents an older callback from overwriting a newer reconnect (FR-004). |
 | Refresh | `refreshLockedSession`, `refreshSessionTokens` | Runs under `WithLockedSession` and calls `RefreshAccessToken` with the established identity. This is shared by on-demand, background, manual, and sweep refreshes. |
-| Agent authorization | `internal/domain/oauth2/service.go` `anyDelegatedSessionUnusable` | Already redirects to consent for a missing or expired session of an included service. It is the natural hook for FR-007. |
-| Consent detail | `internal/domain/consent/service.go` | `IsConnected` comes from `ListActiveServiceIDsByPrincipal`, an expiry-only SQL predicate. |
-| Consent submission | `consent/service.go` `ListActiveByPrincipal` | Validates mandatory services against expiry-only usability. |
-| Session listing | `ListUserSessions`, `storage.NewUserSessionSummary` | `is_expired` and `access_token_expired` are derived from token times only. |
+| Agent authorization | `internal/domain/oauth2/service.go` `anyDelegatedSessionUnusable` | Already redirects to consent for a missing session or ADR 046 reauthentication condition on an included service. Add identity unusability without replacing rejection or refreshability handling (FR-007, FR-015). |
+| Consent detail | `internal/domain/consent/service.go` | `IsConnected` comes from `ListActiveServiceIDsByPrincipal`; preserve ADR 046's existing rejection and refreshability predicates while adding identity filtering. |
+| Consent submission | `consent/service.go` `ListActiveByPrincipal` | Preserve ADR 046's existing session-usability rule while adding identity to mandatory-service validation. |
+| Session listing | `ListUserSessions`, `storage.NewUserSessionSummary` | `requires_reauthentication` already exists. `is_expired` is its equal deprecated alias, while `access_token_expired` is an independent expiry signal (ADR 046). |
 | Admin update | `internal/domain/thirdparty/service.go` `prepareUpdate` and the postgres `UPDATE thirdparty_oauth2_services` | One update path writes `client_id`. `credential_source_transitioned` is computed in SQL atomically. Issuer and resource changes are refused while sessions exist. Client-ID changes are allowed. |
 | Token-exchange mapping | `internal/domain/tokenexchange/session_diagnostic.go` | `identity_missing` and `identity_mismatch` map to `credential_identity_changed`, which gives a recoverable `invalid_grant` with ADR 044's `error_uri`. |
-| Parallel work | Unmerged branch `origin/fix/session-validity-prepare` (its own ADR 045) | Proposes a `requires_reauthentication` session field in an End-User API 2.0.0. It is not on `main` and is not a binding input. |
+| Binding baseline | Accepted `adrs/046-observed-refresh-token-rejection.md`, `api/enduser/openapi.yaml` 1.2.0 | Observed rejection, response fields, deprecated alias, and `409 refresh_rejected` are already accepted, not optional parallel work. |
 
 ## R1 — How to detect a client-ID change on both channels
 
@@ -48,7 +48,7 @@ Every unknown in the plan's Technical Context is resolved here. Each entry gives
 
 ## R3 — Usability rule and legacy sessions
 
-**Decision (Proposed, DEC-001 via ADR-001)**: A session is identity-usable when (a) its recorded identity equals the current effective identity and its recorded revision equals the current revision, or (b) it has no recorded identity, the service is stored, the service never transitioned, and the current revision is 0. Sessions that existed before rollout get revision 0 through a column default. No identity is backfilled.
+**Decision (Proposed, DEC-001 via ADR-001)**: A session is identity-usable when (a) its recorded identity equals the current effective identity and its recorded revision equals the current revision, or (b) it has no recorded identity, the service is stored, the service never transitioned, and the current revision is 0. Sessions that existed before rollout get revision 0 through a column default. No identity is backfilled. Identity usability is only one part of usability: preserve ADR 046's existing `RequiresReauthentication` predicate and OR it with failed identity usability. Rejected sessions remain rejected even with unexpired tokens; expired tokens with stored, not-rejected refresh tokens remain refreshable if identity is usable.
 
 **Rationale**: (a) gives rollback safety. (b) keeps ADR 041's exception exactly until the first recorded change after rollout (FR-013, AS-1.6). It applies per service, so every principal is affected together (AS-1.2).
 
@@ -90,14 +90,14 @@ Token acquisition reads the service through a projection that needs no secret de
 
 **Decision (Proposed, API-001 and API-002)**:
 
-- End-User API `1.1.0` → `1.2.0`. Add the required boolean `requires_reauthentication` to `UserSessionSummary` and `SessionStatus`. It is true when the session cannot supply a token without a fresh user authorization: `is_expired` is true, or the identity is superseded. `is_expired` keeps its meaning.
+- End-User API `1.2.0` → proposed `2.0.0` on existing routes. Extend the existing required `requires_reauthentication` field with identity unusability, preserving ADR 046's rejection and refreshability causes. `SessionStatus` already inherits it from `UserSessionSummary`. `is_expired` remains an equal deprecated alias; `access_token_expired` remains independent.
 - `connectionStatus` keeps its closed two-value enum and reports `not_connected` for a session that requires reauthentication.
 - Document the changed behavior of `/oauth2/authorize` (consent redirect), `/oauth2/token` (no token, `invalid_grant` with `error_uri` despite an unexpired token), the third-party callback (a stale authorization is rejected), and grant submission (a superseded session does not satisfy a mandatory service).
 - Admin API stays at `2.1.0`, with descriptions only. `PUT /api/services/{service-id}` documents that a client-ID change invalidates sessions and that secret rotation does not. The sweep's `failed` count includes sessions with a superseded identity. Internal fields `client_identity`, `client_identity_revision`, and `upstream_client_revision` are rejected as request fields and never returned.
 
-**Rationale**: An additive response field is a minor version under the existing versioning practice (`1.0.0` → `1.1.0` for additive CIMD support). The field name matches the parallel validity proposal, so the two can converge. ADR 044 is precedent for keeping a version when only broker-chosen behavior changes.
+**Rationale**: ADR 046 and OpenAPI 1.2.0 already define the fields. Identity invalidation and manual-refresh status changes alter existing behavior, not merely a broker-selected recovery-link target as in ADR 044. A major cutover follows Constitution Principles IV and X. Preserve the accepted alias instead of inventing a second expiry meaning.
 
-**Alternatives considered**: a new `connectionStatus` value (a breaking change to a closed response enum); reusing `is_expired` (the spec forbids repurposing expiry fields); bumping the Admin API version for description-only changes.
+**Alternatives considered**: new versioned endpoints (more surface area than a major cutover); a minor bump or unchanged version (does not meet the changed-behavior rule); a new `connectionStatus` value (unneeded enum change); bumping the Admin API version for description-only changes.
 
 ## R8 — Persistence and migration
 

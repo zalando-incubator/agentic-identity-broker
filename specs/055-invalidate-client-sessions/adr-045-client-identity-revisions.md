@@ -3,9 +3,9 @@
 **Status**: Proposed
 **Date**: 2026-11-05
 **Feature**: 055-invalidate-client-sessions
-**Supersedes**: In part, [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) (scope and timing of client-identity enforcement, and the legacy identity exception) and [ADR 038](../../adrs/038-proactive-token-refresh.md) (unconditional immediate return of a valid access token). All other decisions of both ADRs remain binding.
+**Supersedes**: In part, [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) (scope and timing of client-identity enforcement, and the legacy identity exception) and [ADR 038](../../adrs/038-proactive-token-refresh.md) (unconditional immediate return of a valid access token). All other decisions of both ADRs remain binding. [ADR 046](../../adrs/046-observed-refresh-token-rejection.md) remains binding in full: identity invalidation extends its reauthentication predicate without weakening observed-rejection handling.
 
-> Feature-local draft. The tasks phase moves it to `adrs/` only after the maintainer approves it. The number can change if `main` assigns 045 first.
+> Feature-local draft. Implementation records the maintainer's approval and moves it to `adrs/` only after sign-off. The draft number is provisional: `main` already owns ADR 045 (agent-subject impersonation), so assign an unused number when moving it.
 
 ## Context
 
@@ -13,7 +13,7 @@ A third-party service's provider-facing client ID can change in two ways. An ope
 
 ADR 041 records the initiating client identity (`UpstreamClientID`) in the authorization state and the session. It compares that identity before code exchange and refresh. Three gaps remain:
 
-1. ADR 038 returns a still-valid access token immediately, so token exchange does not check identity. A previous-identity token stays available until it expires.
+1. ADR 038 returns a still-valid access token immediately unless ADR 046's observed-rejection rule blocks it, but token exchange does not check client identity. A previous-identity token stays available until it expires.
 2. Only stored or filesystem shared-secret services are eligible. Public, CIMD, DCR, and Google-flavor services record no identity, so a change of their client ID is not detected.
 3. A session compares only its recorded client ID with the current one. When an operator restores the previous client ID, an invalidated session becomes usable again. Identity-less legacy sessions of never-transitioned stored services stay usable after any later change.
 
@@ -49,16 +49,16 @@ A session is **usable for its identity** only when the broker has resolved and r
 - The session has a recorded identity equal to `E` and a recorded revision equal to `R`.
 - The session has no recorded identity (legacy), the service is stored, has never transitioned its credential source (ADR 041), and `R` is 0, so no change has been recorded since rollout.
 
-Otherwise the session needs reauthentication. A session established before rollout has revision 0. A session that ADR 041 already accepts therefore stays usable until the first change after rollout. No historical identity is inferred or backfilled.
+Otherwise the session needs reauthentication. Identity usability does not override ADR 046: a recorded rejection still blocks issuance with an unexpired access token, while access expiry with a stored, not-rejected refresh token remains refreshable if identity is usable. The complete predicate is ADR 046's `RequiresReauthentication` OR identity unusability. A session established before rollout has revision 0. A session that ADR 041 already accepts therefore stays usable until the first change after rollout. No historical identity is inferred or backfilled.
 
 Because usability is evaluated against the persisted revision on each use, no bulk session write is needed. Restoring a previous client ID records a new revision. It cannot revive an older session.
 
 ### Enforcement points
 
 - **Token acquisition** (`GetValidAccessToken`, used by RFC 8693 exchange) checks identity before it returns any stored token, including a still-valid access token and a token with unknown expiry. This narrows ADR 038's immediate return. A valid token still returns immediately after the identity check, without waiting for a refresh.
-- **Refresh** (on-demand, background, manual, and sweep) checks identity and revision under the existing session lock before provider authentication. A failed check never submits the refresh token and never changes the stored session.
+- **Refresh** (on-demand, background, manual, and sweep) preserves ADR 046's exclusion of rejected sessions and checks identity and revision under the existing session lock before provider authentication. A failed check never submits the refresh token and never changes the stored session.
 - **Callback** compares the sealed identity and revision with the current ones before code exchange. A stale authorization fails with the existing credential-source outcome, and the user can start a new one. The existing callback-ID compare-and-set still decides between competing reconnects.
-- **Agent authorization** (`/oauth2/authorize`) treats a session that needs reauthentication like a missing or expired session for each service included in the grant. It redirects to agent consent.
+- **Agent authorization** (`/oauth2/authorize`) extends the existing ADR 046 unusability rule with identity invalidation for each service included in the grant. It redirects to agent consent.
 - **Consent and session management** report such a session as not connected and as requiring reauthentication.
 
 ### Failure semantics
@@ -87,7 +87,7 @@ Replicas can briefly read different client-ID file values while a publication pr
 - Routine secret rotation through files or the Admin API causes no reconnection.
 - Every token exchange for a filesystem service reads the client-ID file, and every token exchange reads the service's identity state. The added cost is one small file read and one indexed read. A file outage now blocks the release of stored tokens for that service. Before this ADR, a valid token was still released.
 - Public, CIMD, DCR, and Google-flavor services now enforce identity for new connections. Their identity-less legacy sessions keep the never-transitioned exception until the first recorded change.
-- Users see `requires_reauthentication` in session responses and `not_connected` in agent consent. They reconnect through the existing service sign-in flow.
+- Users see identity invalidation through the existing `requires_reauthentication` field and its equal deprecated `is_expired` alias, with `not_connected` in agent consent. `access_token_expired` retains its distinct meaning. They reconnect through the existing service sign-in flow. The proposed API-001 major 1.2.0 → 2.0.0 cutover and manual-refresh behavior are detailed in [the End-User contract](contracts/enduser-api.md); ADR 046's `409 refresh_rejected` remains unchanged.
 - Rollback to an older binary removes enforcement but keeps the evidence. The guarded DOWN migration protects that evidence.
 
 ## Alternatives Considered

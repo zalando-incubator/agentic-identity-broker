@@ -13,7 +13,7 @@ Technical approach ([research.md](research.md), draft [ADR 045](adr-045-client-i
 - Each service persists its last **Effective Client Identity** and a monotonic **Client Identity Revision**. An accepted Admin API `PUT` that changes a stored `client_id` increments the revision atomically in the existing conditional `UPDATE`. A filesystem change is recorded by compare-and-set the first time any broker operation reads a different client-ID file value.
 - New authorizations seal `{client ID, revision}` for every service variant. Sessions store both. A session is usable only when both match the service's current state. Legacy identity-less sessions keep ADR 041's exception only while the revision is still 0 (DEC-001). A rollback is a new revision, so it never revives a session.
 - One domain rule is enforced at token acquisition, including still-valid tokens (narrowing ADR 038), and at refresh, sweep, callback, agent authorization, consent, and session listing.
-- Recovery reuses existing flows: `invalid_grant` with ADR 044's `error_uri`, the consent redirect, and service sign-in. The End-User API adds `requires_reauthentication` (1.2.0). The Admin API documents the behavior only.
+- Recovery reuses existing flows: `invalid_grant` with ADR 044's `error_uri`, the consent redirect, and service sign-in. The End-User API extends its existing ADR 046 `requires_reauthentication` predicate with identity invalidation and retains the equal deprecated `is_expired` alias (proposed major 1.2.0 → 2.0.0 cutover). Observed-rejection handling remains binding. The Admin API documents the behavior only.
 
 ## Technical Context
 
@@ -36,13 +36,13 @@ All Technical Context unknowns are resolved in [research.md](research.md).
 **Design Preconditions (BLOCKING)**:
 
 - [x] **Domain Model**: Aggregates `ThirdpartyOAuth2Service` and `UserSession` are extended, with value objects Effective Client Identity and Client Identity Revision and the derived condition Reauthentication Required ([data-model.md](data-model.md)).
-- [x] **Domain Concepts**: The three terms are planned for the `ARCHITECTURE.md` §12 Glossary and the AGENTS.md glossary. The **Client-identity association** entry is updated.
+- [x] **Domain Concepts**: The two identity terms are planned for the `ARCHITECTURE.md` §12 Glossary and the AGENTS.md glossary. Extend existing **Requires Reauthentication** (ADR 046) and **Client-identity association** (ADR 041) entries rather than duplicating them.
 - [x] **Entity IDs**: No new entity or UUID key. `id.ClientID` is reused. No `gen_ids.go` change.
 - [x] **Configuration Design**: No new configuration. The existing `third_party_oauth2.credential_files` and `server.enduser.public_url` are used, as shown in the spec's Journey 1.
 - [x] **Config Examples**: No new keys. `examples/config/third-party-oauth2.yaml` gains only a comment that points to the client-ID change procedure.
 - [x] **Helm Deployment Contract**: No values change. The chart README's migration and rollback notes gain migrations 046/047 and the guarded DOWN.
 - [x] **API Design First**: The deltas are in [contracts/enduser-api.md](contracts/enduser-api.md) and [contracts/admin-api.md](contracts/admin-api.md). They are applied to `api/` only after approval (API-001, API-002).
-- [x] **API Documentation**: `api/enduser/openapi.yaml` (1.2.0) and `api/admin/openapi.yaml` (descriptions), plus `docs/api/` and `docs/reference/token-exchange.md`.
+- [x] **API Documentation**: `api/enduser/openapi.yaml` (proposed 2.0.0 from baseline 1.2.0) and `api/admin/openapi.yaml` (descriptions), plus `docs/api/` and `docs/reference/token-exchange.md`.
 - [ ] **API Changes**: Pending maintainer sign-off on API-001 and API-002.
 - [x] **Database Design**: Migrations `046`/`047` use go-migrate naming and the guarded online pattern of migrations 040/041 and 044/045.
 - [x] **E2E Acceptance Tests**: All 16 named scenarios are mapped below and written before implementation.
@@ -77,6 +77,7 @@ All Technical Context unknowns are resolved in [research.md](research.md).
 | FR-011, AS-3.1, AS-3.3 | Evidence is per service. Grants are untouched. Only included services are checked. |
 | FR-012, AS-3.2, AS-3.4, SC-004 | Increments happen only on a differing effective client ID. Secret, metadata, and same-identity source changes record nothing. |
 | FR-013, AS-1.6 | Legacy rule `R == 0` (DEC-001). The column default is 0. No backfill. |
+| FR-015, AS-3.1, SC-004 | ADR 046's existing `RequiresReauthentication` OR identity unusability; preserve rejected-session exclusion, refreshable expired-token behavior, `409 refresh_rejected`, and equality of the deprecated alias. |
 | SR-001–SR-005 | R5 fail-closed. Existing state, PKCE, and return-URI protections. ADR 044 `PublicURL` link. Events in [contracts/observability.md](contracts/observability.md). No provider revocation. |
 
 ## Approval Items
@@ -85,11 +86,11 @@ These items need the maintainer's sign-off before implementation. Each is Propos
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-001 | API | End-User API 1.1.0 → 1.2.0: required `requires_reauthentication` on `UserSessionSummary` and `SessionStatus`. `connectionStatus` reports `not_connected` for such sessions. Documented behavior for `/oauth2/authorize` (consent redirect), `/oauth2/token` (`invalid_grant` despite an unexpired token, `server_error` when identity is unreadable), the third-party callback (stale authorization rejected), manual refresh (identity denial → `409 refresh_unavailable` instead of `500`), and grant submission | specs/055-invalidate-client-sessions/contracts/enduser-api.md:1-75 |
+| API-001 | API | End-User API 1.2.0 → 2.0.0 major cutover on existing routes: add identity unusability to the existing `requires_reauthentication` predicate, preserving ADR 046's rejection and refreshability rule and the equal deprecated `is_expired` alias; `SessionStatus` inherits the summary fields. `connectionStatus` reports `not_connected` for such sessions. Documented behavior for `/oauth2/authorize` (consent redirect), `/oauth2/token` (`invalid_grant` despite an unexpired token, `server_error` when identity is unreadable), the third-party callback (stale authorization rejected), manual refresh (identity denial → `409 refresh_unavailable` instead of `500`, preserving `409 refresh_rejected`), and grant submission | specs/055-invalidate-client-sessions/contracts/enduser-api.md:1-79 |
 | API-002 | API | Admin API stays 2.1.0. Description-only: an accepted `client_id` change invalidates all sessions of the service, secret rotation and same-identity changes do not, internal identity fields are rejected as input, and sweep `failed` includes superseded sessions | specs/055-invalidate-client-sessions/contracts/admin-api.md:1-35 |
 | ADR-001 | ADR | Draft ADR 045 "Client Identity Revisions Invalidate Third-Party Sessions", which partially supersedes ADR 041 (enforcement scope, timing, and legacy exception) and ADR 038 (immediate valid-token return now follows the identity check) | specs/055-invalidate-client-sessions/adr-045-client-identity-revisions.md:1-104 |
-| DEC-001 | Decision | Identity-less legacy sessions stay usable only while the service's Client Identity Revision is 0. The first recorded change after rollout invalidates them for all principals. No identity is inferred | specs/055-invalidate-client-sessions/spec.md:418 |
-| DEC-002 | Decision | Persisted schema change: `client_identity` and `client_identity_revision` on services, `upstream_client_revision` on sessions. Migrations 046 (add, `NOT VALID` checks, `NOWAIT`) and 047 (validate). DOWN 046 refuses while any revision > 0. Invalidated sessions are retained, not deleted | specs/055-invalidate-client-sessions/data-model.md:104-113 |
+| DEC-001 | Decision | Identity-less legacy sessions stay usable only while the service's Client Identity Revision is 0. The first recorded change after rollout invalidates them for all principals. No identity is inferred | specs/055-invalidate-client-sessions/spec.md:423 |
+| DEC-002 | Decision | Persisted schema change: `client_identity` and `client_identity_revision` on services, `upstream_client_revision` on sessions. Migrations 046 (add, `NOT VALID` checks, `NOWAIT`) and 047 (validate). DOWN 046 refuses while any revision > 0. Invalidated sessions are retained, not deleted | specs/055-invalidate-client-sessions/data-model.md:106-115 |
 | DEC-003 | Decision | Security over availability: an unreadable client-ID file or unloadable identity state blocks the release of still-valid stored tokens (`500 server_error`). Display surfaces fall back to persisted evidence | specs/055-invalidate-client-sessions/research.md:73-79 |
 | DEC-004 | Decision | Every differing filesystem observation, including a stale replica or a reverted file, records a new revision. Reconnections during incomplete multi-replica publication can need repeating. Operators publish coherently before announcing the change | specs/055-invalidate-client-sessions/research.md:81-87 |
 
@@ -130,7 +131,7 @@ internal/
 │   ├── model/
 │   │   ├── thirdparty_oauth2_provider.go   # ClientIdentity, ClientIdentityRevision (+Copy)
 │   │   └── credential_source_error.go      # identity_superseded reason
-│   ├── storage/user_session.go             # UpstreamClientRevision; UserSessionSummary.RequiresReauthentication
+│   ├── storage/user_session.go             # UpstreamClientRevision; extend existing summary reauthentication predicate
 │   ├── oauth2session/
 │   │   ├── client_identity.go              # resolveClientIdentity, sessionIdentityStatus, evaluator
 │   │   ├── credentials.go                  # identity sealing and checks for all variants
@@ -207,7 +208,7 @@ tests/
 | AS-2.3 | same | `It("recovers through the token error_uri and returns to sessions")` |
 | AS-2.4 | same | `It("keeps the session unusable after a declined or failed reconnect and allows retry")` |
 | AS-2.5 | same | `It("reports requires_reauthentication and not_connected for the superseded session")` |
-| AS-3.1 | same | `It("leaves other services, broker login, and grants unchanged")` |
+| AS-3.1 | same | `It("leaves other services, broker login, and grants unchanged")`; matrix retains ADR 046 rejection, refreshability, and alias outcomes for unchanged services. |
 | AS-3.2 | same | `It("keeps sessions usable through a filesystem secret rotation with the same client ID")` |
 | AS-3.3 | same | `It("does not force consent for a changed service excluded from the grant")` |
 | AS-3.4 | same | `It("keeps sessions usable through Admin API secret rotation, metadata updates, and same-identity source transitions")` |
@@ -246,13 +247,13 @@ tests/
 
 **Unit Tests** (TDD, red first):
 
-- `internal/domain/oauth2session/client_identity_test.go`: a usability rule table covering match, mismatch, superseded, legacy, rollback, and each variant; observation compare-and-set retry; fail-closed on source errors.
+- `internal/domain/oauth2session/client_identity_test.go`: a usability rule table covering match, mismatch, superseded, legacy, rollback, each variant, and the cross-product with ADR 046's recorded rejection and refreshability states; observation compare-and-set retry; fail-closed on source errors.
 - `internal/domain/oauth2session/*_test.go`: the token-acquisition fast path, refresh under lock, callback revision check, sweep classification, and sealing for public, CIMD, DCR, and Google services.
 - `internal/domain/oauth2/service_test.go` and `internal/domain/consent/service_test.go`: evaluator gate and display modes.
 - `internal/domain/tokenexchange/session_diagnostic_test.go`: `identity_superseded` mapping.
 - `internal/adapters/storage/memory/*_test.go`: recording rules and compare-and-set parity.
 - `internal/adapters/http/handlers/admin/services_handler_test.go`: internal fields are rejected.
-- `internal/adapters/http/oauth2_sessions/handler_test.go`: `409` mapping.
+- `internal/adapters/http/oauth2_sessions/handler_test.go`: identity `409 refresh_unavailable`, unchanged `409 refresh_rejected`, and alias equality.
 - `web/src/components/sessions/SessionCard.test.tsx`: `requires_reauthentication` gives "Sign-in required" and the Login action.
 
 **Integration Tests**:

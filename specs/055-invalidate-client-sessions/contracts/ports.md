@@ -35,7 +35,7 @@ Errors are domain `storage.StorageError` values: `NotFound` for a deleted servic
 | `ThirdpartyOAuth2ProviderRepository.Update` | Applies the stored-source recording rule ([data-model.md](../data-model.md)) in the same conditional `UPDATE ... RETURNING`, and returns the resulting identity and revision on the entity. A failed precondition records nothing. |
 | `ThirdpartyOAuth2ProviderRepository.Get`, `GetByIDs`, `List`, `FindByProtectedResource` | Populate `ClientIdentity` and `ClientIdentityRevision` with explicit columns. |
 | `UserSessionRepository.CreateIfAbsent` and `UserSessionRefreshRepository.WithLockedSession` | Persist and return `UpstreamClientRevision`. As with `UpstreamClientID`, only a new callback generation may replace it. Refresh writes preserve it. |
-| `UserSessionRepository` reads (`FindByPrincipalAndService`, `ListSummariesByPrincipal`, `ListActiveByPrincipal`, `ListActiveServiceIDsByPrincipal`) and `UserSessionExpiryRepository.ListExpiringSessions` | Return `UpstreamClientID` and `UpstreamClientRevision` so that the domain can evaluate identity. Their SQL predicates stay expiry-only, and identity filtering happens in the domain. |
+| `UserSessionRepository` reads (`FindByPrincipalAndService`, `ListSummariesByPrincipal`, `ListActiveByPrincipal`, `ListActiveServiceIDsByPrincipal`) and `UserSessionExpiryRepository.ListExpiringSessions` | Return `UpstreamClientID` and `UpstreamClientRevision` so that the domain can evaluate identity. Preserve their existing ADR 046 rejection and refreshability predicates, including sweep exclusion of rejected sessions; add identity filtering in the domain rather than replacing those predicates with expiry-only checks. |
 
 ## New domain operations (`internal/domain/oauth2session`)
 
@@ -55,7 +55,7 @@ Exported operations for other domains are exposed through one narrow interface i
 ```go
 // SessionUsabilityEvaluator reports which of a principal's sessions require reauthentication.
 type SessionUsabilityEvaluator interface {
-    // RequiresReauthentication evaluates each session: expired without refresh authority, or not identity-usable.
+    // RequiresReauthentication combines ADR 046's existing predicate with unusable identity.
     // A live identity read failure on a gating path returns an error; display paths use the
     // persisted state instead (see research R5).
     RequiresReauthentication(ctx context.Context, sessions []*storage.UserSession, mode UsabilityMode) (map[id.ServiceID]bool, error)
@@ -79,4 +79,4 @@ Token acquisition, refresh, callback, sweep, and initiation call the private ope
 
 ## Credential-source reason
 
-`model.CredentialSourceReasonIdentitySuperseded = "identity_superseded"` joins the closed reason set. `tokenexchange.sessionDiagnostic` maps it, like `identity_mismatch` and `identity_missing`, to `credential_identity_changed`, which gives a recoverable `invalid_grant` with ADR 044's `error_uri`. The manual-refresh handler maps these three identity reasons to `409 refresh_unavailable`.
+`model.CredentialSourceReasonIdentitySuperseded = "identity_superseded"` joins the closed reason set. `tokenexchange.sessionDiagnostic` maps it, like `identity_mismatch` and `identity_missing`, to `credential_identity_changed`, which gives a recoverable `invalid_grant` with ADR 044's `error_uri`. The manual-refresh handler maps these three identity reasons to `409 refresh_unavailable`. It preserves ADR 046's separate `409 refresh_rejected` outcome for a recorded or newly observed terminal refresh rejection.

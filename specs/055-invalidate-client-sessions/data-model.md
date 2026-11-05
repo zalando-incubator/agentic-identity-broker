@@ -4,15 +4,15 @@
 
 No new entity, aggregate, or typed entity ID is introduced. The feature adds internal value objects and attributes to the existing `ThirdpartyOAuth2Service` and `UserSession` aggregates, plus one claim to the existing third-party authorization JWE state.
 
-## Glossary additions (for `ARCHITECTURE.md` §12)
+## Glossary additions and extension (for `ARCHITECTURE.md` §12)
 
 | Term | Definition | Relationships |
 |---|---|---|
 | **Effective Client Identity** | The non-secret, provider-facing client ID that the broker would use for a service now. It is the stored `client_id` for a stored source and the trimmed client-ID file value for a filesystem source. | Owned by `ThirdpartyOAuth2Service`. Compared with `UserSession` establishment. |
 | **Client Identity Revision** | A per-service counter that starts at 0 and increases by exactly 1 each time a different Effective Client Identity is recorded, through an Admin API update or a filesystem observation. It never decreases, including on rollback. | Recorded on `ThirdpartyOAuth2Service`. Copied into authorization state and `UserSession` when established. |
-| **Reauthentication Required** | The derived condition in which a `UserSession` cannot supply or refresh tokens until its principal completes a fresh authorization. Its causes are expiry without refresh authority or a superseded client identity. It is not persisted. | Derived from `UserSession` and `ThirdpartyOAuth2Service`. Surfaced as `requires_reauthentication` and `connectionStatus: not_connected`. |
+| **Requires Reauthentication** (existing, ADR 046) | The derived condition in which a `UserSession` cannot supply or refresh tokens until its principal completes a fresh authorization. Its existing ADR 046 causes are recorded terminal refresh rejection or access expiry without a stored refresh token; this feature adds unusable client identity or revision. It is not persisted. | Derived from `UserSession` and `ThirdpartyOAuth2Service`. Surfaced as `requires_reauthentication` and `connectionStatus: not_connected`. |
 
-These terms extend the existing **Client-identity association** glossary entry (ADR 041).
+The two identity terms extend the existing **Client-identity association** glossary entry (ADR 041). Extend the existing **Requires Reauthentication** entry (ADR 046), rather than introducing a synonymous term.
 
 ## ThirdpartyOAuth2Service (aggregate, existing)
 
@@ -57,7 +57,8 @@ identityUsable(s) =
     (s.UpstreamClientID != nil && *s.UpstreamClientID == E && s.UpstreamClientRevision == R)
  || (s.UpstreamClientID == nil && service.source == stored && !service.CredentialSourceTransitioned && R == 0)
 
-requiresReauthentication(s) = s.IsExpired() || !identityUsable(s)
+requiresReauthentication(s) = s.RequiresReauthentication() || !identityUsable(s)
+// s.RequiresReauthentication() retains ADR 046's rejection and refreshability rule.
 ```
 
 A failure cause maps to an existing credential-source reason:
@@ -75,7 +76,8 @@ A failure cause maps to an existing credential-source reason:
 stateDiagram-v2
     [*] --> Usable: Winning callback seals {E,R}
     Usable --> ReauthenticationRequired: Service records a new revision (admin update or file observation)
-    Usable --> ReauthenticationRequired: Expiry without refresh authority (existing)
+    Usable --> ReauthenticationRequired: Observed terminal refresh rejection (ADR 046)
+    Usable --> ReauthenticationRequired: Access expiry without stored refresh token (ADR 046)
     ReauthenticationRequired --> ReauthenticationRequired: Refresh, sweep, rollback, restart, failed or cancelled reconnect
     ReauthenticationRequired --> Usable: Winning callback under current {E,R}
     Usable --> [*]: User terminates (existing)
@@ -97,8 +99,8 @@ The state is internal and encrypted, and providers echo it opaquely. Its claims 
 
 | Read model | Change |
 |---|---|
-| `storage.UserSessionSummary` | Adds `RequiresReauthentication bool` (`json:"requires_reauthentication"`), set by `oauth2session` after identity evaluation. `IsExpired` is unchanged. |
-| `consent.ServiceRequirementStatus.IsConnected` | True only for a session that is not expired and is identity-usable. |
+| `storage.UserSessionSummary` | Extends the existing `RequiresReauthentication` value with identity evaluation. Its deprecated `IsExpired` alias always has the same value. `AccessTokenExpired` remains an independent expiry signal; no rejection timestamp is exposed. |
+| `consent.ServiceRequirementStatus.IsConnected` | True only for a session that does not require reauthentication under ADR 046 and is identity-usable; an expired access token with a stored, not-rejected refresh token remains refreshable. |
 | Authorization decision `anyDelegatedSessionUnusable` | Adds reason `session_reauthentication_required` when an included service's session is not identity-usable. |
 
 ## Persistence
