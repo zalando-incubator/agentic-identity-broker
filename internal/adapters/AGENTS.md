@@ -30,7 +30,7 @@ Read `.agents/skills/aws-crypto-go/SKILL.md` before encryption changes.
 Apply the repository-specific context rules instead of the skill's generic context example.
 
 - Use `RequireEncryptRequireDecrypt`.
-- Keep exactly one non-secret context subject: `service_id` for service assets or `kid` for signing-key material.
+- Keep exactly one non-secret context subject: `service_id` for service assets or `kid` for token-signing and CIMD client-authentication key material.
 - Reject missing or multiple subjects. Do not add secrets, purpose fields, or `key_domain` to the context.
 - Keep encryption in domain services. Storage adapters store opaque ciphertext.
 - Do not add a plaintext fallback.

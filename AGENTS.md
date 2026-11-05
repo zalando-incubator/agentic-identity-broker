@@ -98,7 +98,7 @@ Check that this selection matches the task. Do not infer the feature from the br
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 1. **Security-First** — Fail closed. Do not bypass security controls. Only accepted ADR 031 permits unsigned subjects, with its full controls. This exception applies only to explicit unverified-subject rules in local-mode impersonation. Client assertions, actor tokens, and signed subjects still require signature verification.
-2. **ADRs are Binding** — Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
+2. **Accepted ADRs are Binding** — Only ADRs with status "Accepted" are binding. Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
    for same-PR ADR acceptance and revisions. A merged Accepted ADR requires an Accepted
    superseding ADR for deviations.
 3. **Library-First Security** — Do not use custom crypto. Use Go `crypto/*`, `golang.org/x/crypto`, or AWS Encryption SDK.

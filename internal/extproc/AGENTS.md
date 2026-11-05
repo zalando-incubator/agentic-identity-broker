@@ -377,4 +377,4 @@ It sets `EXTPROC_CONFIG_PATH=/app/config.yaml`.
 
 Use the current approval contracts for snapshot semantics.
 Older Feature 026 narrative still describes deltas and the former `internal/toolpattern` location.
-Accepted ADR 035 and ADR 036, the contracts, and current source define the current behavior.
+The accepted ADRs `adrs/035-shared-tool-pattern-matching.md` and `adrs/036-extproc-approval-cache-and-gate.md`, together with the contracts and current source, define the current behavior.
