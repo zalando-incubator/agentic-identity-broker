@@ -20,9 +20,7 @@ Scope covers only ledger behavior and its acceptance. It excludes unrelated depe
 
 **Shared validation scope (user decision, 2026-10-06)**: The user removed feature-specific diagnostic tools, runner commands, and setup. No replacement performance suite is required. All 20 active functional scenarios remain required in the existing backend E2E and integration lanes. Historical measurements remain evidence only. Accepted ADR 047's storage/security design is unchanged.
 
-**Future OTLP ingestion prerequisite (review, 2026-10-06)**: OTLP ingestion will add a second writer under the same lifecycle lock and use the same collector. Review findings M1, M2, and M9 are prerequisites for that work, not optional improvements. Their definitions and resolution evidence are absent from this repository. External ingestion remains outside Feature 048.
-
-Before ingestion implementation, resolve those findings explicitly.
+**Activity API boundary (#188)**: Feature 048 supplies broker-owned facts, not the complete activity API described in #188. ExtProc/OPA policy decisions and agentgateway observations require external producer ingestion, which this feature excludes. The headline blocked-tool-call example cannot be produced by this catalogue alone. Activity-specific projections, filters, and producer contracts require separate design and approval; this plan does not claim activity-UI readiness.
 
 `just security broker` derives first-party package directories from the production import closure of `cmd/agentic-identity-broker`. Gosec scans that code, including schema, credential, encryption, storage and telemetry paths. Govulncheck analyzes the production entrypoint and its transitive vulnerable-symbol reachability. Relevant findings fail the gate. This scope loads no advisory ignore file. Repository-wide module and manifest audits remain available through `just security`.
 
@@ -30,7 +28,7 @@ Before ingestion implementation, resolve those findings explicitly.
 
 **Language/Version**: Go 1.27.1 from go.mod. No frontend changes.
 **Primary Dependencies**: Existing sqlx 1.4.0, pgx/v5 5.11.0, google/uuid 1.6.0, Fosite 0.49.0, chi/v5 5.3.2, Cobra 1.10.2, Viper 1.21.0, OTel 1.46.0 and log/sdk-log 0.22.0. Promote existing google/jsonschema-go 0.4.2 from indirect to direct. Do not introduce a second schema validator.
-**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions. Broker-owned business state remains in existing tables. Migration 037 follows main's CIMD migrations 033–035 and refresh-consent migration 036.
+**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions. Broker-owned business state remains in existing tables. Migration 047 follows main's observed refresh-token rejection migration 046.
 **Testing**: Standard Go tests/testify, Ginkgo 2.32.2/Gomega, shared testcontainers PostgreSQL, production app.Builder bootstrap, local OTLP receiver. No frontend Playwright work for this backend-only feature.
 **Target Platform**: The existing Linux broker deployment on amd64/arm64 and local development on supported Go hosts. The Kubernetes chart plus an equivalent external PostgreSQL scheduler.
 **Project Type**: The existing Go hexagonal backend within the monorepo, not a new service or event bus.

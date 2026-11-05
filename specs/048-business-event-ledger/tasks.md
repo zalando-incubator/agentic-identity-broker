@@ -50,11 +50,11 @@ Phase 2f historically established 21 journeys. Retirement of US4-AS4 leaves 20 a
 
 - [X] T006 Promote the existing pinned `github.com/google/jsonschema-go v0.4.2` dependency to direct in `go.mod`. If dependency tooling requires it, update `go.sum`. Retain existing Go, UUID, sqlx, pgx, Fosite, and OTel versions. Do not introduce a second validator.
 
-- [X] T007 Allocate the next free migration number and record the pre-feature baseline. The completed migration is 037 after main's 035/036 allocations. The former deployment-profile requirement is retired. Historical measurement conditions remain in `performance-results.md`.
+- [X] T007 Allocate the next free migration number and record the pre-feature baseline. The completed ledger migration is 047 after main's observed refresh-token rejection migration 046. The former deployment-profile requirement is retired. Historical measurement conditions remain in `performance-results.md`.
 
   Migration allocation still requires the next free number across `main` and open branches. If an allocation changes, update the plan, data model, research, and task paths before implementation.
 
-**Migration allocation after rebase**: T007 correctly verified 035 availability at initial review. Main uses 035 for CIMD authentication, 036 for refresh-consent grant identity, and 046 for the observed refresh-token rejection contract. The completed ledger migration now uses 047 (originally 037; main took 037 through 046 before this feature merged). Task text below keeps the historical number.
+**Migration allocation after rebase**: Main uses 035 for CIMD authentication, 036 for refresh-consent grant identity, and 046 for the observed refresh-token rejection contract. The completed ledger migration uses 047 (originally 037; main allocated 037 through 046 before this feature merged). Current task paths and references use 047.
 
 ## 🔒 Phase 2: Design Preconditions (Blocking Prerequisites) [MANDATORY]
 
@@ -337,7 +337,7 @@ This story's independent demonstration requires no telemetry delivery.
 - [X] T080 [US3] Implement `charts/agentic-identity-broker/templates/cronjob-business-events.yaml` with `*/5 * * * *` and Forbid concurrency. Bound resources/retries/security context. Use the established migration service account/Secret/SSL connectivity and `migration.grants.image`. Run `psql -v ON_ERROR_STOP=1 -c 'SELECT public.business_event_maintain_partitions();'`. Render only for PostgreSQL. Render no `spec.suspend`, so an operator suspension survives `helm upgrade`.
 
   Update `charts/agentic-identity-broker/templates/job-migrate.yaml` to run `SELECT public.business_event_provision_partitions();` before broker startup, even with grants initialization disabled. The migration job never runs maintenance or drops partitions.
-- [X] T081 [US3] Restrict ledger privileges after broad DML grants in the chart grants script and migration 037. Deny runtime event mutation, direct child writes, DDL, and ledger-function execution. Retain pending/policy DML, existing business-table permissions, and future-partition ACL cleanup. Use explicit per-ledger ACLs, not a global future-function policy. Migration-owner administration remains available.
+- [X] T081 [US3] Restrict ledger privileges after broad DML grants in the chart grants script and migration 047. Deny runtime event mutation, direct child writes, DDL, and ledger-function execution. Retain pending/policy DML, existing business-table permissions, and future-partition ACL cleanup. Use explicit per-ledger ACLs, not a global future-function policy. Migration-owner administration remains available.
 - [X] T082 [US3] Document PostgreSQL and bare-process scheduler installation and authorized migration-owner SQL. Document optional manual object-specific grants to existing independently managed roles. Removing former settings or commands does not undo applied ACLs. Require DBA review and reconciliation. Document erasure's commit boundary, partition-health alerts before 24 hours, retention, and sub-microsecond normalization.
 
   Document the coordinated rollout: suspend the CronJob, then upgrade so every new replica stores the policy. Verify the stored value, then resume. Retention increases are the destructive direction. Pre-upgrade provisioning never drops partitions.

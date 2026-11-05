@@ -535,7 +535,7 @@ It uses a CronJob with schedule `*/5 * * * *`, a 300-second starting deadline, a
 The Job runs `SELECT public.business_event_maintain_partitions();` through `psql -v ON_ERROR_STOP=1`.
 
 It reuses `migration.grants.image`, the migration ServiceAccount, migration credentials, and the trusted database endpoint and SSL configuration.
-It uses non-root execution, a read-only filesystem, bounded resources, a 120-second deadline, and at most two retries.
+It uses non-root execution, a read-only filesystem, bounded resources, and a 120-second deadline. Retries follow `migration.backoffLimit`, capped at two; the default is zero retries.
 The SQL connection sets a five-second lock timeout and a 30-second statement timeout through `PGOPTIONS` before the first command.
 Maintenance rejects a missing statement deadline or one greater than 30 seconds.
 
