@@ -65,8 +65,9 @@ retry (R3) gives the required race behavior on both adapters with the existing m
 2. `GetByExternalID(selector)`.
 3. **No match**: build the creation definition (FR-012 creation column), validate service
    requirements and client-ID uniqueness as `Create` does, and call `repo.Create`. On
-   an error wrapping `ports.ErrExternalIDConflict`, re-read by selector once. If an agent now holds the selector,
-   continue with step 4 against it; otherwise return the original conflict.
+   any conflict, re-read by selector once. If an agent now holds the selector, continue with step 4
+   against it; otherwise return the original conflict. If step 4's update finds the agent deleted,
+   run step 3 once.
 4. **One match**: apply the FR-012 update policy to obtain the effective definition. If it equals
    the stored definition (R4), return the stored agent with outcome `unchanged` and write nothing.
    Otherwise set `UpdatedAt` to UTC now (R4), validate as `Update` does (client-ID uniqueness excludes the selected
@@ -74,9 +75,10 @@ retry (R3) gives the required race behavior on both adapters with the existing m
 5. Return the agent and an outcome (`created`, `updated`, `unchanged`). The handler maps `created`
    to `201` + `Location` and the others to `200`.
 
-Step 3 retries only the external-ID sentinel under approved remediation F4. Canonical/client
-conflicts propagate directly instead of being treated as an external-ID race. Retry remains
-bounded to one reread; persistent conflicts return `409` (FR-010).
+Step 3 re-reads after any conflict: a concurrent identical first call can win on `canonical_id` or
+another unique key before `external_id`, so retrying only the external-ID sentinel returned `409`
+to callers FR-009 requires to get `200` (revised after review on 2026-11-05). Without a holder the
+conflict is real. Retry remains bounded to one reread; persistent conflicts return `409` (FR-010).
 
 **Rationale**: Satisfies FR-005, FR-008, FR-009, FR-013, and SC-003 on both adapters without
 locking or a new port. Each write is a single existing transaction, so a definition is never

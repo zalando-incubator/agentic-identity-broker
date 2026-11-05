@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -38,31 +39,47 @@ func (s *Service) ReconcileByExternalID(ctx context.Context, selector id.Externa
 	}
 	existing, err := s.repo.GetByExternalID(ctx, selector)
 	if err == nil {
-		return s.reconcileExisting(ctx, existing, desired, selector, input)
-	}
-	if !errors.Is(err, ports.ErrNotFound) {
+		agent, outcome, err := s.reconcileExisting(ctx, existing, desired, selector, input)
+		if !errors.Is(err, errAgentRemoved) {
+			return agent, outcome, err
+		}
+	} else if !errors.Is(err, ports.ErrNotFound) {
 		return nil, 0, err
 	}
+	return s.reconcileNew(ctx, desired, selector, input)
+}
+
+// errAgentRemoved marks an update that found no agent because it was deleted after the lookup.
+var errAgentRemoved = errors.New("agent removed during reconciliation")
+
+func (s *Service) reconcileNew(ctx context.Context, desired *storage.Agent, selector id.ExternalID, input ReconcileInput) (*storage.Agent, ReconcileOutcome, error) {
 	candidate := desired.Copy()
 	candidate.ID = id.NewAgentID()
 	candidate.ExternalID = &selector
 	candidate.CreatedAt = time.Now().UTC()
 	candidate.UpdatedAt = candidate.CreatedAt
-	if err := s.Create(ctx, candidate); err == nil {
+	err := s.Create(ctx, candidate)
+	if err == nil {
 		return candidate, ReconcileCreated, nil
-	} else {
-		if !errors.Is(err, ports.ErrExternalIDConflict) {
-			return nil, 0, err
-		}
-		holder, lookupErr := s.repo.GetByExternalID(ctx, selector)
-		if errors.Is(lookupErr, ports.ErrNotFound) {
-			return nil, 0, err
-		}
-		if lookupErr != nil {
-			return nil, 0, lookupErr
-		}
-		return s.reconcileExisting(ctx, holder, desired, selector, input)
 	}
+	// A concurrent first call can win on any unique key, such as canonical_id, so any conflict
+	// re-reads once. Without a holder of the external ID the conflict is real.
+	var storageErr *storage.StorageError
+	if !errors.As(err, &storageErr) || storageErr.Kind != storage.ErrorKindConflict {
+		return nil, 0, err
+	}
+	holder, lookupErr := s.repo.GetByExternalID(ctx, selector)
+	if errors.Is(lookupErr, ports.ErrNotFound) {
+		return nil, 0, err
+	}
+	if lookupErr != nil {
+		return nil, 0, lookupErr
+	}
+	agent, outcome, updateErr := s.reconcileExisting(ctx, holder, desired, selector, input)
+	if errors.Is(updateErr, errAgentRemoved) {
+		return nil, 0, err
+	}
+	return agent, outcome, updateErr
 }
 
 func (s *Service) reconcileExisting(ctx context.Context, existing, desired *storage.Agent, selector id.ExternalID, input ReconcileInput) (*storage.Agent, ReconcileOutcome, error) {
@@ -77,6 +94,9 @@ func (s *Service) reconcileExisting(ctx context.Context, existing, desired *stor
 	}
 	candidate.UpdatedAt = time.Now().UTC()
 	if err := s.persistUpdate(ctx, existing, candidate); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return nil, 0, fmt.Errorf("%w: %w", errAgentRemoved, err)
+		}
 		return nil, 0, err
 	}
 	return candidate, ReconcileUpdated, nil

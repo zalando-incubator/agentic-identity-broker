@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,14 +68,12 @@ func TestExternalIDOtherConflictsPreserveAllIndexes(t *testing.T) {
 				after, err := r.List(ctx)
 				require.NoError(t, err)
 				assert.ElementsMatch(t, before, after)
-				found, err := r.externalIDMatches(ctx, "unused")
-				require.NoError(t, err)
-				assert.Empty(t, found)
+				_, err = r.GetByExternalID(ctx, "unused")
+				require.ErrorIs(t, err, ports.ErrNotFound)
 				for key, agentID := range external {
-					found, err = r.externalIDMatches(ctx, key)
+					found, err := r.GetByExternalID(ctx, key)
 					require.NoError(t, err)
-					require.Len(t, found, 1)
-					assert.Equal(t, agentID, found[0].ID)
+					assert.Equal(t, agentID, found.ID)
 				}
 			})
 		}
@@ -98,11 +97,11 @@ func TestExternalIDConcurrentMixedWrites(t *testing.T) {
 				if !assert.NoError(t, r.Update(ctx, a)) {
 					return
 				}
-				found, err := r.externalIDMatches(ctx, moved)
-				if !assert.NoError(t, err) || !assert.Len(t, found, 1) {
+				found, err := r.GetByExternalID(ctx, moved)
+				if !assert.NoError(t, err) {
 					return
 				}
-				*found[0].ExternalID = "clone-only"
+				*found.ExternalID = "clone-only"
 				a.ExternalID = nil
 				if !assert.NoError(t, r.Update(ctx, a)) {
 					return
@@ -122,9 +121,8 @@ func TestExternalIDConcurrentMixedWrites(t *testing.T) {
 	assert.Len(t, r.agents, 20)
 	assert.Len(t, r.byExternalID, 20)
 	for key, agentID := range r.byExternalID {
-		found, err := r.externalIDMatches(ctx, key)
+		found, err := r.GetByExternalID(ctx, key)
 		require.NoError(t, err)
-		require.Len(t, found, 1)
-		assert.Equal(t, agentID, found[0].ID)
+		assert.Equal(t, agentID, found.ID)
 	}
 }

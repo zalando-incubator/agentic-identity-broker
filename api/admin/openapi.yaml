@@ -503,8 +503,8 @@ paths:
         with the existing `validation failed` envelope. Canonical-ID conflicts,
         configuration-dependent `client_id` conflicts (`multi_agent_client.enabled`),
         and client-URI identity conflicts return `409 conflict` on both branches.
-        Failed requests change no agent. Shared Agent ordering and timestamp presentation
-        follow API-ORDER/API-TIMESTAMPS above on create, update, and replay.
+        Failed requests change no agent. Agent ordering and timestamps follow
+        "Stable Agent Response Presentation" above on create, update, and replay.
       operationId: reconcileAgentByExternalId
       tags:
         - Agents

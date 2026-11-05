@@ -65,11 +65,7 @@ func TestAgentWriteErrorEnvelopes(t *testing.T) {
 					if failure == "empty external" {
 						code = "invalid external_id"
 					} else if operation == "PUT create" {
-						reads := 1
-						if failure == "external conflict" {
-							reads = 2
-						}
-						repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Times(reads)
+						repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Times(2)
 						repo.On("Create", mock.Anything, mock.Anything).Return(failureErr).Once()
 					} else {
 						repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(existing.Copy(), nil).Once()

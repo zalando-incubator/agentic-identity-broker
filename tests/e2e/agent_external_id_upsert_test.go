@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -160,10 +161,9 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 						Expect(err).To(Succeed())
 						Expect(readObject(resp, http.StatusOK)).To(Equal(created))
 					}
-					found, err := externalIDMatches(ctx, st.Agents(), selector)
+					found, err := st.Agents().GetByExternalID(ctx, selector)
 					Expect(err).To(Succeed())
-					Expect(found).To(HaveLen(1))
-					Expect(found[0]).To(Equal(beforeReplay))
+					Expect(found).To(Equal(beforeReplay))
 					resp, err = s.AuthenticatedGET("/api/agents/"+agentID.String(), principal)
 					Expect(err).To(Succeed())
 					Expect(readObject(resp, http.StatusOK)).To(Equal(created))
@@ -227,6 +227,8 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			withExternalIDPostgresBrokers(func(first, second *bootstrap.TestServer, st *storageadapter.Adapter) {
 				for _, calls := range []int{2, 10} {
 					key := id.ExternalID(id.NewAgentID().String())
+					racing := maps.Clone(definition)
+					racing["canonical_id"] = fmt.Sprintf("racing-%d", calls)
 					var wg sync.WaitGroup
 					results := make(chan *http.Response, calls)
 					for i := range calls {
@@ -236,7 +238,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 							if i%2 == 1 {
 								target = second
 							}
-							resp, err := helpers.ReconcileAgent(target, principal, key, definition, "")
+							resp, err := helpers.ReconcileAgent(target, principal, key, racing, "")
 							Expect(err).To(Succeed())
 							results <- resp
 						})
@@ -258,10 +260,10 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 						Expect(body["id"]).To(Equal(identity))
 					}
 					Expect(created).To(Equal(1))
-					found, err := externalIDMatches(ctx, st.Agents(), key)
+					found, err := st.Agents().GetByExternalID(ctx, key)
 					Expect(err).To(Succeed())
-					Expect(found).To(HaveLen(1))
-					Expect(found[0].ID.String()).To(Equal(identity))
+					Expect(found.ID.String()).To(Equal(identity))
+					Expect(found.CanonicalID).To(HaveValue(Equal(racing["canonical_id"])))
 				}
 				key := id.ExternalID("mixed-definitions")
 				var wg sync.WaitGroup
@@ -280,10 +282,9 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 					})
 				}
 				wg.Wait()
-				found, err := externalIDMatches(ctx, st.Agents(), key)
+				found, err := st.Agents().GetByExternalID(ctx, key)
 				Expect(err).To(Succeed())
-				Expect(found).To(HaveLen(1))
-				Expect(found[0].Description).To(Equal(strings.Replace(found[0].DisplayName, "Definition", "Description", 1)))
+				Expect(found.Description).To(Equal(strings.Replace(found.DisplayName, "Definition", "Description", 1)))
 			})
 		})
 

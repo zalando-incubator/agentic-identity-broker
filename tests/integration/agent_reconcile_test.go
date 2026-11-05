@@ -70,10 +70,9 @@ func TestAgentReconcileConcurrentAndReplayJourney(t *testing.T) {
 		require.Equal(t, identity, got.body["id"])
 	}
 	require.Equal(t, 1, created)
-	found, err := externalIDMatches(ctx, st.Agents(), key)
+	found, err := st.Agents().GetByExternalID(ctx, key)
 	require.NoError(t, err)
-	require.Len(t, found, 1)
-	before := found[0].Copy()
+	before := found.Copy()
 	for range 10 {
 		got := call()
 		require.NoError(t, got.err)

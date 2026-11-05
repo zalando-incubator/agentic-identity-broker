@@ -772,10 +772,7 @@ for grants that reference the set.
 
 An agent is the AI agent that requests delegated access. Create one with `POST /api/agents`.
 
-**Feature 055 delivery status:** This PR ships the maintainer-approved Admin API 3.0.0
-implementation and acceptance tests for external-ID uniqueness and reconciliation. PostgreSQL and
-container-backed acceptance validation remain the release gate; this is not a release announcement.
-Before upgrading, follow the
+Before you upgrade to Admin API 3.0.0, follow the
 [external-ID uniqueness runbook](../operations/agent-external-id-uniqueness.md).
 
 The fields:
@@ -907,10 +904,9 @@ advances the displayed `updated_at`.
 
 Migration 047 blocks the release if legacy duplicates or empty IDs remain. Use the
 [runbook](../operations/agent-external-id-uniqueness.md) to inventory **every** affected UUID/value,
-coordinate writers, assign distinct IDs or deliberately clear them through complete ID-addressed
+pause writers, assign distinct IDs or deliberately clear them through complete ID-addressed
 PUTs, inspect dirty metadata, retry, and verify rollback/reapply. UUIDs, grants and all relationships
-are preserved; neither migration nor broker chooses survivors or deletes data. Do not deploy until
-implementation and the required PostgreSQL/E2E tests are complete.
+are preserved; neither migration nor broker chooses survivors or deletes data.
 
 ### Allow a native-app callback for a CIMD agent
 

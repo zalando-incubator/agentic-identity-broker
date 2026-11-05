@@ -18,13 +18,14 @@ Sign-off inventory: API-UPSERT, API-OMISSION, API-UNIQUE, API-VERSION, API-ORDER
 
 ## Approved architecture remediation — F1–F5 (2026-11-04)
 
-Scope: [P1–P5 approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767). These tasks supersede contradictory historical port/validation/reread wording below; no migration or timestamp change is included.
+Scope: P1–P5 approved by mjungsbluth on 2026-11-04. These tasks supersede contradictory historical port/validation/reread wording below; no migration or timestamp change is included.
 
 - [X] T074 [F1] Share one update-candidate builder/validator between `Service.Update` and reconcile, remove handler field policy, and retain update/no-op/audit tests (FR-012; Principle VI).
 - [X] T075 [F2] Move FR-019 permission-set service coverage into `agents.Service` for Create, Update and reconcile; inject the resolver in the builder and test direct-domain rejection without mutation (Principles VI, VIII, XII).
 - [X] T076 [F3] Share full External ID UTF-8/no-NUL/1–255-code-point validation across selectors and all Agent writes; test invalid values and the multibyte boundary, document the approved validation contract (FR-003; Principles IV, VIII).
 - [X] T077 [F4] Replace the list-shaped unique-key port with GetByExternalID on both adapters, preserve HTTP array filtering, retry only ErrExternalIDConflict and test not-found/clone/error/bounded reread behavior (ADR 004; Principles VI, IX).
 - [X] T078 [F5] Rename ADR 047 and update links/approval, use reconcile in OpenAPI and prefix outcome constants; align spec/plan/domain docs and run static, unit, self-contained integration and backend acceptance gates (Principles II, V, XIII).
+- [X] T079 [F4 revision] Re-read once after any create conflict, create an agent deleted before its update, send a `canonical_id` in the race acceptance test, and move adapter tests from the list shims to `GetByExternalID` (FR-009; review 2026-11-05).
 
 ### Apply-review evidence
 

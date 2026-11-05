@@ -22,9 +22,8 @@ description: A pre-deployment, deployment, and post-deployment checklist for run
 
 ### Admin API 3.0.0 / Agent external-ID upgrade
 
-- [ ] Feature 055 implementation and its mandatory PostgreSQL/E2E acceptance gates are complete; approval alone is not a release.
 - [ ] Follow the [Agent external-ID uniqueness runbook](./agent-external-id-uniqueness.md) before migration 047. Unresolved duplicate or empty values block the release; no automatic cleanup is performed.
-- [ ] Coordinate old writers, deliberately remediate through complete ID-addressed Admin PUTs, and compare Agent UUIDs/grants/relationships against the baseline.
+- [ ] Pause governance sync jobs and administrative writes until migration 047 completes, deliberately remediate through complete ID-addressed Admin PUTs, and compare Agent UUIDs/grants/relationships against the baseline.
 - [ ] Inspect dirty migration metadata and actual schema before any manual force/retry. Keep the separate migration role/image and Helm Job boundary.
 - [ ] Adapt consumers to unique IDs, 400/409 errors, zero-or-one filtered arrays, byte-sorted client URIs and unchanged whole-second timestamps; verify rollback/reapply without data loss.
 

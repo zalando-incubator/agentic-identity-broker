@@ -558,15 +558,14 @@ concurrent revision guarantee. No-op preserves exact stored times without a writ
 
 Both adapters enforce external-ID uniqueness atomically; memory maintains a locked lookup index
 and PostgreSQL uses a partial unique index. Reconcile adds one indexed read to a normal write and
-no-op performs only reads. `GetByExternalID` returns one Agent or not-found; only a create error wrapping
-`ErrExternalIDConflict` triggers one reread for a lost create race; different
-concurrent definitions remain last-writer-wins with coherent, atomic writes. Invalid selectors fail
+no-op performs only reads. `GetByExternalID` returns one Agent or not-found; any create conflict
+triggers one reread for a lost create race, and an agent deleted before its update is created once;
+different concurrent definitions remain last-writer-wins with coherent, atomic writes. Invalid selectors fail
 closed. The new route inherits the existing admin proxy, Host, cross-origin and JSON boundaries.
 Migration `047` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
 blocks on duplicate/empty values without changing rows, and preserves UUIDs/grants through rollback.
 See [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) and the
-[upgrade runbook](docs/operations/agent-external-id-uniqueness.md). PostgreSQL acceptance validation
-runs in the container test gate before release; approval alone does not establish delivery.
+[upgrade runbook](docs/operations/agent-external-id-uniqueness.md).
 
 **Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 

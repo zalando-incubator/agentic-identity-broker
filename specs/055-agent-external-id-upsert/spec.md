@@ -76,11 +76,11 @@ This specification proposes superseding [feature 054](../054-agent-external-id-f
 
 ### Session 2026-11-04 (approved architecture remediation)
 
-- F1: ID-addressed updates and reconcile share one domain candidate-building/validation policy; the handler only supplies presence. Reason: [approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) (P1).
-- F2: `agents.Service` enforces FR-019 permission-set service coverage on create, update and reconcile, including no-op replay. Reason: [approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) (P2).
-- F3: Every supplied External ID on POST and ID-addressed PUT must meet the selector format: valid UTF-8, no NUL, 1–255 Unicode code points. Invalid ordinary writes return `400 validation failed` without mutation; collection PUT retains `invalid external_id`. This supersedes the earlier existing-write length assumption. Reason: [approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) (P3).
-- F4: `GetByExternalID` returns one Agent or not-found. Only a create conflict wrapping `ErrExternalIDConflict` triggers the bounded reread; other conflicts propagate. GET keeps its zero-or-one array contract. Reason: [approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) (P4).
-- F5: Use reconcile in ADR 047 and the OpenAPI summary, with outcomes `ReconcileCreated`, `ReconcileUpdated`, and `ReconcileUnchanged`; an error has no successful outcome. Reason: [approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767) (P5).
+- F1: ID-addressed updates and reconcile share one domain candidate-building/validation policy; the handler only supplies presence. Reason: approved proposal on 2026-11-04 (P1).
+- F2: `agents.Service` enforces FR-019 permission-set service coverage on create, update and reconcile, including no-op replay. Reason: approved proposal on 2026-11-04 (P2).
+- F3: Every supplied External ID on POST and ID-addressed PUT must meet the selector format: valid UTF-8, no NUL, 1–255 Unicode code points. Invalid ordinary writes return `400 validation failed` without mutation; collection PUT retains `invalid external_id`. This supersedes the earlier existing-write length assumption. Reason: approved proposal on 2026-11-04 (P3).
+- F4: `GetByExternalID` returns one Agent or not-found. Any create conflict triggers the bounded reread, because a concurrent first call can win on `canonical_id` or another unique key before `external_id`; without an agent holding the external ID the conflict returns `409`. An agent deleted between the lookup and its update is created once. GET keeps its zero-or-one array contract. Reason: approved proposal on 2026-11-04 (P4); review on 2026-11-05 replaced the external-ID-only reread, which returned `409` to concurrent identical first calls carrying a `canonical_id` (FR-009).
+- F5: Use reconcile in ADR 047 and the OpenAPI summary, with outcomes `ReconcileCreated`, `ReconcileUpdated`, and `ReconcileUnchanged`; an error has no successful outcome. Reason: approved proposal on 2026-11-04 (P5).
 
 ## User Scenarios & Testing *(mandatory)*
 

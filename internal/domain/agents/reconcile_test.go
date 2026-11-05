@@ -307,6 +307,7 @@ func TestSameDefinitionCoversEveryAgentField(t *testing.T) {
 	}
 }
 
+// A concurrent identical first call can win on any unique key, so every create conflict re-reads once (FR-009).
 func TestReconcileBoundedConflictReread(t *testing.T) {
 	for _, source := range []string{"external", "canonical", "client URI"} {
 		cause := error(nil)
@@ -345,13 +346,6 @@ func TestReconcileBoundedConflictReread(t *testing.T) {
 				repo.createFn = func(context.Context, *storage.Agent) error { creates++; return conflict }
 				repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return conflict }
 				got, result, err := newTestService(repo, false).ReconcileByExternalID(context.Background(), "registry", desired, ReconcileInput{})
-				if source != "external" {
-					require.ErrorIs(t, err, conflict)
-					require.Equal(t, 1, reads)
-					require.Equal(t, 1, creates)
-					require.Zero(t, updates)
-					return
-				}
 				if mode == "holder" {
 					require.NoError(t, err)
 					require.NotNil(t, got)

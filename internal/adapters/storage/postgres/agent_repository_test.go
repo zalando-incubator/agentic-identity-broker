@@ -850,19 +850,17 @@ func TestAgentRepository_GetByExternalID(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, agent))
 		return agent
 	}
-	check := func(t *testing.T, value id.ExternalID, expected ...id.AgentID) []*storage.Agent {
+	check := func(t *testing.T, value id.ExternalID, expected ...id.AgentID) *storage.Agent {
 		t.Helper()
-		found, err := repo.externalIDMatches(ctx, value)
-		require.NoError(t, err)
-		require.NotNil(t, found)
-		ids := make([]id.AgentID, 0, len(found))
-		for _, agent := range found {
-			require.NotNil(t, agent)
-			require.NotNil(t, agent.ExternalID)
-			assert.Equal(t, value, *agent.ExternalID)
-			ids = append(ids, agent.ID)
+		found, err := repo.GetByExternalID(ctx, value)
+		if len(expected) == 0 {
+			require.ErrorIs(t, err, ports.ErrNotFound)
+			return nil
 		}
-		assert.ElementsMatch(t, expected, ids)
+		require.NoError(t, err)
+		require.NotNil(t, found.ExternalID)
+		assert.Equal(t, value, *found.ExternalID)
+		assert.Equal(t, expected[0], found.ID)
 		return found
 	}
 
@@ -883,13 +881,8 @@ func TestAgentRepository_GetByExternalID(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, withoutExternalID))
 
 		found := check(t, shared, first.ID)
-		for _, agent := range found {
-			switch agent.ID {
-			case first.ID:
-				assert.Equal(t, first.ClientURIs, agent.ClientURIs)
-				assert.Equal(t, first.PermissionSets, agent.PermissionSets)
-			}
-		}
+		assert.Equal(t, first.ClientURIs, found.ClientURIs)
+		assert.Equal(t, first.PermissionSets, found.PermissionSets)
 		check(t, other, different.ID)
 		check(t, id.ExternalID("urn:example:ai-registry:agent:missing"))
 		check(t, id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))

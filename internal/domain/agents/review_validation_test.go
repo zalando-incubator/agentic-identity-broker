@@ -8,7 +8,9 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,7 +84,7 @@ func TestWritesEnforceServiceCoverage(t *testing.T) {
 	}
 }
 
-func TestReconcileDoesNotRereadUnrelatedConflict(t *testing.T) {
+func TestReconcileReturnsConflictWhenNoAgentHoldsTheExternalID(t *testing.T) {
 	repo := newMockAgentRepo()
 	reads := 0
 	repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) { reads++; return nil, nil }
@@ -90,7 +92,60 @@ func TestReconcileDoesNotRereadUnrelatedConflict(t *testing.T) {
 	repo.createFn = func(context.Context, *storage.Agent) error { return conflict }
 	_, _, err := newTestService(repo, true).ReconcileByExternalID(context.Background(), "registry", desiredAgent(), ReconcileInput{})
 	require.ErrorIs(t, err, conflict)
+	require.Equal(t, 2, reads)
+}
+
+func TestReconcileDoesNotRereadNonConflictCreateErrors(t *testing.T) {
+	repo := newMockAgentRepo()
+	reads := 0
+	repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) { reads++; return nil, nil }
+	invalid := storage.NewStorageError("Create", storage.ErrorKindValidation, nil, "invalid agent")
+	repo.createFn = func(context.Context, *storage.Agent) error { return invalid }
+	_, _, err := newTestService(repo, true).ReconcileByExternalID(context.Background(), "registry", desiredAgent(), ReconcileInput{})
+	require.ErrorIs(t, err, invalid)
 	require.Equal(t, 1, reads)
+}
+
+// An agent deleted between the lookup and its update is created, as on a first call.
+func TestReconcileCreatesAgentRemovedBeforeUpdate(t *testing.T) {
+	for _, mode := range []string{"created", "removed again"} {
+		t.Run(mode, func(t *testing.T) {
+			repo := newMockAgentRepo()
+			existing := desiredAgent()
+			existing.ID = id.NewAgentID()
+			existing.ExternalID = ptr.To(id.ExternalID("registry"))
+			existing.DisplayName = "Old"
+			reads, creates, updates := 0, 0, 0
+			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
+				reads++
+				return []*storage.Agent{existing.Copy()}, nil
+			}
+			gone := storage.NewStorageError("UpdateAgent", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+			repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return gone }
+			conflict := storage.NewStorageError("CreateAgent", storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id conflict")
+			repo.createFn = func(_ context.Context, a *storage.Agent) error {
+				creates++
+				if mode == "removed again" {
+					return conflict
+				}
+				repo.agents[a.ID] = a.Copy()
+				return nil
+			}
+			got, result, err := newTestService(repo, true).ReconcileByExternalID(context.Background(), "registry", desiredAgent(), ReconcileInput{})
+			require.Equal(t, 1, creates)
+			if mode == "created" {
+				require.NoError(t, err)
+				assert.Equal(t, ReconcileCreated, result)
+				assert.NotEqual(t, existing.ID, got.ID)
+				assert.Equal(t, 1, reads)
+				assert.Equal(t, 1, updates)
+				return
+			}
+			require.ErrorIs(t, err, conflict)
+			assert.Equal(t, 2, reads)
+			assert.Equal(t, 2, updates)
+		})
+	}
 }
 
 type coveredPermissionSets []storage.ServiceRequirement

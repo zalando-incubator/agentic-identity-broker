@@ -1,7 +1,7 @@
 # ADR 047: Unique Agent External ID and Reconcile by External ID
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767)
-**Date**: 2026-10-30 (revised 2026-11-04)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-04)
+**Date**: 2026-10-30 (revised 2026-11-05)
 **Revision**: Withdraws the microsecond timestamp presentation and `+1 microsecond` advancement
 (API-TIMESTAMPS) on maintainer direction. Admin Agent timestamps keep the whole-second RFC 3339
 presentation of Admin API 2.1.0.
@@ -48,11 +48,12 @@ that creates or updates by an alternate key.
    of Admin API 2.1.0. A change within the same second as the previous write may present an
    unchanged `updated_at`; it is not a revision or concurrent-write guarantee.
 3. **Race handling without locks.** The domain service reads through `GetByExternalID`, which
-   returns one Agent or not-found, then calls repository `Create` or `Update`. Only a create
-   error wrapping `ports.ErrExternalIDConflict` triggers one reread; when a holder now exists,
-   reconciliation continues on the update branch. Other conflicts propagate without a reread.
-   No advisory lock is added. Without `If-Match`, concurrent different
-   definitions are last-writer-wins.
+   returns one Agent or not-found, then calls repository `Create` or `Update`. Any create
+   conflict triggers one reread, because a concurrent first call can win on another unique key,
+   such as `canonical_id`, before `external_id`. When an agent now holds the external ID,
+   reconciliation continues on the update branch; otherwise the original conflict returns `409`.
+   An agent deleted between the lookup and its update is created once instead. No advisory lock
+   is added. Without `If-Match`, concurrent different definitions are last-writer-wins.
 4. **Safe migration.** Migration `047` locks `agents`, inventories duplicate and empty external IDs,
    and fails before changing anything with a report covering both duplicate groups and empty-value
    agent UUIDs. The report lists the first 100 of each category with remaining counts; the runbook
@@ -69,9 +70,11 @@ Create enforces the same coverage rule. Handlers parse presence but do not decid
 All selectors and Agent writes share the full External ID format validator. Reconcile outcomes are
 `ReconcileCreated`, `ReconcileUpdated`, and `ReconcileUnchanged`; errors have no outcome.
 
-These F1–F5 revisions were approved in the [remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6629376767);
+These F1–F5 revisions were approved in the remediation proposal on 2026-11-04;
 the [earlier approval](https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887)
 continues to cover the unchanged API, migration, ordering, and timestamp decisions.
+Review on 2026-11-05 revised decision 3: rereading only after an external-ID conflict returned
+`409` to concurrent identical first calls that carry a `canonical_id` (FR-009).
 
 ## Consequences
 

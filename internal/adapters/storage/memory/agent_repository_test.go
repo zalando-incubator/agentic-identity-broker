@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
 
@@ -548,7 +549,7 @@ func TestAgentRepository_List(t *testing.T) {
 	})
 }
 
-func TestAgentRepository_externalIDMatches(t *testing.T) {
+func TestAgentRepository_GetByExternalID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("exact matches only, including literal identifiers", func(t *testing.T) {
@@ -568,17 +569,15 @@ func TestAgentRepository_externalIDMatches(t *testing.T) {
 
 		check := func(value id.ExternalID, expected ...id.AgentID) {
 			t.Helper()
-			found, err := repo.externalIDMatches(ctx, value)
-			require.NoError(t, err)
-			require.NotNil(t, found)
-			ids := make([]id.AgentID, 0, len(found))
-			for _, agent := range found {
-				require.NotNil(t, agent)
-				require.NotNil(t, agent.ExternalID)
-				assert.Equal(t, value, *agent.ExternalID)
-				ids = append(ids, agent.ID)
+			found, err := repo.GetByExternalID(ctx, value)
+			if len(expected) == 0 {
+				require.ErrorIs(t, err, ports.ErrNotFound)
+				return
 			}
-			assert.ElementsMatch(t, expected, ids)
+			require.NoError(t, err)
+			require.NotNil(t, found.ExternalID)
+			assert.Equal(t, value, *found.ExternalID)
+			assert.Equal(t, expected[0], found.ID)
 		}
 		check(shared, agents[0].ID)
 		check(other, agents[1].ID)
@@ -600,10 +599,9 @@ func TestAgentRepository_externalIDMatches(t *testing.T) {
 		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
 			agent := &storage.Agent{ExternalID: &value, DisplayName: string(value), Description: "Literal identifier", PermissionSets: testPermissionSets()}
 			require.NoError(t, repo.Create(ctx, agent))
-			found, err := repo.externalIDMatches(ctx, value)
+			found, err := repo.GetByExternalID(ctx, value)
 			require.NoError(t, err)
-			require.Len(t, found, 1)
-			assert.Equal(t, agent.ID, found[0].ID)
+			assert.Equal(t, agent.ID, found.ID)
 		}
 	})
 
@@ -617,53 +615,47 @@ func TestAgentRepository_externalIDMatches(t *testing.T) {
 			ExternalID: &oldID, CanonicalID: &canonical, DisplayName: "Original", Description: "Lookup copy",
 			ClientURIs: []string{uri}, PermissionSets: testPermissionSets(),
 		}
-		before, err := repo.externalIDMatches(ctx, oldID)
-		require.NoError(t, err)
-		assert.Empty(t, before)
+		_, err := repo.GetByExternalID(ctx, oldID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
 		require.NoError(t, repo.Create(ctx, agent))
-		found, err := repo.externalIDMatches(ctx, oldID)
+		found, err := repo.GetByExternalID(ctx, oldID)
 		require.NoError(t, err)
-		require.Len(t, found, 1)
-		require.NotNil(t, found[0].ExternalID)
-		require.NotNil(t, found[0].CanonicalID)
-		require.Len(t, found[0].ClientURIs, 1)
-		require.Len(t, found[0].PermissionSets, 1)
-		assert.Equal(t, agent.ClientURIs, found[0].ClientURIs)
-		assert.Equal(t, agent.PermissionSets, found[0].PermissionSets)
-		found[0].DisplayName = "Changed"
-		*found[0].ExternalID = id.ExternalID("modified")
-		*found[0].CanonicalID = "modified"
-		found[0].ClientURIs[0] = "https://example.com/changed.json"
-		found[0].PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
+		require.NotNil(t, found.ExternalID)
+		require.NotNil(t, found.CanonicalID)
+		require.Len(t, found.ClientURIs, 1)
+		require.Len(t, found.PermissionSets, 1)
+		assert.Equal(t, agent.ClientURIs, found.ClientURIs)
+		assert.Equal(t, agent.PermissionSets, found.PermissionSets)
+		found.DisplayName = "Changed"
+		*found.ExternalID = id.ExternalID("modified")
+		*found.CanonicalID = "modified"
+		found.ClientURIs[0] = "https://example.com/changed.json"
+		found.PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
 
-		again, err := repo.externalIDMatches(ctx, oldID)
+		again, err := repo.GetByExternalID(ctx, oldID)
 		require.NoError(t, err)
-		require.Len(t, again, 1)
-		require.NotNil(t, again[0].ExternalID)
-		require.NotNil(t, again[0].CanonicalID)
-		assert.Equal(t, agent.ID, again[0].ID)
-		assert.Equal(t, "Original", again[0].DisplayName)
-		assert.Equal(t, oldID, *again[0].ExternalID)
-		assert.Equal(t, canonical, *again[0].CanonicalID)
-		assert.Equal(t, agent.ClientURIs, again[0].ClientURIs)
-		assert.Equal(t, agent.PermissionSets, again[0].PermissionSets)
+		require.NotNil(t, again.ExternalID)
+		require.NotNil(t, again.CanonicalID)
+		assert.Equal(t, agent.ID, again.ID)
+		assert.Equal(t, "Original", again.DisplayName)
+		assert.Equal(t, oldID, *again.ExternalID)
+		assert.Equal(t, canonical, *again.CanonicalID)
+		assert.Equal(t, agent.ClientURIs, again.ClientURIs)
+		assert.Equal(t, agent.PermissionSets, again.PermissionSets)
 
 		agent.ExternalID = &newID
 		require.NoError(t, repo.Update(ctx, agent))
-		oldMatches, err := repo.externalIDMatches(ctx, oldID)
+		_, err = repo.GetByExternalID(ctx, oldID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
+		moved, err := repo.GetByExternalID(ctx, newID)
 		require.NoError(t, err)
-		assert.Empty(t, oldMatches)
-		newMatches, err := repo.externalIDMatches(ctx, newID)
-		require.NoError(t, err)
-		require.Len(t, newMatches, 1)
-		assert.Equal(t, agent.ID, newMatches[0].ID)
+		assert.Equal(t, agent.ID, moved.ID)
 
 		deleted, err := repo.Delete(ctx, agent.ID)
 		require.NoError(t, err)
 		require.True(t, deleted)
-		newMatches, err = repo.externalIDMatches(ctx, newID)
-		require.NoError(t, err)
-		assert.Empty(t, newMatches)
+		_, err = repo.GetByExternalID(ctx, newID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
 	})
 }
 

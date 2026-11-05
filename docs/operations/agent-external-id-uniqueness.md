@@ -5,10 +5,6 @@ description: Inventory and deliberately remediate legacy agents before migration
 
 # Upgrade to unique Agent external IDs
 
-**Delivery status:** Feature 055 implements the revised decision approved on 2026-11-04.
-PostgreSQL and container-backed acceptance validation remains the workflow release gate;
-do not deploy until the mandatory migration and complete E2E suites pass.
-
 Admin API `3.0.0` replaces `2.1.0` on the existing routes. A set `external_id` must be non-empty
 and unique by exact, case-sensitive equality. Multiple agents may have no external ID (`NULL`).
 Existing POST and ID-addressed PUT reject duplicates with `409 conflict` and empty strings with
@@ -24,10 +20,11 @@ presentation; two changes within one second may display the same `updated_at`. [
    protections unchanged. Restrict writers operationally, not by weakening authentication.
 3. Use the existing broker at schema version 46 to perform remediation. It supports full
    ID-addressed PUT and can read all legacy records before the new constraints apply.
-4. After remediation, stop all old writers, including old broker replicas, before migration.
-   Do not resume mixed old/new writers. Migration obtains `ACCESS EXCLUSIVE MODE NOWAIT` on
-   `agents`; it fails immediately if another transaction holds a conflicting lock, and its
-   statement timeout is five seconds. Wait for active transactions to finish before retrying.
+4. After remediation, keep governance sync jobs and other administrative writes paused until
+   migration 047 completes. Old broker replicas can keep serving: the migration checks for duplicates under its lock,
+   and the unique index rejects new ones after that. It takes `ACCESS EXCLUSIVE MODE NOWAIT` on
+   `agents` and fails immediately if another transaction holds a conflicting lock; its statement
+   timeout is five seconds. If it fails on the lock, retry once active transactions finish.
 5. Use the separate version-matched migration image and migration role. Do not add schema
    privileges or migration tooling to the runtime broker. The Helm pre-upgrade Job remains the
    deployment owner in both grants modes (ADR 009).
