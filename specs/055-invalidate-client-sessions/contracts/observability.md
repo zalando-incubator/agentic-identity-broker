@@ -10,6 +10,8 @@
 | `session.oauth2.credential_source_failed` (existing) | `Error` for source unavailability; `Warn` for identity reasons | A use is denied before provider authentication | Existing attributes. `reason` gains `identity_superseded`. `operation` gains `token_acquisition`. |
 | `session.oauth2.refresh_failed` (existing) | existing | A refresh or sweep candidate is denied for identity | Existing `oauth2_session` metadata with detail `credential_source_unavailable` |
 
+Attribute `admin_update` only from a successful `ThirdpartyOAuth2ProviderRepository.Update` returning `identityChanged == true`, computed under the update lock/transaction, and use that update's returned committed revision. Attribute `filesystem_observation` only from a successful observation with `applied && changed`. Never infer the writer from a before/after comparison outside the mutation lock or from a follow-up read. A filesystem metadata PUT paused after its initial read must emit no identity-change event if an intervening observation alone increments the revision at unchanged administrative version; it preserves that evidence and returns `identityChanged == false`. The observation alone emits the event. Errors, rolled-back updates, initialization, and unchanged identities emit no identity-change event. These are post-commit operational logs under LOGGING §8, not a durable exactly-once ledger.
+
 Never log the client ID value, file paths or contents, tokens, or secrets (LOGGING §6.1). The client ID is non-secret, but it is not needed for audit, and keeping it out of the log keeps the data surface unchanged.
 
 ## Spans and metrics
