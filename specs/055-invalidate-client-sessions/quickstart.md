@@ -23,7 +23,7 @@ Expected: everything passes. The domain tests include the AS-1.5 rollback and AS
 ## 2. Backend acceptance journeys (in-memory store)
 
 ```bash
-ginkgo -v --focus "Client identity change" ./tests/e2e/
+ginkgo -v --label-filter='!performance && !docker' --focus "Client identity change" ./tests/e2e/
 ```
 
 | Scenario group | Proves |
@@ -41,7 +41,15 @@ Expected: one passing `It` per scenario, as mapped in `plan.md` Testing Strategy
 just test-e2e-frontend
 ```
 
-Expected: consent shows Reports Production as needing sign-in and Calendar as connected (State A). Reconnecting returns with selections preserved (State B). The sessions page shows "Sign-in required" (State C), then connected (State D). Screenshots are written to `tests/e2e/screenshots/`, as named in `plan.md`.
+Expected: consent shows Reports Production as needing sign-in and Calendar as connected (State A). Reconnecting returns with selections preserved (State B). The sessions page shows "Sign-in required" (State C), then connected (State D). Failed reconnection leaves sign-in and retry available.
+
+Normal verification does not capture screenshots. For maintained review artifacts, run the existing capture path in serial mode:
+
+```bash
+E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
+```
+
+The harness writes captures under its suite-relative `coverage/screenshots/` directory. Use the existing maintained-image flow to place the five named artifacts from `plan.md` into `tests/e2e/screenshots/`; no screenshot-workflow change is needed.
 
 ## 4. PostgreSQL persistence and migration (container suites)
 
@@ -49,6 +57,8 @@ Expected: consent shows Reports Production as needing sign-in and Calendar as co
 just test-integration-infra
 just test-e2e-docker
 ```
+
+These commands run in the container-test environment on the pushed commit, not in the agent sandbox. Their absence locally does not block the non-container implementation or count as validation. Record their CI evidence separately.
 
 Expected:
 

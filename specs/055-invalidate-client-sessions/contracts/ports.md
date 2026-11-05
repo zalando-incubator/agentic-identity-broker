@@ -68,6 +68,8 @@ const (
 )
 ```
 
+Session list reads remain metadata-only: extend their internal projection with `UpstreamClientID` and `UpstreamClientRevision`, excluded from JSON, alongside the existing reauthentication/refreshability metadata. Do not fetch encrypted token blobs or decrypt secrets merely to adapt a summary to `RequiresReauthentication`'s full-session input. Share the private identity-status rule with a metadata helper inside `oauth2session` for summary evaluation; the cross-domain evaluator interface remains unchanged. This is an internal projection adaptation, not a new public field or persisted concept.
+
 | Consumer | Mode | Effect |
 |---|---|---|
 | `oauth2.AuthorizationService.anyDelegatedSessionUnusable` | Gate | Adds reason `session_reauthentication_required`, which leads to the existing consent redirect. |

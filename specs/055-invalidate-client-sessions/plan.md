@@ -35,6 +35,8 @@ All Technical Context unknowns are resolved in [research.md](research.md).
 
 **Design Preconditions (BLOCKING)**:
 
+Checked entries below record design coverage, not implementation or executed test evidence. The unchecked tasks in [tasks.md](tasks.md) are the implementation checklist, including approval recording, acceptance-test red evidence, and validation.
+
 - [x] **Domain Model**: Aggregates `ThirdpartyOAuth2Service` and `UserSession` are extended, with value objects Effective Client Identity and Client Identity Revision and the derived condition Reauthentication Required ([data-model.md](data-model.md)).
 - [x] **Domain Concepts**: The two identity terms are planned for the `ARCHITECTURE.md` §12 Glossary and the AGENTS.md glossary. Extend existing **Requires Reauthentication** (ADR 046) and **Client-identity association** (ADR 041) entries rather than duplicating them.
 - [x] **Entity IDs**: No new entity or UUID key. `id.ClientID` is reused. No `gen_ids.go` change.
@@ -49,7 +51,7 @@ All Technical Context unknowns are resolved in [research.md](research.md).
 - [x] **E2E Test Mapping**: Each AS maps to exactly one `It`.
 - [x] **E2E Red Phase**: Realistic assertions on status, `error`, `error_uri`, `Location`, and `requires_reauthentication`, with no placeholders.
 - [x] **Frontend Playwright E2E**: Consent and sessions-page journeys in `tests/e2e/frontend/`.
-- [x] **Frontend Screenshots**: Four states, named below.
+- [x] **Frontend Screenshots**: Four journey states plus the failure/retry state, named below.
 
 **Implementation Considerations**:
 
@@ -113,7 +115,7 @@ specs/055-invalidate-client-sessions/
 │   └── observability.md                     # Log events
 ├── checklists/requirements.md
 ├── wireframes/                              # Spec States A–D
-└── tasks.md                                 # /speckit-tasks (not created here)
+└── tasks.md                                 # Dependency-ordered implementation and validation checklist
 ```
 
 ### Source Code (repository root)
@@ -233,7 +235,7 @@ tests/
 
 **Framework**: The existing Playwright harness, with page objects in `tests/e2e/pages/`.
 
-**Screenshot Location**: `tests/e2e/screenshots/`
+**Screenshot Location**: Maintained artifacts in `tests/e2e/screenshots/`. Capture is opt-in (`E2E_CAPTURE_SCREENSHOTS=true`, serial `GINKGO_FRONTEND_PROCS=1`); the harness first writes suite-relative `coverage/screenshots/`, then the existing maintained-image flow supplies the review artifacts. See [quickstart.md](quickstart.md).
 
 | UI Scenario | Playwright Test Location | Screenshot Filename |
 |-------------|--------------------------|---------------------|
