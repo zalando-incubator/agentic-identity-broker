@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 2.1.1
+  version: 3.0.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -1088,6 +1088,22 @@ paths:
         - Provide a new `client_secret` to rotate stored static confidential-service credentials
         - New secret is encrypted before storage
         - Old secret is securely discarded
+        - Existing user sessions remain usable; rotation alone never requires users to reconnect
+
+        **Client Identity Changes**:
+        - An accepted update whose resulting stored `client_id` differs from the previous effective
+          client ID invalidates all existing sessions for this service from commit. This includes
+          a static/CIMD registration switch replacing the identifier. Token exchange returns
+          `invalid_grant` with a service-specific `error_uri`; refresh never uses the old session's
+          refresh token. Each user reconnects independently; grants are unchanged.
+        - Restoring a previous client ID never restores invalidated sessions.
+        - Same-ID secret rotation, metadata-only changes, and source transitions retaining the
+          effective client ID do not invalidate sessions.
+        - A filesystem client-ID change is recorded on the next live identity read; selecting
+          filesystem in an update never reads files.
+        - Rejected, invalid, and version-conflicting (409/412) updates invalidate nothing.
+        - Internal identity evidence is never bound as administrative input or returned. Unlisted
+          request properties retain their existing handling; no request-validation change applies.
 
         **Discovery Re-run**:
         - If `enable_discovery: true`, endpoints are re-fetched
@@ -2261,15 +2277,23 @@ paths:
         using each session's stored refresh token. Newly issued tokens are encrypted before they
         are stored. A candidate that another refresh already renewed, or that was deleted during
         the sweep, is counted as `skipped`. A candidate that cannot be refreshed (no usable refresh
-        token, upstream error) is counted as `failed`. The sweep then continues and the stored
+        token, unusable client identity/revision, unreadable identity, or upstream error) is counted
+        as `failed`. Identity-invalid candidates make no provider request. The sweep then continues and the stored
         tokens are left unchanged. When the provider rejects the refresh token with a 4xx
         `invalid_grant` (other than `429`), the broker records the rejection and counts that
         attempt as `failed`. Later sweeps exclude the session from their candidates, so it
         contributes to no count and the provider is not contacted again until the user reconnects.
 
         **Dry run**: With `dry_run: true`, candidates are classified without calling any upstream
-        provider and without writing. Candidates that would be refreshed are counted in
-        `refreshed`.
+        provider and without writing observations or session state. Live identity is compared
+        with persisted evidence before success classification. Missing required identity, a different
+        client ID, a superseded revision, or unreadable identity counts as `failed`, not `refreshed`.
+        Other candidates that would be refreshed are counted in `refreshed`.
+
+        **3.0.0 migration**: Identity-invalid candidates now count as failed in both real and dry
+        runs. Clients must account for changed totals; paths, request/response shapes, status codes,
+        ETags, and rejected-session exclusion are unchanged. For one due identity-invalid session,
+        both runs return `failed: 1`, `refreshed: 0`; dry run leaves service revision and tokens unchanged.
 
         **Concurrency**: Safe to invoke concurrently on several broker replicas. Each session is
         refreshed under a row lock, so concurrent sweeps never refresh the same session twice and
@@ -2328,6 +2352,22 @@ paths:
                     failed: 1
                     total_evaluated: 46
                     dry_run: false
+                identity_invalid:
+                  summary: One due identity-invalid session (still 200; no provider call)
+                  value:
+                    refreshed: 0
+                    skipped: 0
+                    failed: 1
+                    total_evaluated: 1
+                    dry_run: false
+                identity_invalid_dry_run:
+                  summary: Same identity-invalid candidate without observation or session writes
+                  value:
+                    refreshed: 0
+                    skipped: 0
+                    failed: 1
+                    total_evaluated: 1
+                    dry_run: true
                 all_failed:
                   summary: Every candidate failed (still 200)
                   value:
@@ -4440,7 +4480,7 @@ components:
           type: integer
           format: int32
           minimum: 0
-          description: Candidates whose tokens were refreshed, or would be refreshed when `dry_run` is true.
+          description: Candidates with usable client identity/revision whose tokens were refreshed, or would be refreshed when `dry_run` is true. Identity-invalid candidates never count as refreshed.
         skipped:
           type: integer
           format: int32
@@ -4450,7 +4490,7 @@ components:
           type: integer
           format: int32
           minimum: 0
-          description: Candidates that needed a refresh but could not be refreshed (refresh token missing or expired, upstream error, provider misconfiguration). Their stored sessions are unchanged.
+          description: Candidates that needed a refresh but could not be refreshed (no usable refresh token, missing/mismatched/superseded identity, unreadable identity, upstream error, or provider misconfiguration). Includes identity-invalid candidates in dry runs. Identity denial preserves stored session tokens; an observed terminal provider rejection retains existing rejection recording.
         total_evaluated:
           type: integer
           format: int32
