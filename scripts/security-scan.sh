@@ -16,18 +16,24 @@ scan_root="$(cd "$scan_root_input" && pwd -P)"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 trusted_root="$(cd "$script_dir/.." && pwd -P)"
-tool_gobin="$(mktemp -d "${TMPDIR:-/tmp}/security-scan.XXXXXX")"
-trap 'rm -rf "$tool_gobin"' EXIT
+scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/security-scan.XXXXXX")"
+trap 'rm -rf "$scratch_dir"' EXIT
 
 cd "$trusted_root"
 
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
+# SECURITY_SCAN_TOOLS_DIR names scanners built before an environment that cannot
+# compile them, such as the agent sandbox; they must match the pinned builds.
+if [[ -n "${SECURITY_SCAN_TOOLS_DIR:-}" ]]; then
+    tool_gobin="$SECURITY_SCAN_TOOLS_DIR"
+    bash "$script_dir/install-security-tools.sh" --verify "$tool_gobin"
+else
+    tool_gobin="$scratch_dir/bin"
+    bash "$script_dir/install-security-tools.sh" "$tool_gobin"
+fi
 
 trusted_config="$trusted_root/osv-scanner.toml"
 if [[ ! -f "$trusted_config" ]]; then
-    trusted_config="$tool_gobin/osv-scanner.toml"
+    trusted_config="$scratch_dir/osv-scanner.toml"
     printf 'ScanGoModVersion = false\n' > "$trusted_config"
 fi
 

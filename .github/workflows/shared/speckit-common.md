@@ -86,6 +86,13 @@ steps:
     run: |
       if [ -d "$HOME/go/bin" ]; then cp -a "$HOME/go/bin/." "$GOBIN/"; fi
       just install-tools
+  # Compiling the scanners' AI SDK dependencies exceeds the agent sandbox's memory, so
+  # `just security` verifies and runs these pinned builds instead of compiling its own.
+  - name: Build security scanners
+    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
+    run: |
+      bash scripts/install-security-tools.sh /tmp/gh-aw/security-scan-tools
+      echo "SECURITY_SCAN_TOOLS_DIR=/tmp/gh-aw/security-scan-tools" >> "$GITHUB_ENV"
   # A cache hit skips `playwright install --with-deps`, and the cache holds no system packages.
   - name: Install Playwright system dependencies
     if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
