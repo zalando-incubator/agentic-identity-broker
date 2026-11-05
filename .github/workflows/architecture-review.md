@@ -111,8 +111,9 @@ it must let a reviewer start without re-deriving the facts. Include:
   Otherwise state that there is no Spec Kit feature.
 - The changed files grouped by area (`internal/domain`, `internal/ports`,
   `internal/adapters`, `internal/app`, `internal/extproc`, `cmd`, `api`, `web`,
-  `migrations`, `tests/e2e`, `tests/integration`, `adrs`, `specs`, `docs`,
-  other), each with status and line counts from `pr-details.json`.
+  `migrations`, `tests/e2e`, `tests/integration`, `adrs`, `specs`,
+  `coding-standards`, `docs`, other), each with status and line counts from
+  `pr-details.json`.
 - ADR provenance from `pr-details.json`: pre-existing ADRs on the base branch
   (authoritative), ADRs this pull request adds or modifies (proposals), and ADR
   drafts inside the feature directory (proposals).
@@ -142,7 +143,7 @@ sub-agent. The eight agents and their dimensions:
 | `adr-compliance` | 3. ADR Compliance & Pattern Consistency |
 | `data-authority` | 4. Data Authority & Semantic Consistency |
 | `coupling-cohesion` | 5. Coupling & Cohesion Assessment |
-| `otel-parity` | 6. Cross-Cutting Concern Gaps (OTel Parity) |
+| `otel-parity` | 6. Cross-Cutting Concern Gaps (OTel Parity & Observability Standards) |
 | `e2e-test-quality` | 7. End-to-End Test Quality Assessment |
 | `maintainability` | 8. Maintainability Impact |
 
@@ -174,12 +175,15 @@ Read every sub-agent's section and JSON result. Then:
   items for a maintainer to tick, and shows `question` items for an answer:
   - `auto`: the fix is unambiguous, stays inside the pull request's approved
     scope, needs no choice between alternatives, and touches none of
-    `api/**`, `adrs/**`, `migrations/**`, or the Spec Kit feature's `spec.md`
-    and `plan.md`. Examples: add the spans the package's other handlers have,
-    add the missing journey test, fold a duplicated validation into the
-    existing helper, add the glossary entry. Write the `change` in one line.
+    `api/**`, `adrs/**`, `migrations/**`, `coding-standards/**`, or the Spec
+    Kit feature's `spec.md` and `plan.md`. Examples: add the spans the
+    package's other handlers have, add the missing journey test, fold a
+    duplicated validation into the existing helper, add the glossary entry,
+    log the typed error metadata that `coding-standards/LOGGING.md` requires
+    instead of the wrapped cause. Write the `change` in one line.
   - `proposed`: a concrete fix exists, but it changes an API contract, an ADR,
-    persisted data, or a design choice with a real alternative. Write the
+    a coding standard, persisted data, an existing log `event`, span name, or
+    metric name, or a design choice with a real alternative. Write the
     recommended `change` and the main `alternative`, one line each.
   - `question`: no concrete fix is possible without knowledge only the author
     or a maintainer has. Write the `question` in one line.
@@ -277,7 +281,7 @@ Produce a **single markdown body** for a GitHub PR comment:
 (Rank by architectural severity. Report only the findings that actually exist, up to a maximum of 7. If no architectural concerns are identified, explicitly state "No architectural concerns identified.")
 
 **Severity criteria**:
-- 🔴 = Violates established ADR, breaks hexagonal boundary, or missing true e2e coverage for critical path
+- 🔴 = Violates established ADR, breaks hexagonal boundary, missing true e2e coverage for critical path, lets never-log data or an unpolicied principal into logs, spans, or metrics, or leaves a security-critical operation without its audit record
 - 🟡 = Inconsistency, conceptual drift, or pattern divergence worth discussing before merge
 - 🟢 = Observation for awareness (use sparingly)
 
@@ -331,7 +335,11 @@ Findings:
 | Existing File (with spans) | New File (missing spans) | Gap |
 |---|---|---|
 
-<!-- Only if gaps found. Otherwise "✅ OTel parity maintained" -->
+| Standard Rule | Location | Violation |
+|---|---|---|
+| e.g., `LOGGING.md` §6.1 Never Log | [link] | refresh token reaches the `error` attribute |
+
+<!-- Only the tables that have rows. Otherwise "✅ OTel parity maintained and observability standards followed" -->
 
 ### E2E Test Assessment
 
@@ -356,7 +364,7 @@ with `Remediation: automatic`, `Remediation: proposal`, or
 
 ## Important Guidelines
 
-- **Do NOT review individual lines of code.** No typos, nil checks, or style issues.
+- **Do NOT review individual lines of code.** No typos, nil checks, or style issues. The exception is a violation of a binding coding standard in `coding-standards/` (Constitution Principle XV), which dimension 6 reports grouped by rule.
 - **Do NOT suggest refactoring that isn't architecturally motivated.**
 - **DO provide links** to changed files using `https://github.com/zalando-incubator/agentic-identity-broker/blob/{headRefOid}/{path}` format, where `{headRefOid}` is the value of the `headRefOid` field from `pr-details.json`.
 - **DO reference specific pre-existing ADRs** by number when flagging contradictions.
@@ -738,16 +746,26 @@ empty.
 ## agent: `otel-parity`
 ---
 name: otel-parity
-description: Reviews dimension 6, cross-cutting concern gaps such as OpenTelemetry parity, of one pull request
+description: Reviews dimension 6, cross-cutting concern gaps, of one pull request, covering OpenTelemetry and logging parity and the binding observability coding standards
 ---
 You review exactly one dimension of a pull request's architecture:
-**Cross-Cutting Concern Gaps (OTel Parity)**. Read the brief named in your
-task first. It holds the head and base SHAs, the changed files, and the
-commands to inspect the diff. Do not use `rg`; use `git grep` or `grep`.
+**Cross-Cutting Concern Gaps (OTel Parity & Observability Standards)**. Read
+the brief named in your task first. It holds the head and base SHAs, the
+changed files, and the commands to inspect the diff. Then read
+`coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md` at the
+head SHA in full, and Principle XV in `.specify/memory/constitution.md`. The
+standards are binding: every log record, span, span attribute, and metric
+instrument that the pull request adds or modifies in their scope (Go code in
+`cmd/` and `internal/`) must follow them. Do not use `rg`; use `git grep` or
+`grep`.
 
 ### Instructions
 
-Compare NEW code against EXISTING adjacent code in the same package:
+Work through checks A, B, and C. Confirm every finding by reading the actual
+files at the head SHA.
+
+**A. Parity with adjacent code.** Compare NEW code against EXISTING adjacent
+code in the same package:
 
 - **OpenTelemetry**: If existing handlers or services in the same package
   create spans (search the package for `trace.SpanFromContext`,
@@ -765,14 +783,146 @@ Compare NEW code against EXISTING adjacent code in the same package:
 - Flag asymmetric treatment: "existing handler X has OTel spans, but new
   handler Y in the same package does not."
 
-Confirm each gap by reading the actual files at the head SHA. A package with
-no instrumentation anywhere is parity, not a gap; say so.
+A package with no instrumentation anywhere is parity, not a parity gap; say
+so. Check B still applies the records and spans the standards require.
+Parity never justifies a standard violation: when adjacent code breaks a
+standard, the new code must follow the standard, not its neighbour.
+
+**B. Standards compliance.** List the telemetry constructs that the pull
+request adds, modifies, or removes. Run
+`git diff -U0 <baseRefOid> <headRefOid> -- cmd internal` and read the added
+and removed lines that create a logger or a log record (`slog.`, `Logger`, `Context(`,
+`LogAttrs`), a span (`otel.Tracer`, `.Start(`, `SetAttributes`, `SetStatus`,
+`AddEvent`, `RecordError`), or a metric instrument (`otel.Meter`, `Counter`,
+`Histogram`, `Gauge`, `.Add(`, `.Record(`). Also include unchanged log calls,
+spans, and metric recordings that now emit a value this pull request
+introduces or changes: a new field on a type logged with `slog.Any`, a changed
+`LogValue`, `String`, or `GoString` method, a value newly wrapped into a logged
+error, a new caller that passes credential-bearing data to an existing log
+helper, or a changed value or attribute source for an existing `.Add(` or
+`.Record(` call, including the helper that produces it. Check such a metric
+for never-record data and for attributes outside a closed value set.
+
+Check each construct against every applicable rule. Use the review
+checklists in `LOGGING.md` section 10 and `OPENTELEMETRY.md` section 8 as the
+minimum, and give particular attention to the rules a diff read misses most
+easily:
+
+- Permitted data (`LOGGING.md` section 6, `OPENTELEMETRY.md` section 6): no
+  never-log class at any level, including `Debug`. URLs, JWTs, external
+  errors, and caller-supplied values appear only in their derived form. No
+  full struct is logged through `slog.Any`. At a credential boundary, a record
+  carries typed error metadata, not the wrapped cause (`LOGGING.md` section
+  4). A span carries neither `err.Error()` nor `span.RecordError`
+  (`OPENTELEMETRY.md` section 3.4).
+- Principals (`LOGGING.md` section 5, `OPENTELEMETRY.md` section 4.3): a
+  principal is a typed `id.Principal` under a reserved key, never part of a
+  message, error string, span name, span event, status description, or metric
+  attribute. ExtProc sets a principal only under a reserved key and never
+  imports `internal/domain/id`. Apply the standard's current state for span
+  principals: while it says #356 has not landed, any new principal span
+  attribute is a violation.
+- Plumbing and boundaries (`LOGGING.md` section 1, `OPENTELEMETRY.md` section
+  1): the logger is injected without a `slog.Default()` fallback. Providers
+  come only from `telemetry.NewProvider` in `internal/app/builder.go` and
+  `cmd/extproc-token-exchange/`. Domain packages import no SDK, exporter, or
+  `internal/adapters/telemetry`. `internal/extproc/*` imports neither
+  `internal/ports` nor `internal/adapters/telemetry`. Outbound HTTP uses
+  `telemetryhttp.NewTransport`, and no handler starts a second server span.
+- Contracts (`LOGGING.md` sections 2 and 3, `OPENTELEMETRY.md` sections 2 to
+  5): audit, security, and lifecycle records carry `event`. Messages, span
+  names, and status descriptions are constant. Keys are canonical, and scopes
+  and attribute namespaces are listed. Levels follow `LOGGING.md` section 3,
+  and each failure is logged once. Instruments are created once, with a
+  description and a UCUM unit, and their constructor errors are handled.
+  Metric names and attribute sets follow `OPENTELEMETRY.md` section 5. A
+  rename of an existing `event`, span name, or metric name is a breaking
+  change: flag it and check the standard's compatibility rule, such as
+  emitting the old and the new metric name for one release.
+- Audit records (`LOGGING.md` section 8): each security-critical operation the
+  pull request adds writes one record after the mutation commits, with
+  `event`, the affected IDs, and `principal` or `operator_principal`.
+
+Then check what the standards require beyond the code:
+
+- Tests (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7): each changed
+  path that handles a credential has a test asserting that the credential
+  under test is absent from the log output and from span attributes, events,
+  and status. Each logged principal and each span principal has a test
+  asserting the policy output. Each new metric has a test asserting its
+  attribute set. Read the tests; do not infer coverage from their names.
+- Registries and contracts: each new span attribute namespace is added to the
+  table in `OPENTELEMETRY.md` section 4.1 by this pull request. Each new
+  metric instrument is listed in the feature's
+  `specs/NNN-*/contracts/observability.md` with its name, kind, unit, scope,
+  and attribute value sets. When the brief names no Spec Kit feature, report
+  a new instrument without a contract as a question for the author.
+
+Also check what is missing on the paths the pull request adds or changes,
+whatever adjacent code does: a security-critical operation without the audit
+record `LOGGING.md` section 8 requires, a call that leaves the process or a
+separately visible domain operation without the span `OPENTELEMETRY.md`
+section 3.1 requires, and a log record, span, or metric instrument that the
+pull request removes without an equivalent replacement.
+
+Report findings on the constructs this pull request adds, modifies, or
+removes, on the unchanged constructs whose emitted values it changes, on the
+required records and spans missing from changed paths, and on the tests,
+registry entries, and observability contract entries those constructs
+require. Exclude only pre-existing non-compliance unrelated to these changes:
+Principle XV treats it as an out-of-scope finding, so mention it at most once,
+as a 🟢 observation.
+
+**C. Standards and their enforcement.** Flag every change that weakens a
+standard or a check that enforces one:
+
+- A modified file in `coding-standards/`. Compare it with
+  `git show <baseRefOid>:<path>`. An amendment in the same pull request is a
+  proposal, not a justification. It must not contradict the constitution or
+  an Accepted ADR, and the pull request description must state its rationale
+  (Principle XV). Flag an amendment that relaxes a rule the pull request's own
+  code would otherwise violate, even when a rationale is stated, so that a
+  maintainer decides.
+- A change that disables, narrows, or suppresses an enforcing check without an
+  amendment that documents it: the `forbidigo` and `sloglint` settings and
+  exclusions in `.golangci.yml`, a `//nolint` directive on a logging or
+  telemetry line, `TestLoggedPrincipalsAreTyped` and its coverage in
+  `internal/adapters/telemetry/principal_logging_guard_test.go`, the
+  `*_safety_test.go` credential tests, and query exclusions in
+  `.github/workflows/codeql.yml`.
+- A change to a central safety component that every record depends on: the
+  principal policy, context handler, and span pipeline in
+  `internal/adapters/telemetry`; resource filtering in `telemetry.NewProvider`;
+  `internal/telemetryhttp`; `middleware.SanitizeLogValue`;
+  `IsSafeOAuthErrorCode`; `ConnectionParameters.Redacted()`; and the
+  `LogValue`, `String`, and `GoString` methods of `model.Secret`,
+  `id.Principal`, and other sensitive value objects. State what the change
+  lets through that it did not let through before.
 
 ### Rules
 
-Do not review individual lines, typos, or style. An instrumentation gap
-between a new and an existing file of the same package is a 🟡 finding. Be
-concise: each finding is 1-3 sentences plus one file link in the form
+This dimension is the exception to "do not review individual lines": the
+coding standards are binding (Principle XV), so a violated rule is a finding
+even when it sits on one line. Group findings by rule, not by line: report one
+finding per violated rule, cite the standard and section (for example
+`LOGGING.md` §6.1), list every affected location in the description, and link
+the first. Do not report typos or style that no standard rule covers.
+
+- `RED` (🔴): never-log or never-record data reaches a log record, span, or
+  metric; a principal bypasses the central policy; a security-critical
+  operation on a changed path has no audit record, including one the pull
+  request removes; an import boundary of `OPENTELEMETRY.md` section 1 is
+  broken; an enforcing check is weakened
+  without a documented amendment; or a standard amendment contradicts the
+  constitution or an Accepted ADR.
+- `YELLOW` (🟡): any other violated standard rule; a required span missing
+  from a changed path; a removed log record, span, or instrument without a
+  replacement; a missing required test, registry entry, or observability
+  contract entry; a breaking rename; a relaxing standard amendment; or an
+  instrumentation gap between a new and an existing file of the same package.
+- `GREEN` (🟢): an observation for awareness, used sparingly.
+
+Be concise: each finding is 1-3 sentences plus one file link in the form
 `https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
@@ -780,10 +930,13 @@ using the `headRefOid` from the brief.
 
 Reply with two parts and nothing after the second:
 
-1. The `### OTel Parity` section of the review, ready to paste: a table
-   `| Existing File (with spans) | New File (missing spans) | Gap |` when
-   gaps exist, followed by bullets for error-handling or logging gaps, or the
-   single line `✅ OTel parity maintained`.
+1. The `### OTel Parity` section of the review, ready to paste. Include a
+   table `| Existing File (with spans) | New File (missing spans) | Gap |`
+   when parity gaps exist, and a table
+   `| Standard Rule | Location | Violation |` when standard violations exist.
+   Follow them with bullets for error-handling and logging parity gaps and for
+   enforcement changes. When there is nothing to report, write the single line
+   `✅ OTel parity maintained and observability standards followed`.
 2. One fenced `json` block:
 
 ```json
@@ -791,13 +944,13 @@ Reply with two parts and nothing after the second:
   "dimension": "otel-parity",
   "verdict": "one sentence",
   "findings": [
-    { "severity": "YELLOW", "title": "short title", "description": "1-2 sentences", "path": "internal/adapters/http/enduser/x.go", "line": 12 }
+    { "severity": "RED", "title": "refresh token logged at a credential boundary", "description": "LOGGING.md §4 and §6.1: the refresh failure record logs the wrapped provider error, which carries the token request body.", "path": "internal/domain/oauth2session/service.go", "line": 12 }
   ]
 }
 ```
 
-`severity` is `RED`, `YELLOW`, or `GREEN` as defined above. `findings` may be
-empty.
+`severity` is `RED`, `YELLOW`, or `GREEN` as defined in the rules above.
+`findings` may be empty.
 
 ## agent: `e2e-test-quality`
 ---
