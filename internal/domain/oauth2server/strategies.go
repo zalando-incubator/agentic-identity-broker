@@ -74,17 +74,36 @@ func NewJWXAccessTokenStrategy(
 	}, nil
 }
 
+type preparedSigningMaterialContextKey struct{}
+
+// prepareSigningMaterial completes any cold-cache decryption before issuance gates.
+func (s *JWXAccessTokenStrategy) prepareSigningMaterial(ctx context.Context) (*cachedSigningKey, error) {
+	if _, active := ports.StorageTransactionEffectsFromContext(ctx); active {
+		return nil, fmt.Errorf("signer preparation must precede the storage transaction")
+	}
+	signer, err := s.signingKeyService.signingMaterial(ctx)
+	if err != nil {
+		if isStorageNotFound(err) {
+			return nil, fmt.Errorf("no signing key provisioned: create one via the admin API (POST /api/oauth2-server/signing-keys)")
+		}
+		return nil, err
+	}
+	return signer, nil
+}
+
 // GenerateAccessToken creates a signed JWT access token.
 func (s *JWXAccessTokenStrategy) GenerateAccessToken(ctx context.Context, requester fosite.Requester) (string, string, error) {
 	return s.mintAccessToken(ctx, requester, nil)
 }
 
 func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester fosite.Requester, actor *actorClaim) (token string, signature string, err error) {
-	signer, err := s.signingKeyService.signingMaterial(ctx)
+	signer, prepared := ctx.Value(preparedSigningMaterialContextKey{}).(*cachedSigningKey)
+	if prepared {
+		err = s.signingKeyService.revalidateSigningMaterial(ctx, signer)
+	} else {
+		signer, err = s.prepareSigningMaterial(ctx)
+	}
 	if err != nil {
-		if isStorageNotFound(err) {
-			return "", "", fmt.Errorf("no signing key provisioned: create one via the admin API (POST /api/oauth2-server/signing-keys)")
-		}
 		return "", "", err
 	}
 

@@ -18,20 +18,28 @@ type clientAssertionReplayKey struct {
 
 // ClientAssertionReplayStore keeps consumed assertion identifiers in memory.
 type ClientAssertionReplayStore struct {
-	mu   sync.Mutex
-	data map[clientAssertionReplayKey]time.Time
+	mu           sync.Mutex
+	transactions *TransactionManager
+	data         map[clientAssertionReplayKey]time.Time
 }
 
 // NewClientAssertionReplayStore creates an empty replay store.
-func NewClientAssertionReplayStore() *ClientAssertionReplayStore {
-	return &ClientAssertionReplayStore{data: make(map[clientAssertionReplayKey]time.Time)}
+func NewClientAssertionReplayStore(transactions *TransactionManager) *ClientAssertionReplayStore {
+	return &ClientAssertionReplayStore{transactions: transactions, data: make(map[clientAssertionReplayKey]time.Time)}
 }
 
-func (s *ClientAssertionReplayStore) Consume(_ context.Context, clientID, jti string, expiresAt time.Time) error {
+// Consume records the identifier outside any ambient transaction: a replay record must
+// survive a rolled-back outer transaction (ADR 043), so it is never journaled.
+func (s *ClientAssertionReplayStore) Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error {
 	record := &storage.ClientAssertionReplay{ClientID: clientID, JTI: jti, ExpiresAt: expiresAt}
 	if err := record.Validate(); err != nil {
 		return err
 	}
+	guard, gateErr := s.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -43,7 +51,12 @@ func (s *ClientAssertionReplayStore) Consume(_ context.Context, clientID, jti st
 	return nil
 }
 
-func (s *ClientAssertionReplayStore) DeleteExpired(_ context.Context) (int, error) {
+func (s *ClientAssertionReplayStore) DeleteExpired(ctx context.Context) (int, error) {
+	guard, gateErr := s.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

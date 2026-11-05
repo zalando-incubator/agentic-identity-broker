@@ -50,7 +50,7 @@ func requireStorageKind(t *testing.T, err error, want storage.ErrorKind) {
 }
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateMaterializesResourceSet(t *testing.T) {
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testProvider(id.NewServiceID(), "https://api.example.com/v1/")
 
 	require.NoError(t, repo.Create(context.Background(), provider))
@@ -68,7 +68,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateMaterializesResourceSe
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_GetByIDs(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	first := testProvider(id.NewServiceID(), "https://api.example.com/one")
 	second := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, first))
@@ -87,7 +87,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_GetByIDs(t *testing.T) {
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ProtectedResourceMutations(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, provider))
 
@@ -122,7 +122,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ProtectedResourceMutations(t
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsGlobalResourceConflicts(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	first := testProvider(id.NewServiceID(), "https://api.example.com")
 	second := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, first))
@@ -140,7 +140,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsGlobalResourceConflic
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_OwnershipConflictsAreTypedAndAtomic(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	owner := testProvider(id.NewServiceID(), "https://api.example.com/owned")
 	require.NoError(t, repo.Create(ctx, owner))
 
@@ -173,7 +173,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_OwnershipConflictsAreTypedAn
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateUsesCASOnlyForResourceReplacement(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testProvider(id.NewServiceID(), "https://api.example.com/old")
 	require.NoError(t, repo.Create(ctx, provider))
 
@@ -201,7 +201,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateUsesCASOnlyForResource
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ConcurrentClaimsPreserveOwnership(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	first := testProvider(id.NewServiceID())
 	second := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, first))
@@ -260,7 +260,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ConcurrentClaimsPreserveOwne
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ChildResourceResolverLifecycle(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, provider))
 
@@ -280,7 +280,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ChildResourceResolverLifecyc
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_PublicProviderRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                      id.NewServiceID(),
 		DisplayName:             "Public Provider",
@@ -302,7 +302,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_PublicProviderRoundTrip(t *t
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDPublicRegistrationRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testCIMDProvider(id.NewServiceID())
 	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
 	provider.ClientRegistration = model.ClientRegistrationCIMD
@@ -348,7 +348,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsInvalidClientAuthenti
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 			provider := testProvider(id.NewServiceID())
 			provider.TokenEndpointAuthMethod = tt.method
 			provider.Secret = tt.secret
@@ -360,7 +360,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsInvalidClientAuthenti
 }
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsPlaintextSecret(t *testing.T) {
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:          id.NewServiceID(),
 		DisplayName: "Confidential Provider",
@@ -375,7 +375,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsPlaintextSecret(t *te
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testCIMDProvider(id.NewServiceID())
 
 	require.NoError(t, repo.Create(ctx, provider))
@@ -390,7 +390,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *tes
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSecret(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	staticProvider := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, staticProvider))
 
@@ -422,7 +422,7 @@ func testDCRProvider(serviceID id.ServiceID, issuer string, method model.TokenEn
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRIdentityIsIssuerScoped(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	first := testDCRProvider(id.NewServiceID(), "https://first.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	second := testDCRProvider(id.NewServiceID(), "https://second.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	require.NoError(t, repo.Create(ctx, first))
@@ -455,7 +455,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRIdentityIsIssuerScoped(t 
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRDuplicatePreservesConfidentialCredentials(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(NewInMemoryUserSessionRepository(NewTransactionManager()))
 	firstCiphertext := []byte("first encrypted credential")
 	secondCiphertext := []byte("second encrypted credential")
 	first := testDCRProvider(id.NewServiceID(), "https://first.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret(firstCiphertext))
@@ -501,7 +501,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRDuplicatePreservesConfide
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateDiscoveryStateIsOwned(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testCIMDProvider(id.NewServiceID())
 	resourceURL := "https://api.example.com/discovery"
 	completedAt := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
@@ -568,7 +568,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateDiscoveryStateIsOwned(
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateCommitsActiveDiscoveryAndStatusTogether(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(NewInMemoryUserSessionRepository(NewTransactionManager()))
 	provider := testCIMDProvider(id.NewServiceID())
 	oldResource := "https://api.example.com/old"
 	initial := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
@@ -644,8 +644,8 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateCommitsActiveDiscovery
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_DiscoveryFailureRetainsActiveStateAndSessions(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessions := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
+	sessions := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ciphertext := []byte("encrypted registered client credential")
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret(ciphertext))
 	resourceURL := "https://api.example.com/resource"
@@ -740,8 +740,8 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			sessions := NewInMemoryUserSessionRepository()
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+			sessions := NewInMemoryUserSessionRepository(NewTransactionManager())
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(sessions)
 			provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 			const audienceA = "https://audience.example.test/a"
 			const audienceB = "https://audience.example.test/b"
@@ -802,8 +802,8 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_PinnedAudienceSurvivesDiscoveryURLChangeWithSession(t *testing.T) {
 	ctx := context.Background()
-	sessions := NewInMemoryUserSessionRepository()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	sessions := NewInMemoryUserSessionRepository(NewTransactionManager())
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(sessions)
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	const audience = "https://audience.example.test/pinned"
 	provider.AuthorizationParams["resource"] = audience
@@ -831,7 +831,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_PinnedAudienceSurvivesDiscov
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_EqualStoredMicrosecondKeepsFirstFailure(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	require.NoError(t, repo.Create(ctx, provider))
 	before, err := repo.Get(ctx, provider.ID)
@@ -858,7 +858,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_EqualStoredMicrosecondKeepsF
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_FailureOnlyTieKeepsFirstOutcome(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	require.NoError(t, repo.Create(ctx, provider))
 	ready, err := repo.Get(ctx, provider.ID)
@@ -876,7 +876,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_FailureOnlyTieKeepsFirstOutc
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewerFailure(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(NewInMemoryUserSessionRepository(NewTransactionManager()))
 	ciphertext := []byte("encrypted registered client credential")
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret(ciphertext))
 	require.NoError(t, repo.Create(ctx, provider))
@@ -934,7 +934,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewer
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ConcurrentDiscoveryFailuresKeepLatestAttempt(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
 	require.NoError(t, repo.Create(ctx, provider))
 	ready, err := repo.Get(ctx, provider.ID)
@@ -974,7 +974,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ConcurrentDiscoveryFailuresK
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_DeleteRemovesDiscoveryStatus(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret([]byte("deleted encrypted credential")))
 	resourceURL := "https://api.example.com/resource"
 	succeededAt := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
@@ -1005,7 +1005,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DeleteRemovesDiscoveryStatus
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverClearsDiscoveryAudience(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager()).WithUserSessionRepository(NewInMemoryUserSessionRepository(NewTransactionManager()))
 	discovered := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret([]byte("old-sealed-secret")))
 	discovered.AuthorizationParams["prompt"] = "consent"
 	require.NoError(t, repo.Create(ctx, discovered))
@@ -1022,7 +1022,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverClearsDiscovery
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverKeepsOmittedParamsWithoutDiscoveryMarker(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	discovered := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret([]byte("old-sealed-secret")))
 	discovered.ResourceExplicit = true
 	discovered.AuthorizationParams["resource"] = "https://audience.example.test/files"

@@ -8,6 +8,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	dstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,12 +28,12 @@ func TestFositeStorage_GetClientPreservesCIMDAuthenticationMetadata(t *testing.T
 		return ports.NewClientResolution(agent, metadata), nil
 	}}
 	store := NewFositeStorage(
-		memory.NewAuthorizationCodeStore(),
-		memory.NewRefreshTokenSessionStore(),
-		memory.NewPKCESessionStore(),
-		memory.NewClientCredentialStore(),
+		memory.NewAuthorizationCodeStore(memory.NewTransactionManager()),
+		memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()),
+		memory.NewPKCESessionStore(memory.NewTransactionManager()),
+		memory.NewClientCredentialStore(memory.NewTransactionManager()),
 		resolver,
-		newTestGrantVerifier(memory.NewAgentRepository()),
+		newTestGrantVerifier(memory.NewAgentRepository(memory.NewTransactionManager()), memory.NewTransactionManager(), ledgerfixture.NewRecorder()),
 		testSlogger(),
 	)
 

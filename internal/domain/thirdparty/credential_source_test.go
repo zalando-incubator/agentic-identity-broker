@@ -85,7 +85,7 @@ type credentialSourceFixture struct {
 
 func newCredentialSourceFixture(t *testing.T) *credentialSourceFixture {
 	t.Helper()
-	repo := &credentialSourceRepository{InMemoryThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository()}
+	repo := &credentialSourceRepository{InMemoryThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())}
 	crypto := &credentialSourceEncryption{EncryptionPort: testutil.NewTestEncryptionAdapter(t)}
 	keys := &credentialSourceBranchKeys{}
 	service := thirdparty.NewThirdpartyOAuth2ProviderService(repo, crypto, keys, nil, false, slog.New(slog.DiscardHandler))

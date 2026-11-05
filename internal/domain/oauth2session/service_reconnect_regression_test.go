@@ -32,19 +32,16 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		var lock sync.Mutex
 		var lockCalls atomic.Int32
 		reconnectWaiting := make(chan struct{})
-		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, update func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		repository := service.refreshRepo.(operationRefreshRepository)
+		repository.lock = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, update func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 			if lockCalls.Add(1) == 2 {
 				close(reconnectWaiting)
 			}
 			lock.Lock()
 			defer lock.Unlock()
-			current := *stored
-			changed, err := update(ctx, &current)
-			if changed && err == nil {
-				*stored = current
-			}
-			return &current, err
-		})
+			return repository.ledgerSessionRecords.WithLockedSession(ctx, principal, serviceID, update)
+		}
+		service.refreshRepo = repository
 		refreshed := make(chan error, 1)
 		go func() {
 			_, _, _, err := service.refreshDueSession(ctx, stored.Principal, provider.ID, time.Now, RefreshTriggerOnDemand)
@@ -65,6 +62,7 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		close(releaseRefresh)
 		require.NoError(t, <-refreshed)
 		require.NoError(t, <-reconnected)
+		stored = repository.session
 		assert.Equal(t, "other-account-access", string(stored.EncryptedAccessToken))
 		assert.Empty(t, stored.EncryptedRefreshToken)
 		assert.Nil(t, stored.RefreshRejectedAt)
@@ -86,15 +84,15 @@ func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
 			service, provider, stored := newOperationTestService(t, io.Discard)
 			before := *stored
 			cause := errors.New("sentinel-locked-reconnect-failure")
-			service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, update func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-				if tc.stageUpdate {
-					current := *stored
-					changed, err := update(ctx, &current)
-					require.NoError(t, err)
-					require.True(t, changed)
+			repository := service.refreshRepo.(operationRefreshRepository)
+			if tc.stageUpdate {
+				repository.update = func(context.Context, *storage.UserSession, *storage.UserSession) error { return cause }
+			} else {
+				repository.lock = func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
+					return nil, cause
 				}
-				return nil, cause
-			})
+			}
+			service.refreshRepo = repository
 			createCalls := 0
 			service.sessionRepo = operationSessionRepository{create: func(_ context.Context, session *storage.UserSession) error {
 				createCalls++
@@ -111,6 +109,32 @@ func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
 			assert.Equal(t, KindInfrastructure, metadata.Kind())
 			assert.Equal(t, DependencySessionRepository, metadata.Dependency())
 			assert.ErrorIs(t, err, cause)
+		})
+	}
+}
+
+func TestSetSessionTokensClearsRejectionOnlyForReplacementRefreshToken(t *testing.T) {
+	for _, replacement := range []string{"", "rotated-refresh"} {
+		t.Run("refresh_token="+replacement, func(t *testing.T) {
+			service, provider, session := newOperationTestService(t, io.Discard)
+			rejectedAt := time.Now().Add(-time.Minute)
+			session.RefreshRejectedAt = &rejectedAt
+			previousRefresh := append([]byte(nil), session.EncryptedRefreshToken...)
+
+			err := service.setSessionTokens(context.Background(), session, &oauth2.Token{
+				AccessToken: "renewed-access", RefreshToken: replacement,
+			}, provider.Flavor)
+
+			require.NoError(t, err)
+			if replacement == "" {
+				assert.Equal(t, &rejectedAt, session.RefreshRejectedAt)
+				assert.Equal(t, previousRefresh, session.EncryptedRefreshToken)
+				assert.True(t, session.RequiresReauthentication())
+			} else {
+				assert.Nil(t, session.RefreshRejectedAt)
+				assert.NotEqual(t, previousRefresh, session.EncryptedRefreshToken)
+				assert.True(t, session.CanRefresh())
+			}
 		})
 	}
 }

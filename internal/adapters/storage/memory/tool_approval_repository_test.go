@@ -13,7 +13,7 @@ import (
 )
 
 func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	now := time.Now()
 	principal := id.Principal("user@example.com")
 	agentID := id.NewAgentID()
@@ -44,18 +44,27 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 
 	_, err := repo.Create(context.Background(), first)
 	require.NoError(t, err)
+	unrecognized, err := repo.Create(context.Background(), second)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, unrecognized.ID, "retirement must wait for expiry recognition")
+	old, err := repo.Get(context.Background(), first.ID)
+	require.NoError(t, err)
+	require.False(t, old.Consumed)
+	won, err := repo.RecordExpiration(context.Background(), first.ID, first.ExpiresAt)
+	require.NoError(t, err)
+	require.True(t, won)
 	created, err := repo.Create(context.Background(), second)
 	require.NoError(t, err)
 
 	require.Equal(t, second.ID, created.ID)
 	require.Equal(t, second.ApprovalURL, created.ApprovalURL)
-	old, err := repo.Get(context.Background(), first.ID)
+	old, err = repo.Get(context.Background(), first.ID)
 	require.NoError(t, err)
 	require.True(t, old.Consumed)
 }
 
 func TestToolApprovalRepository_FindPendingByKey(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("user@example.com")
 	agentID := id.NewAgentID()
@@ -86,7 +95,7 @@ func TestToolApprovalRepository_FindPendingByKey(t *testing.T) {
 }
 
 func TestToolApprovalRepository_RevokePermanentClearsPermanentDenial(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	now := time.Now()
 	permanent := storage.ApprovalPersistencePermanent
 	approval := &storage.ToolApproval{
@@ -114,7 +123,7 @@ func TestToolApprovalRepository_RevokePermanentClearsPermanentDenial(t *testing.
 }
 
 func TestToolApprovalRepository_PermanentDenialClearsParameterScope(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	ctx := context.Background()
 	approval := &storage.ToolApproval{ID: id.NewApprovalID(), ToolName: "read_file", ToolPattern: "read_file",
 		ParamsPattern: map[string]string{"path": "/reviewed"}, Status: storage.ApprovalStatusPending, ExpiresAt: time.Now().Add(time.Minute)}
@@ -133,7 +142,7 @@ func TestToolApprovalRepository_PermanentDenialClearsParameterScope(t *testing.T
 }
 
 func TestToolApprovalRepository_RejectsExpiredPendingResolution(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	now := time.Now()
 	approval := &storage.ToolApproval{
 		ID:            id.NewApprovalID(),
@@ -156,7 +165,7 @@ func TestToolApprovalRepository_RejectsExpiredPendingResolution(t *testing.T) {
 }
 
 func TestToolApprovalRepository_ListAllActiveOmitsInactiveSessionApproval(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	now := time.Now()
 	session := storage.ApprovalPersistenceSession
 	sessionID := "session-1"
@@ -186,7 +195,7 @@ func TestToolApprovalRepository_ListAllActiveOmitsInactiveSessionApproval(t *tes
 }
 
 func TestToolApprovalRepositoryPatterns(t *testing.T) {
-	repo := NewToolApprovalRepository()
+	repo := NewToolApprovalRepository(NewTransactionManager())
 	approval := &storage.ToolApproval{ID: id.NewApprovalID(), ToolName: "read_file", Status: storage.ApprovalStatusPending}
 	_, err := repo.Create(context.Background(), approval)
 	require.ErrorIs(t, err, storage.ErrApprovalPatternMissing)

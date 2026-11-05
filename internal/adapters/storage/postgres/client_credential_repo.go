@@ -31,12 +31,10 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx,
-		`INSERT INTO client_credentials (id, agent_id, secret_hash, created_at, rotated_at)
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `INSERT INTO client_credentials (id, agent_id, secret_hash, created_at, rotated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		credential.ID, credential.AgentID,
-		credential.SecretHash, credential.CreatedAt, credential.RotatedAt,
-	)
+		credential.SecretHash, credential.CreatedAt, credential.RotatedAt)
 	if err != nil {
 		return storage.NewStorageError("ClientCredentialRepo.Create", storage.ErrorKindUnknown, err, "failed to create credential")
 	}
@@ -44,6 +42,14 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 }
 
 func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.getByAgentID(ctx, agentID, false)
+}
+
+func (r *ClientCredentialRepo) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.getByAgentID(ctx, agentID, true)
+}
+
+func (r *ClientCredentialRepo) getByAgentID(ctx context.Context, agentID id.AgentID, forUpdate bool) (*storage.ClientCredential, error) {
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -51,10 +57,13 @@ func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.Agen
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
+	query := `SELECT id, agent_id, secret_hash, created_at, rotated_at
+		 FROM client_credentials WHERE agent_id = $1`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
 	var cred storage.ClientCredential
-	err := r.adapter.db.GetContext(queryCtx, &cred,
-		`SELECT id, agent_id, secret_hash, created_at, rotated_at
-		 FROM client_credentials WHERE agent_id = $1`, agentID)
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &cred, query, agentID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindNotFound, err, "credential not found")
@@ -83,8 +92,7 @@ func (r *ClientCredentialRepo) Delete(ctx context.Context, agentID id.AgentID) e
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	result, err := r.adapter.db.ExecContext(execCtx,
-		`DELETE FROM client_credentials WHERE agent_id = $1`, agentID)
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM client_credentials WHERE agent_id = $1`, agentID)
 	if err != nil {
 		return storage.NewStorageError("ClientCredentialRepo.Delete", storage.ErrorKindUnknown, err, "failed to delete credential")
 	}
@@ -103,7 +111,7 @@ func (r *ClientCredentialRepo) Rotate(ctx context.Context, agentID id.AgentID, n
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindUnknown, err, "failed to begin transaction")
 	}

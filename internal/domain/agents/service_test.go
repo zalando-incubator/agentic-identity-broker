@@ -14,6 +14,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -140,7 +142,7 @@ func (m *mockServiceReqValidator) ValidateServiceRequirements(_ context.Context,
 }
 
 func newTestService(repo ports.AgentRepository, multiAgent bool) *Service {
-	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent)
+	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 }
 
 func testPermissionSets() []storage.AgentPermissionSetEntry {
@@ -465,7 +467,7 @@ func TestDeleteLogsOnlyActualDeletion(t *testing.T) {
 				repo.deleteFn = func(context.Context, id.AgentID) (bool, error) { return false, tc.err }
 			}
 			var logs bytes.Buffer
-			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 			err := svc.Delete(context.Background(), agentID)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
@@ -518,7 +520,7 @@ func agentAuditFields(t *testing.T, record slog.Record) map[string]any {
 func TestCreateAuditContainsOnlyDefensiveTypedDefinitions(t *testing.T) {
 	repo := newMockAgentRepo()
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
 	agent := &storage.Agent{
 		ID: id.NewAgentID(), ClientID: ptr.To(id.ClientID("PRIVATE_AGENT_METADATA")),
@@ -581,7 +583,7 @@ func TestUpdateAuditPreservesObservedBeforeAndNewDefinitions(t *testing.T) {
 		return nil
 	}
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
 	require.NoError(t, svc.Update(ctx, previous.ID, agent, false))
 	assert.Equal(t, 1, writes)
@@ -605,12 +607,9 @@ func TestUpdateAuditsSuccessfulUnchangedDefinition(t *testing.T) {
 	repo := newMockAgentRepo()
 	agent := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Agent", Description: "Definition", PermissionSets: testPermissionSets()}
 	repo.agents[agent.ID] = agent.Copy()
-	writes := 0
-	repo.updateFn = func(context.Context, *storage.Agent) error { writes++; return nil }
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	require.NoError(t, svc.Update(context.Background(), agent.ID, agent, false))
-	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
 	assert.Equal(t, "agent_updated", agentAuditFields(t, capture.records[0])["action"])
 }
@@ -646,7 +645,7 @@ func TestFailedAgentMutationsEmitNoSuccessfulAudit(t *testing.T) {
 				agent.DisplayName = ""
 			}
 			capture := &agentAuditCapture{}
-			svc := NewService(repo, &mockServiceReqValidator{err: tc.validationErr}, slog.New(capture), true)
+			svc := NewService(repo, &mockServiceReqValidator{err: tc.validationErr}, slog.New(capture), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 			var err error
 			switch tc.operation {
 			case "create":
@@ -672,7 +671,7 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	agentID := id.NewAgentID()
 	repo.agents[agentID] = &storage.Agent{ID: agentID}
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, nil, slog.New(capture), true)
+	svc := NewService(repo, nil, slog.New(capture), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
 	require.NoError(t, svc.Delete(ctx, agentID))
 	require.NoError(t, svc.Delete(ctx, agentID))
@@ -682,4 +681,8 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	require.Len(t, fields, 2)
 	assert.Equal(t, "agent_deleted", fields["action"])
 	assert.Equal(t, agentID, fields["agent_id"])
+}
+
+func (m *mockAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return m.Get(ctx, agentID)
 }

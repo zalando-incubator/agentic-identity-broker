@@ -23,6 +23,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+type SQLMigration struct {
+	File    string
+	Version int64
+}
+
+// PostgresTestHandle accepts both testing.T and Ginkgo's test proxy.
+type PostgresTestHandle interface {
+	Helper()
+	Errorf(format string, args ...any)
+	FailNow()
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+	Skipf(format string, args ...any)
+}
+
 type SharedPostgres struct {
 	container testcontainers.Container
 	host      string
@@ -39,7 +54,7 @@ var (
 	sharedPostgresErr  error
 )
 
-func RequireSharedPostgres(t *testing.T) *SharedPostgres {
+func RequireSharedPostgres(t PostgresTestHandle) *SharedPostgres {
 	t.Helper()
 
 	if testing.Short() {
@@ -100,7 +115,7 @@ func startSharedPostgres(ctx context.Context) (*SharedPostgres, error) {
 	}
 
 	req := testcontainers.ContainerRequest{
-		Image:        "postgres:15-alpine",
+		Image:        "postgres:17-alpine",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "testuser",
@@ -146,9 +161,9 @@ func startSharedPostgres(ctx context.Context) (*SharedPostgres, error) {
 }
 
 func (pg *SharedPostgres) SetupDatabaseFromTemplate(
-	t *testing.T,
+	t PostgresTestHandle,
 	templateKey string,
-	provision func(t *testing.T, dbName string),
+	provision func(dbName string),
 ) (string, string, func()) {
 	t.Helper()
 
@@ -163,73 +178,103 @@ func (pg *SharedPostgres) SetupDatabaseFromTemplate(
 	return dbName, pg.ConnectionString(dbName), cleanup
 }
 
-func (pg *SharedPostgres) SetupMigratedDatabase(t *testing.T) (string, string, func()) {
+// SetupMigratedDatabase provisions a database with every project migration applied.
+func (pg *SharedPostgres) SetupMigratedDatabase(t PostgresTestHandle) (string, string, func()) {
 	t.Helper()
 
-	return pg.SetupDatabaseFromTemplate(t, "full_migrations", func(t *testing.T, dbName string) {
-		migrationRunner := pg.newMigrationRunner(t, dbName)
+	return pg.SetupDatabaseFromTemplate(t, "full_migrations", func(dbName string) {
+		migrationRunner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
+		require.NoError(t, err)
 		defer func() { _, _ = migrationRunner.Close() }()
-		err := migrationRunner.Up()
+		err = migrationRunner.Up()
 		if err != migrate.ErrNoChange {
 			require.NoError(t, err)
 		}
 	})
 }
 
-func (pg *SharedPostgres) ConnectionString(dbName string) string {
-	return fmt.Sprintf("postgres://testuser:testpass@%s:%s/%s?sslmode=disable", pg.host, pg.port, dbName)
-}
-
-func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, upTo uint) {
+// ApplyProjectMigrationsUpTo runs the repository migrations through golang-migrate up to a version.
+func (pg *SharedPostgres) ApplyProjectMigrationsUpTo(t PostgresTestHandle, dbName string, upTo uint) {
 	t.Helper()
 
-	migrationRunner := pg.newMigrationRunner(t, dbName)
+	migrationRunner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
+	require.NoError(t, err)
 	defer func() { _, _ = migrationRunner.Close() }()
-	err := migrationRunner.Migrate(upTo)
+	err = migrationRunner.Migrate(upTo)
 	if err != migrate.ErrNoChange {
 		require.NoError(t, err)
 	}
 }
 
-func (pg *SharedPostgres) newMigrationRunner(t *testing.T, dbName string) *migrate.Migrate {
-	t.Helper()
-
-	migrationRunner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
-	require.NoError(t, err)
-	return migrationRunner
-}
-
-func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
-	t.Helper()
-
-	pg.applyMigration(t, dbName, projectMigrationsDir(t), filename)
-}
-
-func projectMigrationsDir(t *testing.T) string {
+func projectMigrationsDir(t PostgresTestHandle) string {
 	t.Helper()
 	projectRoot, err := FindProjectRoot()
 	require.NoError(t, err, "Failed to find project root")
 	return filepath.Join(projectRoot, "migrations")
 }
 
-func (pg *SharedPostgres) applyMigration(t *testing.T, dbName, migrationsDir, filename string) {
+func (pg *SharedPostgres) ConnectionString(dbName string) string {
+	return fmt.Sprintf("postgres://testuser:testpass@%s:%s/%s?sslmode=disable", pg.host, pg.port, dbName)
+}
+
+func (pg *SharedPostgres) ApplyMigrationsUpTo(t PostgresTestHandle, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(migrationsDir, filename)) // #nosec G304 -- test helper reads repository-owned migration filenames.
+
+	pg.CreateSchemaMigrationsTable(t, dbName)
+	for _, migration := range migrations {
+		if int(migration.Version) > upTo {
+			break
+		}
+		pg.ApplyMigration(t, dbName, migration.File)
+		pg.recordMigrationVersion(t, dbName, migration.Version)
+	}
+}
+
+func (pg *SharedPostgres) CreateSchemaMigrationsTable(t PostgresTestHandle, dbName string) {
+	t.Helper()
+	pg.ExecuteSQL(t, dbName, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version BIGINT PRIMARY KEY,
+			dirty BOOLEAN NOT NULL DEFAULT FALSE
+		);
+	`)
+}
+
+func (pg *SharedPostgres) ApplyMigration(t PostgresTestHandle, dbName, filename string) {
+	t.Helper()
+
+	projectRoot, err := FindProjectRoot()
+	require.NoError(t, err, "Failed to find project root")
+
+	migrationPath := filepath.Join(projectRoot, "migrations", filename)
+	data, err := os.ReadFile(migrationPath) // #nosec G304 -- test helper reads repository-owned migration filenames.
 	require.NoErrorf(t, err, "Failed to read migration file %s", filename)
+
 	pg.ExecuteSQL(t, dbName, string(data))
 }
 
-func (pg *SharedPostgres) QuerySQL(t *testing.T, dbName, query string) string {
+func (pg *SharedPostgres) QuerySQL(t PostgresTestHandle, dbName, query string) string {
 	t.Helper()
 	return strings.TrimSpace(pg.execPSQL(t, dbName, "-t", "-A", "-c", query))
 }
 
-func (pg *SharedPostgres) ExecuteSQL(t *testing.T, dbName, query string) {
+func (pg *SharedPostgres) ExecuteSQL(t PostgresTestHandle, dbName, query string) {
 	t.Helper()
 	_ = pg.execPSQL(t, dbName, "-c", query)
 }
 
-func (pg *SharedPostgres) execPSQL(t *testing.T, dbName string, args ...string) string {
+// ExecutePSQLScript runs psql-specific commands (including \gexec) inside the shared container.
+func (pg *SharedPostgres) ExecutePSQLScript(t *testing.T, dbName, brokerUser, script string) {
+	t.Helper()
+	localFile := filepath.Join(t.TempDir(), "grants.sql")
+	require.NoError(t, os.WriteFile(localFile, []byte(script), 0o600))
+	containerFile := "/tmp/" + dbName + "-grants.sql"
+	defer pg.execContainerCommand(t, "rm", "-f", containerFile)
+	require.NoError(t, pg.container.CopyFileToContainer(context.Background(), localFile, containerFile, 0o644))
+	pg.execPSQL(t, dbName, "-X", "-v", "ON_ERROR_STOP=1", "-v", "broker_user="+brokerUser, "-f", containerFile)
+}
+
+func (pg *SharedPostgres) execPSQL(t PostgresTestHandle, dbName string, args ...string) string {
 	t.Helper()
 
 	baseArgs := []string{"psql", "-U", "testuser", "-d", dbName}
@@ -237,7 +282,7 @@ func (pg *SharedPostgres) execPSQL(t *testing.T, dbName string, args ...string) 
 	return pg.execContainerCommand(t, baseArgs...)
 }
 
-func (pg *SharedPostgres) execContainerCommand(t *testing.T, args ...string) string {
+func (pg *SharedPostgres) execContainerCommand(t PostgresTestHandle, args ...string) string {
 	t.Helper()
 
 	exitCode, outReader, err := pg.container.Exec(context.Background(), args)
@@ -284,7 +329,7 @@ func decodeExecOutput(raw []byte) []byte {
 	return decoded
 }
 
-func (pg *SharedPostgres) ensureTemplateDatabase(t *testing.T, templateKey string, provision func(t *testing.T, dbName string)) string {
+func (pg *SharedPostgres) ensureTemplateDatabase(t PostgresTestHandle, templateKey string, provision func(dbName string)) string {
 	t.Helper()
 
 	pg.templateMu.Lock()
@@ -296,12 +341,12 @@ func (pg *SharedPostgres) ensureTemplateDatabase(t *testing.T, templateKey strin
 
 	templateName := pg.nextDatabaseName("template_" + templateKey)
 	pg.createDatabase(t, templateName, "")
-	provision(t, templateName)
+	provision(templateName)
 	pg.templateDBs[templateKey] = templateName
 	return templateName
 }
 
-func (pg *SharedPostgres) createDatabase(t *testing.T, dbName, templateName string) {
+func (pg *SharedPostgres) createDatabase(t PostgresTestHandle, dbName, templateName string) {
 	t.Helper()
 
 	args := []string{"createdb", "-U", "testuser", "--maintenance-db=postgres"}
@@ -312,17 +357,25 @@ func (pg *SharedPostgres) createDatabase(t *testing.T, dbName, templateName stri
 	pg.execContainerCommand(t, args...)
 }
 
-func (pg *SharedPostgres) dropDatabase(t *testing.T, dbName string) {
+func (pg *SharedPostgres) dropDatabase(t PostgresTestHandle, dbName string) {
 	t.Helper()
 	pg.terminateDatabaseConnections(t, dbName)
 	pg.execContainerCommand(t, "dropdb", "--if-exists", "-U", "testuser", "--maintenance-db=postgres", dbName)
 }
 
-func (pg *SharedPostgres) terminateDatabaseConnections(t *testing.T, dbName string) {
+func (pg *SharedPostgres) terminateDatabaseConnections(t PostgresTestHandle, dbName string) {
 	t.Helper()
 	pg.execPSQL(t, "postgres", "-c", fmt.Sprintf(
 		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid();",
 		dbName,
+	))
+}
+
+func (pg *SharedPostgres) recordMigrationVersion(t PostgresTestHandle, dbName string, version int64) {
+	t.Helper()
+	pg.ExecuteSQL(t, dbName, fmt.Sprintf(
+		"INSERT INTO schema_migrations (version, dirty) VALUES (%d, FALSE) ON CONFLICT DO NOTHING;",
+		version,
 	))
 }
 

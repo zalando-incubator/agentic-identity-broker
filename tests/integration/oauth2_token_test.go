@@ -17,6 +17,7 @@ import (
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,10 +46,11 @@ func newTestTokenHandler(upstreamURL string, agentID id.AgentID) *enduser.OAuth2
 		ClientID: ptr.To(id.ClientID("test-upstream-client-id")),
 	}
 	transport := enduser.NewOAuth2TokenProxy(upstreamURL, nil)
-	outcomes := oauth2.NewTokenOutcomeService(transport, nil)
+	outcomes := oauth2.NewTokenOutcomeService(transport, nil, ledgerfixture.NewRecorder())
 	return &enduser.OAuth2TokenHandler{
 		OAuth2Service: &stubOAuth2Service{agent: agent},
 		GrantHandler:  enduser.NewProxyTokenGrantStrategy(upstreamURL, outcomes, nil),
+		Outcomes:      outcomes,
 	}
 }
 
@@ -309,6 +311,7 @@ func TestOAuth2TokenEndpoint_CIMDFetchFailuresAreDirect(t *testing.T) {
 			handler := &enduser.OAuth2TokenHandler{
 				OAuth2Service: service,
 				GrantHandler:  enduser.NewLocalGrantStrategy(nil, nil),
+				Outcomes:      oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()),
 			}
 			form := url.Values{"grant_type": {"authorization_code"}, "client_id": {clientURL}, "code": {"unused-code"}}
 			request := httptest.NewRequest(http.MethodPost, "https://broker.example.com/oauth2/token", strings.NewReader(form.Encode()))

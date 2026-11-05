@@ -21,6 +21,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type observingGrantRepository struct {
@@ -60,12 +61,15 @@ func observationFixture(t *testing.T) (*TokenExchangeService, *TokenExchangeRequ
 	providers := newTestProviderService(&MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
 		ID: serviceID, DisplayName: "Service", ClientID: "provider-client", Secret: model.NewEncryptedSecret([]byte("synthetic-secret")), ProtectedResources: []string{"https://api.example.com"},
 	}})
+	store := &ledgerfixture.Store{}
+	recorder := store.Recorder(t)
 	svc := &TokenExchangeService{
 		jwtValidator: validator, celEvaluator: evaluator, providerService: providers, agentRepository: agentRepo,
-		consentService:       consent.NewService(agentRepo, providers, grants, nil, nil, nil, slog.Default()),
+		consentService:       consent.NewService(agentRepo, providers, grants, nil, nil, nil, slog.Default(), recorder),
 		permissionSetService: ps,
-		oauth2SessionService: oauth2session.NewOAuth2SessionService(nil, sessions, nil, nil, nil, &MockEncryption{}, nil, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example.com"}, slog.Default()),
+		oauth2SessionService: oauth2session.NewOAuth2SessionService(nil, sessions, nil, nil, nil, &MockEncryption{}, nil, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example.com"}, slog.Default(), recorder, store),
 		config:               &ports.TokenExchangeConfig{},
+		ledger:               recorder,
 	}
 	claims := map[string]interface{}{"iss": "https://issuer.example.com", "aud": "broker", "sub": "human", "agent_id": agentID.String(), "exp": future.Unix(), "iat": time.Now().Unix()}
 	token := signServiceTestJWT(t, key, claims)

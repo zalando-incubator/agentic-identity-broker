@@ -16,6 +16,7 @@ import (
 	dstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // testClientResolver wraps an AgentRepository into a ClientResolver for tests.
@@ -78,12 +79,12 @@ func (m *mockPKCERepo) Delete(ctx context.Context, sig string) error {
 func (m *mockPKCERepo) DeleteExpired(_ context.Context) (int, error) { return 0, nil }
 
 func newTestFositeStorage() (*FositeStorage, *memory.AuthorizationCodeStore, *memory.AgentRepository, *memory.ClientCredentialStore) {
-	codeRepo := memory.NewAuthorizationCodeStore()
-	pkceRepo := memory.NewPKCESessionStore()
-	agentRepo := memory.NewAgentRepository()
-	credRepo := memory.NewClientCredentialStore()
+	codeRepo := memory.NewAuthorizationCodeStore(memory.NewTransactionManager())
+	pkceRepo := memory.NewPKCESessionStore(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+	credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
 	resolver := &testClientResolver{agentRepo: agentRepo}
-	return NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), pkceRepo, credRepo, resolver, newTestGrantVerifier(agentRepo), testSlogger()), codeRepo, agentRepo, credRepo
+	return NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), pkceRepo, credRepo, resolver, newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()), testSlogger()), codeRepo, agentRepo, credRepo
 }
 
 func TestFositeStorage_AuthorizeCodeSessions(t *testing.T) {
@@ -557,7 +558,7 @@ func TestExtractAgentID(t *testing.T) {
 }
 
 func TestCreateAuthorizeCodeSession_WrongClientType(t *testing.T) {
-	store := NewFositeStorage(&mockCodeRepo{}, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), &mockCredentialRepo{}, &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+	store := NewFositeStorage(&mockCodeRepo{}, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), &mockCredentialRepo{}, &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 	req := &fosite.Request{
 		Client:  &fosite.DefaultClient{ID: "not-a-broker-client"},
@@ -593,7 +594,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, connectionErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		_, err := store.GetAuthorizeCodeSession(context.Background(), "anycode", nil)
 		assert.Error(t, err)
@@ -607,14 +608,14 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, notFoundErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		_, err := store.GetAuthorizeCodeSession(context.Background(), "anycode", nil)
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
 	})
 
 	t.Run("GetClient non-UUID input returns ErrNotFound", func(t *testing.T) {
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), "broker_any")
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -627,7 +628,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, dstorage.NewStorageError("Get", dstorage.ErrorKindTimeout, nil, "query timeout")
 			},
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), resolver, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), agentID.String())
 		assert.Error(t, err)
@@ -635,19 +636,19 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 	})
 
 	t.Run("GetClient valid-but-unknown agent UUID returns ErrNotFound", func(t *testing.T) {
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), id.NewAgentID().String())
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
 	})
 
 	t.Run("GetClient agent-exists-but-no-credential returns ErrNotFound", func(t *testing.T) {
-		agentRepo := memory.NewAgentRepository()
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 		agentID := id.NewAgentID()
 		agent := &dstorage.Agent{ID: agentID, ClientID: ptr.To(id.ClientID("upstream-client")), DisplayName: "Test Agent", Description: "Test agent for infrastructure error tests", PermissionSets: testAgentPermissionSets()}
 		require.NoError(t, agentRepo.Create(context.Background(), agent))
 		// No credential created — credential repo is empty
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), agentID.String())
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -667,7 +668,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return timeoutErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		err := store.InvalidateAuthorizeCodeSession(context.Background(), "anycode")
 		assert.Error(t, err)
@@ -689,7 +690,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return notFoundErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		err := store.InvalidateAuthorizeCodeSession(context.Background(), "anycode")
 		assert.ErrorIs(t, err, fosite.ErrInvalidatedAuthorizeCode)
@@ -700,7 +701,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 		pkceRepo := &mockPKCERepo{
 			deleteFunc: func(_ context.Context, _ string) error { return connErr },
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), pkceRepo, memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		err := store.DeletePKCERequestSession(context.Background(), "anysig")
 		assert.Error(t, err)
@@ -712,7 +713,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 		pkceRepo := &mockPKCERepo{
 			deleteFunc: func(_ context.Context, _ string) error { return notFoundErr },
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), pkceRepo, memory.NewClientCredentialStore(memory.NewTransactionManager()), &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, nil, testSlogger())
 
 		err := store.DeletePKCERequestSession(context.Background(), "anysig")
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -729,7 +730,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 			SecretHash: "hash",
 		}
 		require.NoError(t, credRepo.Create(context.Background(), cred))
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), memory.NewRefreshTokenSessionStore(memory.NewTransactionManager()), memory.NewPKCESessionStore(memory.NewTransactionManager()), credRepo, &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
 
 		client, err := store.GetClient(context.Background(), agentID.String())
 		require.NoError(t, err)

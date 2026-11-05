@@ -25,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -60,15 +61,23 @@ func (r *observedSweepExpiry) ListExpiringSessions(ctx context.Context, threshol
 type observedSweepRefresh struct {
 	base   ports.UserSessionRefreshRepository
 	locks  int
-	invoke func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+	invoke func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error)
+	update func(context.Context, *storage.UserSession, *storage.UserSession) error
 }
 
-func (r *observedSweepRefresh) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+func (r *observedSweepRefresh) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 	r.locks++
 	if r.invoke != nil {
 		return r.invoke(ctx, principal, serviceID, callback)
 	}
 	return r.base.WithLockedSession(ctx, principal, serviceID, callback)
+}
+
+func (r *observedSweepRefresh) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	if r.update != nil {
+		return r.update(ctx, previous, current)
+	}
+	return r.base.UpdateRefreshedSession(ctx, previous, current)
 }
 
 type unavailableSweepProviderRepository struct {
@@ -92,6 +101,7 @@ func (r *countingSweepProviderRepository) Get(ctx context.Context, serviceID id.
 
 type sweepFixture struct {
 	t              *testing.T
+	transactions   *memory.TransactionManager
 	repo           *memory.InMemoryUserSessionRepository
 	expiry         *observedSweepExpiry
 	refresh        *observedSweepRefresh
@@ -105,9 +115,10 @@ type sweepFixture struct {
 func newSweepFixture(t *testing.T) *sweepFixture {
 	t.Helper()
 	_, _, _, _, _, providers := setupServiceWithConfig(t, nil)
-	repo := memory.NewInMemoryUserSessionRepository()
+	transactions := memory.NewTransactionManager()
+	repo := memory.NewInMemoryUserSessionRepository(transactions)
 	f := &sweepFixture{
-		t: t, repo: repo, providers: providers, serviceID: id.NewServiceID(),
+		t: t, transactions: transactions, repo: repo, providers: providers, serviceID: id.NewServiceID(),
 		seedEncryption: newTestEncryption(t), logs: &strings.Builder{},
 		expiry:  &observedSweepExpiry{base: repo},
 		refresh: &observedSweepRefresh{base: repo},
@@ -120,8 +131,27 @@ func (f *sweepFixture) resetService(config oauth2session.Config, encryption port
 	f.service = oauth2session.NewOAuth2SessionService(
 		f.providers, f.repo, f.refresh, nil, nil, encryption,
 		&http.Client{Timeout: 10 * time.Second}, nil, config,
-		slog.New(slog.NewJSONHandler(f.logs, nil)),
+		slog.New(slog.NewJSONHandler(f.logs, nil)), ledgerfixture.NewRecorder(), f.transactions,
 	)
+}
+
+// amend applies a conditional session write the way a concurrent refresh would.
+func (f *sweepFixture) amend(principal id.Principal, serviceID id.ServiceID, mutate func(*storage.UserSession)) {
+	f.t.Helper()
+	_, err := f.repo.WithLockedSession(context.Background(), principal, serviceID, func(ctx context.Context, current *storage.UserSession) error {
+		previous := *current
+		mutate(current)
+		txCtx, err := f.transactions.BeginTX(ctx)
+		if err != nil {
+			return err
+		}
+		if err := f.repo.UpdateRefreshedSession(txCtx, &previous, current); err != nil {
+			_ = f.transactions.Rollback(txCtx)
+			return err
+		}
+		return f.transactions.Commit(txCtx)
+	})
+	require.NoError(f.t, err)
 }
 
 func (f *sweepFixture) sweeper() *oauth2session.SessionSweepService {
@@ -337,13 +367,11 @@ func TestSessionSweepLockedRefreshUsesOriginalCutoff(t *testing.T) {
 		var renewedExpiry time.Time
 		f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
 			renewedExpiry = f.expiry.calls[0].threshold.Add(15 * time.Second)
-			_, err := f.repo.WithLockedSession(context.Background(), original.Principal, original.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			f.amend(original.Principal, original.ServiceID, func(current *storage.UserSession) {
 				current.AccessTokenExpiresAt = &renewedExpiry
-				return true, nil
 			})
-			require.NoError(t, err)
 		}
-		f.refresh.invoke = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+		f.refresh.invoke = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 			time.Sleep(30 * time.Second)
 			require.True(t, renewedExpiry.After(f.expiry.calls[0].threshold))
 			require.True(t, renewedExpiry.Before(time.Now().Add(lookahead)))
@@ -526,15 +554,10 @@ func TestSessionSweepRealRefreshCommitsBeforeSuccessAndMetrics(t *testing.T) {
 	})
 	soon := time.Now().Add(time.Minute)
 	f.seed(1, &soon, nil, true)
-	f.refresh.invoke = func(ctx context.Context, p id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-		return f.repo.WithLockedSession(ctx, p, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
-			changed, err := callback(ctx, session)
-			if changed && err == nil {
-				assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.token_refreshed"`, "success is logged only after storage commits")
-				assert.Empty(t, sweepMetrics(t, reader), "success counter requires a committed update")
-			}
-			return changed, err
-		})
+	f.refresh.update = func(ctx context.Context, previous, current *storage.UserSession) error {
+		assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.token_refreshed"`, "success is logged only after storage commits")
+		assert.Empty(t, sweepMetrics(t, reader), "success counter requires a committed update")
+		return f.repo.UpdateRefreshedSession(ctx, previous, current)
 	}
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 	require.NoError(t, err)
@@ -576,11 +599,9 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 		{name: "renewed after listing", modify: func(f *sweepFixture, s *storage.UserSession) {
 			f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
 				later := time.Now().Add(time.Hour)
-				_, err := f.repo.WithLockedSession(context.Background(), s.Principal, s.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+				f.amend(s.Principal, s.ServiceID, func(current *storage.UserSession) {
 					current.AccessTokenExpiresAt = &later
-					return true, nil
 				})
-				require.NoError(f.t, err)
 			}
 		}, wantSkip: 1},
 		{name: "provider rejection", response: http.StatusBadRequest, wantFail: 1, wantProviderCall: true, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshRejected, wantKind: oauth2session.KindProvider, wantDependency: oauth2session.DependencyProvider},
@@ -670,7 +691,7 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
 	f := newSweepFixture(t)
 	providerRepo := &countingSweepProviderRepository{
-		ThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		ThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager()),
 		gets:                               make(map[id.ServiceID]int),
 	}
 	f.providers = thirdparty.NewThirdpartyOAuth2ProviderService(providerRepo, f.seedEncryption, newNoopBranchKeyManager(), nil, false, slog.Default())
@@ -752,12 +773,10 @@ func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
 	refresh, err := f.seedEncryption.Encrypt(context.Background(), []byte("reauthorized-refresh"), domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext())
 	require.NoError(t, err)
 	f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
-		_, err := f.repo.WithLockedSession(context.Background(), current.Principal, current.ServiceID, func(_ context.Context, latest *storage.UserSession) (bool, error) {
+		f.amend(current.Principal, current.ServiceID, func(latest *storage.UserSession) {
 			latest.EncryptedRefreshToken = refresh
 			latest.RefreshRejectedAt = nil
-			return true, nil
 		})
-		require.NoError(t, err)
 	}
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 	require.NoError(t, err)
@@ -791,12 +810,12 @@ func TestSessionSweepRepositoryFailuresAbortInsteadOfMiscounting(t *testing.T) {
 				}
 			} else if tc.providerRepo {
 				f.providers = thirdparty.NewThirdpartyOAuth2ProviderService(
-					unavailableSweepProviderRepository{memory.NewInMemoryThirdpartyOAuth2ProviderRepository(), failure},
+					unavailableSweepProviderRepository{memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager()), failure},
 					f.seedEncryption, newNoopBranchKeyManager(), nil, false, slog.Default(),
 				)
 				f.resetService(oauth2session.DefaultConfig(), f.seedEncryption)
 			} else {
-				f.refresh.invoke = func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+				f.refresh.invoke = func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
 					return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, failure, "session repository unavailable")
 				}
 			}
@@ -832,14 +851,8 @@ func TestSessionSweepCommitFailureDoesNotRecordSuccess(t *testing.T) {
 	f.seed(1, &soon, nil, true)
 	f.seed(2, &soon, nil, true)
 	commitFailure := errors.New("failed to commit encrypted tokens")
-	f.refresh.invoke = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-		return f.repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
-			updated, err := callback(ctx, session)
-			if updated && err == nil {
-				return false, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, commitFailure, "failed to commit encrypted tokens")
-			}
-			return updated, err
-		})
+	f.refresh.update = func(context.Context, *storage.UserSession, *storage.UserSession) error {
+		return storage.NewStorageError("UpdateRefreshedSession", storage.ErrorKindConnection, commitFailure, "failed to commit encrypted tokens")
 	}
 	_, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 	require.ErrorIs(t, err, commitFailure)

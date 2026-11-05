@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	eventschemas "github.com/agentic-identity-broker/agentic-identity-broker/api/events"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,20 +28,19 @@ type pausedCommitRefreshRepo struct {
 	release    chan struct{}
 }
 
-func (r pausedCommitRefreshRepo) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-	return r.underlying.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
-		updated, err := refresh(ctx, session)
-		if err == nil && updated {
-			close(r.refreshed)
-			<-r.release
-		}
-		return updated, err
-	})
+func (r pausedCommitRefreshRepo) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
+	return r.underlying.WithLockedSession(ctx, principal, serviceID, refresh)
+}
+
+func (r pausedCommitRefreshRepo) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	close(r.refreshed)
+	<-r.release
+	return r.underlying.UpdateRefreshedSession(ctx, previous, current)
 }
 
 func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testing.T) {
 	ctx := context.Background()
-	_, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
+	_, sessions, providerRepo, transactions, events := realMemoryRefreshService(t, nil)
 	principal := id.Principal("canceled-leader@example.com")
 	serviceID := id.NewServiceID()
 	var refreshes atomic.Int32
@@ -57,7 +59,8 @@ func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testin
 	defer upstream.Close()
 	provider := createTestService(serviceID)
 	provider.Endpoints.TokenEndpoint = upstream.URL
-	require.NoError(t, providers.Create(ctx, provider))
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(providerRepo, newTestEncryption(t), newNoopBranchKeyManager(), nil, false, slog.Default())
+	require.NoError(t, providerService.Create(ctx, provider))
 
 	encryption := newTestEncryption(t)
 	encryptionContext := domainencryption.NewServiceBranchKeySubject(serviceID).EncryptionContext()
@@ -73,7 +76,7 @@ func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testin
 		EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
 		InitiatedAt:       time.Now(), CreatedAt: time.Now(),
 	}))
-	paused := pausedCommitRefreshRepo{underlying: sessions.(ports.UserSessionRefreshRepository), refreshed: make(chan struct{}), release: make(chan struct{})}
+	paused := pausedCommitRefreshRepo{underlying: sessions, refreshed: make(chan struct{}), release: make(chan struct{})}
 	defer func() {
 		select {
 		case <-paused.release:
@@ -81,8 +84,11 @@ func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testin
 			close(paused.release)
 		}
 	}()
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	require.NoError(t, err)
 	service := oauth2session.NewOAuth2SessionService(
-		providers, sessions, paused, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
+		providerService, sessions, paused, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
+		ledger.NewService(registry, events, nil, transactions, false), transactions,
 	)
 	leaderCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

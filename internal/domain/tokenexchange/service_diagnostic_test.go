@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +39,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 		{name: "expired grant", code: "access_denied", detail: DetailGrantExpired},
 		{name: "no session", code: "invalid_grant", detail: DetailSessionMissing},
 		{name: "access token expired, no refresh token", code: "invalid_grant", detail: DetailAccessTokenExpired},
-		{name: "stored refresh token rejected", code: "invalid_grant", detail: DetailRefreshRejected},
+		{name: "stored refresh rejection with live access token", code: "invalid_grant", detail: DetailRefreshRejected},
 		{name: "service invalid_grant", code: "invalid_grant", detail: DetailRefreshRejected, status: 400, body: `{"error":"invalid_grant"}`},
 		{name: "service rejects otherwise", code: "server_error", detail: DetailProviderUnavailable, status: 502, body: "unavailable"},
 		{name: "service unreachable", code: "server_error", detail: DetailProviderUnavailable},
@@ -101,19 +102,21 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 				sessionRepo.session = nil
 			case "access token expired, no refresh token":
 				sessionRepo.session.AccessTokenExpiresAt = &past
-			case "stored refresh token rejected", "service invalid_grant", "service rejects otherwise", "service unreachable":
+			case "service invalid_grant", "service rejects otherwise", "service unreachable":
 				sessionRepo.session.AccessTokenExpiresAt = &past
 				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
-				if tc.name == "stored refresh token rejected" {
-					sessionRepo.session.RefreshRejectedAt = &past
-				}
+			case "stored refresh rejection with live access token":
+				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
+				sessionRepo.session.RefreshRejectedAt = &past
 			case "insufficient scope":
 				sessionRepo.session.Scope = []string{}
 			}
 			thirdpartyService := newTestProviderService(repo)
 			sessionConfig := oauth2session.DefaultConfig()
 			sessionConfig.CallbackBaseURL = "https://broker.example.com/"
-			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, sessionConfig, slog.Default())
+			store := &ledgerfixture.Store{}
+			recorder := store.Recorder(t)
+			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, &refreshExchangeSessionRepository{sessionRepo}, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, sessionConfig, slog.Default(), recorder, store)
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -124,8 +127,9 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			svc := &TokenExchangeService{
 				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, nil, slog.Default()),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, nil, slog.Default(), recorder),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default()),
+				ledger:               recorder,
 			}
 			claims := map[string]interface{}{
 				"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": "user@example.com",

@@ -46,12 +46,14 @@ func TestRefreshTokenSessionRepo(t *testing.T) {
 
 	t.Run("Create and FindBySignature", func(t *testing.T) {
 		session := newSession(t, "sig-1", "req-1", time.Now().Add(time.Hour).UTC())
+		session.GrantID = ptr.To(id.NewGrantID())
 		require.NoError(t, repo.Create(ctx, session))
 
 		got, err := repo.FindBySignature(ctx, "sig-1")
 		require.NoError(t, err)
 		assert.Equal(t, session.RequestID, got.RequestID)
 		assert.Equal(t, session.Scope, got.Scope)
+		assert.Equal(t, session.GrantID, got.GrantID)
 		assert.Nil(t, got.UsedAt)
 		assert.Equal(t, "u@example.com", *got.Email)
 		assert.Equal(t, "Jane Doe", got.DisplayName)
@@ -120,6 +122,59 @@ func TestRefreshTokenSessionRepo(t *testing.T) {
 			require.NotNil(t, got.UsedAt)
 		}
 	})
+
+	for _, action := range []string{"principal", "agent"} {
+		for _, commit := range []bool{false, true} {
+			completion := "rollback"
+			if commit {
+				completion = "commit"
+			}
+			t.Run("ambient "+action+" revocation/"+completion, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				session := newSession(t, "ambient-"+action+"-"+completion, "ambient-"+action+"-"+completion, time.Now().Add(time.Hour).UTC())
+				require.NoError(t, repo.Create(ctx, session))
+				txCtx, err := adapter.BeginTX(ctx)
+				require.NoError(t, err)
+				defer func() { _ = adapter.Rollback(txCtx) }()
+				var count int
+				if action == "principal" {
+					count, err = repo.RevokeByPrincipalAndAgent(txCtx, session.Principal, session.AgentID)
+				} else {
+					count, err = repo.RevokeByAgent(txCtx, session.AgentID)
+				}
+				require.NoError(t, err)
+				assert.Equal(t, 1, count)
+				stored, err := repo.FindBySignature(txCtx, session.Signature)
+				require.NoError(t, err)
+				assert.NotNil(t, stored.UsedAt)
+				if commit {
+					require.NoError(t, adapter.Commit(txCtx))
+				} else {
+					require.NoError(t, adapter.Rollback(txCtx))
+				}
+				stored, err = repo.FindBySignature(ctx, session.Signature)
+				require.NoError(t, err)
+				assert.Equal(t, commit, stored.UsedAt != nil, "the joined revocation must not commit independently")
+			})
+		}
+		t.Run("absent agent "+action+" revocation leaves owner active", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			txCtx, err := adapter.BeginTX(ctx)
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(txCtx) }()
+			var count int
+			if action == "principal" {
+				count, err = repo.RevokeByPrincipalAndAgent(txCtx, id.Principal("absent"), id.NewAgentID())
+			} else {
+				count, err = repo.RevokeByAgent(txCtx, id.NewAgentID())
+			}
+			require.NoError(t, err)
+			assert.Zero(t, count)
+			require.NoError(t, adapter.Commit(txCtx), "a successful joined no-op must not mark the owner rollback-only")
+		})
+	}
 
 	t.Run("DeleteExpired removes expired sessions only", func(t *testing.T) {
 		require.NoError(t, repo.Create(ctx, newSession(t, "sig-expired", "req-expired", time.Now().Add(-time.Minute).UTC())))

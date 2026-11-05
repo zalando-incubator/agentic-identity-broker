@@ -12,6 +12,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	dstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestFositeStorageRefreshClientAuthMethodRoundTrip(t *testing.T) {
@@ -23,10 +24,10 @@ func TestFositeStorageRefreshClientAuthMethodRoundTrip(t *testing.T) {
 		{name: "private_key_jwt", method: "private_key_jwt"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			refreshRepo := memory.NewRefreshTokenSessionStore()
-			agentRepo := memory.NewAgentRepository()
-			credRepo := memory.NewClientCredentialStore()
-			store := NewFositeStorage(memory.NewAuthorizationCodeStore(), refreshRepo, memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, newTestGrantVerifier(agentRepo), testSlogger())
+			refreshRepo := memory.NewRefreshTokenSessionStore(memory.NewTransactionManager())
+			agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+			credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+			store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), refreshRepo, memory.NewPKCESessionStore(memory.NewTransactionManager()), credRepo, &testClientResolver{agentRepo: agentRepo}, newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()), testSlogger())
 			agent := testAgent()
 			require.NoError(t, agentRepo.Create(context.Background(), agent))
 			credential := &dstorage.ClientCredential{ID: id.NewCredentialID(), AgentID: agent.ID, SecretHash: "hash"}
@@ -59,10 +60,10 @@ func TestFositeStorageRefreshClientAuthMethodRoundTrip(t *testing.T) {
 }
 
 func TestFositeStorageRefreshClientAuthMethodSurvivesRotation(t *testing.T) {
-	refreshRepo := memory.NewRefreshTokenSessionStore()
-	agentRepo := memory.NewAgentRepository()
-	credRepo := memory.NewClientCredentialStore()
-	store := NewFositeStorage(memory.NewAuthorizationCodeStore(), refreshRepo, memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, newTestGrantVerifier(agentRepo), testSlogger())
+	refreshRepo := memory.NewRefreshTokenSessionStore(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
+	credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+	store := NewFositeStorage(memory.NewAuthorizationCodeStore(memory.NewTransactionManager()), refreshRepo, memory.NewPKCESessionStore(memory.NewTransactionManager()), credRepo, &testClientResolver{agentRepo: agentRepo}, newTestGrantVerifier(agentRepo, memory.NewTransactionManager(), ledgerfixture.NewRecorder()), testSlogger())
 	agent := testAgent()
 	require.NoError(t, agentRepo.Create(context.Background(), agent))
 	credential := &dstorage.ClientCredential{ID: id.NewCredentialID(), AgentID: agent.ID, SecretHash: "hash"}

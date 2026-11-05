@@ -21,6 +21,12 @@ Ports contain **interfaces only** and minimal DTOs. Do not put business logic or
 | `storage.go` | Repository and transaction interfaces, including `ClientAssertionReplayRepository` | Storage contracts. The replay repository atomically consumes `(client_id, jti)` and removes expired records. Sentinel: `ErrNotFound` |
 | `thirdparty_provider.go` | Provider configuration storage | `ThirdpartyOAuth2ProviderRepository` |
 
+Ledger values live in `internal/domain/model/business_event.go`.
+
+Before you change ownership, deletion barriers, or dispatch callbacks, read `specs/048-business-event-ledger/contracts/storage.md`.
+
+Delivery returns reference keys only and exports synchronously inside its barrier.
+
 ## Rules
 
 - **ISP**: Expose only operations that consumers need. Justify new operations.

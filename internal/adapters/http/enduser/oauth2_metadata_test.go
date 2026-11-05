@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +19,7 @@ import (
 // TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata tests successful metadata generation
 func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
+		consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		&noopSessionRepository{},
 		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
@@ -28,8 +30,9 @@ func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 			SupportedResponseTypes:    []string{"code"},
 			SupportedGrantTypes:       []string{"authorization_code"},
 		},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenSvc(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	handler := &OAuth2MetadataHandler{
@@ -59,7 +62,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 // TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding tests proper JSON encoding
 func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
+		consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		&noopSessionRepository{},
 		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
@@ -70,8 +73,9 @@ func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 			SupportedResponseTypes:    []string{"code"},
 			SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
 		},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenSvc(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	handler := &OAuth2MetadataHandler{
@@ -102,7 +106,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 // TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders tests appropriate cache headers
 func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
+		consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		&noopSessionRepository{},
 		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
@@ -111,8 +115,9 @@ func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
 			UpstreamTokenEndpoint:     "https://auth.example.com/token",
 			PublicURL:                 "https://broker.example.com",
 		},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenSvc(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	handler := &OAuth2MetadataHandler{
@@ -132,7 +137,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
 // TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly tests only GET method allowed
 func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
+		consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		&noopSessionRepository{},
 		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
@@ -140,8 +145,9 @@ func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 			PublicURL:                 "https://broker.example.com",
 		},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenSvc(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	handler := &OAuth2MetadataHandler{
@@ -164,7 +170,7 @@ func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
 // TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint tests endpoint is public (no auth required)
 func TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
+		consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		&noopSessionRepository{},
 		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
 		&oauth2.OAuth2Config{
@@ -173,8 +179,9 @@ func TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint(t *testing.T) {
 			UpstreamTokenEndpoint:     "https://auth.example.com/token",
 			PublicURL:                 "https://broker.example.com",
 		},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenSvc(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	handler := &OAuth2MetadataHandler{

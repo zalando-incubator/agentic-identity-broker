@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:catalogue",
+  "title": "Initial 28 broker business event types",
+  "oneOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:grant-created"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:grant-updated"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:grant-revoked"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:grant-expired"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:session-established"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:session-refreshed"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:session-refresh-failed"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:session-terminated"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:authorization-requested"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:token-issued"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:token-request-failed"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:token-exchanged"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:token-exchange-denied"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:impersonation-granted"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:impersonation-denied"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-requested"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-approved"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-denied"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-consumed"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-revoked"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:approval-expired"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:agent-registered"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:agent-updated"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:agent-deleted"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:credential-generated"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:credential-rotated"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:credential-revoked"
+    },
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:signing-key-promoted"
+    }
+  ]
+}

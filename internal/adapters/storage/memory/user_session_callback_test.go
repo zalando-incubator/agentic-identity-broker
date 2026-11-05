@@ -11,7 +11,7 @@ import (
 )
 
 func TestCreateIfAbsentKeepsConcurrentCallbackWinner(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal, serviceID := id.Principal("callbacks@example.com"), id.NewServiceID()
 	type result struct {
@@ -45,7 +45,7 @@ func TestCreateIfAbsentKeepsConcurrentCallbackWinner(t *testing.T) {
 }
 
 func TestCreateIfAbsentReturnsIsolatedSnapshots(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	candidate := refreshTestSession("snapshot@example.com", id.NewServiceID())
 	identity := id.ClientID("established-client")
@@ -68,17 +68,18 @@ func TestCreateIfAbsentReturnsIsolatedSnapshots(t *testing.T) {
 }
 
 func TestLockedReconnectReplacesUpstreamIdentity(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	initial := refreshTestSession("reconnect@example.com", id.NewServiceID())
 	initial.UpstreamClientID = new(id.ClientID("initial-client"))
 	initial.CallbackID = "initial-generation"
 	require.NoError(t, repo.Create(ctx, initial))
-	_, err := repo.WithLockedSession(ctx, initial.Principal, initial.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+	_, err := repo.WithLockedSession(ctx, initial.Principal, initial.ServiceID, func(ctx context.Context, current *storage.UserSession) error {
+		previous := copyUserSession(current)
 		current.UpstreamClientID = new(id.ClientID("reconnected-client"))
 		current.CallbackID = "reconnected-generation"
 		current.EncryptedAccessToken = []byte("reconnected-access")
-		return true, nil
+		return commitRefreshedSession(ctx, repo, previous, current)
 	})
 	require.NoError(t, err)
 	persisted, err := repo.Get(ctx, initial.ID)
@@ -89,7 +90,7 @@ func TestLockedReconnectReplacesUpstreamIdentity(t *testing.T) {
 }
 
 func TestSessionSummariesReturnIsolatedSnapshots(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	session := refreshTestSession("summary@example.com", id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, session))

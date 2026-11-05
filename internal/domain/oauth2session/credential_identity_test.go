@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func credentialState(t *testing.T, service *oauth2session.OAuth2SessionService, principal id.Principal, serviceID id.ServiceID, established *id.ClientID) string {
@@ -287,8 +288,8 @@ type emptyIdentityRefreshRepository struct {
 	ports.UserSessionRefreshRepository
 }
 
-func (r emptyIdentityRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
-	return r.UserSessionRefreshRepository.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
+func (r emptyIdentityRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error) {
+	return r.UserSessionRefreshRepository.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
 		invalid := *session
 		empty := id.ClientID("")
 		invalid.UpstreamClientID = &empty
@@ -329,8 +330,8 @@ func TestCredentialIdentity_EmptyRecordedIdentityIsNotLegacyAbsence(t *testing.T
 			config.CredentialFiles = map[string]ports.CredentialFileBinding{"empty-identity": binding}
 			h.service = oauth2session.NewOAuth2SessionService(h.providers, h.sessions,
 				emptyIdentityRefreshRepository{h.sessions.(ports.UserSessionRefreshRepository)},
-				memory.NewUserGrantRepository(), memory.NewAgentRepository(), newTestEncryption(t),
-				h.endpoint.server.Client(), jweService, config, slog.Default()).WithCredentialFileReader(h.reader)
+				memory.NewUserGrantRepository(h.transactions), memory.NewAgentRepository(h.transactions), newTestEncryption(t),
+				h.endpoint.server.Client(), jweService, config, slog.Default(), ledgerfixture.NewRecorder(), h.transactions).WithCredentialFileReader(h.reader)
 			_, err = h.service.ForceRefreshSession(context.Background(), principal, provider.ID)
 			assertCredentialSourceNotProviderFailure(t, err, model.CredentialSourceReasonIdentityMissing)
 			assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailCredentialSourceUnavailable)

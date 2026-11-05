@@ -12,12 +12,14 @@ import (
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +44,7 @@ func newTestSessionTokenService() *sessiontoken.Service {
 // newTestAuthorizationService connects every service, as FR-020 guarantees for included
 // services at consent time. Tests of session state use newTestAuthorizationServiceWithSessions.
 func newTestAuthorizationService(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), cfg, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 }
 
 func newConnectedSessionRepository() *MockSessionRepository {
@@ -54,7 +56,7 @@ func newConnectedSessionRepository() *MockSessionRepository {
 }
 
 func newTestAuthorizationServiceWithSessions(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, sessionRepo ports.UserSessionRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, sessionRepo, NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), sessionRepo, NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), cfg, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 }
 
 type MockAgentRepository struct {
@@ -142,6 +144,7 @@ func (m *MockAgentRepository) ExistsOtherWithClientID(_ context.Context, _ id.Cl
 // MockGrantRepository is a test double for UserGrantRepository
 type MockGrantRepository struct {
 	grants map[id.GrantID]*storage.UserGrant
+	ledgerfixture.GrantExpiryMarkers
 }
 
 func NewMockGrantRepository() *MockGrantRepository {
@@ -782,11 +785,11 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	authReq := &ports.AuthorizationRequest{
 		ClientID:            id.ClientID(agentID.String()),
@@ -888,12 +891,12 @@ func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 			tt.setupAgent(agentRepo)
 			tt.setupGrant(grantRepo)
 
-			svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+			svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 				PublicURL:                 "https://broker.example.com",
 				ModeStrategy:              NewProxyModeStrategy(),
 				SupportedResponseTypes:    []string{"code"},
-			}, nil, newTestSessionTokenService())
+			}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 			req := &ports.AuthorizationRequest{
 				ClientID:     tt.clientID,
@@ -945,11 +948,11 @@ func TestService_HandleAuthorization_UUIDResolution_UpstreamClientID(t *testing.
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -984,7 +987,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), config, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	tests := []struct {
 		name string
@@ -1064,7 +1067,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 
 	t.Run("param injected when multi_agent_client enabled", func(t *testing.T) {
 		agentRepo, grantRepo := makeRepos()
-		svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+		svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 			PublicURL:                 "https://broker.example.com",
 			ModeStrategy:              NewProxyModeStrategy(),
@@ -1073,7 +1076,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 				AgentIDParamName: "x_agent_id",
 				AgentIDClaimName: "x_agent_id",
 			},
-		}, nil, newTestSessionTokenService())
+		}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -1084,12 +1087,12 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 
 	t.Run("param absent when multi_agent_client disabled", func(t *testing.T) {
 		agentRepo, grantRepo := makeRepos()
-		svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+		svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 			PublicURL:                 "https://broker.example.com",
 			ModeStrategy:              NewProxyModeStrategy(),
 			MultiAgentClient:          ports.MultiAgentClientConfig{Enabled: false},
-		}, nil, newTestSessionTokenService())
+		}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -1344,7 +1347,7 @@ func TestService_GenerateMetadata_RFC8414Compliance(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), config, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 	metadata, err := svc.GenerateMetadata(context.Background())
 
 	require.NoError(t, err)
@@ -1395,10 +1398,10 @@ func TestService_HandleAuthorization_GrantLookupError(t *testing.T) {
 		findErr:             connErr,
 	}
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		PublicURL:    "https://broker.example.com",
 		ModeStrategy: NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1613,11 +1616,11 @@ func TestService_HandleAuthorization_InvalidUpstreamAuthorizeURL(t *testing.T) {
 		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{},
 	}))
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "%",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1658,11 +1661,11 @@ func TestService_HandleAuthorization_LocalClientInHybridMode(t *testing.T) {
 	}))
 
 	// Hybrid mode: UpstreamAuthorizeEndpoint set for proxy agents; local agents must not be blocked.
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1708,11 +1711,11 @@ func TestService_HandleAuthorization_CIMDClientInHybridMode(t *testing.T) {
 	cimdFetch := &ports.CIMDFetchResult{Body: []byte(cimdBody), CacheControl: "max-age=300"}
 	cimdSvc := cimdServiceForTest(t, cimdFetch, nil)
 
-	svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, slog.New(slog.DiscardHandler)), &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, slog.New(slog.DiscardHandler)), &OAuth2Config{
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID("https://cimd.example.com/agent.json"),
@@ -1788,11 +1791,11 @@ func TestService_HandleAuthorization_CIMDPrivateUseRedirectURI(t *testing.T) {
 
 			body := `{"client_id":"https://cimd.example.com/agent.json","client_name":"CIMD Agent","redirect_uris":[` + tt.documentURIs + `]}`
 			cimdSvc := cimdServiceForTest(t, &ports.CIMDFetchResult{Body: []byte(body), CacheControl: "max-age=300"}, nil)
-			svc := NewAuthorizationService(grantRepo, newConnectedSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, slog.New(slog.DiscardHandler)), &OAuth2Config{
+			svc := NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()), newConnectedSessionRepository(), NewAgentClientResolverWithCIMD(agentRepo, cimdSvc, slog.New(slog.DiscardHandler)), &OAuth2Config{
 				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 				PublicURL:                 "https://broker.example.com",
 				ModeStrategy:              NewHybridModeStrategy(),
-			}, nil, newTestSessionTokenService())
+			}, slog.New(slog.DiscardHandler), newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 			decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 				ClientID:     id.ClientID(clientURI),
@@ -2067,12 +2070,13 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	agentID := id.NewAgentID()
 
 	svc := NewAuthorizationService(
-		NewMockGrantRepository(),
+		consent.NewService(nil, nil, NewMockGrantRepository(), nil, nil, nil, slog.New(slog.DiscardHandler), ledgerfixture.NewRecorder()),
 		NewMockSessionRepository(),
 		NewAgentClientResolver(NewMockAgentRepository(), slog.New(slog.DiscardHandler)),
 		&OAuth2Config{PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy()},
-		nil,
+		slog.New(slog.DiscardHandler),
 		newTestSessionTokenService(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	req := &ports.AuthorizationRequest{
@@ -2094,4 +2098,8 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	assert.Contains(t, consentURL, "session_token=", "buildConsentURL must always produce session_token")
 	assert.NotContains(t, consentURL, "redirect_uri=", "buildConsentURL must never produce redirect_uri fallback")
 	assert.True(t, strings.HasPrefix(consentURL, "https://broker.example.com/agents/"+agentID.String()+"?session_token="))
+}
+
+func (m *MockGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
 }

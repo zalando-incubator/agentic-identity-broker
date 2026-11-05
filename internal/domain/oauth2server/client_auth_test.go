@@ -193,8 +193,8 @@ func TestClientAuthService_GenerateCredentials(t *testing.T) {
 
 func TestClientAuthService_Authenticate(t *testing.T) {
 	t.Run("valid credentials succeed", func(t *testing.T) {
-		credRepo := memory.NewClientCredentialStore()
-		agentRepo := memory.NewAgentRepository()
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 
 		// Create test agent
 		agent := testAgent()
@@ -216,8 +216,8 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("unknown agent_id fails", func(t *testing.T) {
-		credRepo := memory.NewClientCredentialStore()
-		agentRepo := memory.NewAgentRepository()
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: agentRepo}, NewArgon2Hasher(1), testSlogger())
 
 		_, err := svc.Authenticate(context.Background(), id.NewAgentID(), "secret")
@@ -225,8 +225,8 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("wrong secret fails", func(t *testing.T) {
-		credRepo := memory.NewClientCredentialStore()
-		agentRepo := memory.NewAgentRepository()
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
+		agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 
 		// Create test agent + credential
 		agent := testAgent()
@@ -252,7 +252,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, NewArgon2Hasher(1), logger)
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -267,7 +267,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 			},
 		}
 		logger, buf := bufLogger()
-		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository()}, NewArgon2Hasher(1), logger)
+		svc := NewClientAuthService(credRepo, &testClientResolver{agentRepo: memory.NewAgentRepository(memory.NewTransactionManager())}, NewArgon2Hasher(1), logger)
 
 		_, err := svc.Authenticate(context.Background(), agentID, "secret")
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
@@ -275,7 +275,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("client resolver timeout error logs at error level", func(t *testing.T) {
-		credRepo := memory.NewClientCredentialStore()
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
 		agentID := id.NewAgentID()
 		cred := &storage.ClientCredential{
 			ID:         id.NewCredentialID(),
@@ -298,7 +298,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("client resolver not-found does not log an error", func(t *testing.T) {
-		credRepo := memory.NewClientCredentialStore()
+		credRepo := memory.NewClientCredentialStore(memory.NewTransactionManager())
 		agentID := id.NewAgentID()
 		cred := &storage.ClientCredential{
 			ID:         id.NewCredentialID(),
@@ -319,4 +319,8 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 		assert.ErrorIs(t, err, fosite.ErrInvalidClient)
 		assert.Empty(t, buf.String(), "not-found on agent lookup must not produce an error log")
 	})
+}
+
+func (m *mockCredentialRepo) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return m.GetByAgentID(ctx, agentID)
 }
