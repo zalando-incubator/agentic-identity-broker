@@ -210,9 +210,6 @@ var _ = Describe("CIMD Authorization", func() {
 			agent.ClientURIs = []string{clientURL}
 			agent.RedirectURIs = []string{wildcardRedirectPattern}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
-			Expect(fixtures.SeedDefaultConsentData(
-				context.Background(), testStorage, id.NewPrincipal(fixtures.DefaultPrincipal().String()),
-			)).To(Succeed())
 
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
 			serverFactory = bootstrap.NewServerFactory(config, logger)
@@ -247,16 +244,18 @@ var _ = Describe("CIMD Authorization", func() {
 		}
 
 		// US2-S5 from specs/055-wildcard-redirect-uri/spec.md
-		It("accepts the exact callback listed by the CIMD document", func() {
-			response, err := authorize(exactCallback, "cimd-exact")
-			Expect(err).ToNot(HaveOccurred())
+		It("completes consent and token exchange with the exact callback listed by the CIMD document", func() {
+			code, verifier := completeAuthorizationCodeFlow(
+				server, testStorage, fixtures.DefaultPrincipal().String(), clientURL, exactCallback, nil,
+			)
+			response := exchangeAuthorizationCode(server, clientURL, code, exactCallback, verifier)
 			defer func() { _ = response.Body.Close() }()
 
-			Expect(response).To(matchers.HaveStatusCode(http.StatusFound))
-			location, parseErr := url.Parse(response.Header.Get("Location"))
-			Expect(parseErr).ToNot(HaveOccurred())
-			Expect(location.Path).To(ContainSubstring("/agents/" + agent.ID.String()))
-			Expect(location.Query().Get("session_token")).ToNot(BeEmpty())
+			Expect(response).To(matchers.HaveStatusCode(http.StatusOK))
+			var token map[string]any
+			Expect(json.NewDecoder(response.Body).Decode(&token)).To(Succeed())
+			Expect(token["token_type"]).To(Equal("Bearer"))
+			Expect(token["access_token"]).ToNot(BeEmpty())
 		})
 
 		// US2-S6 from specs/055-wildcard-redirect-uri/spec.md
