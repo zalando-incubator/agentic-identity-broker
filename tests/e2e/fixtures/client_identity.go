@@ -1,5 +1,12 @@
 package fixtures
 
+import (
+	"time"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+)
+
 const (
 	ReportsClientV1 = "reports-client-v1"
 	ReportsClientV2 = "reports-client-v2"
@@ -15,6 +22,30 @@ func ClientIdentityServiceRequest(providerURL, source string) map[string]any {
 		request["client_secret"] = ReportsSecretV1
 	}
 	return request
+}
+
+func ClientIdentityPermissionSet(serviceID id.ServiceID, name string) *storage.PermissionSet {
+	now := time.Now()
+	return &storage.PermissionSet{
+		ID: id.NewPermissionSetID(), Name: name, Description: "Reports access for client identity recovery",
+		ServiceScopes: []storage.ServiceScope{{
+			ServiceID: serviceID, Scopes: []string{"profile"}, RequirementType: storage.RequirementTypeMandatory,
+		}},
+		CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func ClientIdentityAgent(serviceID id.ServiceID, required, optional id.PermissionSetID) *storage.Agent {
+	agent := LocalAgent()
+	agent.DisplayName = "Reports Reader"
+	agent.PermissionSets = []storage.AgentPermissionSetEntry{
+		{PermissionSetID: required, RequirementType: storage.RequirementTypeMandatory},
+		{PermissionSetID: optional, RequirementType: storage.RequirementTypeOptional},
+	}
+	agent.ServiceRequirements = []storage.ServiceRequirement{{
+		ServiceID: serviceID, RequiredScopes: []string{"profile"}, RequirementType: storage.RequirementTypeMandatory,
+	}}
+	return agent
 }
 
 func ClientIdentityCalendarRequest(providerURL string) map[string]any {

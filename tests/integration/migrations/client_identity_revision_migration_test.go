@@ -4,16 +4,33 @@ package migrations
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const identityRevisionConstraints = `'chk_thirdparty_oauth2_services_client_identity', 'chk_thirdparty_oauth2_services_client_identity_revision', 'chk_user_sessions_upstream_client_revision'`
+
+func newIdentityRevisionMigrationFramework(t *testing.T, version uint) *MigrationTestFramework {
+	t.Helper()
+	postgres := bootstrap.RequireSharedPostgres(t)
+	dbName, connStr, cleanup := postgres.SetupDatabaseFromTemplate(t, fmt.Sprintf("client_identity_revision_%d", version), func(t *testing.T, dbName string) {
+		postgres.ApplyMigrationsUpTo(t, dbName, version)
+	})
+	migrationsDir, err := filepath.Abs(filepath.Join("..", "..", "..", "migrations"))
+	require.NoError(t, err)
+	db, err := sql.Open("pgx", connStr)
+	require.NoError(t, err)
+	require.NoError(t, db.PingContext(context.Background()))
+	return &MigrationTestFramework{db: db, connStr: connStr, dbName: dbName, migrationsDir: migrationsDir, cleanup: cleanup}
+}
 
 func seedIdentityRevisionRows(t *testing.T, f *MigrationTestFramework) {
 	t.Helper()
@@ -29,18 +46,39 @@ func seedIdentityRevisionRows(t *testing.T, f *MigrationTestFramework) {
 
 func identityRevisionData(t *testing.T, f *MigrationTestFramework) string {
 	t.Helper()
-	data, err := f.QuerySQL(t, `SELECT jsonb_build_object(
-		'services', (SELECT jsonb_agg(to_jsonb(s) - 'client_identity' - 'client_identity_revision' ORDER BY id) FROM thirdparty_oauth2_services s),
-		'sessions', (SELECT jsonb_agg(to_jsonb(s) - 'upstream_client_revision' ORDER BY id) FROM user_sessions s)
+	data, err := f.QuerySQL(t, `WITH services AS (
+		SELECT id, canonical_id, display_name, client_id, client_secret_encrypted,
+			token_endpoint_auth_method, client_registration, credential_source, credential_source_transitioned,
+			oauth2_flavor, issuer_uri, enable_discovery, metadata_url, resource_url, client_method, resource_explicit,
+			discovery_last_attempt_at, discovery_last_success_at, discovery_failure_reason,
+			token_endpoint, authorize_endpoint, scopes, authorization_params, created_at, updated_at, version
+		FROM thirdparty_oauth2_services
+	), sessions AS (
+		SELECT id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
+			access_token_expires_at, refresh_token_expires_at, token_type, scope, encryption_context,
+			initiated_at, created_at, updated_at, callback_id, upstream_client_id
+		FROM user_sessions
+	) SELECT jsonb_build_object(
+		'services', (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM services s),
+		'sessions', (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM sessions s)
 	)::text`)
 	require.NoError(t, err)
 	return data
 }
 
+func identityRevisionFullData(t *testing.T, f *MigrationTestFramework) string {
+	t.Helper()
+	evidence, err := f.QuerySQL(t, `SELECT jsonb_build_object(
+		'services', (SELECT jsonb_agg(jsonb_build_object('id', id, 'identity', client_identity, 'revision', client_identity_revision) ORDER BY id) FROM thirdparty_oauth2_services),
+		'sessions', (SELECT jsonb_agg(jsonb_build_object('id', id, 'revision', upstream_client_revision) ORDER BY id) FROM user_sessions)
+	)::text`)
+	require.NoError(t, err)
+	return identityRevisionData(t, f) + evidence
+}
+
 func TestMigration047IdentityRevisionLifecycle(t *testing.T) {
-	f := NewMigrationTestFramework(t)
+	f := newIdentityRevisionMigrationFramework(t, 46)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 46))
 	seedIdentityRevisionRows(t, f)
 	before, schema := identityRevisionData(t, f), credentialMigrationSchema(t, f)
 	heapBefore, err := f.QuerySQL(t, `SELECT jsonb_object_agg(relname, relfilenode)::text FROM pg_class WHERE oid IN ('thirdparty_oauth2_services'::regclass, 'user_sessions'::regclass)`)
@@ -87,9 +125,8 @@ func TestMigration047IdentityRevisionLifecycle(t *testing.T) {
 }
 
 func TestMigration047ExplicitColumnLegacyWritersPreserveEvidence(t *testing.T) {
-	f := NewMigrationTestFramework(t)
+	f := newIdentityRevisionMigrationFramework(t, 48)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 48))
 	seedIdentityRevisionRows(t, f)
 	require.NoError(t, f.ExecuteSQL(t, `UPDATE thirdparty_oauth2_services
 		SET client_identity = 'reports-v1', client_identity_revision = 3 WHERE canonical_id = 'reports';
@@ -128,24 +165,22 @@ func TestMigration047ExplicitColumnLegacyWritersPreserveEvidence(t *testing.T) {
 }
 
 func TestMigration047DownRetainsInvalidationEvidence(t *testing.T) {
-	f := NewMigrationTestFramework(t)
+	f := newIdentityRevisionMigrationFramework(t, 48)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 48))
 	seedIdentityRevisionRows(t, f)
 	require.NoError(t, f.ExecuteSQL(t, `UPDATE thirdparty_oauth2_services SET client_identity = 'reports-v2', client_identity_revision = 1 WHERE canonical_id = 'reports'`))
 	require.NoError(t, f.Down(t, 47))
-	before, schema := credentialMigrationFullData(t, f), credentialMigrationSchema(t, f)
+	before, schema := identityRevisionFullData(t, f), credentialMigrationSchema(t, f)
 	require.ErrorContains(t, f.Down(t, 46), "client identity revisions", "DOWN must refuse to discard evidence that prevents old-session revival")
-	assert.Equal(t, before, credentialMigrationFullData(t, f))
+	assert.Equal(t, before, identityRevisionFullData(t, f))
 	assert.Equal(t, schema, credentialMigrationSchema(t, f))
 }
 
 func TestMigration047ExpansionNeverQueuesBehindTraffic(t *testing.T) {
 	for _, table := range []string{"thirdparty_oauth2_services", "user_sessions"} {
 		t.Run(table, func(t *testing.T) {
-			f := NewMigrationTestFramework(t)
+			f := newIdentityRevisionMigrationFramework(t, 46)
 			defer f.Cleanup(t)
-			require.NoError(t, f.Up(t, 46))
 			seedIdentityRevisionRows(t, f)
 			before, schema := identityRevisionData(t, f), credentialMigrationSchema(t, f)
 			traffic, err := f.db.BeginTx(context.Background(), nil)
@@ -166,9 +201,8 @@ func TestMigration047ExpansionNeverQueuesBehindTraffic(t *testing.T) {
 }
 
 func TestMigration048ValidationCoexistsWithTrafficAndFailsOnMaintenanceContention(t *testing.T) {
-	f := NewMigrationTestFramework(t)
+	f := newIdentityRevisionMigrationFramework(t, 47)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 47))
 	seedIdentityRevisionRows(t, f)
 	traffic, err := f.db.BeginTx(context.Background(), nil)
 	require.NoError(t, err)
@@ -191,8 +225,8 @@ func TestMigration048ValidationCoexistsWithTrafficAndFailsOnMaintenanceContentio
 	defer cancel()
 	_, err = f.db.ExecContext(ctx, `UPDATE thirdparty_oauth2_services SET display_name = 'Still serving'; UPDATE user_sessions SET scope = ARRAY['read', 'write']`)
 	require.NoError(t, err, "validation must leave both runtime tables writable")
-	before, schema := credentialMigrationFullData(t, f), credentialMigrationSchema(t, f)
+	before, schema := identityRevisionFullData(t, f), credentialMigrationSchema(t, f)
 	require.ErrorContains(t, f.Up(t, 48), "could not obtain lock on relation", "concurrent maintenance must fail NOWAIT")
-	assert.Equal(t, before, credentialMigrationFullData(t, f))
+	assert.Equal(t, before, identityRevisionFullData(t, f))
 	assert.Equal(t, schema, credentialMigrationSchema(t, f))
 }
