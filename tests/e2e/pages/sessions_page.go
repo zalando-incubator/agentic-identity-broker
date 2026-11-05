@@ -79,6 +79,21 @@ func (sp *SessionsPage) ClickLoginButton(ctx context.Context) error {
 	return nil
 }
 
+func (sp *SessionsPage) LoginWithKeyboard(_ context.Context, key string) error {
+	button := sp.loginButtonLocator().First()
+	if err := button.Focus(); err != nil {
+		return err
+	}
+	focused, err := button.Evaluate(`element => element === document.activeElement`, nil)
+	if err != nil {
+		return err
+	}
+	if focused != true {
+		return fmt.Errorf("session login did not receive keyboard focus")
+	}
+	return button.Press(key)
+}
+
 func (sp *SessionsPage) GetLoginButtonCount(ctx context.Context) (int, error) {
 	count, err := sp.loginButtonLocator().Count()
 	if err != nil {

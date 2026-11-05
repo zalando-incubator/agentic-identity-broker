@@ -154,6 +154,8 @@ tokens during the authorization flow. Compromise allows state token forgery and 
 
 For paired credentials, use the examples in [`third-party-oauth2.yaml`](third-party-oauth2.yaml). Register the eligible service with `credential_source: filesystem` and neither inline credential. Its exact canonical-ID binding supplies both absolute paths. A missing binding or unusable required file stops authentication without stored fallback. Stored services ignore bindings.
 
+Client-ID changes invalidate every affected session, even with an unexpired access token; restoring a previous ID never revives one. Same-ID secret rotation preserves sessions. Existing credential-file/public-URL settings suffice, with no enforcement opt-out. Follow [Changing a service client ID](../../docs/configuration.md#changing-a-service-client-id) and [ADR 047's continuous rolling procedure](../../adrs/047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005) before changing an identity or deploying revision enforcement.
+
 The winning source replaces the whole mapping: CLI, environment, configuration file, then default. An explicit `{}` removes all bindings but preserves service source selection. Startup validates mapping syntax and paths, not file availability. Authorization initiation reads only the client ID. Code exchange and refresh acquire both values.
 
 Multiple independent pairs preserve exact canonical-ID case and dots:

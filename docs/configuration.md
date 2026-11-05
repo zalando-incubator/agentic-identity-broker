@@ -157,16 +157,29 @@ Public, CIMD confidential, and Google services cannot select filesystem mode.
 
 Initiation reads only the current client-ID file. Each exchange attempt and actual refresh reads a fresh, coherent pair.
 Each file must be regular, readable by the broker UID, non-empty after whitespace removal, and at most 65,536 bytes before trimming.
-The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value and reads no files for metadata.
+The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value. Administrative service metadata reads and writes never read files. Session and consent usability displays read only the client-ID file, never the secret file; source failure falls back to persisted identity evidence for display only. Token acquisition and authorization gates have no availability fallback.
 Configuration has no hot reload. Binding changes require a restart, but file publication takes effect on the next applicable operation.
 
 For rotation, publish fresh immutable targets and switch the complete pair atomically. Do not modify a published target or reuse a retired target during acquisition.
 The reader revalidates both targets after acquisition. A detected replacement returns a safe `generation_changed` error and sends no provider authentication request.
 A pair validated before later publication can finish its in-flight operation. Provider validity overlap must cover that operation.
 
-Secret rotation can retain sessions when the client ID stays the same. A changed client ID requires new connections for old codes and sessions.
+Secret rotation retains sessions when the client ID stays the same. A changed client ID invalidates old codes and sessions, including still-valid access tokens, for every principal. Restoring an old client ID does not revive an invalidated session: each differing observation records a new monotonic per-service revision. Sessions and grants are retained, and each user reconnects independently. Eligible identity-less legacy stored sessions remain usable only at revision 0; there is no historical identity backfill. Pre-upgrade callbacks missing explicit identity/revision must restart sign-in on a new replica.
 Source transitions never rewrite established identities. Removing a binding preserves filesystem mode and makes affected authentication fail with `missing_binding`.
 Administrative responses expose source metadata, not paths, file values, or transition history. Source errors retain generic HTTP responses and closed, credential-free event reasons.
+
+### Changing a service client ID
+
+Existing `third_party_oauth2.credential_files` and `server.enduser.public_url` suffice. There is no enforcement opt-out, new configuration key, or changed default. The public URL determines the same-origin, service-specific recovery URL; see [ADR 044](../adrs/044-service-specific-session-recovery-url.md).
+
+Before any identity change, complete the [continuous rolling upgrade checklist](../charts/agentic-identity-broker/README.md#client-identity-migrations-047-and-048) from [ADR 047](../adrs/047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005). During old/new overlap keep traffic open but hold identities, sources, canonical IDs, and bindings fixed, pause identity-mutating automation/direct writers, and defer identity-assigning registrations. Same-ID secret rotation and metadata-only writes may continue. Resume identity changes only after old processes and admitted work are drained, all serving/writing processes are revision-aware, and old-image restart is prevented. A failed check leaves healthy traffic and the freeze intact. Prior-binary abort is only pre-activation with verified unchanged frozen fields, zero increments, drained new work, and retained schema/evidence; post-activation rollback is revision-aware only.
+
+1. Register the new client and existing callback URI with the provider.
+2. Publish the complete filesystem credential pair through fresh immutable targets, or send one full-replacement Admin PUT with the new stored client ID and credentials.
+3. Wait for coherent publication to reach every replica before announcing the change. A stale replica or reverted file can record another revision, requiring users who reconnected early to reconnect again.
+4. Expect sign-in on each user's next use. Unreadable identity fails closed with `500 server_error`, even with a still-valid access token; identity invalidation instead gives recoverable `invalid_grant` with a service-specific `error_uri`.
+
+Same-ID secret rotation needs no reconnection or identity change procedure. It must still satisfy the immutable-target publication rules above.
 
 ## ExtProc approval configuration
 

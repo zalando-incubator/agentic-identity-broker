@@ -721,6 +721,33 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName s
 	return fmt.Errorf("action button (Login or Delegate) not found for service %q", serviceDisplayName)
 }
 
+func (cp *ConsentPage) IsServiceLoginVisible(_ context.Context, serviceName string) (bool, error) {
+	return cp.serviceLoginButton(serviceName).IsVisible()
+}
+
+func (cp *ConsentPage) LoginServiceWithKeyboard(_ context.Context, serviceName, key string) error {
+	button := cp.serviceLoginButton(serviceName)
+	if err := button.Focus(); err != nil {
+		return err
+	}
+	focused, err := button.Evaluate(`element => element === document.activeElement`, nil)
+	if err != nil {
+		return err
+	}
+	if focused != true {
+		return fmt.Errorf("service %q login did not receive keyboard focus", serviceName)
+	}
+	return button.Press(key)
+}
+
+func (cp *ConsentPage) serviceLoginButton(serviceName string) playwright.Locator {
+	return cp.page().GetByRole("article", playwright.PageGetByRoleOptions{
+		Name: "Service: " + serviceName, Exact: playwright.Bool(true),
+	}).GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Login", Exact: playwright.Bool(true),
+	})
+}
+
 // TogglePermissionSet changes an optional permission set's selection by name.
 func (cp *ConsentPage) TogglePermissionSet(_ context.Context, permissionSetName string) error {
 	if permissionSetName == "" {

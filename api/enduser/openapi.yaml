@@ -4,6 +4,15 @@ info:
   description: |
     End-user API endpoints for the Agentic Identity Broker running on port 8000.
 
+    **2.0.0 migration**: Existing routes and response shapes remain, but client-ID changes now
+    invalidate affected sessions even with unexpired tokens. Consumers must handle the extended
+    reauthentication predicate, automatic consent for included unusable services, stale/pre-upgrade
+    callback denial, fail-closed token acquisition, and identity-related 409 refresh_unavailable.
+    is_expired remains an equal deprecated alias; access_token_expired is independent.
+    During continuous rolling upgrade identities remain fixed until every old process and admitted
+    operation drains and unaware images cannot restart. Pre-upgrade callbacks reaching new replicas
+    may need sign-in retry. After activation rollback is revision-aware only (ADR 047).
+
     This API provides two main capabilities:
 
     ## 1. Consent Management
@@ -89,7 +98,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.2.0
+  version: 2.0.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -524,6 +533,8 @@ paths:
         - All service IDs must exist and be available to the agent
         - All scopes must be valid for the specified services
         - At least one scope required per service
+        - A mandatory service requires a usable session; a session requiring reauthentication,
+          including after a client-ID change, does not satisfy this validation
         - Returns `400 Bad Request` with details if validation fails
 
         **Use Cases**:
@@ -751,6 +762,18 @@ paths:
                       has_refresh_token: true
                       dependent_agent_count: 3
                       is_encrypted: true
+                    - id: 660e8400-e29b-41d4-a716-446655440002
+                      service_id: 880e8400-e29b-41d4-a716-446655440010
+                      service_display_name: Reports Production
+                      token_type: Bearer
+                      scope: ["reports:read"]
+                      initiated_at: "2026-11-04T08:00:00Z"
+                      requires_reauthentication: true
+                      is_expired: true
+                      access_token_expired: false
+                      has_refresh_token: true
+                      dependent_agent_count: 1
+                      is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -902,6 +925,11 @@ paths:
         - State token is not expired
         - Principal in token matches current authenticated principal (CSRF protection)
         - Service ID in token matches path parameter
+        - Explicit sealed client identity and non-negative revision match the current service
+          before code exchange. A change followed by restoration still rejects the old revision.
+          Pre-upgrade state missing either claim is rejected even at revision 0; start a fresh
+          authorization. The legacy stored-session exception never admits legacy callback state.
+          Failure uses the existing 302 to `/sessions?error=callback_failed&error_description=...`.
 
         On success:
 
@@ -1155,7 +1183,9 @@ paths:
         third-party service, using the stored refresh token via the RFC 6749 refresh_token
         grant. Unlike the transparent refresh performed during token exchange, this refreshes
         even when the current access token has not yet expired. Requires a stored refresh
-        token that the provider has not rejected.
+        token that the provider has not rejected and a usable client identity/revision.
+        An identity denial leaves stored tokens unchanged and makes no provider request.
+        An unreadable current client-ID file remains a 500 infrastructure outcome.
       tags:
         - Third-Party Sessions
       security:
@@ -1194,7 +1224,8 @@ paths:
         "409":
           description: |
             The session cannot be refreshed. `refresh_unavailable` means no refresh token is
-            stored. `refresh_rejected` means the provider already rejected the stored refresh
+            stored, or the established client identity is missing, mismatched, or superseded
+            after a client-ID change. `refresh_rejected` means the provider already rejected the stored refresh
             token with `invalid_grant`; the broker does not contact the provider again and the
             user must log in to the service again.
           content:
@@ -1297,8 +1328,11 @@ paths:
 
         **Local/Hybrid Mode**:
         When the broker acts as its own OAuth2 authorization server:
-        - If user has an active grant, redirects to `redirect_uri` with `code` and `state`
-        - If no active grant exists, redirects to the consent UI for user approval
+        - If user has an active grant and every included service session is usable, redirects
+          to `redirect_uri` with `code` and `state`
+        - If no active grant exists or an included session requires reauthentication (including
+          after a service client-ID change), returns the existing 302 to the consent UI at
+          `/agents/{agent-id}?session_token=...`; an existing grant never bypasses this check
         - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`
 
         **Proxy Mode**:
@@ -1532,9 +1566,16 @@ paths:
           service-specific `error_uri`. The stored tokens are left unchanged, and the rejection is
           recorded. Later exchanges return the same error without contacting the provider, even
           while the stored access token has not expired, until the user reconnects the service.
-        - A missing required client-identity association or a mismatch with the selected client ID
-          returns 400 `invalid_grant` with the same service-specific `error_uri`.
-          The broker stops before provider authentication and leaves the established session unchanged.
+        - A missing required client-identity association, a mismatch with the current client ID,
+          or a superseded identity revision returns 400 `invalid_grant` with the same service-specific
+          `error_uri`, even with an unexpired or unknown-expiry access token. Restoring a previous
+          client ID does not revive invalidated sessions. The broker stops before token release
+          or provider authentication and leaves the established session unchanged. No token or
+          `WWW-Authenticate` header is returned.
+        - If current client identity cannot be resolved (for example an unreadable client-ID file
+          or unavailable service state), returns 500 `server_error` without `error_uri`, even
+          when the stored access token remains valid. Display-only persisted fallback never
+          permits token acquisition.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never
@@ -3085,7 +3126,11 @@ components:
           enum:
             - connected
             - not_connected
-          description: User's current connection status with this service
+          description: |
+            `connected` when the user has a session that can supply tokens now, including an
+            expired access token with a stored, not-rejected refresh token and usable identity.
+            `not_connected` when there is no session or the session requires reauthentication,
+            including after the service's client ID changed. The user must sign in to the service.
     GetAgentDetailResponse:
       type: object
       required:
@@ -3907,11 +3952,14 @@ components:
         requires_reauthentication:
           type: boolean
           description: |
-            True when the broker cannot obtain another access token for this session: the
-            provider rejected the stored refresh token with `invalid_grant`, or the access token
-            expired and no refresh token is stored. A recorded rejection takes effect even while
-            the stored access token has not expired. An expired access token with a stored,
-            not-rejected refresh token does not require reauthentication.
+            True when this session cannot supply or refresh tokens until the user signs in to
+            the service again. This includes a recorded terminal provider refresh rejection, an
+            expired access token without a stored refresh token, or an unusable client identity
+            or revision. Rejection blocks issuance even with an unexpired access token. An expired
+            token with a stored, not-rejected refresh token and usable identity remains refreshable.
+            Restoring a previous client ID does not clear identity invalidation; fresh authorization
+            under the current identity is required. `is_expired` remains an equal deprecated alias;
+            `access_token_expired` remains the independent access-expiry signal.
         is_expired:
           type: boolean
           deprecated: true

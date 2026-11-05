@@ -452,6 +452,8 @@ The migration Job defaults to `backoffLimit: 0`. A failed migration can leave di
 
 #### Application rollback with the schema retained
 
+This historical 040/041 procedure is insufficient after client-identity activation. Once the fleet has activated ADR 047, use revision-aware rollback only, as specified below; converting services to stored never authorizes an unaware binary.
+
 1. Select a rollback release that includes explicit session-query columns. Do not roll back to a binary with wildcard session scans.
 2. Before starting older pods, list services through the current Admin API.
 3. PUT every filesystem service back to `credential_source: stored` with explicit, non-empty `client_id` and `client_secret`. Supply the complete replacement metadata. Use inline credentials from the operator's secure source, not values imported by the broker. Omit `protected_resources` to preserve them, or supply the current `If-Match` when replacing them.
@@ -459,6 +461,29 @@ The migration Job defaults to `backoffLimit: 0`. A failed migration can leave di
 5. Retain schema 040 and the transition evidence. Returning to stored does not permit a database downgrade: migration 040 DOWN still rejects transitioned rows.
 
 An earlier compatibility release can instead exclude NULL-client-ID rows from every provider lookup and listing query. Those services must return not-found and fail closed. Converting NULL to an empty string is not sufficient. This branch does not change already-released binaries.
+
+### Client-identity migrations 047 and 048
+
+[ADR 047](../../adrs/047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005) governs continuous rolling upgrade and rollback. Activation is an operator-verified boundary, not a runtime flag. New replicas enforce identity revisions immediately. No Helm values, templates, hooks, or workflow changes are required.
+
+Migration 047 adds nullable service `client_identity`, service `client_identity_revision`, and session `upstream_client_revision` (both revisions default to 0). It performs no identity backfill or token rewrite. All three checks begin `NOT VALID`; new writes are still checked. Both table locks use `ACCESS EXCLUSIVE ... NOWAIT` with a one-second schema statement timeout. Migration 048 validates under `SHARE UPDATE EXCLUSIVE ... NOWAIT`, allowing ordinary reads and writes. Apply both online before new pods start; retain atomic golang-migrate execution with `x-multi-statement` disabled. Lock contention aborts instead of queuing an exclusive lock behind traffic.
+
+Record evidence for each deployment prerequisite:
+
+- [ ] Snapshot and freeze effective client IDs, credential sources, canonical IDs, and immutable binding configuration across every replica. Pause identity-mutating Admin automation, discovery/DCR re-registration, and direct service writers; defer new registrations that assign identities.
+- [ ] Keep end-user and Admin ingress open. Verify token, refresh, browser/session, same-ID rotation, and metadata-only traffic continues; allowed writes cannot alter frozen fields.
+- [ ] Apply 047/048 and verify the actual supported prior release against the expanded schema: explicit-column reads, updates preserving unknown evidence columns, and legacy session inserts defaulting to revision 0. Keep database I/O headroom and sufficient Helm timeout; a brief expansion lock can still add latency.
+- [ ] Replace replicas incrementally with revision-aware images under unchanged identities and bindings. Unchanged first observations do not increment. A pre-upgrade callback reaching a new replica must restart sign-in if identity/revision claims are missing.
+- [ ] Withdraw each old process from end-user/Admin/direct traffic and drain its admitted token requests, refreshes, sweeps, callbacks, and service writes while healthy new replicas serve.
+- [ ] Verify the complete serving/writing replica, worker, job, and direct/DCR caller inventory is revision-aware. Pin rollback targets and ensure no controller can restart an unaware image. Only then activate by resuming identity mutations.
+
+If migration, compatibility, drain, or inventory checks fail, keep healthy replicas serving and retain the freeze. Inspect actual schema/data and migration logs; never force past failed validation or automate dirty-state recovery. A failed atomic 047 requires intact schema 046 before any explicit dirty-metadata recovery; a failed 048 requires intact schema 047 and all three unvalidated constraints. Retain the evidence and retry separately only after resolving the cause.
+
+Before activation, a prior-binary abort requires verified unchanged identities/sources/canonical IDs/bindings throughout the overlap, zero service increments, drained new admitted work, and retained schema/evidence. Zero revisions alone prove nothing if an old writer or file change escaped recording. If freeze integrity is lost, isolate unaware readers/writers and restore a revision-aware fleet before resuming changes. After activation rollback is revision-aware only, even when revisions remain 0. Never apply the historical 040/041 conversion procedure to authorize an unaware binary after activation.
+
+048 DOWN restores unvalidated constraints without altering rows. 047 DOWN refuses any positive service revision and changes nothing on refusal. A successful DOWN guard is not an application rollback authorization. Retaining invalidated session rows and service revision evidence prevents a restored client ID from reviving old sessions.
+
+For filesystem publication, publish fresh immutable credential pairs coherently to every replica before announcing an identity change. Each differing observation, including a stale replica or reverted file, can record another revision, so early reconnections can need repeating. Same-ID secret rotation and metadata-only updates never invalidate sessions. See [configuration guidance](../../docs/configuration.md#changing-a-service-client-id).
 
 ### Security: Separate Migration Image
 

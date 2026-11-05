@@ -1,0 +1,124 @@
+# Data Model: Invalidate Sessions After Service Client-ID Changes
+
+**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **Decision**: [ADR 047](../../adrs/047-client-identity-revisions.md) (Accepted; supplied maintainer approval)
+
+No new entity, aggregate, or typed entity ID is introduced. The feature adds internal value objects and attributes to the existing `ThirdpartyOAuth2Service` and `UserSession` aggregates, plus one claim to the existing third-party authorization JWE state.
+
+## Glossary additions and extension (for `ARCHITECTURE.md` §12)
+
+| Term | Definition | Relationships |
+|---|---|---|
+| **Effective Client Identity** | The non-secret, provider-facing client ID that the broker would use for a service now. It is the stored `client_id` for a stored source and the trimmed client-ID file value for a filesystem source. | Owned by `ThirdpartyOAuth2Service`. Compared with `UserSession` establishment. |
+| **Client Identity Revision** | A per-service counter that starts at 0 and increases by exactly 1 each time a different Effective Client Identity is recorded, through an Admin API update or a filesystem observation. It never decreases, including on rollback. | Recorded on `ThirdpartyOAuth2Service`. Copied into authorization state and `UserSession` when established. |
+| **Requires Reauthentication** (existing, ADR 046) | The derived condition in which a `UserSession` cannot supply or refresh tokens until its principal completes a fresh authorization. Its existing ADR 046 causes are recorded terminal refresh rejection or access expiry without a stored refresh token; this feature adds unusable client identity or revision. It is not persisted. | Derived from `UserSession` and `ThirdpartyOAuth2Service`. Surfaced as `requires_reauthentication` and `connectionStatus: not_connected`. |
+
+The two identity terms extend the existing **Client-identity association** glossary entry (ADR 041). Extend the existing **Requires Reauthentication** entry (ADR 046), rather than introducing a synonymous term.
+
+## ThirdpartyOAuth2Service (aggregate, existing)
+
+`model.ThirdpartyOAuth2ProviderEntity` gains the following attributes:
+
+| Field (Go) | Column | Type | Rules |
+|---|---|---|---|
+| `ClientIdentity *id.ClientID` | `client_identity TEXT NULL` | non-secret | Null until first recorded. Non-empty when set. Never an Admin API input or output. Not encryption AAD (ADR 008). |
+| `ClientIdentityRevision int64` | `client_identity_revision BIGINT NOT NULL DEFAULT 0` | counter | `>= 0`. Changes only by +1 together with `ClientIdentity`. Never an Admin API input or output. |
+
+### Recording rules
+
+Let `previous` be `client_identity`, or the persisted stored `client_id` while `client_identity` is null and the persisted source is stored.
+
+| Operation | Effect |
+|---|---|
+| Create, stored | `client_identity = client_id`, revision 0. |
+| Create, filesystem | `client_identity = NULL`, revision 0. |
+| Accepted Admin API update, resulting source stored | If `previous` is non-null and differs from the new `client_id`, set revision to revision + 1. In every case, set `client_identity = client_id`. Both happen atomically in the same conditional `UPDATE` that applies the version and discovery preconditions. |
+| Accepted Admin API update, resulting source filesystem | No change. Files are not read (ADR 041). |
+| Rejected, invalid, or version-conflicting update | No change. |
+| Filesystem observation of value `v` at service version `g`, canonical ID `c`, and identity revision `r` | Atomically require source still `filesystem`, `version == g`, canonical ID still `c`, and revision still `r`, for null initialization, change, and same-ID no-op alike. If matched and `client_identity` is null, set it to `v` with no increment. If matched and it differs from `v`, set `client_identity = v` and revision to `r + 1`. A lost precondition writes nothing and reports `applied = false`. Discard `v`, reload service/source/version/canonical ID/revision, reselect the current binding, and read the file anew if still filesystem; a stored result uses stored identity without an observation. Never retry the obsolete value. `version`, `updated_at`, and the ETag do not change. |
+| Session sweep with `dry_run: true` | No change. It compares the read value with the recorded state to classify candidates, but records nothing, consistent with the dry run's no-write contract. |
+
+The existing administrative `version` supplies configuration-generation fencing; no new persisted generation column is needed. It advances on accepted Admin changes, including source/canonical-ID changes and round trips. It does not itself invalidate sessions. The builder-injected credential binding snapshot is immutable (ADR 041); a canonical-ID change selects a binding afresh, while binding configuration replacement requires replacing replicas using the guarded rollout/publication procedure. Tests must pause an observation, commit filesystem→stored or canonical-ID/binding changes (including a round trip with unchanged revision), then prove the obsolete file value cannot initialize or increment identity evidence. Both stores must preserve FR-012: same-identity transitions and later same-ID updates cause no spurious increment.
+
+Each increment emits `session.oauth2.client_identity_changed` (see [contracts/observability.md](contracts/observability.md)). Admin `Update` returns operation-local `identityChanged` from the predecessor and increment decision captured under the same memory write lock or PostgreSQL row lock/transaction as the conditional update, and populates the entity with that update's committed identity/revision. Only a successful update that itself increments returns true; initialization, same-ID updates, resulting-filesystem updates, and errors return false. A resulting-filesystem update preserves the locked row's latest identity evidence, even if an observation changed it after the domain's initial read without advancing the administrative version. Comparing that initial read with the returned entity cannot attribute an increment. Only the transaction-derived outcome authorizes an admin identity-change event (see [contracts/ports.md](contracts/ports.md#atomic-admin-update-outcome)); no new persisted or public field is added.
+
+## UserSession (aggregate, existing)
+
+`storage.UserSession` gains one attribute:
+
+| Field (Go) | Column | Type | Rules |
+|---|---|---|---|
+| `UpstreamClientRevision int64` (`json:"-"`) | `upstream_client_revision BIGINT NOT NULL DEFAULT 0` | counter | `>= 0`. Set only when a winning callback creates or replaces the session, from the sealed state. Refresh, source transitions, and observations never rewrite it. Pre-existing rows default to 0. |
+
+`UpstreamClientID` (ADR 041) is now set for every service variant on new connections. It is never backfilled.
+
+### Usability for identity
+
+Given the current state `{E, R}` from `resolveClientIdentity` and a session `s`:
+
+```text
+identityUsable(s) =
+    (s.UpstreamClientID != nil && *s.UpstreamClientID == E && s.UpstreamClientRevision == R)
+ || (s.UpstreamClientID == nil && service.source == stored && !service.CredentialSourceTransitioned && R == 0)
+
+requiresReauthentication(s) = s.RequiresReauthentication() || !identityUsable(s)
+// s.RequiresReauthentication() retains ADR 046's rejection and refreshability rule.
+```
+
+A failure cause maps to an existing credential-source reason:
+
+| Condition | Reason | Exchange outcome |
+|---|---|---|
+| Identity differs from `E` | `identity_mismatch` (existing) | `400 invalid_grant`, ADR 044 `error_uri` |
+| Identity equals `E`, but revision differs from `R` | `identity_superseded` (new) | `400 invalid_grant`, ADR 044 `error_uri` |
+| Legacy and not covered by the exception | `identity_missing` (existing) | `400 invalid_grant`, ADR 044 `error_uri` |
+| `E` cannot be resolved | Existing source reasons (`not_found`, `read_failed`, and others) | `500 server_error`, no `error_uri` |
+
+### State transitions
+
+```mermaid
+stateDiagram-v2
+    [*] --> Usable: Winning callback seals {E,R}
+    Usable --> ReauthenticationRequired: Service records a new revision (admin update or file observation)
+    Usable --> ReauthenticationRequired: Observed terminal refresh rejection (ADR 046)
+    Usable --> ReauthenticationRequired: Access expiry without stored refresh token (ADR 046)
+    ReauthenticationRequired --> ReauthenticationRequired: Refresh, sweep, rollback, restart, failed or cancelled reconnect
+    ReauthenticationRequired --> Usable: Winning callback under current {E,R}
+    Usable --> [*]: User terminates (existing)
+    ReauthenticationRequired --> [*]: User terminates (existing)
+```
+
+The session row is retained while reauthentication is required. Its retention drives the sign-in prompt and lets the reconnect callback replace it through the existing callback-ID compare-and-set.
+
+## OAuth2StateTokenClaims (JWE, existing)
+
+| Claim | Type | Rules |
+|---|---|---|
+| `upstream_client_id` (existing) | string | Now present for every service variant. |
+| `upstream_client_revision` (new) | integer, presence-aware | Required alongside `upstream_client_id` for every newly initiated flow. Must be `>= 0`; explicit 0 differs from an absent claim. At callback, both claims must be present and equal current `{E, R}` before code exchange. A missing identity or revision (including pre-upgrade state from public/CIMD/DCR/Google flows) is rejected with `identity_missing`; mismatches use `identity_mismatch` or `identity_superseded`. The user starts a fresh flow; the legacy stored-session exception never admits legacy callback state. |
+
+The state is internal and encrypted, and providers echo it opaquely. Its claims are not an external contract.
+
+## Read models
+
+| Read model | Change |
+|---|---|
+| `storage.UserSessionSummary` | Extends the existing `RequiresReauthentication` value with identity evaluation. Its deprecated `IsExpired` alias always has the same value. `AccessTokenExpired` remains an independent expiry signal; no rejection timestamp is exposed. |
+| `consent.ServiceRequirementStatus.IsConnected` | True only for a session that does not require reauthentication under ADR 046 and is identity-usable; an expired access token with a stored, not-rejected refresh token remains refreshable. |
+| Authorization decision `anyDelegatedSessionUnusable` | Adds reason `session_reauthentication_required` when an included service's session is not identity-usable. |
+
+## Persistence
+
+| Migration | Content |
+|---|---|
+| `047_add_client_identity_revision.up.sql` | Atomic. `SET LOCAL statement_timeout = '1s'`. `LOCK ... IN ACCESS EXCLUSIVE MODE NOWAIT` on both tables. Adds the three columns with defaults and the `NOT VALID` CHECK constraints `client_identity_revision >= 0`, `upstream_client_revision >= 0`, and `client_identity IS NULL OR client_identity <> ''`. No backfill. |
+| `047_add_client_identity_revision.down.sql` | Raises an error and changes nothing if `EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE client_identity_revision > 0)`. Otherwise it drops the constraints and columns. |
+| `048_validate_client_identity_revision.up.sql` | Validates the three constraints under `SHARE UPDATE EXCLUSIVE ... NOWAIT`. |
+| `048_validate_client_identity_revision.down.sql` | Restores the unvalidated constraints without changing data. |
+
+The guarded DOWN is necessary but does not make an older binary safe after activation: rollout and rollback also follow Proposed DEC-005 in ADR 047. Apply expansion/validation online while healthy replicas keep serving; mixed-version traffic is allowed only with effective identities, sources, canonical IDs, and bindings fixed. Prior binaries must use explicit columns, leave new evidence columns untouched on updates, and create legacy sessions at default revision 0; verify these properties against the expanded schema with the supported prior release. An unchanged first identity observation records no increment. Same-ID secret rotation and metadata-only writes preserve this compatibility. Drain old admitted work while new replicas serve, then verify the entire serving/writing inventory and prevent old-image restart before resuming identity mutations. Pre-activation abort additionally requires verified unchanged identities, zero increments, drained new work, and retained schema/evidence; after activation only revision-aware binaries may serve, regardless of the current revision.
+
+The in-memory adapter keeps identical source/configuration-generation/revision compare-and-set and copy-on-read semantics. Explicit column lists are extended in every session and service query. No `SELECT *`.
+
+## Ports
+
+See [contracts/ports.md](contracts/ports.md).
