@@ -16,13 +16,12 @@ import (
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
 type InMemoryUserSessionRepository struct {
-	mu                sync.RWMutex
-	transactions      *TransactionManager
-	issuerSessionGate *sync.RWMutex
-	provider          *InMemoryThirdpartyOAuth2ProviderRepository
-	sessions          map[id.SessionID]*storage.UserSession // Key: session ID
-	index             map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
-	locks             map[string]*sessionLock
+	mu           sync.RWMutex
+	transactions *TransactionManager
+	provider     *InMemoryThirdpartyOAuth2ProviderRepository
+	sessions     map[id.SessionID]*storage.UserSession // Key: session ID
+	index        map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
+	locks        map[string]*sessionLock
 }
 
 type sessionLock struct {
@@ -57,17 +56,6 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 	if err := session.Validate(); err != nil {
 		return nil, err
 	}
-	if r.issuerSessionGate != nil {
-		r.issuerSessionGate.RLock()
-		defer r.issuerSessionGate.RUnlock()
-	}
-	operation := "CreateIfAbsent"
-	if replace {
-		operation = "Create"
-	}
-	if err := r.currentDiscoveryStateError(session, operation); err != nil {
-		return nil, err
-	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
 	if _, ambient := memoryTransaction(ctx); !ambient {
@@ -82,6 +70,13 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, err
 	}
 	defer guard.release()
+	operation := "CreateIfAbsent"
+	if replace {
+		operation = "Create"
+	}
+	if err := r.currentDiscoveryStateError(session, operation); err != nil {
+		return nil, err
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -628,4 +623,8 @@ func (r *InMemoryUserSessionRepository) unlockSession(key string, gate *sessionL
 		delete(r.locks, key)
 	}
 	r.mu.Unlock()
+}
+
+func (r *InMemoryUserSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.FindByPrincipalAndService(ctx, principal, serviceID)
 }

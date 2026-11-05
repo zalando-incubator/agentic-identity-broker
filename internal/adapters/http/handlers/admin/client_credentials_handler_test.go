@@ -130,3 +130,7 @@ func TestClientCredentialsHandler_CanonicalAgentPaths(t *testing.T) {
 		agentRepo.AssertExpectations(t)
 	})
 }
+
+func (r *clientCredentialRepositoryFake) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.GetByAgentID(ctx, agentID)
+}

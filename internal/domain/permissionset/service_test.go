@@ -736,3 +736,7 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	assert.Equal(t, "permission_set_deleted", fields["action"])
 	assert.Equal(t, psID, fields["permission_set_id"])
 }
+
+func (s *stubGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return s.FindByPrincipalAndAgent(ctx, principal, agentID)
+}

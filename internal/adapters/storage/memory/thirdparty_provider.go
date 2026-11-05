@@ -30,15 +30,14 @@ func providerDCRIdentity(entity *model.ThirdpartyOAuth2ProviderEntity) (dcrClien
 // with thread-safe in-memory storage. Protected resources are stored as an
 // authoritative child set and indexed globally by their normalized URI.
 type InMemoryThirdpartyOAuth2ProviderRepository struct {
-	mu                sync.RWMutex
-	transactions      *TransactionManager
-	issuerSessionGate sync.RWMutex
-	sessions          *InMemoryUserSessionRepository
-	providers         map[id.ServiceID]*thirdpartyOAuth2ProviderRecord
-	canonicalIndex    map[string]id.ServiceID
-	dcrIndex          map[dcrClientIdentity]id.ServiceID
-	resources         map[id.ServiceID]map[string]struct{}
-	resourceOwners    map[string]id.ServiceID
+	mu             sync.RWMutex
+	transactions   *TransactionManager
+	sessions       *InMemoryUserSessionRepository
+	providers      map[id.ServiceID]*thirdpartyOAuth2ProviderRecord
+	canonicalIndex map[string]id.ServiceID
+	dcrIndex       map[dcrClientIdentity]id.ServiceID
+	resources      map[id.ServiceID]map[string]struct{}
+	resourceOwners map[string]id.ServiceID
 }
 
 var _ ports.ThirdpartyOAuth2ProviderRepository = (*InMemoryThirdpartyOAuth2ProviderRepository)(nil)
@@ -62,7 +61,6 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) WithUserSessionRepository(s
 	r.sessions = sessions
 	if sessions != nil {
 		sessions.provider = r
-		sessions.issuerSessionGate = &r.issuerSessionGate
 	}
 	return r
 }
@@ -127,6 +125,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 		r.canonicalIndex[*entity.CanonicalID] = entity.ID
 	}
 	if identity, isDCR := providerDCRIdentity(record.entity); isDCR {
+		journalEntry(ctx, r.dcrIndex, identity)
 		r.dcrIndex[identity] = entity.ID
 	}
 	for resource := range resources {
@@ -210,10 +209,6 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if entity == nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "entity cannot be nil")
 	}
-	// Session creation takes the issuer gate before the visibility gate; keep that order here.
-	// The session count below runs inside this operation's gate, not a nested one.
-	r.issuerSessionGate.Lock()
-	defer r.issuerSessionGate.Unlock()
 	ctx, guard, gateErr := r.transactions.enter(ctx, true)
 	if gateErr != nil {
 		return gateErr
@@ -354,9 +349,11 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	journalEntry(ctx, r.providers, entity.ID)
 	r.providers[entity.ID] = record
 	if identity, isDCR := providerDCRIdentity(existing.entity); isDCR {
+		journalEntry(ctx, r.dcrIndex, identity)
 		delete(r.dcrIndex, identity)
 	}
 	if identity, isDCR := providerDCRIdentity(record.entity); isDCR {
+		journalEntry(ctx, r.dcrIndex, identity)
 		r.dcrIndex[identity] = entity.ID
 	}
 	if existing.entity.CanonicalID != nil {
@@ -376,8 +373,6 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 
 // Delete removes the provider and releases every resource it owns.
 func (r *InMemoryThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
-	r.issuerSessionGate.Lock()
-	defer r.issuerSessionGate.Unlock()
 	ctx, guard, gateErr := r.transactions.enter(ctx, true)
 	if gateErr != nil {
 		return gateErr
@@ -404,6 +399,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context,
 	}
 	if record, exists := r.providers[serviceID]; exists {
 		if identity, isDCR := providerDCRIdentity(record.entity); isDCR {
+			journalEntry(ctx, r.dcrIndex, identity)
 			delete(r.dcrIndex, identity)
 		}
 	}
@@ -608,11 +604,17 @@ func providerStorageError(operation string, kind storage.ErrorKind, cause error,
 }
 
 // RecordDiscoveryFailure changes only the status of a still-current discovery-backed provider.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(_ context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error {
 	const operation = "RecordDiscoveryFailure"
 	if !model.ValidDiscoveryFailureCode(failureCode) {
 		return providerStorageError(operation, storage.ErrorKindValidation, nil, "invalid discovery failure code")
 	}
+
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -621,7 +623,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(_ co
 	if !exists {
 		return providerStorageError(operation, storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
-	entity := record.entity
+	entity := *record.entity
 	if entity.Version != expectedVersion || entity.Discovery.ResourceURL == nil {
 		return providerStorageError(operation, storage.ErrorKindConflict, nil, "provider discovery state is no longer current")
 	}
@@ -632,7 +634,9 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(_ co
 		return providerStorageError(operation, storage.ErrorKindConflict, nil, "provider discovery attempt is no longer current")
 	}
 
+	journalEntry(ctx, r.providers, serviceID)
 	status.LastAttemptAt = &completedAt
 	status.FailureReason = &failureCode
+	r.providers[serviceID] = &thirdpartyOAuth2ProviderRecord{entity: &entity}
 	return nil
 }

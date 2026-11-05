@@ -359,13 +359,13 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	hints := ports.StorageTransactionHintsFromContext(ctx)
 	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: req.Principal})
 	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
-		if _, err := s.agentRepo.Get(txCtx, req.AgentID); err != nil {
+		if _, err := s.agentRepo.GetForUpdate(txCtx, req.AgentID); err != nil {
 			if ports.IsNotFoundErr(err) {
 				return fmt.Errorf("%w: agent_id=%s", ErrAgentNotFound, req.AgentID)
 			}
 			return fmt.Errorf("failed to get agent: %w", err)
 		}
-		existing, err := s.grantRepo.FindByPrincipalAndAgent(txCtx, req.Principal, req.AgentID)
+		existing, err := s.grantRepo.FindByPrincipalAndAgentForUpdate(txCtx, req.Principal, req.AgentID)
 		if err != nil && !ports.IsNotFoundErr(err) {
 			return fmt.Errorf("failed to find existing grant: %w", err)
 		}
@@ -382,6 +382,11 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 				"previous_observed_valid_until", grantAuditValidUntil(existing.ValidUntil),
 				"previous_observed_updated_at", existing.UpdatedAt.UTC().Format(time.RFC3339Nano),
 				"previous_observed_granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: existing.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+			}
+			if expired {
+				if err := s.RecognizeGrantExpiration(txCtx, existing); err != nil {
+					return err
+				}
 			}
 			grant = existing
 			grant.ValidUntil, grant.GrantedPermissionSets, grant.UpdatedAt = req.ValidUntil, req.GrantedPermissionSets, now
@@ -404,13 +409,8 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			if err := grant.ValidateForCreate(); err != nil {
 				return fmt.Errorf("%w: %w", ErrGrantValidation, err)
 			}
-			candidateID := grant.ID
 			if err := s.grantRepo.Create(txCtx, grant); err != nil {
 				return fmt.Errorf("failed to create grant: %w", err)
-			}
-			if grant.ID != candidateID {
-				eventName = "grant-updated"
-				action, message = "grant_updated", "grant updated"
 			}
 		}
 		return s.recordGrant(txCtx, eventName, grant, now)
@@ -692,7 +692,7 @@ func (s *Service) revokeGrant(ctx context.Context, principal id.Principal, agent
 	hints := ports.StorageTransactionHintsFromContext(ctx)
 	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
 	err := s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
-		if _, err := s.agentRepo.Get(txCtx, agentID); err != nil && !ports.IsNotFoundErr(err) {
+		if _, err := s.agentRepo.GetForUpdate(txCtx, agentID); err != nil && !ports.IsNotFoundErr(err) {
 			return fmt.Errorf("failed to get agent: %w", err)
 		}
 		var err error
@@ -752,7 +752,7 @@ func (s *Service) RecognizeGrantExpiration(ctx context.Context, grant *storage.U
 	hints := ports.StorageTransactionHintsFromContext(ctx)
 	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: grant.Principal})
 	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
-		current, err := s.grantRepo.FindByPrincipalAndAgent(txCtx, grant.Principal, grant.AgentID)
+		current, err := s.grantRepo.FindByPrincipalAndAgentForUpdate(txCtx, grant.Principal, grant.AgentID)
 		if ports.IsNotFoundErr(err) {
 			return nil
 		}

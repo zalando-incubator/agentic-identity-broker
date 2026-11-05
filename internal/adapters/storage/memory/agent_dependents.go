@@ -10,7 +10,7 @@ import (
 
 var _ ports.AgentDependentRepository = (*AgentRepository)(nil)
 
-func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.UserGrant, error) {
+func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.AgentID, _ bool) ([]*storage.UserGrant, error) {
 	guard, err := r.transactions.lock(ctx, false)
 	if err != nil {
 		return nil, err
@@ -31,7 +31,7 @@ func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.Agen
 	return result, nil
 }
 
-func (r *AgentRepository) ListApprovalsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+func (r *AgentRepository) ListApprovalsByAgent(ctx context.Context, agentID id.AgentID, _ bool) ([]*storage.ToolApproval, error) {
 	guard, err := r.transactions.lock(ctx, false)
 	if err != nil {
 		return nil, err

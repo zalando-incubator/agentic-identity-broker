@@ -2694,3 +2694,23 @@ func TestExchange_CancellationPreservesOnlyResolvedAuthorizationContext(t *testi
 		})
 	}
 }
+
+func (m *MockAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
+	return m.Get(ctx, agentID)
+}
+
+func (r *trackingAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
+	return r.Get(ctx, agentID)
+}
+
+func (r *singleAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
+	return r.Get(ctx, agentID)
+}
+
+func (m *MockGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
+	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
+}
+
+func (m *MockSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storagedomain.UserSession, error) {
+	return m.FindByPrincipalAndService(ctx, principal, serviceID)
+}

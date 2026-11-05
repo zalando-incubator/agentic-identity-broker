@@ -2628,3 +2628,19 @@ type mockConsentRefreshRepo struct {
 func (r *mockConsentRefreshRepo) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (int, error) {
 	return 0, r.err
 }
+
+func (m *mockAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return m.Get(ctx, agentID)
+}
+
+func (m *mockGrantRepo) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
+}
+
+func (m *mockUserSessionRepo) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return m.FindByPrincipalAndService(ctx, principal, serviceID)
+}
+
+func (m *mockSessionRepo) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return m.FindByPrincipalAndService(ctx, principal, serviceID)
+}

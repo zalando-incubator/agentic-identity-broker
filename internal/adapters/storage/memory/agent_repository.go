@@ -471,3 +471,7 @@ func clientIDPtrEqual(a, b *id.ClientID) bool {
 	}
 	return *a == *b
 }
+
+func (r *AgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.Get(ctx, agentID)
+}

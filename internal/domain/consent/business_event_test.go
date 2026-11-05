@@ -222,3 +222,40 @@ func TestConsentLedgerReplacesIncludedServiceWithoutChangingValidity(t *testing.
 	require.NoError(t, err)
 	require.Len(t, store.Events, 2, "repeating the new membership must remain silent")
 }
+
+func TestConsentLedgerRenewalRecordsUnrecognizedExpiryAtomically(t *testing.T) {
+	for _, failRecording := range []bool{false, true} {
+		t.Run(map[bool]string{false: "commit", true: "rollback"}[failRecording], func(t *testing.T) {
+			svc, repo, store, request, markers := newLedgerConsent(t)
+			ctx := context.Background()
+			grant, err := svc.GrantConsent(ctx, request)
+			require.NoError(t, err)
+			store.Events = nil
+			expiry := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+			repo.grants[grant.ID].ValidUntil = &expiry
+			before := repo.grants[grant.ID].Copy()
+			if failRecording {
+				store.CommitError = errors.New("commit rejected")
+			}
+			renewed, err := svc.GrantConsent(ctx, request)
+			if failRecording {
+				require.Error(t, err)
+				require.Nil(t, renewed)
+				require.Equal(t, before, repo.grants[grant.ID])
+				require.Empty(t, markers.markers)
+				require.Empty(t, store.Events)
+				return
+			}
+			require.NoError(t, err)
+			require.Nil(t, renewed.ValidUntil)
+			require.Len(t, store.Events, 2)
+			require.Equal(t, model.BusinessEventTypePrefix+"grant-expired", store.Events[0].Type)
+			require.Equal(t, expiry, store.Events[0].OccurredAt)
+			require.Equal(t, model.BusinessEventTypePrefix+"grant-updated", store.Events[1].Type)
+			require.Equal(t, expiry, markers.markers[grant.ID])
+			_, err = svc.GrantConsent(ctx, request)
+			require.NoError(t, err)
+			require.Len(t, store.Events, 2)
+		})
+	}
+}

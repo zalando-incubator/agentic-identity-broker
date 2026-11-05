@@ -131,3 +131,7 @@ func (s *ClientCredentialStore) Rotate(ctx context.Context, agentID id.AgentID, 
 	s.byAgentID[agentID] = newCred
 	return nil
 }
+
+func (s *ClientCredentialStore) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return s.GetByAgentID(ctx, agentID)
+}

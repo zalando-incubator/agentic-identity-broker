@@ -371,6 +371,7 @@ Never use goroutine identity to detect reentrancy.
 Rollback journals restore affected objects and secondary indexes in reverse order.
 Readers cannot observe partial transactions.
 Caller-owned pointers cannot mutate storage behind the gate.
+Provider/session writers use this same exclusive visibility gate, including issuer/audience checks before session insertion. Discovery-status updates replace the stored record and journal it; DCR identity indexes are journaled on create, update, and delete.
 
 Acquire a separate lifecycle barrier before the visibility gate.
 The lifecycle barrier is shared for business transactions and dispatch.

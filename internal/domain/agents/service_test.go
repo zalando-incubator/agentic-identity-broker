@@ -682,3 +682,7 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	assert.Equal(t, "agent_deleted", fields["action"])
 	assert.Equal(t, agentID, fields["agent_id"])
 }
+
+func (m *mockAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return m.Get(ctx, agentID)
+}

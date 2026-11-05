@@ -170,13 +170,52 @@ func TestConsentLedgerRevocationTransactions(t *testing.T) {
 			if operation == "absent" {
 				require.Empty(t, events, "absent revocation is not a business fact")
 			} else {
-				require.Len(t, events, 1)
-				eventName := "grant-revoked"
 				if operation == "renew" {
-					eventName = "grant-updated"
+					require.Len(t, events, 2)
+					require.Equal(t, model.BusinessEventTypePrefix+"grant-expired", events[0].Type)
+					require.Equal(t, model.BusinessEventTypePrefix+"grant-updated", events[1].Type)
+				} else {
+					require.Len(t, events, 1)
+					require.Equal(t, model.BusinessEventTypePrefix+"grant-revoked", events[0].Type)
 				}
-				require.Equal(t, model.BusinessEventTypePrefix+eventName, events[0].Type)
 			}
 		})
 	}
+}
+
+func TestLedgerIssuanceLookupsDoNotSerializeAgentOrGrantReaders(t *testing.T) {
+	adapter, _ := openLedgerFoundation(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	provider := createTestService("concurrent-lookup-provider", "Lookup provider", nil)
+	provider.Secret, provider.TokenEndpointAuthMethod = model.NewAbsentSecret(), model.TokenEndpointAuthMethodNone
+	require.NoError(t, adapter.Services().Create(ctx, provider))
+	set := &storage.PermissionSet{ID: id.NewPermissionSetID(), Name: "Lookup permission", Description: "Concurrent lookup permission", ServiceScopes: []storage.ServiceScope{{ServiceID: provider.ID, Scopes: []string{"read"}, RequirementType: storage.RequirementTypeOptional}}}
+	require.NoError(t, adapter.PermissionSets().Create(ctx, set))
+	agent := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Concurrent token client", Description: "Concurrent issuance lookups"}
+	agent.PermissionSets = []storage.AgentPermissionSetEntry{{PermissionSetID: set.ID, RequirementType: storage.RequirementTypeOptional}}
+	require.NoError(t, adapter.Agents().Create(ctx, agent))
+	now := time.Now().UTC()
+	grant := &storage.UserGrant{ID: id.NewGrantID(), Principal: id.Principal("concurrent-token-user"), AgentID: agent.ID, CreatedAt: now, UpdatedAt: now}
+	require.NoError(t, adapter.UserGrants().Create(ctx, grant))
+	first, err := adapter.BeginTX(ctx)
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(first) }()
+	_, err = adapter.Agents().Get(first, agent.ID)
+	require.NoError(t, err)
+	_, err = adapter.UserGrants().FindByPrincipalAndAgent(first, grant.Principal, agent.ID)
+	require.NoError(t, err)
+	secondCtx, stopSecond := context.WithTimeout(ctx, time.Second)
+	defer stopSecond()
+	second, err := adapter.BeginTX(secondCtx)
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(second) }()
+	client, err := adapter.Agents().Get(second, agent.ID)
+	require.NoError(t, err, "ordinary joined client lookups must remain compatible")
+	require.Equal(t, agent.ID, client.ID)
+	delegation, err := adapter.UserGrants().FindByPrincipalAndAgent(second, grant.Principal, agent.ID)
+	require.NoError(t, err, "issuance grant checks must not take the writer pair lock")
+	require.Equal(t, grant.ID, delegation.ID)
+	require.NoError(t, adapter.Commit(second))
+	require.NoError(t, adapter.Commit(first))
 }

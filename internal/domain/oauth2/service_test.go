@@ -2099,3 +2099,19 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	assert.NotContains(t, consentURL, "redirect_uri=", "buildConsentURL must never produce redirect_uri fallback")
 	assert.True(t, strings.HasPrefix(consentURL, "https://broker.example.com/agents/"+agentID.String()+"?session_token="))
 }
+
+func (m *MockAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return m.Get(ctx, agentID)
+}
+
+func (m *MockGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return m.FindByPrincipalAndAgent(ctx, principal, agentID)
+}
+
+func (r *errorGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return r.FindByPrincipalAndAgent(ctx, principal, agentID)
+}
+
+func (m *MockSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return m.FindByPrincipalAndService(ctx, principal, serviceID)
+}

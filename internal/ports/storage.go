@@ -218,6 +218,8 @@ type UserRepository interface {
 type AgentRepository interface {
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	// GetForUpdate requires an owning transaction and serializes agent mutations and cascades.
+	GetForUpdate(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
 	GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error)
 	Update(ctx context.Context, agent *storage.Agent) error
@@ -239,8 +241,8 @@ type AgentCanonicalIDRepository interface {
 
 // AgentDependentRepository exposes retained business objects before agent deletion cascades.
 type AgentDependentRepository interface {
-	ListGrantsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.UserGrant, error)
-	ListApprovalsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error)
+	ListGrantsByAgent(ctx context.Context, agentID id.AgentID, forUpdate bool) ([]*storage.UserGrant, error)
+	ListApprovalsByAgent(ctx context.Context, agentID id.AgentID, forUpdate bool) ([]*storage.ToolApproval, error)
 }
 
 // UserGrantRepository defines storage operations for user grant entities.
@@ -287,6 +289,8 @@ type UserGrantRepository interface {
 	// Returns StorageError with Kind=NotFound if grant not found.
 	// Returns StorageError for connection/timeout issues.
 	FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error)
+	// FindByPrincipalAndAgentForUpdate also locks an absent pair against competing creation.
+	FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error)
 
 	// DeleteByAgent deletes all grants associated with an agent.
 	// Used during cascade deletion when agent is deleted (FR-021).
@@ -362,6 +366,7 @@ type UserSessionRepository interface {
 	// FindByPrincipalAndService retrieves the session for a principal and service.
 	// Returns nil if no session exists (not an error).
 	FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error)
+	FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error)
 
 	// ListByPrincipal retrieves all sessions for a principal, including those that require reauthentication.
 	// Used for user-visible session lists (DELETE /api/third-party/sessions).
@@ -524,6 +529,7 @@ type ClientCredentialRepository interface {
 
 	// GetByAgentID retrieves the credential for a given agent.
 	GetByAgentID(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error)
+	GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error)
 
 	// GetByClientID retrieves the credential by its client ID.
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.ClientCredential, error)

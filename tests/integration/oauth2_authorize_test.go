@@ -772,3 +772,11 @@ func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserS
 	}
 	return repo
 }
+
+func (r *inMemoryAgentRepo) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.Get(ctx, agentID)
+}
+
+func (r *inMemoryGrantRepo) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return r.FindByPrincipalAndAgent(ctx, principal, agentID)
+}

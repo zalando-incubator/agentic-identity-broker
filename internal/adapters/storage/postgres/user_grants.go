@@ -485,6 +485,14 @@ func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 // FindByPrincipalAndAgent retrieves the grant for a principal and agent pair.
 // Returns StorageError with Kind=NotFound if grant not found.
 func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return r.findByPrincipalAndAgent(ctx, principal, agentID, false)
+}
+
+func (r *UserGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return r.findByPrincipalAndAgent(ctx, principal, agentID, true)
+}
+
+func (r *UserGrantRepository) findByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID, forUpdate bool) (*storage.UserGrant, error) {
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
 			"FindUserGrant",
@@ -504,7 +512,7 @@ func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 		WHERE principal = $1 AND agent_id = $2
 		LIMIT 1
 	`
-	if _, ambient := storageTransaction(ctxTimeout); ambient {
+	if forUpdate {
 		// A missing row also needs a pair lock so concurrent creators compare committed state.
 		if _, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout,
 			`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320135), principal.String(), agentID.String()); err != nil {

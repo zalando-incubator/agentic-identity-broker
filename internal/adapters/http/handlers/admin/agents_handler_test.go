@@ -1753,3 +1753,7 @@ func TestAgentsHandler_CanonicalPresentationRendersNestedReferencesSelectively(t
 	agentRepo.AssertExpectations(t)
 	serviceRepo.AssertExpectations(t)
 }
+
+func (m *MockAgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return m.Get(ctx, agentID)
+}

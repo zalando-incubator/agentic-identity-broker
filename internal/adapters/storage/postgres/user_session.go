@@ -268,13 +268,21 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 
 // FindByPrincipalAndService retrieves the session for a principal and service.
 func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.findByPrincipalAndService(ctx, principal, serviceID, false)
+}
+
+func (r *PostgresUserSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.findByPrincipalAndService(ctx, principal, serviceID, true)
+}
+
+func (r *PostgresUserSessionRepository) findByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID, forUpdate bool) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
 
 	var rec userSessionRecord
 	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND service_id = $2`
-	if _, ambient := storageTransaction(ctx); ambient {
+	if forUpdate {
 		query += " FOR UPDATE"
 	}
 

@@ -1558,7 +1558,7 @@ func (s *OAuth2SessionService) TerminateSession(
 	hints := ports.StorageTransactionHintsFromContext(ctx)
 	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
 	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
-		current, err := s.sessionRepo.FindByPrincipalAndService(txCtx, principal, serviceID)
+		current, err := s.sessionRepo.FindByPrincipalAndServiceForUpdate(txCtx, principal, serviceID)
 		if err != nil {
 			return err
 		}

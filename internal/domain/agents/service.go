@@ -138,7 +138,7 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage.Agent, clearClientID bool) error {
 	var previous *storage.Agent
 	err := s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
-		existing, err := s.repo.Get(txCtx, agentID)
+		existing, err := s.repo.GetForUpdate(txCtx, agentID)
 		if err != nil {
 			return err
 		}
@@ -224,7 +224,7 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		discovered, err := s.loadDependents(ctx, agentID)
+		discovered, err := s.loadDependents(ctx, agentID, false)
 		if err != nil {
 			return err
 		}
@@ -253,20 +253,20 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 			if err := txCtx.Err(); err != nil {
 				return err
 			}
-			if _, err := s.repo.Get(txCtx, agentID); err != nil {
+			if _, err := s.repo.GetForUpdate(txCtx, agentID); err != nil {
 				if ports.IsNotFoundErr(err) {
 					return nil
 				}
 				return err
 			}
-			captured, err := s.loadDependents(txCtx, agentID)
+			captured, err := s.loadDependents(txCtx, agentID, true)
 			if err != nil {
 				return err
 			}
 			if !captured.coveredBy(subjects) {
 				return errCascadeSubjectDiscoveryChanged
 			}
-			captured.credential, err = s.credentials.GetByAgentID(txCtx, agentID)
+			captured.credential, err = s.credentials.GetByAgentIDForUpdate(txCtx, agentID)
 			if err != nil && !ports.IsNotFoundErr(err) {
 				return err
 			}

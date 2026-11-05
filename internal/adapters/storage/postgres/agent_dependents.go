@@ -11,7 +11,7 @@ import (
 
 var _ ports.AgentDependentRepository = (*AgentRepository)(nil)
 
-func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.UserGrant, error) {
+func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.AgentID, forUpdate bool) ([]*storage.UserGrant, error) {
 	const operation = "ListAgentGrants"
 	if r.adapter == nil || r.adapter.db == nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
@@ -20,7 +20,7 @@ func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.Agen
 	defer cancel()
 	query := `SELECT id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
 		FROM public.user_grants WHERE agent_id = $1 ORDER BY id`
-	if _, joined := storageTransaction(ctx); joined {
+	if forUpdate {
 		query += " FOR UPDATE"
 	}
 	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, query, agentID)
@@ -46,7 +46,7 @@ func (r *AgentRepository) ListGrantsByAgent(ctx context.Context, agentID id.Agen
 	return result, nil
 }
 
-func (r *AgentRepository) ListApprovalsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+func (r *AgentRepository) ListApprovalsByAgent(ctx context.Context, agentID id.AgentID, forUpdate bool) ([]*storage.ToolApproval, error) {
 	const operation = "ListAgentApprovals"
 	if r.adapter == nil || r.adapter.db == nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
@@ -57,7 +57,7 @@ func (r *AgentRepository) ListApprovalsByAgent(ctx context.Context, agentID id.A
 		arguments, arguments_hash, description, risk_level, mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		status, persistence, consumed, approval_url, created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM public.tool_approvals WHERE agent_id = $1 ORDER BY id`
-	if _, joined := storageTransaction(ctx); joined {
+	if forUpdate {
 		query += " FOR UPDATE"
 	}
 	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, query, agentID)

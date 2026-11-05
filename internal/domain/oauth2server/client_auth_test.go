@@ -320,3 +320,7 @@ func TestClientAuthService_Authenticate(t *testing.T) {
 		assert.Empty(t, buf.String(), "not-found on agent lookup must not produce an error log")
 	})
 }
+
+func (m *mockCredentialRepo) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return m.GetByAgentID(ctx, agentID)
+}

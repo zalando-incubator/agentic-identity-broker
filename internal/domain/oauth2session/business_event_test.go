@@ -429,3 +429,7 @@ func TestSessionLedgerAutomaticRefreshActor(t *testing.T) {
 		})
 	}
 }
+
+func (r *ledgerSessionRecords) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.FindByPrincipalAndService(ctx, principal, serviceID)
+}

@@ -19,7 +19,7 @@ type ledgerAgentDependents struct {
 	approvals map[id.ApprovalID]*storage.ToolApproval
 }
 
-func (d *ledgerAgentDependents) ListGrantsByAgent(_ context.Context, agentID id.AgentID) ([]*storage.UserGrant, error) {
+func (d *ledgerAgentDependents) ListGrantsByAgent(_ context.Context, agentID id.AgentID, _ bool) ([]*storage.UserGrant, error) {
 	var result []*storage.UserGrant
 	for _, grant := range d.grants {
 		if grant.AgentID == agentID {
@@ -28,7 +28,7 @@ func (d *ledgerAgentDependents) ListGrantsByAgent(_ context.Context, agentID id.
 	}
 	return result, nil
 }
-func (d *ledgerAgentDependents) ListApprovalsByAgent(_ context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+func (d *ledgerAgentDependents) ListApprovalsByAgent(_ context.Context, agentID id.AgentID, _ bool) ([]*storage.ToolApproval, error) {
 	var result []*storage.ToolApproval
 	for _, approval := range d.approvals {
 		if approval.AgentID == agentID {
@@ -224,4 +224,8 @@ func TestAgentLedgerCascadeRecordingFailureRestoresAllDependents(t *testing.T) {
 	require.Equal(t, approval, dependents.approvals[approval.ID])
 	require.Equal(t, credential, credentials.records[agentID])
 	require.Empty(t, store.Events)
+}
+
+func (r *ledgerAgentCredentials) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.GetByAgentID(ctx, agentID)
 }

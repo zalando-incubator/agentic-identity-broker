@@ -989,3 +989,7 @@ func (r failingRefreshEvents) Append(ctx context.Context, event *model.BusinessE
 	}
 	return r.BusinessEventRepository.Append(ctx, event, queue)
 }
+
+func (r observedSessionReads) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.FindByPrincipalAndService(ctx, principal, serviceID)
+}

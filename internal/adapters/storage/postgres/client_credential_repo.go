@@ -42,6 +42,14 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 }
 
 func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.getByAgentID(ctx, agentID, false)
+}
+
+func (r *ClientCredentialRepo) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.getByAgentID(ctx, agentID, true)
+}
+
+func (r *ClientCredentialRepo) getByAgentID(ctx context.Context, agentID id.AgentID, forUpdate bool) (*storage.ClientCredential, error) {
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -51,7 +59,7 @@ func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.Agen
 
 	query := `SELECT id, agent_id, secret_hash, created_at, rotated_at
 		 FROM client_credentials WHERE agent_id = $1`
-	if _, joined := storageTransaction(ctx); joined {
+	if forUpdate {
 		query += " FOR UPDATE"
 	}
 	var cred storage.ClientCredential

@@ -229,6 +229,14 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 // Get retrieves an agent entity by ID from PostgreSQL.
 // Returns StorageError with Kind=NotFound if agent not found.
 func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.get(ctx, agentID, false)
+}
+
+func (r *AgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.get(ctx, agentID, true)
+}
+
+func (r *AgentRepository) get(ctx context.Context, agentID id.AgentID, forUpdate bool) (*storage.Agent, error) {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.get.agent")
 	defer span.End()
 	span.SetAttributes(
@@ -264,8 +272,10 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
 	 FROM agents
 	 WHERE id = $1`
-	if _, joined := storageTransaction(ctx); joined {
+	if forUpdate {
 		query += " FOR UPDATE"
+	} else if _, ambient := storageTransaction(ctx); ambient {
+		query += " FOR KEY SHARE"
 	}
 	agent := &storage.Agent{}
 	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, query, agentID).Scan(

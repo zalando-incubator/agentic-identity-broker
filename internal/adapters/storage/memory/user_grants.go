@@ -559,3 +559,7 @@ func (r *UserGrantRepository) CreateTestGrant(ctx context.Context, grant *storag
 
 	return nil
 }
+
+func (r *UserGrantRepository) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return r.FindByPrincipalAndAgent(ctx, principal, agentID)
+}

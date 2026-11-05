@@ -330,3 +330,11 @@ func TestCredentialLedgerDoesNotReleaseSecretBeforeCommit(t *testing.T) {
 		require.Equal(t, model.BusinessEventTypePrefix+"credential-generated", store.Events[0].Type)
 	})
 }
+
+func (r ledgerCredentialAgents) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.Get(ctx, agentID)
+}
+
+func (r *ledgerCredentialRecords) GetByAgentIDForUpdate(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	return r.GetByAgentID(ctx, agentID)
+}

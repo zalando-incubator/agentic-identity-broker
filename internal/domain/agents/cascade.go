@@ -14,12 +14,12 @@ type agentCascade struct {
 	credential *storage.ClientCredential
 }
 
-func (s *Service) loadDependents(ctx context.Context, agentID id.AgentID) (agentCascade, error) {
-	grants, err := s.dependents.ListGrantsByAgent(ctx, agentID)
+func (s *Service) loadDependents(ctx context.Context, agentID id.AgentID, forUpdate bool) (agentCascade, error) {
+	grants, err := s.dependents.ListGrantsByAgent(ctx, agentID, forUpdate)
 	if err != nil {
 		return agentCascade{}, err
 	}
-	approvals, err := s.dependents.ListApprovalsByAgent(ctx, agentID)
+	approvals, err := s.dependents.ListApprovalsByAgent(ctx, agentID, forUpdate)
 	if err != nil {
 		return agentCascade{}, err
 	}

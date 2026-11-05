@@ -40,10 +40,10 @@ func (s *CredentialService) Generate(ctx context.Context, agentID id.AgentID) (p
 	}
 	isRotation := false
 	err = s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
-		if _, err := s.agents.Get(txCtx, agentID); err != nil {
+		if _, err := s.agents.GetForUpdate(txCtx, agentID); err != nil {
 			return ports.ErrCredentialAgentNotFound
 		}
-		existing, err := s.credentials.GetByAgentID(txCtx, agentID)
+		existing, err := s.credentials.GetByAgentIDForUpdate(txCtx, agentID)
 		if err != nil && !ports.IsNotFoundErr(err) {
 			return err
 		}
@@ -76,10 +76,10 @@ func (s *CredentialService) Get(ctx context.Context, agentID id.AgentID) (*stora
 
 func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) error {
 	return s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
-		if _, err := s.agents.Get(txCtx, agentID); err != nil {
+		if _, err := s.agents.GetForUpdate(txCtx, agentID); err != nil {
 			return err
 		}
-		credential, err := s.credentials.GetByAgentID(txCtx, agentID)
+		credential, err := s.credentials.GetByAgentIDForUpdate(txCtx, agentID)
 		if err != nil {
 			return err
 		}
