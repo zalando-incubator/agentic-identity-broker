@@ -101,7 +101,7 @@ design before implementation
 
 **⚠️ CRITICAL**: No code implementation can begin until this entire phase is complete
 
-**🔒 CONSTITUTION REQUIREMENT**: This phase maps directly to the constitution PRECONDITIONS checklist. All sub-phases (2a-2f) MUST be included in every tasks.md, though specific task details should be adapted to the feature.
+**🔒 CONSTITUTION REQUIREMENT**: This phase maps directly to the constitution PRECONDITIONS checklist. All sub-phases (2a-2f) MUST be included in every tasks.md, though specific task details should be adapted to the feature. Phase 2g MUST also be included when the feature adds or changes log events, spans, or metric instruments.
 
 ### Phase 2a: Domain Model & Glossary [MANDATORY]
 
@@ -192,6 +192,26 @@ XIV (Specification by Example & Reviewable Journeys)
 **Checkpoint**: Concrete spec journeys reviewed against scenarios and applicable configuration,
 HTTP, Wireloom UI, and JWT examples; E2E tests written and verified to fail semantically before
 implementation; frontend Playwright tests added/amended and screenshots configured (if applicable)
+
+### Phase 2g: Observability Design [MANDATORY IF TELEMETRY]
+
+**Constitution Reference**: Principle XV (Binding Coding Standards)
+
+**Required Tasks** (if the feature adds or changes log events, spans, or metric instruments):
+- [ ] T010k Read `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`, then list
+      the log events (`event` identifiers), spans, span attributes, and metric instruments the
+      feature adds or changes. Document each span attribute family and its value set in the
+      feature's reference document or observability contract (`OPENTELEMETRY.md` section 4.2)
+- [ ] T010l [P] List each new metric instrument in `specs/[###-feature-name]/contracts/observability.md`
+      with its name, kind, unit, scope, attribute value sets, and when it changes
+      (`OPENTELEMETRY.md` section 5.4)
+- [ ] T010m [P] Add each new span attribute namespace to the table in `OPENTELEMETRY.md` section 4.1,
+      and state that change to the standard and its rationale in the PR description (Principle XV)
+- [ ] T010n Identify each credential-handling path and each logged or span principal that needs a
+      safety test (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7)
+
+**Checkpoint**: Observability design is listed against the binding coding standards, and each new
+instrument has an observability contract entry (if applicable)
 
 ---
 
@@ -390,6 +410,8 @@ yet — ready for incremental user story implementation
       no "red phase" comments in test files (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify Playwright E2E tests added/amended in `tests/e2e/frontend/` (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify screenshots captured to `tests/e2e/screenshots/` (Principle XIII)
+- [ ] TXXX [IF TELEMETRY] Verify new log events, spans, and metric instruments are identified, and
+      each new instrument is listed in the feature's `contracts/observability.md` (Principle XV)
 
 #### Implementation Phase Verification [MANDATORY]
 
@@ -421,7 +443,16 @@ yet — ready for incremental user story implementation
 **Security** (Principles I, III):
 - [ ] TXXX Verify security features are enabled by default (no optional bypasses)
 - [ ] TXXX [P] Verify no custom cryptography (only vetted libraries used)
-- [ ] TXXX [P] Add structured logging for security-critical operations
+- [ ] TXXX [P] Add structured logging for security-critical operations, following
+      `coding-standards/LOGGING.md` (Principles I, XV)
+
+**Coding Standards** (Principle XV):
+- [ ] TXXX Verify added or modified code follows each applicable standard in `coding-standards/`
+      and satisfies its review checklist
+- [ ] TXXX Verify the tests, contracts, and registry entries the applicable standards require are
+      present (for example, credentials absent from logs and spans, metric attribute sets asserted)
+- [ ] TXXX Verify no automated standard check is disabled or suppressed, and each deviation is
+      covered by a scoped rule or exception in an amendment to the standard, with rationale
 
 **Architecture Patterns** (Principle VI):
 - [ ] TXXX Verify domain logic uses ports (interfaces) and adapters
@@ -470,8 +501,8 @@ yet — ready for incremental user story implementation
   - **CRITICAL**: E2E acceptance tests must be written with detailed expectations and verified to FAIL
     semantically (red phase); frontend Playwright tests added/amended if UI changes involved
   - **CRITICAL**: Helm deployment contract must be updated when configuration changes affect a chart-managed workload; otherwise the accepted standalone deployment boundary must be documented
-  - Phase 2a, 2b, 2c, 2d, 2e, 2f can proceed in parallel, but all must complete before Phase 2.7 begins
-- **Entity Boilerplate (Phase 2.7)**: OPTIONAL (only if new entities) — depends on completion of all Phase 2 design tasks (2a–2f);
+  - Phase 2a, 2b, 2c, 2d, 2e, 2f, 2g can proceed in parallel, but all must complete before Phase 2.7 begins
+- **Entity Boilerplate (Phase 2.7)**: OPTIONAL (only if new entities) — depends on completion of all Phase 2 design tasks (2a–2g);
   produces empty scaffolding BEFORE business logic; enables clean review
 - **Foundational Infrastructure (Phase 2.5)**: Depends on ALL of Phase 2 + Phase 2.7 (if included) completion - BLOCKS all user stories
 - **User Stories (Phase 3+)**: All depend on Phase 2 + Phase 2.5 + Phase 2.7 (if included) completion
@@ -531,6 +562,7 @@ Task: "Create [Entity2] model in src/models/[entity2].py"
    - 2d: Database schema design
    - 2e: Frontend/design system review (if applicable)
    - 2f: E2E acceptance test design (tests written and verified to FAIL)
+   - 2g: Observability design against the binding coding standards (if telemetry changes)
 4. **(If new entities) Complete Phase 2.7**: Entity boilerplate — separate PR, project compiles
 5. Complete Phase 2.5: Foundational Infrastructure (CRITICAL - blocks all stories)
 6. Complete Phase 3: User Story 1

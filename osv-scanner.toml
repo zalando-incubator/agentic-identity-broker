@@ -21,3 +21,8 @@ reason = "No patched go-jose v3 release exists; it is pulled in only by ory/fosi
 id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-11-30T00:00:00Z
 reason = "No patched deepmerge release exists. It is reached only through @svgr/plugin-svgo during the Docusaurus build, merging repository-controlled SVGO configuration, never attacker input. The deployed site contains static assets only. Reassess when this exception expires."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "No compatible patched minimatch exists: the fix is only in 11.0.1, while eslint, @eslint/eslintrc, eslint-plugin-react, serve-handler, docusaurus-lunr-search and @redocly/openapi-core (latest) require 3.x, 5.x or 10.x. It is reached only by lint and documentation-build tooling with repository-controlled glob patterns; nothing ships in the broker or SPA bundle. Reassess when this exception expires."
