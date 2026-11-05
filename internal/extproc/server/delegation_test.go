@@ -173,18 +173,24 @@ func TestDelegation_BodyPathPrecedence(t *testing.T) {
 		status      int
 		errorCode   string
 	}{
+		{"denial wins over exchange success", denied, nil, 403, "access_denied"},
 		{"denial wins over exchange error", denied, exchangeErr, 403, "access_denied"},
+		{"denial wins over exchange cancellation", denied, context.Canceled, 403, "access_denied"},
+		{"resolution error wins over exchange success", unavailable, nil, 503, "service_unavailable"},
 		{"resolution error wins over exchange error", unavailable, exchangeErr, 503, "service_unavailable"},
+		{"resolution timeout wins over exchange error", context.DeadlineExceeded, exchangeErr, 503, "service_unavailable"},
+		{"resolution cancellation wins over exchange error", context.Canceled, exchangeErr, 503, "service_unavailable"},
 		{"exchange error after permit", nil, exchangeErr, 500, ""},
 	}
 	for _, tt := range tests {
 		for _, resolverFirst := range []bool{true, false} {
 			t.Run(tt.name, func(t *testing.T) {
 				resolverDone := make(chan struct{})
+				exchangeDone := make(chan struct{})
 				var h *delegationHarness
 				h = newDelegationHarness(t, func() (delegation.Result, error) {
 					if !resolverFirst {
-						time.Sleep(20 * time.Millisecond)
+						<-exchangeDone
 					}
 					defer close(resolverDone)
 					if tt.resolveErr != nil {
@@ -196,6 +202,7 @@ func TestDelegation_BodyPathPrecedence(t *testing.T) {
 					if resolverFirst {
 						<-resolverDone
 					}
+					defer close(exchangeDone)
 					return server.ExchangeResult{}, tt.exchangeErr
 				}
 
@@ -239,6 +246,37 @@ func TestDelegation_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {
 	assert.Equal(t, "delegation context unavailable", body["error_description"])
 	assert.Zero(t, h.policies.Load(), "an expired permit never reaches policy")
 	assert.Equal(t, int32(1), h.resolver.calls.Load(), "no re-resolution")
+}
+
+func TestDelegation_RejectsPermitExpiredWhileBufferingBody(t *testing.T) {
+	var h *delegationHarness
+	h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Second)() })
+	stream, err := h.client.Process(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata("mcp"),
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: extProcHeaders(map[string]string{":method": "POST"}, false),
+		},
+	}))
+	headersResp, err := stream.Recv()
+	require.NoError(t, err)
+	requireAuthorizationMutation(t, headersResp)
+	h.clock.Advance(time.Second)
+	require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{
+			RequestBody: &extprocv3.HttpBody{Body: mcpCall, EndOfStream: true},
+		},
+	}))
+	require.NoError(t, stream.CloseSend())
+	bodyResp, err := stream.Recv()
+	require.NoError(t, err)
+	status, body := immediate(t, bodyResp)
+	assert.Equal(t, 503, status)
+	assert.Equal(t, "delegation context unavailable", body["error_description"])
+	assert.Zero(t, h.policies.Load())
+	assert.Equal(t, int32(1), h.resolver.calls.Load(), "no re-resolution after buffering")
+	assert.Equal(t, int32(1), h.exchanges.Load())
 }
 
 func TestDelegation_BatchRejectsPermitExpiringBetweenDecisions(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -208,6 +209,8 @@ func TestClient_TypedContextValidation(t *testing.T) {
 		"missing resource uri":           mutate("resource.resource_uri", "<delete>"),
 		"null scopes":                    mutate("resource.scopes", nil),
 		"string scopes":                  mutate("resource.scopes", "read:repo"),
+		"null resource scope element":    mutate("resource.scopes", []any{nil}),
+		"null service scope element":     mutate("permission_sets.services.scopes", []any{nil}),
 		"bad updated_at":                 mutate("grant.updated_at", "yesterday"),
 		"null valid_until":               mutate("grant.valid_until", nil),
 		"empty valid_until":              mutate("grant.valid_until", ""),
@@ -220,6 +223,16 @@ func TestClient_TypedContextValidation(t *testing.T) {
 		"null service scopes": `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"id":"r","resource_uri":"https://a","scopes":[]},
 			"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},"permission_sets":[{"id":"p","services":[{"id":"s","scopes":null}]}]}`,
 		"context not object": `"permit"`,
+	}
+	for _, path := range []string{"subject.id", "agent.id", "resource.id", "resource.resource_uri", "grant.id", "grant.updated_at", "permission_sets.id", "permission_sets.services.id"} {
+		for _, value := range []any{"<delete>", nil, 42, ""} {
+			invalid[path+"/"+fmt.Sprint(value)] = mutate(path, value)
+		}
+	}
+	for _, path := range []string{"agent.canonical_id", "resource.canonical_id", "permission_sets.canonical_id", "permission_sets.services.canonical_id", "grant.valid_until"} {
+		for _, value := range []any{nil, 42, ""} {
+			invalid[path+"/"+fmt.Sprint(value)] = mutate(path, value)
+		}
 	}
 	for name, ctxJSON := range invalid {
 		t.Run(name, func(t *testing.T) {

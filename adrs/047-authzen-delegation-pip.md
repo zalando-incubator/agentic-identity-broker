@@ -1,6 +1,6 @@
 # ADR 047: AuthZEN Delegation Policy Information Point
 
-**Status**: Accepted (approved by mjungsbluth on 2026-10-30: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937); revised in the same PR on 2026-10-30, see §1 and Revision history
+**Status**: Accepted (approved by mjungsbluth on 2026-11-05: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255); original approval on 2026-10-30: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937; see Revision history
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -160,6 +160,13 @@ are defined by the standard and are a documented exception to general REST namin
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-05 (same PR, before merge)**: Supplied maintainer approval by `mjungsbluth` at
+  `2026-11-05T16:38:49Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255)
+  covers all thirteen items (API-1–API-6, ADR-1, D-1–D-6), including §1's ignore-unknown
+  contract and the unchanged body-path exchange cooldown. The historical VIII/XIII exception
+  D-6 is conditional alternative validation, not a claim that original test-first sequencing
+  occurred; its disposition is recorded in the feature's `quickstart.md`.
 
 - **2026-10-30 (same PR, before merge)**: API-003 verification found that AuthZEN 1.0 requires
   receivers to ignore unknown request fields, which conflicts with the approved strict rejection
