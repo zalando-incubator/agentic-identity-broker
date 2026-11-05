@@ -180,21 +180,20 @@ func ValidateAgentRedirectURIRegistration(raw string) error {
 	if _, err := netip.ParseAddr(asciiHost); err == nil {
 		return errors.New("wildcard redirect URI cannot use an IP literal hostname")
 	}
-	publicSuffix, _ := publicsuffix.PublicSuffix(asciiHost)
-	if publicSuffix == "" {
-		return errors.New("wildcard redirect URI has no classifiable public suffix")
-	}
 	registrableDomain, err := publicsuffix.EffectiveTLDPlusOne(asciiHost)
 	if err != nil {
 		return fmt.Errorf("wildcard redirect URI has no classifiable registrable domain: %w", err)
 	}
-	labels := strings.Split(host, ".")
+	// IDNA maps Unicode separators to dots, so use normalized labels to agree with the PSL probe.
+	// For example, "preview*\u3002example\u3002com" has three labels, not one.
 	registrableLabelCount := len(strings.Split(registrableDomain, "."))
-	if registrableLabelCount > len(labels) {
+	if registrableLabelCount > len(patternLabels) {
 		return errors.New("wildcard redirect URI hostname has an invalid public-suffix boundary")
 	}
-	for _, label := range labels[len(labels)-registrableLabelCount:] {
-		if strings.Contains(label, "*") {
+	// Keep the trust domain literal: multiple parts indicate a structural wildcard, not literal text.
+	// Allow "*.example.com", but reject "preview.*.com" because "*" replaces the registrable label.
+	for _, label := range patternLabels[len(patternLabels)-registrableLabelCount:] {
+		if len(label.parts) != 1 {
 			return errors.New("wildcard cannot replace a registrable-domain or public-suffix label")
 		}
 	}
@@ -266,10 +265,6 @@ func hasLiteralPublicSuffixBoundary(patternLabels, candidateLabels []wildcardLab
 	}
 	asciiHost, err := asciiDNSHostname(candidateHost)
 	if err != nil {
-		return false
-	}
-	publicSuffix, _ := publicsuffix.PublicSuffix(asciiHost)
-	if publicSuffix == "" {
 		return false
 	}
 	registrableDomain, err := publicsuffix.EffectiveTLDPlusOne(asciiHost)
