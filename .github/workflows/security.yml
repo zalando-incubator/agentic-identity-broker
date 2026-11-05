@@ -29,6 +29,7 @@ on:
       - "tools/wireloom/package-lock.json"
       - "osv-scanner.toml"
       - "scripts/security-scan.sh"
+      - "scripts/install-security-tools.sh"
       - ".github/workflows/security.yml"
   workflow_dispatch:
 
