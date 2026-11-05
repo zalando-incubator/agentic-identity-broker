@@ -13,6 +13,10 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
+// storageOutcomeCanceled is the storage.outcome value for caller cancellation. The other values
+// are the storage.ErrorKind of the result.
+const storageOutcomeCanceled = "canceled"
+
 // startStorageSpan starts the Client span of a repository method. The returned function records
 // the method's result and ends the span.
 func startStorageSpan(ctx context.Context, name, operation string) (context.Context, func(err error)) {
@@ -38,7 +42,7 @@ func recordStorageResult(span trace.Span, err error) {
 		return
 	}
 	if errors.Is(err, context.Canceled) {
-		span.SetAttributes(attribute.String("storage.outcome", "canceled"))
+		span.SetAttributes(attribute.String("storage.outcome", storageOutcomeCanceled))
 		return
 	}
 	kind := storage.ErrorKindUnknown
