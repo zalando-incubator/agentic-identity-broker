@@ -10,17 +10,17 @@ This guide proves the feature end to end. It references the acceptance scenarios
 - Docker or Podman only for the PostgreSQL-backed suites (`just test-integration-infra`, `just test-e2e-docker`).
 - Approved items API-001, API-002, ADR-001, and DEC-001 to DEC-005 (`plan.md` Approval Items).
 
-## Deployment prerequisite — guarded cutover (Proposed DEC-005)
+## Deployment prerequisite — continuous rolling upgrade (Proposed DEC-005)
 
-Before enabling identity changes, follow [ADR 047's guarded rollout](adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005):
+Before resuming identity changes, follow [ADR 047's guarded rollout](adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005):
 
-1. Freeze service/client-ID/source/canonical-ID/binding/file changes; pause Admin automation, discovery/DCR writers, external sweeps, and old-replica restart controllers.
-2. Close both ingress planes and direct/internal callers. Drain requests and refresh work, stop every old broker/writer, and verify zero old replicas/jobs. A routing-only change is not enough.
-3. Apply and validate migrations 047/048; start revision-aware binaries with coherent bindings/files while traffic/writes remain closed. Verify complete image/schema inventory and that old targets cannot restart. Failed checks keep the system closed.
-4. Open traffic, then resume writers and identity changes only after every process enforces revisions. Pre-upgrade callbacks missing explicit identity/revision must restart sign-in; unchanged legacy stored sessions retain DEC-001.
-5. After activation, rollback only to a revision-aware release with schema/evidence retained. An older binary remains offline even at revision 0; a guarded schema DOWN does not authorize restoring its traffic.
+1. Record and freeze effective client IDs, credential sources, canonical IDs, and bindings across replicas. Pause identity-mutating automation/direct writers and DCR re-registration; defer new identity-assigning registrations. Keep both ingress planes and existing token/refresh/browser/session traffic open. Same-ID secret rotation and metadata-only writes may continue if frozen fields cannot change.
+2. Apply and validate additive migrations 047/048 online before starting new replicas. Verify prior-release explicit-column reads, updates preserving unknown columns, and revision-0 legacy inserts against the expanded schema. Lock contention or validation failure aborts deployment, not healthy serving; retain the freeze and never force past failed validation.
+3. Roll revision-aware replicas in incrementally with unchanged IDs/bindings. Old and new replicas may serve simultaneously; new replicas enforce immediately without a switch. Legacy callback state reaching a new replica must restart sign-in; unchanged eligible legacy stored sessions retain DEC-001.
+4. Withdraw and drain old replicas/jobs and all their admitted callbacks, refreshes, sweeps, and writes individually while healthy new replicas serve. Verify the complete serving/writing image inventory, completed old work, and prevention of old-image restart before resuming identity mutations (activation). A failed check keeps healthy traffic and the freeze intact.
+5. Before activation, a prior-binary abort requires verified unchanged identities, zero revision increments, drained new work, and retained schema/evidence; zero revisions alone are insufficient. After activation, rollback only between revision-aware releases with evidence retained, even at revision 0. If the freeze was breached, isolate unaware processes and restore a revision-aware fleet rather than claiming a safe abort.
 
-This maintenance outage and constrained rollback are Proposed decisions, not an optional enforcement switch. Required operator documentation records actual drain and image inventory checks; automated tests alone cannot prove a deployment is free of old processes.
+No maintenance outage or global ingress closure is required. The temporary identity-mutation/new-registration restriction and rollback boundary remain Proposed decisions, not an optional enforcement switch. Required operator documentation records actual freeze, drain, and image inventory checks; automated tests alone cannot prove a deployment is safe to activate.
 
 ## 1. Static checks and fast tests
 
@@ -45,7 +45,7 @@ ginkgo -v --label-filter='!performance && !docker' --focus "Client identity chan
 | AS-2.1–AS-2.5 | Automatic consent on the next agent authorization, consent-initiated and direct reconnection, failure and retry, and `requires_reauthentication`. |
 | AS-3.1–AS-3.4 | Unrelated services and grants are untouched. Filesystem and Admin API secret rotations, metadata updates, and same-identity transitions invalidate nothing. AS-3.1 also retains ADR 046's rejection and refreshability outcomes for unchanged services and verifies `is_expired == requires_reauthentication`. |
 
-Expected: one passing `It` per scenario, as mapped in `plan.md` Testing Strategy. AS-1.6's guarded-cutover matrix stops the old generation before new serving/writing resumes and preserves unchanged legacy sessions, then verifies post-cutover invalidation. AS-1.4 includes pre-upgrade callback fixtures missing explicit identity/revision (including public/CIMD/DCR/Google): reject before code exchange even at R=0, with no provider call or session replacement. No test may claim mixed-version serving is safe. AS-1.3 asserts changed Admin 3.0.0 sweep totals: one due identity-invalid candidate yields failed=1, refreshed=0 in real and dry runs; dry runs write no evidence.
+Expected: one passing `It` per scenario, as mapped in `plan.md` Testing Strategy. AS-1.6's rolling-upgrade matrix keeps token, refresh, browser/session, same-ID rotation, and metadata operations working under fixed identities, drains old admitted work while new replicas serve, preserves unchanged legacy sessions, and verifies invalidation only after inventory verification and resumption of identity mutations. Its failed-upgrade/abort variant retains healthy traffic and the freeze; an old-binary abort requires unchanged identities, zero revisions, drained new work, and retained evidence. AS-1.4 includes pre-upgrade callback fixtures missing explicit identity/revision (including public/CIMD/DCR/Google): reject before code exchange even at R=0, with no provider call or session replacement. The PostgreSQL variant uses the actual supported prior release to prove simultaneous old/new traffic against the expanded schema; never disable enforcement in new code to impersonate an old binary. No test may claim identity mutations are safe while unaware readers/writers remain. AS-1.3 asserts changed Admin 3.0.0 sweep totals: one due identity-invalid candidate yields failed=1, refreshed=0 in real and dry runs; dry runs write no evidence.
 
 ## 3. Browser journeys
 
@@ -79,6 +79,7 @@ Expected:
 - Concurrent observations across two connections produce exactly one increment. Source/version/canonical-ID/revision CAS fences delayed observations across filesystem→stored, canonical-ID/binding changes, and source round trips; stale values are discarded and later same-ID updates do not increment spuriously.
 - A rejected or version-conflicting `PUT` records nothing.
 - The invalidation survives a broker restart.
+- AS-1.6's actual-prior-release matrix serves old/new traffic concurrently under fixed identities on the expanded schema, preserves evidence across prior-release writes, and drains all old work before identity changes resume. Migrations remain bounded/abort on contention while healthy traffic continues.
 
 ## 5. Manual smoke check (optional, local)
 

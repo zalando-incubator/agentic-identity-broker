@@ -41,7 +41,7 @@ A dry run performs the same comparison against the live identity and persisted r
 
 `docs/guides/manage-agents-and-services.md` and `docs/configuration.md` (`third_party_oauth2.credential_files`) gain a short "Changing a service client ID" procedure:
 
-Prerequisite: complete the guarded cutover in [ADR 047](../adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005). No identity change or credential-source/canonical-ID change is allowed while any old token-serving or service-writing process remains. No request parameter or runtime bypass is introduced.
+Prerequisite: complete the continuous rolling upgrade in [ADR 047](../adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005). Keep traffic open during old/new overlap, but freeze effective identity/source/canonical-ID/binding mutations, including identity-mutating automation and DCR registrations, until all old serving/writing processes and admitted work are drained and old-image restart is prevented. Same-ID secret rotation and metadata-only writes may continue if frozen fields cannot change. This is an operator procedure, not a new request rejection, parameter, or runtime bypass; new replicas enforce revisions immediately. Post-activation rollback uses revision-aware binaries only.
 
 1. Register the new client and its callback URI with the provider.
 2. Publish the new credential pair coherently, or send one full-replacement `PUT`.

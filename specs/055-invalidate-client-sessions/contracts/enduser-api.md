@@ -73,7 +73,7 @@ description: |
 
 ## 3. Compatibility
 
-- Deployment uses Proposed DEC-005’s maintenance cutover with no mixed-version serving or writing. Users with pre-upgrade in-flight authorization state must restart sign-in; unchanged eligible legacy stored sessions are not invalidated solely by rollout.
+- Deployment uses Proposed DEC-005's continuous rolling upgrade: old and new replicas may serve concurrently while effective identities, sources, canonical IDs, and bindings stay fixed. Existing token, refresh, browser, and session traffic continues; no global ingress closure is required. Identity changes resume only after all serving/writing processes and admitted work are revision-aware and old images cannot restart. Users whose pre-upgrade callback reaches a new replica must restart sign-in; unchanged eligible legacy stored sessions are not invalidated solely by rollout. New replicas enforce immediately; mixed-version overlap does not promise uniform new behavior on old replicas or permit an identity mutation. Post-activation rollback is revision-aware only.
 - The response shape is unchanged from 1.2.0. Consumers must account for the new identity-related reauthentication cause and the manual-refresh status change at the proposed major cutover. The SPA is updated in the same change.
 - `is_expired` remains an equal deprecated alias of `requires_reauthentication`, so both become true after identity invalidation. `access_token_expired` is unchanged. No refresh expiry or rejection timestamp is exposed.
 - Existing provider-rejection behavior, including `409 refresh_rejected`, exclusion from background refresh and sweep, and no issuance after committed rejection, remains binding under ADR 046.
