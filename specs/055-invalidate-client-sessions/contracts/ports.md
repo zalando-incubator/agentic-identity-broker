@@ -1,6 +1,6 @@
 # Contract: Internal Ports and Domain Operations
 
-**Status**: Internal design within existing patterns (no sign-off needed by itself). It implements the Proposed decisions in [ADR 047](../adr-047-client-identity-revisions.md).
+**Status**: Internal design within existing patterns (no sign-off needed by itself). It implements the approved decisions in [ADR 047](../../../adrs/047-client-identity-revisions.md).
 
 ## New port: `ports.ThirdpartyOAuth2ClientIdentityRepository`
 

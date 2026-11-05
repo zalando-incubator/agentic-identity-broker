@@ -12,7 +12,7 @@ This guide proves the feature end to end. It references the acceptance scenarios
 
 ## Deployment prerequisite — continuous rolling upgrade (Proposed DEC-005)
 
-Before resuming identity changes, follow [ADR 047's guarded rollout](adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005):
+Before resuming identity changes, follow [ADR 047's guarded rollout](../../adrs/047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005):
 
 1. Record and freeze effective client IDs, credential sources, canonical IDs, and bindings across replicas. Pause identity-mutating automation/direct writers and DCR re-registration; defer new identity-assigning registrations. Keep both ingress planes and existing token/refresh/browser/session traffic open. Same-ID secret rotation and metadata-only writes may continue if frozen fields cannot change.
 2. Apply and validate additive migrations 047/048 online before starting new replicas. Verify prior-release explicit-column reads, updates preserving unknown columns, and revision-0 legacy inserts against the expanded schema. Lock contention or validation failure aborts deployment, not healthy serving; retain the freeze and never force past failed validation.

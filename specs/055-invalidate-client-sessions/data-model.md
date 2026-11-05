@@ -1,6 +1,6 @@
 # Data Model: Invalidate Sessions After Service Client-ID Changes
 
-**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **Decision draft**: [ADR 047](adr-047-client-identity-revisions.md) (Proposed)
+**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **Decision**: [ADR 047](../../adrs/047-client-identity-revisions.md) (Accepted; supplied maintainer approval)
 
 No new entity, aggregate, or typed entity ID is introduced. The feature adds internal value objects and attributes to the existing `ThirdpartyOAuth2Service` and `UserSession` aggregates, plus one claim to the existing third-party authorization JWE state.
 
