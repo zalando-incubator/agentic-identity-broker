@@ -2,7 +2,7 @@
 
 **Status**: Proposed. Approval item API-002 in [plan.md](../plan.md).
 
-**Version (Proposed API-002)**: `info.version` `2.1.1` → `2.1.2`. Only operation descriptions change. No path, parameter, schema, status code, or error code changes. The PUT request and response contract is unchanged; the client-ID change's consumer-visible effects are versioned on the End-User API (API-001). ADR 046's description-only Admin change (`2.1.0` → `2.1.1`) is the precedent. The main alternative is a minor or major bump, which would announce a request or response change that does not exist.
+**Version (Proposed API-002)**: `info.version` `2.1.1` → `3.0.0`, a major cutover on the existing routes. No path, parameter, schema, status code, or error code changes. The PUT request and response shape is unchanged, but sweep response classification changes observably: identity-invalid candidates previously counted as `refreshed` (including dry runs) now count as `failed`. This is not description-only. Constitution IV/X requires a major version or new endpoint for changed released behavior; no evidence establishes this baseline as unreleased. The main alternative is a new sweep operation retaining the old classification on the existing route; a major cutover avoids maintaining a second sweep contract. API-001 separately versions the End-User effects.
 
 ## `PUT /api/services/{service-id}` — add a section after **Secret Rotation**
 
@@ -31,13 +31,17 @@ The existing **Secret Rotation** bullets gain one bullet: `- Existing user sessi
 
 No request-validation change. The internal values `client_identity`, `client_identity_revision`, and `upstream_client_revision` are not fields of any request type, so they cannot be supplied, and service responses never contain them. Unlisted request properties keep today's handling. `ServiceCredentialMetadataBoundary` is unchanged. The main alternative extends that boundary's explicit rejection list, as ADR 041 did for `credential_source_transitioned`. That turns previously ignored input into a `400` contract change without a security benefit, because no request path can write the values.
 
-## `POST /api/sessions/sweep` — `SessionSweepResult.failed` description
+## `POST /api/sessions/sweep` — changed result classification
 
-Append: `Includes candidates whose service client ID changed after the session was established; they are not refreshed and require the user to reconnect. A dry run classifies them as failed without recording a client-ID file change.`
+For each otherwise eligible candidate, evaluate identity before refresh or dry-run success classification. A candidate with missing required identity, a different client ID, or a superseded revision increments `failed`, not `refreshed`; it submits no provider request. ADR 046's rejected-session exclusion and existing candidate selection remain unchanged. Other candidates retain their existing classifications.
+
+A dry run performs the same comparison against the live identity and persisted revision but writes no observation or session state. A differing file value is sufficient to classify the candidate as failed without persisting an increment. An unreadable identity remains a failure, not proof of usability. Document both `failed` and `refreshed` descriptions and examples so consumers can adapt to changed totals. For one due, identity-invalid candidate and no others, both real and dry runs return `failed: 1`, `refreshed: 0`; the dry run leaves service revision and session tokens unchanged.
 
 ## Operator guidance (documentation, not contract)
 
 `docs/guides/manage-agents-and-services.md` and `docs/configuration.md` (`third_party_oauth2.credential_files`) gain a short "Changing a service client ID" procedure:
+
+Prerequisite: complete the guarded cutover in [ADR 047](../adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005). No identity change or credential-source/canonical-ID change is allowed while any old token-serving or service-writing process remains. No request parameter or runtime bypass is introduced.
 
 1. Register the new client and its callback URI with the provider.
 2. Publish the new credential pair coherently, or send one full-replacement `PUT`.

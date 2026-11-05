@@ -25,7 +25,7 @@ Every unknown in the plan's Technical Context is resolved here. Each entry gives
 
 **Decision (Proposed, ADR-001)**: Each service has a persisted `client_identity` and a monotonic `client_identity_revision`. An Admin API update that changes the stored effective client ID increments the revision in the same SQL `UPDATE`, alongside the existing `credential_source_transitioned` expression. A filesystem change is recorded by compare-and-set when any broker operation reads a client-ID file value that differs from `client_identity`.
 
-**Rationale**: The Admin API channel is synchronous, so the update can record the change exactly when it commits (AS-1.7). Rejected or conflicting updates record nothing, because the increment is part of the same conditional statement. Metadata operations must not read files (ADR 041), so the filesystem channel can only be discovered when a file is read. Every token release reads the file first, so the first relevant use records the change (AS-1.1, FR-002). A counter makes rollback a new revision (FR-005). It also gives legacy sessions a "change since rollout" signal without inferring identity (FR-013).
+**Rationale**: The Admin API channel is synchronous, so the update can record the change exactly when it commits (AS-1.7). Rejected or conflicting updates record nothing, because the increment is part of the same conditional statement. Administrative service-metadata operations must not read files (ADR 041); consent/session usability displays are the explicitly proposed exception in R4, so the filesystem channel can only be discovered when a file is read. Every token release reads the file first, so the first relevant use records the change (AS-1.1, FR-002). A counter makes rollback a new revision (FR-005). It also gives legacy sessions a "change since rollout" signal without inferring identity (FR-013).
 
 **Alternatives considered**: comparing only the client ID (fails FR-005 and FR-013); a bulk session invalidation write (does not see lazy filesystem changes, and holds locks in the admin transaction); a file watcher or poller (adds a scheduler, and replicas still need use-time checks); timestamps (depend on clock agreement).
 
@@ -56,13 +56,15 @@ Every unknown in the plan's Technical Context is resolved here. Each entry gives
 
 ## R4 — Where the check runs and how much it costs
 
-**Decision**: Add a single domain operation in `oauth2session`, `resolveClientIdentity(ctx, service) (ClientIdentityState, error)`. It resolves the effective identity: a stored read, or `CredentialFileReader.ReadClientID` for filesystem services. It records a filesystem observation through a new port method, then returns `{Identity, Revision}`. A pure function, `sessionIdentityStatus(session, service, state)`, applies R3. Callers:
+**Decision**: Add a single domain operation in `oauth2session`, `resolveClientIdentity(ctx, service) (ClientIdentityState, error)`. It resolves the effective identity: a stored read, or `CredentialFileReader.ReadClientID` for filesystem services. It records a filesystem observation through the focused repository defined in `internal/ports/storage.go`, then returns `{Identity, Revision}`. The observation atomically fences filesystem source, administrative version, canonical ID, and identity revision, including initialization and no-ops. On a lost precondition, discard the observed value, reload the service/source/version/canonical ID/revision, reselect the immutable configuration binding, and perform a fresh file read if still filesystem; never replay an obsolete file value. A pure function, `sessionIdentityStatus(session, service, state)`, applies R3. Callers:
 
 - Token acquisition, before any decrypt (FR-002).
 - `refreshLockedSession`, inside the lock before `refreshSessionTokens` (FR-004, AS-1.3).
 - `HandleCallback`, before code exchange (AS-1.4).
 - `initiateOAuth2Flow`, to seal the identity and revision (it already reads the file).
 - Agent authorization, consent detail, consent submission, and session listing and detail, through a narrow port that `oauth2session` implements (FR-007, FR-008).
+
+**Proposed ADR-001 boundary change**: ADR 041 and `ARCHITECTURE.md` currently forbid file resolution on administrative, consent, and session metadata surfaces. Preserve that rule for administrative service create/update/get/list only. Partially supersede it for consent detail and session usability list/detail/refresh summaries: these read the live client-ID file, never the secret file, with R5's persisted fallback. Agent authorization and grant submission are gates and fail closed. Storage summary projections still omit encrypted token blobs; metadata-only storage reads do not mean no client-ID file read in the domain.
 
 Token acquisition reads the service through a projection that needs no secret decryption. This avoids a KMS call on every exchange.
 
@@ -80,7 +82,7 @@ Token acquisition reads the service through a projection that needs no secret de
 
 ## R6 — Observation across replicas
 
-**Decision (Proposed, DEC-004)**: The observation compare-and-set is conditional on the revision that was read. A differing value always records a new revision, even if it is a stale or reverted file. The change is documented as an operator consequence.
+**Decision (Proposed, DEC-004)**: The observation compare-and-set is conditional on filesystem source, the administrative version and canonical ID that selected the binding, and the identity revision that was read. Only an observation whose configuration preconditions still hold may record a differing value as a new revision, even if it is a stale or reverted file on that replica. After any lost precondition, reload the service and binding and read again rather than retrying the obsolete observation (see data-model recording rules). The existing administrative version supplies the generation fence without a new column. No version change alone invalidates a session. Immutable binding configuration changes require replica replacement; coherent publication remains an operator prerequisite.
 
 **Rationale**: The broker cannot tell a stale replica from an operator rollback, and FR-005 requires rollback safety. The failure mode is an extra reconnection, never a token release.
 
@@ -93,11 +95,11 @@ Token acquisition reads the service through a projection that needs no secret de
 - End-User API `1.2.0` → proposed `2.0.0` on existing routes. Extend the existing required `requires_reauthentication` field with identity unusability, preserving ADR 046's rejection and refreshability causes. `SessionStatus` already inherits it from `UserSessionSummary`. `is_expired` remains an equal deprecated alias; `access_token_expired` remains independent.
 - `connectionStatus` keeps its closed two-value enum and reports `not_connected` for a session that requires reauthentication.
 - Document the changed behavior of `/oauth2/authorize` (consent redirect), `/oauth2/token` (no token, `invalid_grant` with `error_uri` despite an unexpired token), the third-party callback (a stale authorization is rejected), and grant submission (a superseded session does not satisfy a mandatory service).
-- Admin API `2.1.1` → proposed patch `2.1.2`, with descriptions only, following ADR 046's description-only `2.1.0` → `2.1.1` precedent. `PUT /api/services/{service-id}` documents that a client-ID change invalidates sessions and that secret rotation does not. The sweep's `failed` count includes sessions with a superseded identity; a dry run classifies them without recording an observation. The internal values `client_identity`, `client_identity_revision`, and `upstream_client_revision` are not bound by any request type and are never returned. Request validation is unchanged.
+- Admin API `2.1.1` → proposed major `3.0.0` cutover on existing routes. Sweep response classification changes from `refreshed` to `failed` for identity-invalid candidates, including dry runs; this is observable behavior, not description-only, even though schemas and status codes stay unchanged. `PUT /api/services/{service-id}` documents that a client-ID change invalidates sessions and that secret rotation does not. The sweep's `failed` count includes sessions with a superseded identity; a dry run classifies them without recording an observation. The internal values `client_identity`, `client_identity_revision`, and `upstream_client_revision` are not bound by any request type and are never returned. Request validation is unchanged.
 
-**Rationale**: ADR 046 and OpenAPI 1.2.0 already define the fields. Identity invalidation and manual-refresh status changes alter existing behavior, not merely a broker-selected recovery-link target as in ADR 044. A major cutover follows Constitution Principles IV and X. Preserve the accepted alias instead of inventing a second expiry meaning.
+**Rationale**: ADR 046 and OpenAPI 1.2.0 already define the fields. Identity invalidation and manual-refresh status changes alter existing behavior, not merely a broker-selected recovery-link target as in ADR 044. Major cutovers for both affected APIs follow Constitution Principles IV and X; no release evidence establishes an exemption for the current Admin baseline. Preserve the accepted alias instead of inventing a second expiry meaning.
 
-**Alternatives considered**: new versioned endpoints (more surface area than a major cutover); a minor bump or unchanged version (does not meet the changed-behavior rule); a new `connectionStatus` value (unneeded enum change); a minor or major Admin API bump (no Admin request or response changes); explicitly rejecting the internal identity values as Admin request fields, as ADR 041 does for `credential_source_transitioned` (turns previously ignored input into a `400` without a security benefit, because no request type binds them).
+**Alternatives considered**: new versioned endpoints (more surface area than a major cutover); a minor bump or unchanged version (does not meet the changed-behavior rule); a new `connectionStatus` value (unneeded enum change); a new sweep endpoint (duplicates the operation to preserve old classification); an Admin patch bump (fails IV/X because response totals change); explicitly rejecting the internal identity values as Admin request fields, as ADR 041 does for `credential_source_transitioned` (turns previously ignored input into a `400` without a security benefit, because no request type binds them).
 
 ## R8 — Persistence and migration
 
@@ -118,6 +120,14 @@ Token acquisition reads the service through a projection that needs no secret de
 **Decision**: Add the `Info` audit event `session.oauth2.client_identity_changed` with `service_id`, `client_identity_revision`, and `channel`. Denied uses reuse `session.oauth2.credential_source_failed` with reason `identity_superseded` or `identity_mismatch`. No client ID value, path, token, or principal appears in any metric. No new metric is required. The existing refresh and sweep failure counters already classify failures.
 
 **Rationale**: SR-004 and `coding-standards/LOGGING.md` §2.2 and §6 apply.
+
+## R11 — Rollout and rollback enforcement
+
+**Decision (Proposed, DEC-005)**: Use the maintenance-window cutover in ADR 047: freeze identity/configuration changes, close both ingresses and direct callers, drain/stop all old brokers and writers (including DCR/automation/background work), verify zero old processes, migrate, and start only revision-aware binaries before reopening traffic or writes. Reject callbacks lacking explicit identity/revision claims; preserve only the stored-session legacy exception. Post-activation rollback is revision-aware only with schema/evidence retained. An older binary remains offline even at revision 0.
+
+**Rationale**: Older binaries ignore revisions, so a rolling deployment or schema retention cannot preserve invalidation. An operational no-overlap boundary uses existing deployment controls without a feature bypass or new coordination service. It requires a maintenance outage and constrained rollback, registered separately as DEC-005.
+
+**Main alternative**: a compatibility release with database write fencing and serving admission gates, requiring additional machinery and proof that old token readers cannot serve. No weakening of token safety is proposed.
 
 ## Resolved Technical Context unknowns
 

@@ -13,7 +13,7 @@ Technical approach ([research.md](research.md), draft [ADR 047](adr-047-client-i
 - Each service persists its last **Effective Client Identity** and a monotonic **Client Identity Revision**. An accepted Admin API `PUT` that changes a stored `client_id` increments the revision atomically in the existing conditional `UPDATE`. A filesystem change is recorded by compare-and-set the first time any broker operation reads a different client-ID file value.
 - New authorizations seal `{client ID, revision}` for every service variant. Sessions store both. A session is usable only when both match the service's current state. Legacy identity-less sessions keep ADR 041's exception only while the revision is still 0 (DEC-001). A rollback is a new revision, so it never revives a session.
 - One domain rule is enforced at token acquisition, including still-valid tokens (narrowing ADR 038), and at refresh, sweep, callback, agent authorization, consent, and session listing.
-- Recovery reuses existing flows: `invalid_grant` with ADR 044's `error_uri`, the consent redirect, and service sign-in. The End-User API extends its existing ADR 046 `requires_reauthentication` predicate with identity invalidation and retains the equal deprecated `is_expired` alias (proposed major 1.2.0 → 2.0.0 cutover). Observed-rejection handling remains binding. The Admin API documents the behavior only.
+- Recovery reuses existing flows: `invalid_grant` with ADR 044's `error_uri`, the consent redirect, and service sign-in. The End-User API extends its existing ADR 046 `requires_reauthentication` predicate with identity invalidation and retains the equal deprecated `is_expired` alias (proposed major 1.2.0 → 2.0.0 cutover). Observed-rejection handling remains binding. The Admin API takes a proposed 2.1.1 → 3.0.0 major cutover: sweep results classify identity-invalid candidates as failed rather than refreshed, including dry runs. A maintenance cutover stops all old readers/writers before activation; post-activation rollback is revision-aware only (DEC-005).
 
 ## Technical Context
 
@@ -24,7 +24,7 @@ Technical approach ([research.md](research.md), draft [ADR 047](adr-047-client-i
 **Target Platform**: Linux containers (Kubernetes/Helm). Mounted credential files per ADR 041.
 **Project Type**: Web service with an embedded SPA (monorepo).
 **Performance Goals**: Token exchange adds one indexed service read without secret decryption. For filesystem services it also adds one bounded `ReadClientID` call (≤ 64 KiB, same adapter as initiation). Invalidation itself is O(1) per change.
-**Constraints**: Fail closed (Principle I, SR-001). No credential values, paths, or client IDs in logs, metrics, or public errors (SR-004). Metadata operations never read files (ADR 041). There is no internal scheduler or distributed lock (ADR 038).
+**Constraints**: Fail closed (Principle I, SR-001). No credential values, paths, or client IDs in logs, metrics, or public errors (SR-004). Administrative service-metadata operations never read files (ADR 041). Consent/session usability displays read the live client-ID file, never the secret file, with persisted fallback; Proposed ADR 047 partially supersedes ADR 041's no-file-read rule for those displays only. Observations atomically fence filesystem source, administrative version, canonical ID, and revision; lost preconditions require fresh service/binding/file reads. No mixed-version serving or writing during cutover (DEC-005). There is no internal scheduler or distributed lock (ADR 038).
 **Scale/Scope**: All service variants: static, public, CIMD, DCR, Google, and filesystem. All principals of a changed service. Four browser states (spec wireframes A–D).
 
 All Technical Context unknowns are resolved in [research.md](research.md).
@@ -42,9 +42,9 @@ Checked entries below record design coverage, not implementation or executed tes
 - [x] **Entity IDs**: No new entity or UUID key. `id.ClientID` is reused. No `gen_ids.go` change.
 - [x] **Configuration Design**: No new configuration. The existing `third_party_oauth2.credential_files` and `server.enduser.public_url` are used, as shown in the spec's Journey 1.
 - [x] **Config Examples**: No new keys. `examples/config/third-party-oauth2.yaml` gains only a comment that points to the client-ID change procedure.
-- [x] **Helm Deployment Contract**: No values change. The chart README's migration and rollback notes gain migrations 047/048 and the guarded DOWN.
+- [x] **Helm Deployment Contract**: No values change. The chart README's migration and rollback notes gain migrations 047/048, the guarded DOWN, and the mandatory maintenance cutover/no-old-process inventory boundary (DEC-005). No workflow or chart setting is added.
 - [x] **API Design First**: The deltas are in [contracts/enduser-api.md](contracts/enduser-api.md) and [contracts/admin-api.md](contracts/admin-api.md). They are applied to `api/` only after approval (API-001, API-002).
-- [x] **API Documentation**: `api/enduser/openapi.yaml` (proposed 2.0.0 from baseline 1.2.0) and `api/admin/openapi.yaml` (descriptions, proposed 2.1.2 from baseline 2.1.1), plus `docs/api/` and `docs/reference/token-exchange.md`.
+- [x] **API Documentation**: `api/enduser/openapi.yaml` (proposed 2.0.0 from baseline 1.2.0) and `api/admin/openapi.yaml` (changed sweep classifications, proposed major 3.0.0 from baseline 2.1.1), plus `docs/api/` and `docs/reference/token-exchange.md`.
 - [ ] **API Changes**: Pending maintainer sign-off on API-001 and API-002.
 - [x] **Database Design**: Migrations `047`/`048` use go-migrate naming and the guarded online pattern of migrations 040/041 and 044/045.
 - [x] **E2E Acceptance Tests**: All 16 named scenarios are mapped below and written before implementation.
@@ -59,11 +59,11 @@ Checked entries below record design coverage, not implementation or executed tes
 - [x] **Architecture Docs**: `ARCHITECTURE.md` updates the credential-source section (§ near "Transition evidence"), the session lifecycle, and the glossary.
 - [x] **ADRs**: Draft [ADR 047](adr-047-client-identity-revisions.md) partially supersedes ADR 041 and ADR 038. It is Proposed (ADR-001).
 - [x] **Library-First Security**: The existing JWE service and the ADR 041 credential-file reader are used. No crypto change.
-- [x] **Zalando Guidelines**: No new property. The existing snake_case `requires_reauthentication` and its deprecated alias are reused. No closed enum is extended. Error codes are unchanged. Changed End-User behavior takes a major version (API-001); description-only Admin changes take a patch version (API-002).
+- [x] **Zalando Guidelines**: No new property. The existing snake_case `requires_reauthentication` and its deprecated alias are reused. No closed enum is extended. Error codes are unchanged. Changed End-User behavior takes a major version (API-001); changed Admin sweep classifications take a major version too (API-002), even without a schema/status change.
 - [x] **End-User Docs**: `docs/api/` and `docs/reference/token-exchange.md` are updated with the examples from the spec.
 - [x] **Migration Testing**: Apply, rollback, reapply, refusal, and concurrent compare-and-set are tested in `tests/integration/migrations/`.
 - [x] **Hexagonal Architecture**: Rules live in `oauth2session`. The other domains depend on the narrow port `ports.SessionUsabilityEvaluator`. Persistence goes through `ports.ThirdpartyOAuth2ClientIdentityRepository`. No handler logic is added beyond mapping.
-- [x] **Persistence Patterns**: A focused ISP port, both adapters, explicit SQL columns, and `StorageError` wrapping.
+- [x] **Persistence Patterns**: A focused ISP repository and minimal DTOs defined in `internal/ports/storage.go`, both adapters, explicit SQL columns, source/configuration-generation/revision observation fencing, and `StorageError` wrapping.
 
 ## Spec Alignment
 
@@ -88,13 +88,14 @@ These items need the maintainer's sign-off before implementation. Each is Propos
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-001 | API | End-User API 1.2.0 → 2.0.0 major cutover on existing routes: add identity unusability to the existing `requires_reauthentication` predicate, preserving ADR 046's rejection and refreshability rule and the equal deprecated `is_expired` alias; `SessionStatus` inherits the summary fields. `connectionStatus` reports `not_connected` for such sessions. Documented behavior for `/oauth2/authorize` (consent redirect), `/oauth2/token` (`invalid_grant` despite an unexpired token, `server_error` when identity is unreadable), the third-party callback (stale authorization rejected), manual refresh (identity denial → `409 refresh_unavailable` instead of `500`, preserving `409 refresh_rejected`), and grant submission | specs/055-invalidate-client-sessions/contracts/enduser-api.md:1-79 |
-| API-002 | API | Admin API 2.1.1 → 2.1.2 patch, description-only: an accepted `client_id` change invalidates all sessions of the service, secret rotation and same-identity changes do not, internal identity values are never bound as input or returned (request validation unchanged), and sweep `failed` includes superseded sessions, including in dry runs | specs/055-invalidate-client-sessions/contracts/admin-api.md:1-36 |
-| ADR-001 | ADR | Draft ADR 047 "Client Identity Revisions Invalidate Third-Party Sessions", which partially supersedes ADR 041 (enforcement scope, timing, and legacy exception) and ADR 038 (immediate valid-token return now follows the identity check) | specs/055-invalidate-client-sessions/adr-047-client-identity-revisions.md:1-105 |
-| DEC-001 | Decision | Identity-less legacy sessions stay usable only while the service's Client Identity Revision is 0. The first recorded change after rollout invalidates them for all principals. No identity is inferred | specs/055-invalidate-client-sessions/spec.md:423 |
-| DEC-002 | Decision | Persisted schema change: `client_identity` and `client_identity_revision` on services, `upstream_client_revision` on sessions. Migrations 047 (add, `NOT VALID` checks, `NOWAIT`) and 048 (validate). DOWN 047 refuses while any revision > 0. Invalidated sessions are retained, not deleted | specs/055-invalidate-client-sessions/data-model.md:107-116 |
-| DEC-003 | Decision | Security over availability: an unreadable client-ID file or unloadable identity state blocks the release of still-valid stored tokens (`500 server_error`). Display surfaces fall back to persisted evidence | specs/055-invalidate-client-sessions/research.md:73-79 |
-| DEC-004 | Decision | Every differing filesystem observation, including a stale replica or a reverted file, records a new revision. Reconnections during incomplete multi-replica publication can need repeating. Operators publish coherently before announcing the change | specs/055-invalidate-client-sessions/research.md:81-87 |
+| API-001 | API | End-User API 1.2.0 → 2.0.0 major cutover on existing routes: add identity unusability to the existing `requires_reauthentication` predicate, preserving ADR 046's rejection and refreshability rule and the equal deprecated `is_expired` alias; `SessionStatus` inherits the summary fields. `connectionStatus` reports `not_connected` for such sessions. Documented behavior for `/oauth2/authorize` (consent redirect), `/oauth2/token` (`invalid_grant` despite an unexpired token, `server_error` when identity is unreadable), the third-party callback (stale or pre-upgrade state missing explicit identity/revision rejected before exchange), manual refresh (identity denial → `409 refresh_unavailable` instead of `500`, preserving `409 refresh_rejected`), and grant submission | specs/055-invalidate-client-sessions/contracts/enduser-api.md:1-80 |
+| API-002 | API | Admin API 2.1.1 → 3.0.0 major cutover on existing routes (observable sweep result change, not description-only): an accepted `client_id` change invalidates all sessions of the service, secret rotation and same-identity changes do not, internal identity values are never bound as input or returned (request validation unchanged), and sweep `failed` includes superseded sessions, including in dry runs | specs/055-invalidate-client-sessions/contracts/admin-api.md:1-38 |
+| ADR-001 | ADR | Draft ADR 047 "Client Identity Revisions Invalidate Third-Party Sessions", which partially supersedes ADR 041 (enforcement scope/timing, legacy exception, consent/session usability no-file-read boundary, and rollout/rollback procedure) and ADR 038 (immediate valid-token return now follows the identity check) | specs/055-invalidate-client-sessions/adr-047-client-identity-revisions.md:1-119 |
+| DEC-001 | Decision | Identity-less legacy sessions stay usable only while the service's Client Identity Revision is 0. The first recorded change after rollout invalidates them for all principals. No identity is inferred | specs/055-invalidate-client-sessions/spec.md:433 |
+| DEC-002 | Decision | Persisted schema change: `client_identity` and `client_identity_revision` on services, `upstream_client_revision` on sessions. Migrations 047 (add, `NOT VALID` checks, `NOWAIT`) and 048 (validate). DOWN 047 refuses while any revision > 0. Invalidated sessions are retained, not deleted | specs/055-invalidate-client-sessions/data-model.md:109-120 |
+| DEC-003 | Decision | Security over availability: an unreadable client-ID file or unloadable identity state blocks the release of still-valid stored tokens (`500 server_error`). Display surfaces fall back to persisted evidence | specs/055-invalidate-client-sessions/research.md:75-81 |
+| DEC-004 | Decision | Every differing filesystem observation whose source/configuration-generation/revision preconditions still hold, including a stale replica or reverted file, records a new revision. Lost preconditions require fresh reads. Reconnections during incomplete multi-replica publication can need repeating; operators publish coherently | specs/055-invalidate-client-sessions/research.md:83-89 |
+| DEC-005 | Decision | Maintenance-window no-overlap cutover: freeze identity/configuration changes, close traffic/direct callers and drain/stop old readers/writers before activation; reject pre-upgrade callbacks missing explicit identity/revision. Post-activation rollback serves only revision-aware binaries with evidence retained; unaware binaries remain offline | specs/055-invalidate-client-sessions/adr-047-client-identity-revisions.md:81-93 |
 
 ## Project Structure
 
@@ -127,7 +128,7 @@ migrations/
 
 internal/
 ├── ports/
-│   ├── thirdparty_provider.go        # ThirdpartyOAuth2ClientIdentityRepository, ClientIdentityState
+│   ├── storage.go                    # ThirdpartyOAuth2ClientIdentityRepository, ClientIdentityState/Observation
 │   └── session_usability.go          # SessionUsabilityEvaluator, UsabilityMode
 ├── domain/
 │   ├── model/
@@ -245,15 +246,19 @@ tests/
 | AS-2.3 State D: sessions page after direct recovery | same | `client_identity_sessions_reconnected.png` |
 | AS-2.4: callback failure with retry action | same | `client_identity_reconnect_failed.png` |
 
+### Deployment Safety
+
+Proposed DEC-005's authoritative procedure is [ADR 047](adr-047-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005). A maintenance window closes both ingress planes/direct callers, freezes service/configuration/file changes, drains all work, and verifies zero old serving/writing processes before migrations and new-version activation. Resume traffic/writes only after the full replica/job image inventory is revision-aware. Preserve schema/evidence and the no-old-binary boundary on rollback. Document this in the chart/operator runbook without changing workflows, hooks, Helm settings, or adding a runtime bypass. AS-1.6 covers guarded rollout; AS-1.4 covers presence-aware legacy callback rejection; AS-1.5 covers safe revision-aware rollback. Automated tests cannot substitute for deployment inventory verification.
+
 ### Unit & Integration Tests
 
 **Unit Tests** (TDD, red first):
 
-- `internal/domain/oauth2session/client_identity_test.go`: a usability rule table covering match, mismatch, superseded, legacy, rollback, each variant, and the cross-product with ADR 046's recorded rejection and refreshability states; observation compare-and-set retry; fail-closed on source errors.
+- `internal/domain/oauth2session/client_identity_test.go`: a usability rule table covering match, mismatch, superseded, legacy, rollback, each variant, and the cross-product with ADR 046's recorded rejection and refreshability states; source/version/canonical-ID/revision observation fencing and fresh service/binding/file reads on lost preconditions; fail-closed on source errors.
 - `internal/domain/oauth2session/*_test.go`: the token-acquisition fast path, refresh under lock, callback revision check, sweep classification, and sealing for public, CIMD, DCR, and Google services.
 - `internal/domain/oauth2/service_test.go` and `internal/domain/consent/service_test.go`: evaluator gate and display modes.
 - `internal/domain/tokenexchange/session_diagnostic_test.go`: `identity_superseded` mapping.
-- `internal/adapters/storage/memory/*_test.go`: recording rules and compare-and-set parity.
+- `internal/adapters/storage/memory/*_test.go`: recording rules and compare-and-set parity, with paused-observer filesystem→stored transitions, source round trips, canonical-ID/binding changes, and later same-ID updates that never spuriously invalidate sessions.
 - `internal/adapters/http/handlers/admin/services_handler_test.go`: identity values supplied in a request are not bound, record nothing, and never appear in responses.
 - `internal/adapters/http/oauth2_sessions/handler_test.go`: identity `409 refresh_unavailable`, unchanged `409 refresh_rejected`, and alias equality.
 - `web/src/components/sessions/SessionCard.test.tsx`: `requires_reauthentication` gives "Sign-in required" and the Login action.
@@ -261,7 +266,7 @@ tests/
 **Integration Tests**:
 
 - `tests/integration/migrations/client_identity_revision_migration_test.go`: 047/048 apply, roll back, reapply, DOWN refusal, and lock-contention abort.
-- Postgres repository tests in `internal/adapters/storage/postgres/`: the update recording rule within version and discovery preconditions, observation compare-and-set under concurrency (exactly one increment), and explicit-column reads.
+- Postgres repository tests in `internal/adapters/storage/postgres/`: the update recording rule within version and discovery preconditions, observation compare-and-set under concurrency (exactly one increment, atomic source/version/canonical-ID/revision fencing, obsolete values discarded after source/binding changes), and explicit-column reads.
 
 **Test Coverage Goals**: All new domain branches. Both adapters at parity. E2E coverage of 100% of the 16 acceptance scenarios. Frontend E2E for all UI states.
 

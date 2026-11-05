@@ -3,7 +3,7 @@
 **Status**: Proposed
 **Date**: 2026-11-05
 **Feature**: 055-invalidate-client-sessions
-**Supersedes**: In part, [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) (scope and timing of client-identity enforcement, and the legacy identity exception) and [ADR 038](../../adrs/038-proactive-token-refresh.md) (unconditional immediate return of a valid access token). All other decisions of both ADRs remain binding. [ADR 046](../../adrs/046-observed-refresh-token-rejection.md) remains binding in full: identity invalidation extends its reauthentication predicate without weakening observed-rejection handling.
+**Supersedes**: In part, [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) (scope and timing of client-identity enforcement, the legacy identity exception, the no-file-read rule for consent/session usability displays, and rollout/rollback procedure) and [ADR 038](../../adrs/038-proactive-token-refresh.md) (unconditional immediate return of a valid access token). All other decisions of both ADRs remain binding. [ADR 046](../../adrs/046-observed-refresh-token-rejection.md) remains binding in full: identity invalidation extends its reauthentication predicate without weakening observed-rejection handling.
 
 > Feature-local draft. Implementation records the maintainer's approval and moves it to `adrs/047-client-identity-revisions.md` only after sign-off. `main` already owns ADRs 045 (agent-subject impersonation) and 046 (observed refresh-token rejection), so this draft uses the next unused number, 047; if `main` assigns 047 before the move, use the next unused number and update every reference.
 
@@ -35,11 +35,11 @@ A **client identity change** is recorded when a newly effective client ID differ
 | Channel | When it is recorded | Previous effective identity |
 |---|---|---|
 | Admin API update to a stored source | In the same atomic service update that commits the new `client_id`. A rejected, invalid, or version-conflicting update records nothing. | `client_identity`, or, while it is null, the persisted stored `client_id` |
-| Filesystem publication | When any broker operation reads the client-ID file: authorization initiation, code exchange, token acquisition, refresh, session sweep, agent authorization, consent, or session listing. A compare-and-set on the read revision prevents double increments across replicas. | `client_identity`. A null value is set without an increment. |
+| Filesystem publication | When any broker operation reads the client-ID file: authorization initiation, code exchange, token acquisition, refresh, session sweep, agent authorization, consent, or session listing. A compare-and-set atomically requires filesystem source, the read administrative version and canonical ID, and the read identity revision, including first and same-ID observations. This prevents double increments and obsolete observations across administrative changes. | `client_identity`. A null value is set without an increment. |
 | Session sweep dry run | Never recorded. A dry run compares without writing, consistent with its no-write contract. | — |
-| Update to a filesystem source | Not recorded at update time, because metadata operations never read files (ADR 041). The first read after the update applies the filesystem rule. | — |
+| Update to a filesystem source | Not recorded at update time, because administrative service-metadata operations never read files (ADR 041). The first read after the update applies the filesystem rule. | — |
 
-Same-ID secret rotation, metadata-only updates, and a source transition that keeps the effective client ID record nothing. Observation never changes the service `version`, ETag, or `updated_at`.
+Same-ID secret rotation, metadata-only updates, and a source transition that keeps the effective client ID record nothing. Observation never changes the service `version`, ETag, or `updated_at`. The existing administrative version fences source/canonical-ID changes and round trips. On a lost observation precondition the domain discards the old value, reloads the whole service/source/version/canonical ID/revision, reselects its binding from the immutable injected configuration, and reads again if still filesystem. It never replays an obsolete file value against a stored source or a new binding. A version change alone never invalidates a session.
 
 ### Session establishment and usability
 
@@ -58,9 +58,9 @@ Because usability is evaluated against the persisted revision on each use, no bu
 
 - **Token acquisition** (`GetValidAccessToken`, used by RFC 8693 exchange) checks identity before it returns any stored token, including a still-valid access token and a token with unknown expiry. This narrows ADR 038's immediate return. A valid token still returns immediately after the identity check, without waiting for a refresh.
 - **Refresh** (on-demand, background, manual, and sweep) preserves ADR 046's exclusion of rejected sessions and checks identity and revision under the existing session lock before provider authentication. A failed check never submits the refresh token and never changes the stored session.
-- **Callback** compares the sealed identity and revision with the current ones before code exchange. A stale authorization fails with the existing credential-source outcome, and the user can start a new one. The existing callback-ID compare-and-set still decides between competing reconnects.
+- **Callback** compares the sealed identity and revision with the current ones before code exchange. A stale authorization fails with the existing credential-source outcome, and the user can start a new one. Both sealed claims must be present: a missing revision is not revision 0. Pre-upgrade callbacks are rejected with `identity_missing` before provider exchange and must restart, including service variants that previously sealed no identity. The legacy session exception does not apply to callback state. The existing callback-ID compare-and-set still decides between competing reconnects.
 - **Agent authorization** (`/oauth2/authorize`) extends the existing ADR 046 unusability rule with identity invalidation for each service included in the grant. It redirects to agent consent.
-- **Consent and session management** report such a session as not connected and as requiring reauthentication.
+- **Consent and session management** report such a session as not connected and as requiring reauthentication. Consent detail and session list/detail/refresh summaries resolve the live client-ID file, never the secret file, before falling back to persisted evidence on source failure. This partially supersedes ADR 041's no-file-read boundary for these usability displays and the corresponding boundary in `ARCHITECTURE.md`. Administrative service create/update/get/list metadata operations still never read files. Agent authorization and grant validation are gating operations and fail closed, not display fallbacks. An explicit session sweep is not a service-metadata operation.
 
 ### Failure semantics
 
@@ -76,7 +76,21 @@ Both stores persist the service values and the session revision with the same se
 - `thirdparty_oauth2_services.client_identity_revision BIGINT NOT NULL DEFAULT 0`, with a non-negative CHECK
 - `user_sessions.upstream_client_revision BIGINT NOT NULL DEFAULT 0`, with a non-negative CHECK
 
-No backfill runs. DOWN 048 restores the unvalidated constraints. DOWN 047 refuses to run while any service has a revision greater than 0, because dropping the evidence would revive invalidated sessions. Otherwise it drops the three columns. Brokers older than this feature ignore the columns. Before an application rollback, the operator must expect the older enforcement of ADRs 038 and 041.
+No backfill runs. DOWN 048 restores the unvalidated constraints. DOWN 047 refuses to run while any service has a revision greater than 0, because dropping the evidence would revive invalidated sessions. Otherwise it drops the three columns. Brokers older than this feature ignore the columns, so retaining the schema alone cannot enforce the guarantee. The following cutover is mandatory; ADR 041's continuing-old-pods rollout and older-binary rollback procedure do not apply to this feature.
+
+### Guarded rollout and rollback (Proposed DEC-005)
+
+Use a maintenance-window, stop-the-world cutover, not mixed-version serving. This is an operational enforcement boundary, not a feature flag, database bypass, or new Helm setting.
+
+1. Before deploying, freeze all service writes and client-ID/source/canonical-ID/binding changes and credential-pair publications. Pause Admin automation, discovery/DCR writers, external sweeps, and rollout controllers that could restart an old replica. Keep the prior IDs and bindings unchanged until activation.
+2. Close both end-user and Admin ingress (including direct/internal callers); drain in-flight requests and refresh work under the existing shutdown discipline, then stop every old broker process. Verify zero old replicas, workers, and service-writing jobs before migrations or changes. Traffic routing alone is insufficient because background work and direct writers also matter. If draining or inventory verification fails, keep access closed and abort activation; do not force shutdown past failed validation and call it safe.
+3. Apply and validate migrations 047/048. Start only revision-aware binaries, with coherent immutable binding configuration and file pairs, while ingress and external writers remain closed. Verify the complete replica/job inventory uses the new image and required schema, and that no old rollout target can restart. There is deliberately no overlap of old and new serving replicas.
+4. Open ingress only after these checks; resume service writers and identity changes only after every serving/writing process enforces revisions. New binaries reject pre-upgrade callback state without an explicit identity and revision before code exchange; users restart sign-in. Persisted legacy sessions retain only DEC-001's exception.
+5. After activation, rollback may use only another revision-aware binary with schema/evidence retained. An older binary must never resume traffic or writes, even when revisions happen to be 0; DOWN's guard is not a rollback authorization. Recovery from a failed cutover keeps traffic/writers closed until a revision-aware release is restored. Downgrade to an unaware binary requires a separately approved migration/security decision outside this feature; silently weakening enforcement is not an option.
+
+**Rationale**: An old reader can release tokens and an old writer can change `client_id` without revision recording. Neither a schema default nor an operator announcement prevents this. A drained, verified zero-old-process boundary avoids that window without adding persistent deployment coordination or modifying chart defaults. It trades a bounded maintenance outage and constrained rollback for the requested guarantee. **Main alternative**: a separately designed compatibility release plus database write fencing and serving admission gates; that adds rollout machinery and still needs proof that old token readers cannot serve. DEC-005 requires explicit sign-off for the maintenance outage and forward-only enforcement boundary; it grants no security exception.
+
+Regression coverage under AS-1.6 verifies the guarded no-overlap sequence and unchanged legacy sessions, rejects pre-upgrade callback fixtures under AS-1.4, and proves no invalidated session revives on revision-aware restart/rollback under AS-1.5. Deployment review must verify actual ingress closure, stopped old jobs/replicas, and pinned image inventory; tests must not imply that unaware binaries can safely share live traffic. These deployment checks belong in the chart/operator runbook, not a new workflow or hook.
 
 ### Multi-replica observation
 
@@ -89,7 +103,8 @@ Replicas can briefly read different client-ID file values while a publication pr
 - Every token exchange for a filesystem service reads the client-ID file, and every token exchange reads the service's identity state. The added cost is one small file read and one indexed read. A file outage now blocks the release of stored tokens for that service. Before this ADR, a valid token was still released.
 - Public, CIMD, DCR, and Google-flavor services now enforce identity for new connections. Their identity-less legacy sessions keep the never-transitioned exception until the first recorded change.
 - Users see identity invalidation through the existing `requires_reauthentication` field and its equal deprecated `is_expired` alias, with `not_connected` in agent consent. `access_token_expired` retains its distinct meaning. They reconnect through the existing service sign-in flow. The proposed API-001 major 1.2.0 → 2.0.0 cutover and manual-refresh behavior are detailed in [the End-User contract](contracts/enduser-api.md); ADR 046's `409 refresh_rejected` remains unchanged.
-- Rollback to an older binary removes enforcement but keeps the evidence. The guarded DOWN migration protects that evidence.
+- First deployment requires a maintenance cutover with no mixed-version token serving or service writers. Legacy callback state must restart sign-in. Post-activation rollback is limited to revision-aware binaries; older binaries remain offline. The guarded DOWN migration protects evidence but does not replace those operational controls.
+- Consent and session usability displays now read live client-ID files and can observe changes; administrative service metadata retains its no-file-read boundary. No secret file is read to render usability.
 
 ## Alternatives Considered
 

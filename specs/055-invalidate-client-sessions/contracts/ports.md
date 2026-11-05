@@ -4,7 +4,7 @@
 
 ## New port: `ports.ThirdpartyOAuth2ClientIdentityRepository`
 
-File: `internal/ports/thirdparty_provider.go`. This is a separate focused interface, because `ThirdpartyOAuth2ProviderRepository` already exceeds the ISP method budget. Both the memory and postgres adapters implement it, and `app/builder.go` wires it.
+File: `internal/ports/storage.go` (interface and minimal DTOs), as required by Constitution IX. This is a separate focused interface, because `ThirdpartyOAuth2ProviderRepository` already exceeds the ISP method budget. Both the memory and postgres adapters implement it, expose it through the adapter factory/accessor, and `app/builder.go` wires it. No conditional re-export substitutes for the repository definition.
 
 ```go
 // ClientIdentityState is a service's recorded effective client identity.
@@ -13,17 +13,26 @@ type ClientIdentityState struct {
     Revision int64
 }
 
+// ClientIdentityObservation binds a file read to its service configuration snapshot.
+type ClientIdentityObservation struct {
+    ServiceVersion int64
+    CanonicalID    string
+    Revision       int64
+}
+
 // ThirdpartyOAuth2ClientIdentityRepository records filesystem client-identity observations.
 type ThirdpartyOAuth2ClientIdentityRepository interface {
-    // RecordObservedClientIdentity atomically records observed as the service's identity.
-    // If the stored identity is nil, it sets it without changing the revision.
-    // If it differs and the stored revision still equals expectedRevision, it sets it and
-    // increments the revision by one; changed reports whether an increment happened.
-    // If the revision moved, it returns the current state unchanged so the caller re-evaluates.
+    // RecordObservedClientIdentity requires source=filesystem and matching version,
+    // canonical ID, and revision atomically, including for first/same-ID observations.
+    // A matched null identity is initialized without an increment; a differing identity
+    // increments once. applied distinguishes a matched no-op from a lost precondition.
+    // A failed precondition writes nothing; changed is true only for an increment.
     // It never changes version, updated_at, or any administrative field.
-    RecordObservedClientIdentity(ctx context.Context, serviceID id.ServiceID, observed id.ClientID, expectedRevision int64) (state ClientIdentityState, changed bool, err error)
+    RecordObservedClientIdentity(ctx context.Context, serviceID id.ServiceID, observed id.ClientID, expected ClientIdentityObservation) (state ClientIdentityState, applied bool, changed bool, err error)
 }
 ```
+
+The existing service `version` is the administrative configuration generation: every accepted service update advances it, including source and canonical-ID changes and round trips. It is not the identity revision, and a version change alone invalidates only the pending observation, never a session. The source/version/canonical-ID/revision predicate is checked under one memory-store lock or in one conditional SQL update. On `applied == false`, the domain discards both the file value and expected snapshot, reloads the service/source/version/canonical ID/revision, reselects its binding from the immutable builder-injected configuration, and performs a new bounded file read if still filesystem; if now stored, it uses stored identity without an observation. Never replay a file value from a lost CAS, even if the revision is unchanged. Binding configuration changes require replica replacement under the guarded publication/cutover procedure; they are not live mutations outside the snapshot.
 
 Errors are domain `storage.StorageError` values: `NotFound` for a deleted service and `Unavailable` or `Timeout` for infrastructure. The read timeout applies to the read and the write timeout to the update (Principle IX).
 
@@ -68,7 +77,9 @@ const (
 )
 ```
 
-Session list reads remain metadata-only: extend their internal projection with `UpstreamClientID` and `UpstreamClientRevision`, excluded from JSON, alongside the existing reauthentication/refreshability metadata. Do not fetch encrypted token blobs or decrypt secrets merely to adapt a summary to `RequiresReauthentication`'s full-session input. Share the private identity-status rule with a metadata helper inside `oauth2session` for summary evaluation; the cross-domain evaluator interface remains unchanged. This is an internal projection adaptation, not a new public field or persisted concept.
+Consent and session usability displays may read the current client-ID file (Proposed ADR 047 partially supersedes ADR 041's no-file-read rule for these surfaces only). They never read a secret file. Administrative service create/update/get/list metadata operations retain the no-file-read rule; an explicit session sweep is not a service-metadata operation.
+
+Session list storage reads remain metadata-only: extend their internal projection with `UpstreamClientID` and `UpstreamClientRevision`, excluded from JSON, alongside the existing reauthentication/refreshability metadata. Do not fetch encrypted token blobs or decrypt secrets merely to adapt a summary to `RequiresReauthentication`'s full-session input. Share the private identity-status rule with a metadata helper inside `oauth2session` for summary evaluation; the cross-domain evaluator interface remains unchanged. This is an internal projection adaptation, not a new public field or persisted concept.
 
 | Consumer | Mode | Effect |
 |---|---|---|

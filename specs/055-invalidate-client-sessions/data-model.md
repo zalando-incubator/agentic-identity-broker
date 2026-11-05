@@ -34,8 +34,10 @@ Let `previous` be `client_identity`, or the persisted stored `client_id` while `
 | Accepted Admin API update, resulting source stored | If `previous` is non-null and differs from the new `client_id`, set revision to revision + 1. In every case, set `client_identity = client_id`. Both happen atomically in the same conditional `UPDATE` that applies the version and discovery preconditions. |
 | Accepted Admin API update, resulting source filesystem | No change. Files are not read (ADR 041). |
 | Rejected, invalid, or version-conflicting update | No change. |
-| Filesystem observation of value `v` at read revision `r` | If `client_identity` is null, set it to `v` with no increment, conditional on it still being null. If `client_identity` is not `v`, set `client_identity = v` and revision to `r + 1`, conditional on the revision still being `r`. If the condition fails, re-read and evaluate again. `version`, `updated_at`, and the ETag do not change. |
+| Filesystem observation of value `v` at service version `g`, canonical ID `c`, and identity revision `r` | Atomically require source still `filesystem`, `version == g`, canonical ID still `c`, and revision still `r`, for null initialization, change, and same-ID no-op alike. If matched and `client_identity` is null, set it to `v` with no increment. If matched and it differs from `v`, set `client_identity = v` and revision to `r + 1`. A lost precondition writes nothing and reports `applied = false`. Discard `v`, reload service/source/version/canonical ID/revision, reselect the current binding, and read the file anew if still filesystem; a stored result uses stored identity without an observation. Never retry the obsolete value. `version`, `updated_at`, and the ETag do not change. |
 | Session sweep with `dry_run: true` | No change. It compares the read value with the recorded state to classify candidates, but records nothing, consistent with the dry run's no-write contract. |
+
+The existing administrative `version` supplies configuration-generation fencing; no new persisted generation column is needed. It advances on accepted Admin changes, including source/canonical-ID changes and round trips. It does not itself invalidate sessions. The builder-injected credential binding snapshot is immutable (ADR 041); a canonical-ID change selects a binding afresh, while binding configuration replacement requires replacing replicas using the guarded rollout/publication procedure. Tests must pause an observation, commit filesystem→stored or canonical-ID/binding changes (including a round trip with unchanged revision), then prove the obsolete file value cannot initialize or increment identity evidence. Both stores must preserve FR-012: same-identity transitions and later same-ID updates cause no spurious increment.
 
 Each increment emits `session.oauth2.client_identity_changed` (see [contracts/observability.md](contracts/observability.md)).
 
@@ -92,7 +94,7 @@ The session row is retained while reauthentication is required. Its retention dr
 | Claim | Type | Rules |
 |---|---|---|
 | `upstream_client_id` (existing) | string | Now present for every service variant. |
-| `upstream_client_revision` (new) | integer | Present whenever `upstream_client_id` is present. Must be `>= 0`. At callback, both must equal the current `{E, R}` before code exchange. Otherwise the callback is rejected with `identity_mismatch` or `identity_superseded`. |
+| `upstream_client_revision` (new) | integer, presence-aware | Required alongside `upstream_client_id` for every newly initiated flow. Must be `>= 0`; explicit 0 differs from an absent claim. At callback, both claims must be present and equal current `{E, R}` before code exchange. A missing identity or revision (including pre-upgrade state from public/CIMD/DCR/Google flows) is rejected with `identity_missing`; mismatches use `identity_mismatch` or `identity_superseded`. The user starts a fresh flow; the legacy stored-session exception never admits legacy callback state. |
 
 The state is internal and encrypted, and providers echo it opaquely. Its claims are not an external contract.
 
@@ -113,7 +115,9 @@ The state is internal and encrypted, and providers echo it opaquely. Its claims 
 | `048_validate_client_identity_revision.up.sql` | Validates the three constraints under `SHARE UPDATE EXCLUSIVE ... NOWAIT`. |
 | `048_validate_client_identity_revision.down.sql` | Restores the unvalidated constraints without changing data. |
 
-The in-memory adapter keeps identical recording, compare-and-set, and copy-on-read semantics. Explicit column lists are extended in every session and service query. No `SELECT *`.
+The guarded DOWN is necessary but does not make an older binary safe to serve: rollout and rollback must also follow Proposed DEC-005 in ADR 047. Keep ingress and writers closed through migrations and version inventory verification; after activation only revision-aware binaries may serve.
+
+The in-memory adapter keeps identical source/configuration-generation/revision compare-and-set and copy-on-read semantics. Explicit column lists are extended in every session and service query. No `SELECT *`.
 
 ## Ports
 
