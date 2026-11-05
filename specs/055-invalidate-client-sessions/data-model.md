@@ -1,6 +1,6 @@
 # Data Model: Invalidate Sessions After Service Client-ID Changes
 
-**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **Decision draft**: [ADR 045](adr-045-client-identity-revisions.md) (Proposed)
+**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md) | **Decision draft**: [ADR 047](adr-047-client-identity-revisions.md) (Proposed)
 
 No new entity, aggregate, or typed entity ID is introduced. The feature adds internal value objects and attributes to the existing `ThirdpartyOAuth2Service` and `UserSession` aggregates, plus one claim to the existing third-party authorization JWE state.
 
@@ -35,6 +35,7 @@ Let `previous` be `client_identity`, or the persisted stored `client_id` while `
 | Accepted Admin API update, resulting source filesystem | No change. Files are not read (ADR 041). |
 | Rejected, invalid, or version-conflicting update | No change. |
 | Filesystem observation of value `v` at read revision `r` | If `client_identity` is null, set it to `v` with no increment, conditional on it still being null. If `client_identity` is not `v`, set `client_identity = v` and revision to `r + 1`, conditional on the revision still being `r`. If the condition fails, re-read and evaluate again. `version`, `updated_at`, and the ETag do not change. |
+| Session sweep with `dry_run: true` | No change. It compares the read value with the recorded state to classify candidates, but records nothing, consistent with the dry run's no-write contract. |
 
 Each increment emits `session.oauth2.client_identity_changed` (see [contracts/observability.md](contracts/observability.md)).
 
@@ -107,10 +108,10 @@ The state is internal and encrypted, and providers echo it opaquely. Its claims 
 
 | Migration | Content |
 |---|---|
-| `046_add_client_identity_revision.up.sql` | Atomic. `SET LOCAL statement_timeout = '1s'`. `LOCK ... IN ACCESS EXCLUSIVE MODE NOWAIT` on both tables. Adds the three columns with defaults and the `NOT VALID` CHECK constraints `client_identity_revision >= 0`, `upstream_client_revision >= 0`, and `client_identity IS NULL OR client_identity <> ''`. No backfill. |
-| `046_add_client_identity_revision.down.sql` | Raises an error and changes nothing if `EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE client_identity_revision > 0)`. Otherwise it drops the constraints and columns. |
-| `047_validate_client_identity_revision.up.sql` | Validates the three constraints under `SHARE UPDATE EXCLUSIVE ... NOWAIT`. |
-| `047_validate_client_identity_revision.down.sql` | Restores the unvalidated constraints without changing data. |
+| `047_add_client_identity_revision.up.sql` | Atomic. `SET LOCAL statement_timeout = '1s'`. `LOCK ... IN ACCESS EXCLUSIVE MODE NOWAIT` on both tables. Adds the three columns with defaults and the `NOT VALID` CHECK constraints `client_identity_revision >= 0`, `upstream_client_revision >= 0`, and `client_identity IS NULL OR client_identity <> ''`. No backfill. |
+| `047_add_client_identity_revision.down.sql` | Raises an error and changes nothing if `EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE client_identity_revision > 0)`. Otherwise it drops the constraints and columns. |
+| `048_validate_client_identity_revision.up.sql` | Validates the three constraints under `SHARE UPDATE EXCLUSIVE ... NOWAIT`. |
+| `048_validate_client_identity_revision.down.sql` | Restores the unvalidated constraints without changing data. |
 
 The in-memory adapter keeps identical recording, compare-and-set, and copy-on-read semantics. Explicit column lists are extended in every session and service query. No `SELECT *`.
 

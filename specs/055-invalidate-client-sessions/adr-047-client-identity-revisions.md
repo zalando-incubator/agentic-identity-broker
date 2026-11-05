@@ -1,11 +1,11 @@
-# ADR 045: Client Identity Revisions Invalidate Third-Party Sessions
+# ADR 047: Client Identity Revisions Invalidate Third-Party Sessions
 
 **Status**: Proposed
 **Date**: 2026-11-05
 **Feature**: 055-invalidate-client-sessions
 **Supersedes**: In part, [ADR 041](../../adrs/041-oauth2-client-secret-file-overrides.md) (scope and timing of client-identity enforcement, and the legacy identity exception) and [ADR 038](../../adrs/038-proactive-token-refresh.md) (unconditional immediate return of a valid access token). All other decisions of both ADRs remain binding. [ADR 046](../../adrs/046-observed-refresh-token-rejection.md) remains binding in full: identity invalidation extends its reauthentication predicate without weakening observed-rejection handling.
 
-> Feature-local draft. Implementation records the maintainer's approval and moves it to `adrs/` only after sign-off. The draft number is provisional: `main` already owns ADR 045 (agent-subject impersonation), so assign an unused number when moving it.
+> Feature-local draft. Implementation records the maintainer's approval and moves it to `adrs/047-client-identity-revisions.md` only after sign-off. `main` already owns ADRs 045 (agent-subject impersonation) and 046 (observed refresh-token rejection), so this draft uses the next unused number, 047; if `main` assigns 047 before the move, use the next unused number and update every reference.
 
 ## Context
 
@@ -36,6 +36,7 @@ A **client identity change** is recorded when a newly effective client ID differ
 |---|---|---|
 | Admin API update to a stored source | In the same atomic service update that commits the new `client_id`. A rejected, invalid, or version-conflicting update records nothing. | `client_identity`, or, while it is null, the persisted stored `client_id` |
 | Filesystem publication | When any broker operation reads the client-ID file: authorization initiation, code exchange, token acquisition, refresh, session sweep, agent authorization, consent, or session listing. A compare-and-set on the read revision prevents double increments across replicas. | `client_identity`. A null value is set without an increment. |
+| Session sweep dry run | Never recorded. A dry run compares without writing, consistent with its no-write contract. | — |
 | Update to a filesystem source | Not recorded at update time, because metadata operations never read files (ADR 041). The first read after the update applies the filesystem rule. | — |
 
 Same-ID secret rotation, metadata-only updates, and a source transition that keeps the effective client ID record nothing. Observation never changes the service `version`, ETag, or `updated_at`.
@@ -69,13 +70,13 @@ Because usability is evaluated against the persisted revision on each use, no bu
 
 ### Persistence and migration
 
-Both stores persist the service values and the session revision with the same semantics. Migration `046_add_client_identity_revision` atomically adds these columns with metadata-only defaults and `NOT VALID` CHECK constraints, using the ADR 041 lock discipline (`ACCESS EXCLUSIVE ... NOWAIT`, 1-second statement timeout). Migration `047_validate_client_identity_revision` validates the constraints in a separate transaction under `SHARE UPDATE EXCLUSIVE ... NOWAIT`:
+Both stores persist the service values and the session revision with the same semantics. Migration `047_add_client_identity_revision` atomically adds these columns with metadata-only defaults and `NOT VALID` CHECK constraints, using the ADR 041 lock discipline (`ACCESS EXCLUSIVE ... NOWAIT`, 1-second statement timeout). Migration `048_validate_client_identity_revision` validates the constraints in a separate transaction under `SHARE UPDATE EXCLUSIVE ... NOWAIT`:
 
 - `thirdparty_oauth2_services.client_identity TEXT NULL`
 - `thirdparty_oauth2_services.client_identity_revision BIGINT NOT NULL DEFAULT 0`, with a non-negative CHECK
 - `user_sessions.upstream_client_revision BIGINT NOT NULL DEFAULT 0`, with a non-negative CHECK
 
-No backfill runs. DOWN 047 restores the unvalidated constraints. DOWN 046 refuses to run while any service has a revision greater than 0, because dropping the evidence would revive invalidated sessions. Otherwise it drops the three columns. Brokers older than this feature ignore the columns. Before an application rollback, the operator must expect the older enforcement of ADRs 038 and 041.
+No backfill runs. DOWN 048 restores the unvalidated constraints. DOWN 047 refuses to run while any service has a revision greater than 0, because dropping the evidence would revive invalidated sessions. Otherwise it drops the three columns. Brokers older than this feature ignore the columns. Before an application rollback, the operator must expect the older enforcement of ADRs 038 and 041.
 
 ### Multi-replica observation
 

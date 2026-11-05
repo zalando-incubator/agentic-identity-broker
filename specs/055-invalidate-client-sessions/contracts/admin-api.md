@@ -2,7 +2,7 @@
 
 **Status**: Proposed. Approval item API-002 in [plan.md](../plan.md).
 
-**Version**: `info.version` stays `2.1.0`. Only documented behavior changes. No path, parameter, schema, status code, or error code changes. ADR 044 is the precedent for unversioned changes to broker-chosen behavior.
+**Version (Proposed API-002)**: `info.version` `2.1.1` → `2.1.2`. Only operation descriptions change. No path, parameter, schema, status code, or error code changes. The PUT request and response contract is unchanged; the client-ID change's consumer-visible effects are versioned on the End-User API (API-001). ADR 046's description-only Admin change (`2.1.0` → `2.1.1`) is the precedent. The main alternative is a minor or major bump, which would announce a request or response change that does not exist.
 
 ## `PUT /api/services/{service-id}` — add a section after **Secret Rotation**
 
@@ -21,18 +21,19 @@
   invalidates sessions the first time the broker reads it. Updates that select `filesystem` do
   not read files.
 - Rejected, invalid, and version-conflicting (`409`/`412`) updates invalidate nothing.
-- Internal identity evidence is never accepted as input or returned.
+- Internal identity evidence is never an administrative input or output. Request types do not
+  bind it, and responses never contain it.
 ```
 
 The existing **Secret Rotation** bullets gain one bullet: `- Existing user sessions remain usable; rotation alone never requires users to reconnect`.
 
-## `POST /api/services` and `PUT /api/services/{service-id}` request validation
+## `POST /api/services` and `PUT /api/services/{service-id}` request handling
 
-The existing rejection of internal fields (`credential_source_transitioned`, credential-file paths) extends to `client_identity`, `client_identity_revision`, and `upstream_client_revision`. Each returns the existing `400` validation error. Service responses never contain these fields. This follows the existing internal-field rejection pattern and adds no new error code.
+No request-validation change. The internal values `client_identity`, `client_identity_revision`, and `upstream_client_revision` are not fields of any request type, so they cannot be supplied, and service responses never contain them. Unlisted request properties keep today's handling. `ServiceCredentialMetadataBoundary` is unchanged. The main alternative extends that boundary's explicit rejection list, as ADR 041 did for `credential_source_transitioned`. That turns previously ignored input into a `400` contract change without a security benefit, because no request path can write the values.
 
 ## `POST /api/sessions/sweep` — `SessionSweepResult.failed` description
 
-Append: `Includes candidates whose service client ID changed after the session was established; they are not refreshed and require the user to reconnect.`
+Append: `Includes candidates whose service client ID changed after the session was established; they are not refreshed and require the user to reconnect. A dry run classifies them as failed without recording a client-ID file change.`
 
 ## Operator guidance (documentation, not contract)
 

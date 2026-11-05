@@ -1,6 +1,6 @@
 # Contract: Internal Ports and Domain Operations
 
-**Status**: Internal design within existing patterns (no sign-off needed by itself). It implements the Proposed decisions in [ADR 045](../adr-045-client-identity-revisions.md).
+**Status**: Internal design within existing patterns (no sign-off needed by itself). It implements the Proposed decisions in [ADR 047](../adr-047-client-identity-revisions.md).
 
 ## New port: `ports.ThirdpartyOAuth2ClientIdentityRepository`
 
@@ -35,7 +35,7 @@ Errors are domain `storage.StorageError` values: `NotFound` for a deleted servic
 | `ThirdpartyOAuth2ProviderRepository.Update` | Applies the stored-source recording rule ([data-model.md](../data-model.md)) in the same conditional `UPDATE ... RETURNING`, and returns the resulting identity and revision on the entity. A failed precondition records nothing. |
 | `ThirdpartyOAuth2ProviderRepository.Get`, `GetByIDs`, `List`, `FindByProtectedResource` | Populate `ClientIdentity` and `ClientIdentityRevision` with explicit columns. |
 | `UserSessionRepository.CreateIfAbsent` and `UserSessionRefreshRepository.WithLockedSession` | Persist and return `UpstreamClientRevision`. As with `UpstreamClientID`, only a new callback generation may replace it. Refresh writes preserve it. |
-| `UserSessionRepository` reads (`FindByPrincipalAndService`, `ListSummariesByPrincipal`, `ListActiveByPrincipal`, `ListActiveServiceIDsByPrincipal`) and `UserSessionExpiryRepository.ListExpiringSessions` | Return `UpstreamClientID` and `UpstreamClientRevision` so that the domain can evaluate identity. Preserve their existing ADR 046 rejection and refreshability predicates, including sweep exclusion of rejected sessions; add identity filtering in the domain rather than replacing those predicates with expiry-only checks. |
+| `UserSessionRepository` reads (`FindByPrincipalAndService`, `ListSummariesByPrincipal`, `ListActiveByPrincipal`) and `UserSessionExpiryRepository.ListExpiringSessions` | Return `UpstreamClientID` and `UpstreamClientRevision` so that the domain can evaluate identity. Preserve their existing ADR 046 rejection and refreshability predicates, including sweep exclusion of rejected sessions; add identity filtering in the domain rather than replacing those predicates with expiry-only checks. |
 
 ## New domain operations (`internal/domain/oauth2session`)
 
@@ -71,8 +71,8 @@ const (
 | Consumer | Mode | Effect |
 |---|---|---|
 | `oauth2.AuthorizationService.anyDelegatedSessionUnusable` | Gate | Adds reason `session_reauthentication_required`, which leads to the existing consent redirect. |
-| `consent.Service.SubmitGrant` mandatory-service validation | Gate | A superseded session does not satisfy a mandatory service. |
-| `consent.Service.GetAgentConsentDetail` | Display | `IsConnected = false` for sessions that require reauthentication. |
+| `consent.Service.GrantConsent` mandatory-service validation (`ValidateSubmission`) | Gate | A superseded session does not satisfy a mandatory service. |
+| `consent.Service.GetAgentConsentDetail` | Display | Reads sessions through `ListActiveByPrincipal` instead of the ID-only `ListActiveServiceIDsByPrincipal`, so identity can be evaluated. `IsConnected = false` for sessions that require reauthentication. |
 | `oauth2session.ListUserSessions`, `GetSessionWithAgents`, `ForceRefreshSession` summary | Display | Set `UserSessionSummary.RequiresReauthentication`. |
 
 Token acquisition, refresh, callback, sweep, and initiation call the private operations directly and always fail closed.

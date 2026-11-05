@@ -52,8 +52,8 @@ just test-e2e-docker
 
 Expected:
 
-- Migrations 046 and 047 apply, roll back, and reapply.
-- DOWN 046 refuses to run after any revision increment and leaves the schema unchanged.
+- Migrations 047 and 048 apply, roll back, and reapply.
+- DOWN 047 refuses to run after any revision increment and leaves the schema unchanged.
 - Concurrent observations across two connections produce exactly one increment.
 - A rejected or version-conflicting `PUT` records nothing.
 - The invalidation survives a broker restart.
