@@ -44,6 +44,32 @@ func TestValidateAgentRedirectURIRegistration(t *testing.T) {
 	}
 }
 
+func TestValidateAgentRedirectURIRegistrationIDNASeparators(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		wantErr bool
+	}{
+		{"accepts wildcard in subdomain", "preview*.example.com", false},
+		{"accepts wildcard above multi-label suffix", "preview*.example.co.uk", false},
+		{"rejects wildcard in registrable domain", "preview.*.com", true},
+		{"rejects wildcard in public suffix", "preview.example.*", true},
+		{"rejects wildcard in multi-label public suffix", "preview.example.*.uk", true},
+	}
+	for _, separator := range []string{"\u3002", "\uff0e", "\uff61"} {
+		t.Run(separator, func(t *testing.T) {
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					uri := "https://" + strings.ReplaceAll(test.host, ".", separator) + "/callback"
+					if err := ValidateAgentRedirectURIRegistration(uri); (err != nil) != test.wantErr {
+						t.Errorf("ValidateAgentRedirectURIRegistration(%q) = %v, want error %v", uri, err, test.wantErr)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
 	tests := []struct {
 		name       string
