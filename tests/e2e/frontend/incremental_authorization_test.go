@@ -156,7 +156,11 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(GetTestStorage().Agents().Update(ctx, cast.Agent)).To(Succeed())
 			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo"}))).To(Succeed())
 			sessionToken = authorizeToConsent("openid " + githubScope())
-			Expect(consentPage.NavigateToAgentWithSessionToken(ctx, cast.Agent.ID.String(), sessionToken)).To(Succeed())
+			// Save's redirect chain continues past the mock upstream to the unreachable client callback,
+			// so a navigation started before it settles can be aborted.
+			Eventually(func() error {
+				return consentPage.NavigateToAgentWithSessionToken(ctx, cast.Agent.ID.String(), sessionToken)
+			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
 			Expect(consentPage.WaitForRequestedService(ctx, "GitHub Production")).To(Succeed())
 			Expect(consentPage.IsPermissionSetSelected(ctx, "GitHub Read Access")).To(BeTrue())
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "the selected failing candidate disables Save")
