@@ -108,7 +108,7 @@ text.
 | API-LOCAL-SCOPES | API | Local token responses and the JWT `scope` include granted virtual scopes in their requested form. Refresh widening returns `invalid_scope`. Refresh re-checks every granted service even when `scope` is omitted: a definitive failure returns `invalid_scope`, a transient one returns `server_error`, and neither rotates the token. `client_credentials` with a virtual scope returns `invalid_scope`. | specs/055-incremental-service-authorization/contracts/enduser-api.md:69-94 |
 | DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:540; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:61-68 |
 | DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:542; specs/055-incremental-service-authorization/contracts/enduser-api.md:96-101 |
-| DEC-003 | Decision | Definitive provider refresh rejection stays persisted through the existing #271 marker (`refresh_token_expires_at` = rejection time) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:74-109 |
+| DEC-003 | Decision | Definitive provider refresh rejection stays persisted through the existing #271 marker (`refresh_token_expires_at` = rejection time) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:77-112 |
 | DEC-004 | Decision | Schema change: migration `046_add_service_scope_bindings` adds a nullable `service_scope_bindings JSONB` column to `authorization_codes` and `refresh_token_sessions`, so canonical-ID reuse cannot rebind a grant. | specs/055-incremental-service-authorization/data-model.md:113-139 |
 | ADR-RECOVERY | ADR | ADR 045 draft. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records the persisted rejection marker. It supersedes only those two ADR 044 clauses. | specs/055-incremental-service-authorization/adrs/045-service-session-recovery-return.md:1-113; specs/055-incremental-service-authorization/contracts/enduser-api.md:234-241 |
 | ADR-SCOPES | ADR | ADR 046 draft. Virtual Service Scope semantics, the single `servicescope` owner, local and proxy behavior, identity pinning, and non-advertisement. | specs/055-incremental-service-authorization/adrs/046-virtual-service-scopes.md:1-83 |
@@ -386,6 +386,15 @@ and `sessions_page.go` page objects, which gain the new locators.
 | Consent State D: covered and connected, Save enabled | `tests/e2e/frontend/incremental_authorization_test.go` | `tests/e2e/screenshots/consent_requested_service_ready.png` |
 | Service page State A: no active session | `tests/e2e/frontend/incremental_authorization_test.go` | `tests/e2e/screenshots/service_session_needs_login.png` |
 | Service page State B: active with actions | `tests/e2e/frontend/incremental_authorization_test.go` | `tests/e2e/screenshots/service_session_active.png` |
+
+### Validation Gate
+
+The generated [tasks.md](./tasks.md) requires compiling semantic-red acceptance tests before
+feature logic, test-first unit/integration pairs, `just check`, the matching unit/frontend/ExtProc
+and integration suites, and the complete feature journeys. Completion requires `just verify`,
+including real PostgreSQL migration/repository validation and all E2E suites. Infrastructure that
+cannot run is an implementation blocker, not a skipped passing gate. Maintained screenshots use
+the existing capture-enabled serial harness, as [quickstart.md](./quickstart.md) describes.
 
 ### Unit and Integration Tests
 
