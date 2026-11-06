@@ -97,6 +97,7 @@ safe-outputs:
   create-issue:
     title-prefix: "[PR follow-up] "
     labels: [automation, follow-up]
+    deduplicate-by-title: true
     max: 1
   add-comment:
     target: ${{ inputs.pr }}
