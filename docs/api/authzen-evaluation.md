@@ -134,7 +134,7 @@ with `delegation_context.enabled` (see
 [ExtProc delegation context configuration](../configuration.md#extproc-delegation-context-configuration)).
 ExtProc caches only permits, for at most `min(max-age, max_staleness)` from the moment it sent the
 request, and fails closed: a denial returns 403 with the consent URL, and a broker failure or an
-expired permit returns 503. OPA policies receive `input.context.principal`, `agent`, `resource`,
+expired permit returns 503. ExtProc rechecks the original deadline before final forwarding, including after header-only exchange and body or batch policy evaluation. Expiry returns `{"error":"service_unavailable","error_description":"delegation context unavailable"}` without forwarding or re-resolution. OPA policies receive `input.context.principal`, `agent`, `resource`,
 `grant` and `permission_sets` and can key on canonical IDs, for example
 `input.context.permission_sets[_].canonical_id == "repo-reader"`.
 

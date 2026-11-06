@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: Document remediation reconciles all eight findings. Proposed ADR-2/API-7/D-8 define identity-safe binding reuse, terminal concurrency conflict and explicit provider/provenance limits; Proposed ADR-3 defines canonical-field guidance with present compatibility; D-7 records exact telemetry migration/registration. Current 122 tasks retain 104 historical checked and 18 unchecked markers. T103 publication permission and T104 follow-up issue remain external implementation prerequisites, not waived obligations. Original D-6 closure remains historical, not evidence for US3.11–US3.13.
+**Latest outcome**: Partial implementation (run 42243758976/1): the supplied five-item approval is recorded in ADR 048; final-forwarding permit expiry now fails closed on body, batch and header-only paths. Token binding remains unfinished. The security gate fails on GO-2026-6865 in the existing compression dependency; T103 publication permission and T104 follow-up issue remain unresolved. Current inventory: 123 tasks, 108 checked and 15 unchecked. See §15 for current evidence; historical D-6 does not cover new work.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -17,7 +17,7 @@ Before any implementation, these preconditions must hold:
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
    ADR draft [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md).
-2. T001 records only supplied approval for current covered items, explicitly ADR-2 for `adr-048-revision-permit-bound-tokens.md`. ADR 048 already resides in `adrs/`; incorporate its covered revision with approval in Status/Revision history and remove the incorporated draft, without duplicating its historical move. Move only other covered ADR drafts. Historical direction or thirteen-item approval does not cover ADR-2.
+2. T001 records only supplied approval for current covered items. The ADR-2 revision has been incorporated into [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse) with the current five-item approval in Status/Revision history; its incorporated draft was removed. Historical direction or thirteen-item approval does not cover the continuation. ADR-3 incorporation still needs T104's follow-up issue.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
@@ -777,3 +777,88 @@ The revised design covers 47 scenarios: 29 broker, 14 consumer (US3.1–US3.13 a
 - T103 tests the exact observability §3 target mapping and explicit kinds before implementation. Namespace registration and breaking changelog/query migration must be published through a permitted path; the current standard remains unmodified here. Historical green telemetry tests are not compliance evidence.
 - T104 requires supplied ADR-3 approval and the maintainer-created issue URL before recording canonical-field ADR/docs changes. Both compatibility inputs stay unchanged today; no OPA removal/deprecation is tested or implemented here.
 - T119/T120 require fresh applicable local/race/regression/full non-container gates for all three new acceptance scenarios and the revised observability/compatibility design. Record actual commands and file:line mappings only after implementation; no new red/green or runtime completion is claimed by this document phase.
+
+## 15. Partial implementation (run 42243758976/1)
+
+### Approval and completed work
+
+The supplied approval by `mjungsbluth` at `2026-11-06T15:30:38Z` on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728>
+covers exactly ADR-2, API-7, ADR-3, D-7 and D-8. T001 incorporates the permit-bound reuse
+revision into ADR 048 §10 and preserves earlier approval history. Its binding behavior is
+not yet implemented. ADR-3 remains unincorporated until its issue prerequisite is satisfied;
+D-7 approval does not itself supply permission to publish the standard-file registry change.
+
+T108/T109 review confirms the binding mismatch diagnostic is log-only Debug metadata
+`delegation_binding=mismatch`, with no principal, token, raw scopes, grant contents, span
+attribute or metric. Broker/resolver baseline identifiers and the exact D-7 rename/explicit
+kinds/namespace requirements remain those in `contracts/observability.md`. No binding
+mismatch diagnostic is emitted yet, and this design review does not close T103.
+
+T123 isolates the independently approved final-forwarding expiry portion of T116. The
+header-only request retains its original permit and checks its deadline after exchange,
+before Authorization mutation. Body, batch and approval-authorized body forwarding check
+the same original deadline after authorization, without re-resolution. Existing denial/error
+precedence, disabled behavior and the expiry event are retained. Architecture, consumer docs
+and ExtProc guidance describe this change; spec.md and plan.md remain unchanged.
+
+### Test-first evidence
+
+`internal/extproc/server/delegation_test.go:367` adds
+`TestDelegation_RejectsExpiryBeforeFinalForwarding` with three subtests. Before implementation,
+`go test ./internal/extproc/server -run '^TestDelegation_RejectsExpiryBeforeFinalForwarding$' -count=1`
+compiled and failed semantically in all three: body and final batch policy evaluation returned
+a forwarding RequestBody response, and header-only exchange returned an Authorization-bearing
+RequestHeaders response after the clock reached the original deadline. After implementation
+the unchanged status/body assertions pass. Buffer-log assertions verify the existing
+`extproc.delegation_context.permit_expired` event and exclude subject/provider credentials,
+raw scopes and the grant-update timestamp. `just extproc-test` passes with the race detector.
+This is new evidence only for final-forwarding expiry, not for binding or US3.11–US3.13.
+
+### Current passing validation
+
+- `just check`
+- `just test`
+- `just extproc-test` (race)
+- `just web-test`
+- `just cdk-test`
+- `just mock-sample-agent-test`
+- `just mock-upstream-oauth2-test`
+- `just test-integration` (self-contained, including delegation contract conformance)
+- `just docs-build`
+- `just test-e2e-backend`: 999 passed, 0 failed
+- `just test-e2e-frontend`: 67 passed, 0 failed
+- `ginkgo -v --label-filter="authzen-delegation && !docker" ./tests/e2e/`: 28 passed
+- `ginkgo -v --label-filter="delegation-context" ./tests/e2e/`: 11 passed
+- `ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/`: 4 passed
+- `ginkgo -v --focus="OPA Authorization|ExtProc Metadata Input" --label-filter="!docker" ./tests/e2e/extproc/`: 30 passed
+
+The focused feature total is still **43 local scenarios**, not the target 46: the three new
+binding scenarios are not authored or validated. All existing local regression journeys pass.
+
+### Blockers and remaining work
+
+The prepared `bash "$SECURITY_SCAN_SCRIPT" .` scan did not pass. Its initial concurrent run
+terminated with exit 137. A standalone retry completed gosec (0 issues), then govulncheck
+exited 3 with **GO-2026-6865**, "Panic on two-block frames", in the existing
+`github.com/klauspost/compress v1.20.1` dependency (`go.mod:151`), fixed in `v1.20.2`.
+The reported call paths originate in HTTP gzip middleware, not this ExtProc change. No
+reproduction/exploitation, dependency change, suppression or check weakening was performed.
+The maintainer must arrange the dependency remediation; the full security gate remains failed.
+
+| Unchecked work | Why it remains |
+|---|---|
+| T103 | Namespace registration needs the permitted publication path specified in `contracts/observability.md:71`; the earlier rejection remains recorded in §13. No permission update or registered rows are supplied by this context. |
+| T104 | No maintainer-created follow-up issue URL is supplied; the approved ADR-3 requires it before incorporation (`adr-048-revision-canonical-permission-sets.md:25-27`). |
+| T110, T111, T112, T113, T121, T122 | New narrowing/provider-limit/concurrent-binding acceptance tests, cache/server binding tests and their genuine semantic-red gate are not completed in this run. |
+| T114, T115, T116, T117 | Binding-aware port, shared immutable first-claim handles, identity-safe deletion/retry, terminal conflict and mismatch diagnostic remain unimplemented; T116's independent forwarding-expiry portion alone is completed through T123. |
+| T118 | Full binding architecture/glossary/operator guidance awaits implemented binding behavior; current edits describe only final-forwarding expiry. |
+| T119, T120 | Binding acceptance coverage and full compliance remain incomplete; the security scan also fails. Current passing commands do not close these tasks. |
+
+US2.19, `just test-e2e-docker`, `just test-integration-infra` and Agentgateway container cases
+are deferred to downstream container tests on the pushed commit, never claimed validated here.
+The unchecked checklists remain unchanged (the requirements checklist has no unchecked items).
+Reanalysis LOW I2 is resolved by a serial T110 → T121 → T122 E2E lane. LOW I1's research
+approval references are labeled historical; its spec.md wording is left immutable, with the
+approval provenance above resolving the current status. This run is **blocked**, not a completed
+feature or an approval to merge.

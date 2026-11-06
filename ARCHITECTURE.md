@@ -1225,7 +1225,7 @@ All four gates fail closed. A delegation denial returns 403 with the consent URL
 
 - Body-bearing requests run exchange and delegation resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then buffer the body.
 - Header-only requests resolve first, then evaluate OPA, then exchange only on allow.
-- Immediately before every OPA evaluation that receives delegation input (header-only, body, and each batch element), ExtProc requires `now < Deadline`; otherwise it returns 503 without policy evaluation, forwarding or re-resolution.
+- Immediately before every OPA evaluation that receives delegation input (header-only, body, and each batch element), ExtProc requires `now < Deadline`; otherwise it returns 503 without policy evaluation, forwarding or re-resolution. It checks the same original deadline again before final forwarding: after header-only exchange and before body/batch or approval-authorized body forwarding. Expiry returns `503 service_unavailable` / `delegation context unavailable`, without a header-only Authorization mutation or body forwarding.
 - `input.context` gains `principal`, `agent`, `resource`, `grant` and `permission_sets` from the typed permit, and `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit. Disabled-mode input is unchanged.
 
 See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.

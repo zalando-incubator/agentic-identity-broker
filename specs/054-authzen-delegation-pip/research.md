@@ -30,7 +30,8 @@ The original planning session could not download the AuthZEN 1.0 text because ve
 failed. Later API-003 verification is recorded with its sources in `quickstart.md` §7:
 discovery names/path insertion, unknown-member handling and denial form (a) are settled.
 Earlier **Verify** descriptions below are retained as research history, not unresolved
-choices. Revised API-2 and the cooldown consequence D-5 still require current sign-off.
+choices. Revised API-2 and the cooldown consequence D-5 have recorded approval in
+`quickstart.md` §§11–12; they are not reopened by this continuation.
 
 ---
 
@@ -613,8 +614,8 @@ approval record. The planning session drafted the ADR as
 [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md) with status
 **Proposed**, and registered it as approval item ADR-1 in the plan. The historical implementation recorded approval and moved the draft to
 `adrs/048-authzen-delegation-pip.md`, as documented in `quickstart.md` §7. T001 is now
-reopened to verify supplied approval for current revisions, explicitly revised API-2 and
-D-5; it does not repeat the move or invent a new acceptance. Its OPA input-schema
+reopened for ADR-2, ADR-3, API-7, D-7 and D-8. Revised API-2 and D-5 have historical
+approval in `quickstart.md` §§11–12; the continuation does not repeat the move or invent approval. Its OPA input-schema
 section follows R15 as revised after the 2026-10-28 spec clarification. Under Principle II, the
 ADR may be revised in this PR before it merges, and the final ADR and the code must agree. The
 planning session itself accepts nothing.
