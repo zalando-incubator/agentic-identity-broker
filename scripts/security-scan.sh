@@ -58,6 +58,51 @@ modules=(
     mocks/upstream-oauth2-server
 )
 
+# govulncheck has no ignore file. Each entry names a module, a called advisory it may
+# report, and the UTC date the exception ends. Every entry needs an osv-scanner.toml
+# entry for the same advisory that records the reason.
+govulncheck_exceptions=(
+    "mocks/sample-agent GO-2026-6911 2026-12-31"
+)
+
+run_govulncheck() {
+    local module="$1" output status today id excepted entry entry_module entry_id entry_until
+    local -a ids
+    set +e
+    output="$(cd "$scan_root/$module" && GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/govulncheck" ./... 2>&1)"
+    status=$?
+    set -e
+    printf '%s\n' "$output"
+    if (( status == 0 )); then
+        return 0
+    fi
+    if (( status != 3 )); then
+        return "$status"
+    fi
+
+    mapfile -t ids < <(awk '/^=== (Package|Module) Results ===$/ { exit } match($0, /^Vulnerability #[0-9]+: GO-[0-9]+-[0-9]+$/) { print $3 }' <<<"$output")
+    if (( ${#ids[@]} == 0 )); then
+        echo "govulncheck reported vulnerabilities in $module that this script cannot identify" >&2
+        return 1
+    fi
+
+    today="$(date -u +%F)"
+    for id in "${ids[@]}"; do
+        excepted=false
+        for entry in "${govulncheck_exceptions[@]}"; do
+            read -r entry_module entry_id entry_until <<<"$entry"
+            if [[ "$entry_module" == "$module" && "$entry_id" == "$id" && "$today" < "$entry_until" ]]; then
+                excepted=true
+                echo "govulncheck: $id in $module is excepted until $entry_until; see osv-scanner.toml" >&2
+            fi
+        done
+        if ! $excepted; then
+            echo "govulncheck: $id in $module has no current exception" >&2
+            return 1
+        fi
+    done
+}
+
 for module in "${modules[@]}"; do
     echo "==> gosec: $module"
     (
@@ -69,10 +114,7 @@ for module in "${modules[@]}"; do
     )
 
     echo "==> govulncheck: $module"
-    (
-        cd "$scan_root/$module"
-        GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/govulncheck" ./...
-    )
+    run_govulncheck "$module"
 done
 
 lockfiles=(
