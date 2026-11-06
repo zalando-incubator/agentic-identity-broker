@@ -45,7 +45,7 @@ approved yet. All of them are registered in `plan.md` Approval Items.
   rejection time. Database Requirements are updated. ADR-RECOVERY (ADR 045 draft) records the
   marker and retires ADR 044's stale "leaves the stored session unchanged" sentence.
 - **Identity pinning schema (new approval item DEC-004)**: FR-019 requires pinning, and pinning
-  needs persistence. Migration `048_add_service_scope_bindings` adds a nullable
+  needs persistence. Migration `046_add_service_scope_bindings` adds a nullable
   `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`.
   *Main alternative*: store only UUID-form scopes. That alternative contradicts FR-019's
   old-canonical refresh outcome.
@@ -675,7 +675,7 @@ New domain terms require glossary additions during approved design; this specify
 
 - Persist definitive rejected-session usability so all broker replicas and background/session consumers agree, while preserving existing session identities, encrypted token storage and concurrency guarantees.
 - The existing `user_sessions.refresh_token_expires_at` rejection marker represents this state (DEC-003). No `user_sessions` schema change is made.
-- Proposed (DEC-004): migration `048_add_service_scope_bindings` adds a nullable `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`. The column pins each granted virtual scope to its service UUID (FR-019). The migration has paired up/down files with apply/rollback/repeat tests, and both storage adapters support the column. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
+- Proposed (DEC-004): migration `046_add_service_scope_bindings` adds a nullable `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`. The column pins each granted virtual scope to its service UUID (FR-019). The migration has paired up/down files with apply/rollback/repeat tests, and both storage adapters support the column. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -713,6 +713,6 @@ The domain model above defines Agent, ThirdpartyOAuth2Service, UserGrant, UserSe
 - The scope and step-up behavior described in the issue's MCP 2026-07-28 references is the intended interoperability target. This phase does not implement a client or infer additional requirements from external branch artifacts.
 - Gateway metadata publishing is optional, as proposed in the issue's Operators section; when configured its URL is included in challenges. No mandatory publication requirement is added. A new consent Deny/Decline action is out of scope, as the issue explicitly proposes; users can leave the page and client-owned bounded retries terminate further attempts.
 - Q1–Q3 are resolved in Clarifications and FR-019–FR-021: UUID-only rename durability, visible local virtual scopes, and proxy refresh stripping plus subsequent recovery without a post-response veto. These are Proposed choices awaiting maintainer sign-off, not approvals. Alias compatibility and stronger proxy refresh assurance are outside this release.
-- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature proposes changing both; the Proposed feature-local draft `adrs/048-service-session-recovery-return.md` supersedes only those clauses. The merged accepted ADR is not edited in place. No such decision is accepted here.
+- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature proposes changing both; the Proposed feature-local draft `adrs/045-service-session-recovery-return.md` supersedes only those clauses. The merged accepted ADR is not edited in place. No such decision is accepted here.
 - Existing [ADR 016 authorization-context integrity](../../adrs/016-authorization-session-anti-spoofing.md), [ADR 014 local issuance](../../adrs/014-oauth2-server-mode.md), [ADR 035 root-mounted SPA](../../adrs/035-root-mounted-spa.md), [ADR 038 refresh concurrency](../../adrs/038-proactive-token-refresh.md) and current consent return behavior remain constraints. ADR 037's consent-selection decision is currently Proposed; this draft does not promote it to Accepted.
 - Every numbered acceptance scenario must receive its own complete-journey acceptance test during implementation preparation, including resolved Story 3 Scenarios 3–4 and the Story 4 Scenario 2 rename/recovery variants. No implementation or tests are added in this phase.

@@ -41,8 +41,8 @@ UUID (FR-019).
 
 Two Proposed ADR drafts record the decisions:
 
-- [ADR 045](./adrs/048-service-session-recovery-return.md) partially supersedes ADR 044.
-- [ADR 046](./adrs/049-virtual-service-scopes.md) introduces virtual scopes.
+- [ADR 045](./adrs/045-service-session-recovery-return.md) partially supersedes ADR 044.
+- [ADR 046](./adrs/046-virtual-service-scopes.md) introduces virtual scopes.
 
 ## Technical Context
 
@@ -55,7 +55,7 @@ Playwright for frontend E2E tests, and Vitest for SPA unit tests. The feature ad
 dependency.
 
 **Storage**: PostgreSQL in production and the in-memory adapter for development and tests. The
-only schema change is migration `048_add_service_scope_bindings`, which adds a nullable `JSONB`
+only schema change is migration `046_add_service_scope_bindings`, which adds a nullable `JSONB`
 column to `authorization_codes` and `refresh_token_sessions` (DEC-004). The `user_sessions` table
 does not change (DEC-003).
 
@@ -114,9 +114,9 @@ text.
 | DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:607; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:61-68 |
 | DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:609; specs/055-incremental-service-authorization/contracts/enduser-api.md:120-125 |
 | DEC-003 | Decision | Definitive provider refresh rejection stays persisted through the existing #271 marker (`refresh_token_expires_at` = rejection time) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:77-116 |
-| DEC-004 | Decision | Schema change: migration `048_add_service_scope_bindings` adds nullable `service_scope_bindings JSONB` to codes and refresh sessions. Code bindings lie within granted `Scope`; refresh bindings remain an immutable assurance set even after durable scope narrowing. Successors inherit the map exactly and cannot widen predecessor `Scope`. | specs/055-incremental-service-authorization/data-model.md:95-128; specs/055-incremental-service-authorization/data-model.md:145-170 |
-| ADR-RECOVERY | ADR | ADR 045 draft. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records the persisted rejection marker. It supersedes only those two ADR 044 clauses. | specs/055-incremental-service-authorization/adrs/048-service-session-recovery-return.md:1-113; specs/055-incremental-service-authorization/contracts/enduser-api.md:282-289 |
-| ADR-SCOPES | ADR | ADR 046 draft. Virtual Service Scope semantics, shared effective-scope usability, candidate consent checks, protected post-Save re-entry, durable local narrowing with immutable assurance bindings, proxy boundaries, identity pinning and non-advertisement. | specs/055-incremental-service-authorization/adrs/049-virtual-service-scopes.md:1-104 |
+| DEC-004 | Decision | Schema change: migration `046_add_service_scope_bindings` adds nullable `service_scope_bindings JSONB` to codes and refresh sessions. Code bindings lie within granted `Scope`; refresh bindings remain an immutable assurance set even after durable scope narrowing. Successors inherit the map exactly and cannot widen predecessor `Scope`. | specs/055-incremental-service-authorization/data-model.md:95-128; specs/055-incremental-service-authorization/data-model.md:145-170 |
+| ADR-RECOVERY | ADR | ADR 045 draft. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records the persisted rejection marker. It supersedes only those two ADR 044 clauses. | specs/055-incremental-service-authorization/adrs/045-service-session-recovery-return.md:1-113; specs/055-incremental-service-authorization/contracts/enduser-api.md:282-289 |
+| ADR-SCOPES | ADR | ADR 046 draft. Virtual Service Scope semantics, shared effective-scope usability, candidate consent checks, protected post-Save re-entry, durable local narrowing with immutable assurance bindings, proxy boundaries, identity pinning and non-advertisement. | specs/055-incremental-service-authorization/adrs/046-virtual-service-scopes.md:1-104 |
 
 The approved API items also cover these mechanical consequences:
 
@@ -192,8 +192,8 @@ specs/055-incremental-service-authorization/
 │   ├── enduser-api.md             # End-User OpenAPI delta
 │   └── extproc-challenge.md       # ExtProc metadata field and challenge delta
 ├── adrs/
-│   ├── 048-service-session-recovery-return.md   # Proposed; partially supersedes ADR 044
-│   └── 049-virtual-service-scopes.md            # Proposed
+│   ├── 045-service-session-recovery-return.md   # Proposed; partially supersedes ADR 044
+│   └── 046-virtual-service-scopes.md            # Proposed
 ├── wireframes/                    # Spec Wireloom renders (existing)
 ├── checklists/requirements.md
 └── tasks.md                       # Created by /speckit-tasks
@@ -204,7 +204,7 @@ specs/055-incremental-service-authorization/
 ```text
 adrs/045-*.md, adrs/046-*.md                      # Moved from the feature directory after approval
 api/enduser/openapi.yaml                          # Contract delta, version 1.2.0
-migrations/048_add_service_scope_bindings.{up,down}.sql
+migrations/046_add_service_scope_bindings.{up,down}.sql
 
 internal/domain/
 ├── servicescope/                                 # New bounded context (no I/O)
