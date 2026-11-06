@@ -10,7 +10,7 @@ const severities = ["RED", "YELLOW", "GREEN"];
 const recommendations = ["APPROVE", "DISCUSS", "REQUEST CHANGES"];
 const sections = ["### Executive Summary", "### Top Findings", "### Concept Map", "### Hexagonal Compliance",
   "### Pattern Consistency", "### Coupling & Cohesion", "### OTel Parity", "### E2E Test Assessment",
-  "### Maintainability Forecast", "### Recommendation"];
+  "### Maintainability Forecast", "### Behavioral Probe", "### Recommendation"];
 const pipeline = ["route", "review", "verify"];
 const maxFindings = 7;
 const maxBody = 60000;
