@@ -109,7 +109,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 
 		// 043-extproc-metadata-input: US1-S3 — specs/043-extproc-metadata-input/spec.md
 		It("rejects the request and forwards no credential when the exchange fails", func() {
-			env.MockTokenExchange.WithError(http.StatusForbidden, "access_denied")
+			env.MockTokenExchange.WithError(http.StatusBadRequest, "invalid_target")
 			req := helpers.NewRequestHeaders().
 				WithoutAuthorizationHeader().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
