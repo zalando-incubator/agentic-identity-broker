@@ -1,6 +1,6 @@
-# ADR 045 — Accepted decision reference
+# ADR 049 — Accepted decision reference
 
 The approved decision and maintainer approval record are in
-[ADR 045](../../../adrs/045-service-session-recovery-return.md).
+[ADR 049](../../../adrs/049-virtual-service-scopes.md).
 
 This pointer preserves the specification and plan links; it is not a second decision record.

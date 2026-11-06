@@ -129,27 +129,27 @@ checking GitHub. If GitHub is unusable, that third step instead returns non-cons
 
 ### UserSession (unchanged schema)
 
-The **definitive unusability state** is the existing #271 marker (DEC-003): `RefreshTokenExpiresAt`
+The **definitive unusability state** is ADR 046's observed rejection (DEC-003): `RefreshRejectedAt`
 is set to the rejection time under `WithLockedSession`. Derived states:
 
 | Derived state | Condition |
 |---|---|
 | Access valid now | `HasValidAccessToken()`; verified usability additionally requires effective scopes and matching client identity. |
 | Refreshable | `CanRefresh()` |
-| Definitively unusable | `IsExpired()`. The access token has expired and no usable refresh token remains, which includes a rejection marker in the past. |
+| Definitively unusable | `RequiresReauthentication()`: a recorded rejection, even while the access token is valid, or an expired access token without a refresh token. |
 
 A reconnect writes a new row state under the same lock. `setSessionTokens` clears the marker. A
 termination deletes the row, and a late refresh finds `current == nil` and returns
 `ErrSessionNotFound`. Neither path is changed (FR-018).
 
-## Migration `046_add_service_scope_bindings` (Proposed, DEC-004)
+## Migration `048_add_service_scope_bindings` (Proposed, DEC-004)
 
 ```sql
--- 046_add_service_scope_bindings.up.sql
+-- 048_add_service_scope_bindings.up.sql
 ALTER TABLE authorization_codes ADD COLUMN service_scope_bindings JSONB NULL;
 ALTER TABLE refresh_token_sessions ADD COLUMN service_scope_bindings JSONB NULL;
 
--- 046_add_service_scope_bindings.down.sql
+-- 048_add_service_scope_bindings.down.sql
 ALTER TABLE refresh_token_sessions DROP COLUMN service_scope_bindings;
 ALTER TABLE authorization_codes DROP COLUMN service_scope_bindings;
 ```

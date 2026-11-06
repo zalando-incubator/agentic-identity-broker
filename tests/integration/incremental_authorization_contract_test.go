@@ -55,7 +55,7 @@ func TestIncrementalAuthorizationSessionDetailContract(t *testing.T) {
 				})
 			}
 			if data["session"] != nil {
-				delete(data["session"].(map[string]any), "session_id")
+				delete(data["session"].(map[string]any), "id")
 				assert.Error(t, schema.Validate(body), "non-null sessions retain SessionStatus requirements")
 			}
 		})

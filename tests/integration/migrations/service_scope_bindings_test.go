@@ -9,21 +9,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Migration 046 from specs/055-incremental-service-authorization/data-model.md (DEC-004).
-func TestMigration046ServiceScopeBindings(t *testing.T) {
+// Migration 048 from specs/055-incremental-service-authorization/data-model.md (DEC-004).
+func TestMigration048ServiceScopeBindings(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 45))
+	require.NoError(t, f.Up(t, 47))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO agents (id, display_name, description)
-		VALUES ('10000000-0000-0000-0000-000000000046', 'bindings agent', 'migration test');
+		VALUES ('10000000-0000-0000-0000-000000000048', 'bindings agent', 'migration test');
 		INSERT INTO authorization_codes
 			(id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, email, display_name)
-		VALUES ('30000000-0000-0000-0000-000000000046', 'legacy-code', '10000000-0000-0000-0000-000000000046', 'client',
+		VALUES ('30000000-0000-0000-0000-000000000048', 'legacy-code', '10000000-0000-0000-0000-000000000048', 'client',
 			'user@example.com', 'https://client.example.com/cb', 'challenge', 'openid offline_access', '2030-01-01', NULL, '');
 		INSERT INTO refresh_token_sessions
 			(signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, email, display_name)
-		VALUES ('legacy-refresh', 'request', '10000000-0000-0000-0000-000000000046', 'client', 'user@example.com',
+		VALUES ('legacy-refresh', 'request', '10000000-0000-0000-0000-000000000048', 'client', 'user@example.com',
 			'openid offline_access', '2030-01-01', NULL, NULL, '');
 	`))
 	codeSnapshot := `SELECT jsonb_agg(to_jsonb(c) - 'service_scope_bindings' ORDER BY code_hash)::text FROM authorization_codes c`
@@ -54,7 +54,7 @@ func TestMigration046ServiceScopeBindings(t *testing.T) {
 		assert.Equal(t, refreshBefore, after)
 	}
 
-	require.NoError(t, f.Up(t, 46))
+	require.NoError(t, f.Up(t, 48))
 	requireColumns(true)
 	nullCount, err := f.QuerySQL(t, `SELECT (SELECT count(*) FROM authorization_codes WHERE service_scope_bindings IS NULL) + (SELECT count(*) FROM refresh_token_sessions WHERE service_scope_bindings IS NULL)`)
 	require.NoError(t, err)
@@ -62,11 +62,11 @@ func TestMigration046ServiceScopeBindings(t *testing.T) {
 	requireUnchanged()
 	require.NoError(t, f.ExecuteSQL(t, `UPDATE refresh_token_sessions SET service_scope_bindings = '{"https://broker.example.com/sessions/github":"880e8400-e29b-41d4-a716-446655440010"}' WHERE signature = 'legacy-refresh'`))
 
-	require.NoError(t, f.Down(t, 45))
+	require.NoError(t, f.Down(t, 47))
 	requireColumns(false)
 	requireUnchanged()
 
-	require.NoError(t, f.Up(t, 46))
+	require.NoError(t, f.Up(t, 48))
 	requireColumns(true)
 	bindings, err := f.QuerySQL(t, `SELECT count(*) FROM refresh_token_sessions WHERE service_scope_bindings IS NOT NULL`)
 	require.NoError(t, err)

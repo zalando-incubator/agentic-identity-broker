@@ -26,7 +26,7 @@ func TestCheckServiceUsability(t *testing.T) {
 		noSession       bool
 		accessExpiresIn *time.Duration
 		hasRefresh      bool
-		refreshExpired  bool
+		refreshRejected bool
 		providerStatus  int
 		providerBody    string
 		scopes          []string
@@ -36,12 +36,12 @@ func TestCheckServiceUsability(t *testing.T) {
 		wantMarker      bool
 	}{
 		{name: "valid access with sufficient scopes and absent refresh", accessExpiresIn: &hour, scopes: []string{"repo", "user:email"}, effective: []string{"repo", "user:email"}, want: servicescope.UsabilityUsable},
-		{name: "valid access with expired refresh", accessExpiresIn: &hour, hasRefresh: true, refreshExpired: true, scopes: []string{"repo"}, effective: []string{"repo"}, want: servicescope.UsabilityUsable},
+		{name: "valid access with a recorded refresh rejection", accessExpiresIn: &hour, hasRefresh: true, refreshRejected: true, scopes: []string{"repo"}, effective: []string{"repo"}, want: servicescope.UsabilityUnusableDefinitive},
 		{name: "valid access missing an effective scope despite empty configured scopes", accessExpiresIn: &hour, scopes: []string{"repo"}, effective: []string{"repo", "user:email"}, want: servicescope.UsabilityUnusableDefinitive},
 		{name: "expired access refreshed successfully", hasRefresh: true, providerStatus: 200, providerBody: `{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`, scopes: []string{"repo"}, effective: []string{"repo"}, want: servicescope.UsabilityUsable, wantCalls: 1},
 		{name: "refreshed access missing an effective scope", hasRefresh: true, providerStatus: 200, providerBody: `{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`, scopes: []string{"repo"}, effective: []string{"repo", "user:email"}, want: servicescope.UsabilityUnusableDefinitive, wantCalls: 1},
 		{name: "expired access without refresh", scopes: []string{"repo"}, want: servicescope.UsabilityUnusableDefinitive},
-		{name: "expired access with expired refresh", hasRefresh: true, refreshExpired: true, scopes: []string{"repo"}, want: servicescope.UsabilityUnusableDefinitive},
+		{name: "expired access with a recorded refresh rejection", hasRefresh: true, refreshRejected: true, scopes: []string{"repo"}, want: servicescope.UsabilityUnusableDefinitive},
 		{name: "provider invalid_grant persists the rejection marker", hasRefresh: true, providerStatus: 400, providerBody: `{"error":"invalid_grant"}`, scopes: []string{"repo"}, want: servicescope.UsabilityUnusableDefinitive, wantCalls: 1, wantMarker: true},
 		{name: "provider 503 is transient", hasRefresh: true, providerStatus: 503, providerBody: `{"error":"temporarily_unavailable"}`, scopes: []string{"repo"}, want: servicescope.UsabilityUnverifiableTransient, wantCalls: -1},
 		{name: "provider 429 is transient", hasRefresh: true, providerStatus: 429, providerBody: `{"error":"slow_down"}`, scopes: []string{"repo"}, want: servicescope.UsabilityUnverifiableTransient, wantCalls: -1},
@@ -82,11 +82,10 @@ func TestCheckServiceUsability(t *testing.T) {
 				if tc.hasRefresh {
 					session.EncryptedRefreshToken, err = enc.Encrypt(ctx, []byte("stored-refresh"), encContext)
 					require.NoError(t, err)
-					refreshExpiry := time.Now().Add(24 * time.Hour)
-					if tc.refreshExpired {
-						refreshExpiry = time.Now().Add(-time.Hour)
+					if tc.refreshRejected {
+						rejectedAt := time.Now().Add(-time.Hour)
+						session.RefreshRejectedAt = &rejectedAt
 					}
-					session.RefreshTokenExpiresAt = &refreshExpiry
 				}
 				require.NoError(t, sessions.Create(ctx, session))
 			}
@@ -104,7 +103,7 @@ func TestCheckServiceUsability(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, stored)
 			if tc.wantMarker {
-				require.NotNil(t, stored.RefreshTokenExpiresAt)
+				require.NotNil(t, stored.RefreshRejectedAt)
 				assert.False(t, stored.CanRefresh(), "a definitive rejection is persisted")
 			}
 			if tc.want == servicescope.UsabilityUnverifiableTransient {

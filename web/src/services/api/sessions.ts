@@ -203,16 +203,11 @@ export class SessionsApiService {
 export const sessionsApi = new SessionsApiService();
 
 /** Session status within a single-service detail (OpenAPI `SessionStatus`). */
-export interface ServiceSessionStatus {
-  session_id: string;
-  initiated_at: string;
+export interface ServiceSessionStatus extends SessionSummary {
+  principal: string;
   access_token_expires_at?: string;
-  refresh_token_expires_at?: string;
-  is_expired: boolean;
-  has_refresh_token: boolean;
-  scope: string[];
-  dependent_agent_count: number;
-  tokens_encrypted: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Response data of GET /api/third-party/sessions/{service}. */

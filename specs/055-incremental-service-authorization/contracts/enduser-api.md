@@ -268,7 +268,7 @@ Spec Journey 2, Step 1:
 
 - `dependent_agents` lists only agents whose grants the authenticated principal owns and that
   include the service.
-- A definitively unusable session appears with `is_expired: true`.
+- A definitively unusable session appears with `requires_reauthentication: true` (ADR 046).
 - The read never attempts a provider refresh.
 - Refresh and terminate continue to use the UUID routes `POST /api/third-party/{serviceId}/session/refresh`
   and `DELETE /api/third-party/{serviceId}/session`.

@@ -806,7 +806,7 @@ paths:
         Resolves a current canonical ID or UUID and returns the service even when no session
         exists (`session: null`). Unknown services return 404. Only dependent agents whose
         grants belong to the authenticated principal are included. A definitively unusable
-        session has `is_expired: true`. This read never attempts a provider refresh or changes
+        session has `requires_reauthentication: true`. This read never attempts a provider refresh or changes
         grants. Refresh and terminate use the existing UUID-based session routes.
         The legacy `GET /api/third-party/{serviceId}/session` remains UUID-only and returns
         404 when no session exists.
@@ -856,14 +856,24 @@ paths:
                         display_name: GitHub Production
                         scope_url: https://broker.example.com/sessions/github
                       session:
-                        session_id: 990e8400-e29b-41d4-a716-446655440001
-                        initiated_at: "2026-10-29T10:00:00Z"
-                        access_token_expires_at: "2026-10-29T11:00:00Z"
-                        is_expired: false
-                        has_refresh_token: true
+                        id: 990e8400-e29b-41d4-a716-446655440001
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
+                        service_display_name: GitHub Production
+                        token_type: Bearer
                         scope: [repo, "user:email"]
+                        initiated_at: "2026-10-29T10:00:00Z"
+                        requires_reauthentication: false
+                        is_expired: false
+                        access_token_expired: false
+                        has_refresh_token: true
                         dependent_agent_count: 0
-                        tokens_encrypted: true
+                        is_encrypted: true
+                        principal: alice@example.com
+                        access_token_expires_at: "2026-10-29T11:00:00Z"
+                        encryption_context:
+                          service_id: 880e8400-e29b-41d4-a716-446655440010
+                        created_at: "2026-10-29T10:00:00Z"
+                        updated_at: "2026-10-29T10:00:00Z"
                       dependent_agents: []
         "401":
           $ref: "#/components/responses/Unauthorized"

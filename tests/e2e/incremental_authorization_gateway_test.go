@@ -96,9 +96,9 @@ var _ = Describe("Incremental Service Authorization Gateway Challenge", func() {
 		Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1))
 		session, err := journey.store.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.principal), journey.cast.GitHub.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(session.IsExpired()).To(BeTrue(), "the definitive provider rejection must be persisted")
-		Expect(session.RefreshTokenExpiresAt).NotTo(BeNil())
-		Expect(session.RefreshTokenExpiresAt.Before(time.Now().Add(time.Second))).To(BeTrue())
+		Expect(session.RequiresReauthentication()).To(BeTrue(), "the definitive provider rejection must be persisted")
+		Expect(session.RefreshRejectedAt).NotTo(BeNil())
+		Expect(session.RefreshRejectedAt.Before(time.Now().Add(time.Second))).To(BeTrue())
 
 		recovery := brokerRecovery()
 		Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1), "persisted unusability needs no second provider refresh")

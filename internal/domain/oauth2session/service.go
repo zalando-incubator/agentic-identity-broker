@@ -357,7 +357,7 @@ func (s *OAuth2SessionService) ServiceAuthorizeURL(service *model.ThirdpartyOAut
 }
 
 // ServiceScope returns the service's current Virtual Service Scope, which is also its
-// same-origin service page (ADR 045, ADR 046).
+// same-origin service page (ADR 048, ADR 049).
 func (s *OAuth2SessionService) ServiceScope(service *model.ThirdpartyOAuth2ProviderEntity) string {
 	return servicescope.Format(s.config.CallbackBaseURL, service.ID, service.CanonicalID)
 }
@@ -2124,7 +2124,7 @@ func usabilityFromError(err error) servicescope.Usability {
 	switch operationErr.Metadata().Detail() {
 	case DetailSessionMissing:
 		return servicescope.UsabilityMissing
-	case DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable, DetailRefreshRejected:
+	case DetailAccessTokenExpired, DetailRefreshUnavailable, DetailRefreshRejected:
 		return servicescope.UsabilityUnusableDefinitive
 	case DetailCredentialSourceUnavailable:
 		var sourceErr *model.CredentialSourceError

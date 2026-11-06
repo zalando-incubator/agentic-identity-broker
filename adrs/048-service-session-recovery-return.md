@@ -1,4 +1,4 @@
-# ADR 045: Service-Specific Session Recovery Return and Persisted Rejection
+# ADR 048: Service-Specific Session Recovery Return
 
 **Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189)
 **Date**: 2026-10-29
@@ -34,12 +34,11 @@ Service Scope. ADR 044 returns the browser to the generic `/sessions` list after
 so the user lands away from the service they are repairing (spec FR-006, SC-003).
 
 ADR 044 also states that provider refresh rejection leaves the stored session unchanged. Since #271,
-the broker has persisted a definitive `invalid_grant` refresh rejection. The broker sets
-`refresh_token_expires_at` to the rejection time under the session row lock, and stops contacting
-the provider until the user reconnects (`specs/013-token-exchange/spec.md` User Story 5, Scenario 4,
-and Journey 1). The End-User OpenAPI already documents this behavior. Consent, session pages, tool
+the broker has persisted a definitive `invalid_grant` refresh rejection, and
+[ADR 046](046-observed-refresh-token-rejection.md) now defines that state as
+`UserSession.RefreshRejectedAt` with `requires_reauthentication`. Consent, session pages, tool
 exchange, and background maintenance must all agree on this state (spec FR-008, FR-018), so the
-ADR must describe it.
+stale ADR 044 sentence must not remain binding.
 
 ## Decision
 
@@ -64,23 +63,15 @@ this target. After the provider callback, the browser returns to the service pag
 callback result parameters are appended. Visiting the page or completing provider sign-in never
 creates or changes an agent grant.
 
-### 2. Persisted definitive rejection
+### 2. Rejected sessions follow ADR 046
 
-Only a definitive provider rejection of the stored refresh token (`invalid_grant`) makes a session
-unusable in storage. The broker records it under `WithLockedSession` by setting
-`refresh_token_expires_at` to the rejection time. Stored ciphertext and identifiers are unchanged.
-The following rules apply:
-
-- Transient failures (provider 5xx, 429, network errors, timeouts, storage errors, cancellation)
-  never write this marker.
-- A deliberate reconnect replaces the session tokens under the same row lock and clears the marker.
-  A rejection that was computed for an older token cannot overwrite a newer reconnect, because the
-  refresh re-reads the locked row.
-- Termination deletes the row. A late refresh or callback cannot recreate it, as ADR 038 already
-  guarantees.
-
-No schema change is required. The marker is the single persisted unusability state for every
-consumer.
+The stale ADR 044 sentence is replaced by ADR 046 without change: only an observed HTTP 4xx
+`invalid_grant` refresh response, recorded as `RefreshRejectedAt` under the locked update-only
+refresh callback, marks a session as requiring reauthentication. Transient failures never record it,
+and a successful provider callback clears it. Feature 055 adds no second unusability state: a
+recorded rejection makes the service `unusable_definitive` for Virtual Service Scopes and consent,
+even while the stored access token has not expired, and the service page offers Login. No schema
+change is required.
 
 ## Consequences
 
@@ -92,7 +83,7 @@ consumer.
 - A canonical-ID rename changes the return path of newly issued links. Links that were already
   issued with the old canonical path land on the not-found page after a rename, and the user can
   navigate from the session list.
-- The ADR set now matches the implemented rejected-refresh behavior.
+- ADR 044, ADR 046, and this ADR now describe one rejected-refresh behavior.
 
 ## Alternatives considered
 
@@ -102,12 +93,13 @@ consumer.
   Virtual Service Scope and from the identifier users see.
 - **Accept a caller-supplied return path**: Rejected. It reopens open-redirect and parameter
   injection risks that ADR 044 closed.
-- **Add a new `unusable_at` column**: Rejected. The existing marker already expresses the state
-  consistently, and a second field would need reconciliation.
+- **Add a new `unusable_at` column**: Rejected. ADR 046's `RefreshRejectedAt` already expresses the
+  state consistently, and a second field would need reconciliation.
 
 ## References
 
 - [ADR 044](044-service-specific-session-recovery-url.md) (partially superseded)
+- [ADR 046](046-observed-refresh-token-rejection.md) (observed refresh-token rejection)
 - [ADR 038](038-proactive-token-refresh.md) (refresh concurrency and update-only termination)
 - [ADR 016](016-authorization-session-anti-spoofing.md)
 - Feature 055 [spec](../specs/055-incremental-service-authorization/spec.md) FR-006, FR-008, FR-016, FR-018. [research.md](../specs/055-incremental-service-authorization/research.md) R3 and R9.

@@ -74,7 +74,7 @@ type AuthorizationService struct {
 }
 
 // WithRequestedServices enables Virtual Service Scopes: each requested service is required for
-// that request only, evaluated for grant coverage and verified session usability (ADR 046).
+// that request only, evaluated for grant coverage and verified session usability (ADR 049).
 func (s *AuthorizationService) WithRequestedServices(resolver *servicescope.Resolver, evaluator *servicescope.Evaluator) *AuthorizationService {
 	s.requestedServices = resolver
 	s.serviceEvaluator = evaluator

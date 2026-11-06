@@ -237,7 +237,7 @@ No service has the requested URI in its `protected_resources`.
 
 Rejected subject credentials do not require provider-session recovery and have no recovery URI.
 A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
-The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions/<identifier>)>` (ADR 045).
+The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions/<identifier>)>` (ADR 048).
 The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`; `<identifier>` is the service's current canonical ID, or its UUID when it has none.
 Opening the link starts third-party OAuth with PKCE. The provider callback returns to that service page.
 Every recoverable error after service resolution, including grant denials that link to consent, also carries `scope`: the service's Virtual Service Scope, which is the same `<public URL>/sessions/<identifier>` URL. Non-recoverable errors and errors before service resolution carry neither `error_uri` nor `scope`.

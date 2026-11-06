@@ -96,7 +96,7 @@ keeps its original validation evidence.
   forms in response and JWT, code-to-refresh bindings, code-exchange rename/reuse rejection,
   exact (case-sensitive) non-consuming widening refusal and durable narrowing.
 - **T042, T049–T051** exchange `scope` member on recoverable errors and service-page recovery
-  (ADR 045); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
+  (ADR 048); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
   appends both attributes in fixed order with value-free diagnostics.
 - **T072** existing acceptance assertions updated for the approved recovery target and `scope`.
 
@@ -202,15 +202,15 @@ This historical checkpoint is superseded by the 2026-10-30 progress and validati
 
 All 11 items in the immutable plan match the supplied approval by **mjungsbluth** on
 **2026-10-29**, [approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189).
-ADRs [045](../../adrs/045-service-session-recovery-return.md) and
-[046](../../adrs/046-virtual-service-scopes.md) now record that approval in `adrs/`.
+ADRs [048](../../adrs/048-service-session-recovery-return.md) and
+[049](../../adrs/049-virtual-service-scopes.md) now record that approval in `adrs/`.
 Their feature-local paths remain reference-only pointers. Approval is not evidence that the
 feature is implemented. The original spec and plan are intentionally unchanged.
 
 ### Tooling and validation blocker
 
 The installed executables report Go **1.27.3**, Node **24.22.1**, npm **11.19.1** and
-just **1.58.0**. Migration number **046** is available after existing migration 045.
+just **1.58.0**. Migration number **048** is available after existing migration 045.
 `ginkgo`, `golangci-lint` and `wireloom` are not on PATH. Tool versions have not changed in
 this feature; no tool installation or permission workaround was attempted.
 
@@ -280,7 +280,7 @@ changed to imply that either revision was approved.
   verification gate's container-backed suites. This feature's broker-plus-ExtProc challenge tests
   use `bootstrap.ExtProcEnvironment` and assert gRPC immediate responses without a gateway container.
 - The maintainer has approved the items in [plan.md › Approval Items](./plan.md#approval-items).
-  ADRs 045 and 046 have been moved to `adrs/` with an Accepted status.
+  ADRs 048 and 049 have been moved to `adrs/` with an Accepted status.
 
 ## 1. Static checks and fast tests
 
@@ -302,7 +302,7 @@ Expected:
 just test-integration-infra
 ```
 
-Expected: migration `046_add_service_scope_bindings` applies, rolls back, and reapplies. Bindings
+Expected: migration `048_add_service_scope_bindings` applies, rolls back, and reapplies. Bindings
 survive the round trip on `authorization_codes` and `refresh_token_sessions`, and `NULL` rows stay
 readable. Both adapters enforce exact successor binding inheritance and scope subset. Exercise code
 issuance with full scopes → successful narrowed refresh → scope-less successor refresh: successor
@@ -421,10 +421,10 @@ Trigger an exchange error.
 
 ## 6. Rollback note
 
-Rolling back requires reverting the code first, then migration 046. Rolling back the code alone is
+Rolling back requires reverting the code first, then migration 048. Rolling back the code alone is
 not enough: the pre-feature broker treats a granted virtual scope as an ordinary scope string.
 After the rollback, affected clients may need to authorize again. No user session or grant data is
-lost. The discarded service-scope bindings cannot be recovered by reapplying migration 046;
+lost. The discarded service-scope bindings cannot be recovered by reapplying migration 048;
 affected clients need fresh interactive authorization to reestablish identity pinning.
 
 ## 7. Full completion gate

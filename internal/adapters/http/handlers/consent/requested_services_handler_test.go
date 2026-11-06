@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,7 +55,7 @@ func TestCreateGrantRequestedServices(t *testing.T) {
 		handler := NewGrantsHandler(&mockConsentService{grantConsentFunc: func(_ context.Context, req *consent.GrantRequest) (*storage.UserGrant, error) {
 			received = req
 			return &storage.UserGrant{ID: id.NewGrantID(), AgentID: agentID, Principal: "alice@example.com", CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
-		}}, nil, newTestSessionTokenValidator())
+		}}, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 		rr := httptest.NewRecorder()
 		handler.CreateGrant(rr, routedRequest(http.MethodPost, path, agentID.String(), "alice@example.com", GrantRequest{GrantedPermissionSets: map[string][]string{}}))
 		require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
@@ -69,7 +70,7 @@ func TestCreateGrantRequestedServices(t *testing.T) {
 	t.Run("an unsatisfied requested service returns the approved error without redirect", func(t *testing.T) {
 		handler := NewGrantsHandler(&mockConsentService{grantConsentFunc: func(context.Context, *consent.GrantRequest) (*storage.UserGrant, error) {
 			return nil, fmt.Errorf("%w: requested services must be selected, cover required scopes and have a usable session: %s", consent.ErrRequestedServiceNotSatisfied, serviceID)
-		}}, nil, newTestSessionTokenValidator())
+		}}, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 		rr := httptest.NewRecorder()
 		handler.CreateGrant(rr, routedRequest(http.MethodPost, path, agentID.String(), "alice@example.com", GrantRequest{GrantedPermissionSets: map[string][]string{}}))
 		require.Equal(t, http.StatusBadRequest, rr.Code)
@@ -100,7 +101,7 @@ func TestAgentDetailRequestedServices(t *testing.T) {
 			}}, nil
 		},
 	}
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 	detail := func(path string) map[string]any {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rctx := chi.NewRouteContext()

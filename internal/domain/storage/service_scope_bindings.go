@@ -12,7 +12,7 @@ import (
 )
 
 // ServiceScopeBindings maps each originally granted Virtual Service Scope to its service UUID
-// (ADR 046). It is immutable after issuance and inherited unchanged by refresh successors.
+// (ADR 049). It is immutable after issuance and inherited unchanged by refresh successors.
 type ServiceScopeBindings map[string]id.ServiceID
 
 var lowercaseServiceUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)

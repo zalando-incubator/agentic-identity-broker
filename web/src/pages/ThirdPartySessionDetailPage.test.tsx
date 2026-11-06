@@ -7,7 +7,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThirdPartySessionDetailPage } from './ThirdPartySessionDetailPage';
-import { sessionsApi, type ServiceSessionDetail } from '@services/api/sessions';
+import { sessionsApi, type ServiceSessionDetail, type ServiceSessionStatus } from '@services/api/sessions';
 
 vi.mock('@services/api/sessions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@services/api/sessions')>();
@@ -34,15 +34,22 @@ const detail = (session: ServiceSessionDetail['session']): ServiceSessionDetail 
   dependent_agents: [{ agent_id: 'agent-1', display_name: 'Data Analysis Assistant' }],
 });
 
-const activeSession = {
-  session_id: 'session-1',
+const activeSession: ServiceSessionStatus = {
+  id: 'session-1',
+  service_id: '880e8400-e29b-41d4-a716-446655440010',
+  service_display_name: 'GitHub Production',
+  token_type: 'Bearer',
+  principal: 'alice@example.com',
   initiated_at: '2026-10-27T09:00:00Z',
   access_token_expires_at: '2099-10-27T10:00:00Z',
-  is_expired: false,
+  created_at: '2026-10-27T09:00:00Z',
+  updated_at: '2026-10-27T09:00:00Z',
+  requires_reauthentication: false,
+  access_token_expired: false,
   has_refresh_token: true,
   scope: ['repo', 'user:email'],
   dependent_agent_count: 1,
-  tokens_encrypted: true,
+  is_encrypted: true,
 };
 
 const renderPage = (path = '/sessions/github') =>
@@ -72,7 +79,7 @@ describe('ThirdPartySessionDetailPage', () => {
   });
 
   it('marks a definitively unusable session as needing login', async () => {
-    vi.mocked(sessionsApi.getServiceSessionDetail).mockResolvedValue(detail({ ...activeSession, is_expired: true }));
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockResolvedValue(detail({ ...activeSession, requires_reauthentication: true }));
     renderPage();
 
     expect(await screen.findByTestId('service-session-status')).toHaveTextContent('Expired');

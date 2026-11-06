@@ -57,13 +57,13 @@ func TestGetServiceSessionDetail(t *testing.T) {
 	rejected := time.Now().Add(-time.Minute)
 	require.NoError(t, sessions.Create(ctx, &storage.UserSession{
 		ID: id.NewSessionID(), Principal: alice, ServiceID: serviceID, EncryptedAccessToken: []byte("sealed"),
-		EncryptedRefreshToken: []byte("sealed"), TokenType: "Bearer", AccessTokenExpiresAt: &expired, RefreshTokenExpiresAt: &rejected,
+		EncryptedRefreshToken: []byte("sealed"), TokenType: "Bearer", AccessTokenExpiresAt: &expired, RefreshRejectedAt: &rejected,
 		Scope: []string{"repo"}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now(),
 	}))
 	detail, err := service.GetServiceSessionDetail(ctx, alice, "github")
 	require.NoError(t, err)
 	require.NotNil(t, detail.Session)
-	assert.True(t, detail.Session.IsExpired(), "a persisted rejection is shown as unusable")
+	assert.True(t, detail.Session.RequiresReauthentication(), "a persisted rejection is shown as unusable")
 	assert.Zero(t, providerCalls.Load(), "the read never refreshes")
 
 	for _, unknown := range []string{"unknown-service", id.NewServiceID().String(), "github/", "", "880E8400-E29B-41D4-A716-446655440010"} {

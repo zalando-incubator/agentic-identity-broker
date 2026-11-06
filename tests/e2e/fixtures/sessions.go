@@ -148,10 +148,10 @@ func ExpiredAccessWithRefresh(principal, serviceID string, scopes []string) *sto
 }
 
 // RejectedRefreshSession returns a session carrying the persisted provider-rejection marker:
-// expired access and a refresh expiry at the rejection time.
+// expired access and an observed refresh rejection.
 func RejectedRefreshSession(principal, serviceID string, scopes []string) *storage.UserSession {
 	session := ExpiredAccessWithRefresh(principal, serviceID, scopes)
 	rejectedAt := time.Now().Add(-time.Second)
-	session.RefreshTokenExpiresAt = &rejectedAt
+	session.RefreshRejectedAt = &rejectedAt
 	return session
 }

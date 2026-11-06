@@ -96,7 +96,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
       const detail = await load();
       setAlert({
         type: 'error',
-        message: detail?.session?.is_expired
+        message: detail?.session?.requires_reauthentication
           ? 'This session can no longer be renewed. Log in to reconnect.'
           : extractApiError(err, 'Failed to refresh session token. Please try again.'),
       });
@@ -145,7 +145,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
         );
       case 'loaded': {
         const { service, session, dependent_agents: agents } = state.detail;
-        const needsLogin = !session || session.is_expired;
+        const needsLogin = !session || session.requires_reauthentication;
         return (
           <Stack gap="lg">
             <div>
@@ -164,13 +164,13 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                     </p>
                   </>
                 )}
-                {session && session.is_expired && (
+                {session && session.requires_reauthentication && (
                   <>
                     <Badge variant="error">Expired</Badge>
                     <p className="text-neutral-700">This session can no longer be renewed. Log in to reconnect.</p>
                   </>
                 )}
-                {session && !session.is_expired && (
+                {session && !session.requires_reauthentication && (
                   <>
                     <Badge variant="success">Active</Badge>
                     <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">

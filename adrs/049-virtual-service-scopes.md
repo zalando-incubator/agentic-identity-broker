@@ -1,4 +1,4 @@
-# ADR 046: Virtual Service Scopes for Incremental Authorization
+# ADR 049: Virtual Service Scopes for Incremental Authorization
 
 **Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189)
 **Date**: 2026-10-29
@@ -69,7 +69,7 @@ services.
 - The broker's issued tokens reveal which managed services a client was granted access to. The
   issuer is the same broker, and audience handling does not change.
 - `authorization_codes` and `refresh_token_sessions` gain a nullable `service_scope_bindings`
-  column (migration 046, decision DEC-004).
+  column (migration 048, decision DEC-004).
 - Agents with a non-empty `allowed_scopes` can request virtual scopes without listing them. The
   broker checks eligibility separately.
 - Proxy refresh gives weaker assurance than local refresh. This is documented.
@@ -101,4 +101,4 @@ services.
   and [contracts](../specs/055-incremental-service-authorization/contracts/).
 - [ADR 014](014-oauth2-server-mode.md), [ADR 016](016-authorization-session-anti-spoofing.md),
   [ADR 036 (ExtProc metadata input)](036-extproc-metadata-token-exchange-input.md),
-  [ADR 045](045-service-session-recovery-return.md).
+  [ADR 048](048-service-session-recovery-return.md).

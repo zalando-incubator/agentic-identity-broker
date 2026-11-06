@@ -2,8 +2,8 @@
 
 Use this guide to let an MCP client recover a tool call that failed because one broker-managed
 third-party service is not usable, without a silent reauthorization loop. The design is recorded in
-[ADR 045](../../adrs/045-service-session-recovery-return.md) and
-[ADR 046](../../adrs/046-virtual-service-scopes.md).
+[ADR 048](../../adrs/048-service-session-recovery-return.md) and
+[ADR 049](../../adrs/049-virtual-service-scopes.md).
 
 Every configured service has a broker-only **Virtual Service Scope**:
 
@@ -113,5 +113,5 @@ leaves the refresh token valid, and only interactive authorization can add it.
 - **Renames.** UUID scopes survive canonical-ID renames. A canonical scope bound to an old canonical
   ID fails closed: refresh returns `invalid_scope` without consuming the token, and the client must
   authorize again with the scope from a fresh challenge.
-- **Rollback.** Rolling back migration `046` discards stored service bindings and requires rolling
+- **Rollback.** Rolling back migration `048` discards stored service bindings and requires rolling
   back the broker version; affected clients authorize again.

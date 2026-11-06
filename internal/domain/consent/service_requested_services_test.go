@@ -85,8 +85,8 @@ func newRequestedConsentFixture(t *testing.T) *requestedConsentFixture {
 		f.triageSet: {ID: f.triageSet, ServiceScopes: []storage.ServiceScope{{ServiceID: f.github, Scopes: []string{"repo"}, RequirementType: storage.RequirementTypeOptional}}},
 	}}
 	sessions := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
-		id.NewSessionID(): {Principal: "alice@example.com", ServiceID: identity, RefreshTokenExpiresAt: &f.future},
-		id.NewSessionID(): {Principal: "alice@example.com", ServiceID: f.github, RefreshTokenExpiresAt: &f.future},
+		id.NewSessionID(): {Principal: "alice@example.com", ServiceID: identity, AccessTokenExpiresAt: &f.future},
+		id.NewSessionID(): {Principal: "alice@example.com", ServiceID: f.github, AccessTokenExpiresAt: &f.future},
 	}}
 	f.grants = &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}
 	existing := &storage.UserGrant{ID: id.NewGrantID(), Principal: "alice@example.com", AgentID: f.agentID, ValidUntil: &f.future,

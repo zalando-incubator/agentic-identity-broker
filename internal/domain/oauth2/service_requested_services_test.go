@@ -3,6 +3,7 @@ package oauth2
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"testing"
 
@@ -118,7 +119,7 @@ func newRequestedFixture(t *testing.T, cfg *OAuth2Config, covered bool) *request
 		requestedGitHubID: {ID: requestedGitHubID, CanonicalID: ptr.To("github")},
 	}}
 	snapshots := &requestedSnapshots{snapshot: servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: []string{"repo", "user:email"}}}
-	svc := NewAuthorizationService(grants, newConnectedSessionRepository(), NewAgentClientResolver(agents, nil), cfg, nil, tokens).
+	svc := NewAuthorizationService(grants, newConnectedSessionRepository(), NewAgentClientResolver(agents, slog.New(slog.DiscardHandler)), cfg, nil, tokens).
 		WithRequestedServices(servicescope.NewResolver(services, requestedPermissionSets{}, requestedPublicURL), servicescope.NewEvaluator(requestedPermissionSets{}, snapshots))
 	return &requestedFixture{svc: svc, agent: agent, grants: grants, services: services, snapshots: snapshots, tokens: tokens}
 }

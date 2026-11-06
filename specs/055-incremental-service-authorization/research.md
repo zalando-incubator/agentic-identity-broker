@@ -56,7 +56,7 @@ re-specified for every consumer.
 - At local refresh, each bound scope is resolved again. If the scope no longer resolves, or it
   resolves to a different UUID, refresh fails with `invalid_scope` and does not rotate the token.
   This happens, for example, after a rename or when a canonical ID is reused.
-- **Proposed (DEC-004)**: Migration `046_add_service_scope_bindings` adds a nullable
+- **Proposed (DEC-004)**: Migration `048_add_service_scope_bindings` adds a nullable
   `service_scope_bindings JSONB` column to `authorization_codes` and `refresh_token_sessions`.
   `NULL` means "no virtual scopes", so existing rows are unaffected and need no backfill.
 
@@ -101,7 +101,7 @@ this check. Transient results fail closed:
 Transient results never write an unusability marker.
 
 **Proposed (DEC-003)**: Definitive provider refresh rejection stays persisted through the existing
-#271 marker, `refresh_token_expires_at = rejection time`, with no schema change. ADR 045 (draft)
+#271 marker, `refresh_token_expires_at = rejection time`, with no schema change. ADR 048 (draft)
 records this behavior and retires ADR 044's stale "leaves the stored session unchanged" clause.
 Every consumer reads the same row: consent, the session list and detail, tool exchange, and the
 background refresh and sweep. Reconnect precedence and update-only termination stay as ADR 038 and
@@ -297,7 +297,7 @@ The path keeps the UUID, and the return page uses the emitted scope identifier. 
 same-origin `redirect_uri` validation already accepts this target. The callback appends its
 existing `service_id` and `success` parameters. Grant-denial links remain `<public URL>/agents/<id>`.
 
-**Proposed (ADR-RECOVERY)**: Draft [ADR 045](./adrs/045-service-session-recovery-return.md) replaces
+**Proposed (ADR-RECOVERY)**: Draft [ADR 048](./adrs/048-service-session-recovery-return.md) replaces
 two clauses of ADR 044: the fixed `/sessions` return clause and the "leaves stored session
 unchanged" clause. It keeps every other ADR 044 protection. ADR 044 is not edited.
 
@@ -392,5 +392,5 @@ changes additively; the ExtProc has no versioned OpenAPI.
 - `anyDelegatedSessionUnusable` does not try a refresh for granted services that were not
   requested. Changing it would alter unrelated authorization behavior. The maintainer can decide
   whether to file an issue.
-- ADR 044's stale rejected-session clause is corrected by ADR 045 as part of this feature, so no
+- ADR 044's stale rejected-session clause is corrected by ADR 048 as part of this feature, so no
   separate issue is needed.

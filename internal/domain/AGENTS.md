@@ -46,7 +46,7 @@ For other feature changes, read the relevant specification, plan, and tasks befo
 | `internal/domain/principal/` | Authenticated identity context | `WithPrincipal()`, `FromContext()` |
 | `internal/domain/security/` | Request security context and identity normalization | `SecurityContext`, `CaptureHolder` |
 | `internal/domain/server/` | Server configuration validation | `ValidateServerConfig()` |
-| `internal/domain/servicescope/` | Virtual Service Scope grammar, requested-service resolution, shared grant coverage and requested-service evaluation (ADR 046) | `Parse()`, `Resolver`, `Cover()`, `Evaluator` |
+| `internal/domain/servicescope/` | Virtual Service Scope grammar, requested-service resolution, shared grant coverage and requested-service evaluation (ADR 049) | `Parse()`, `Resolver`, `Cover()`, `Evaluator` |
 | `internal/domain/storage/` | Domain data models and endpoint discovery | `Agent`, `UserGrant`, `UserSession` |
 | `internal/domain/thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `internal/domain/tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
