@@ -1,7 +1,7 @@
 # Tasks: Incremental Service Authorization
 
 **Input**: `specs/055-incremental-service-authorization/` — `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, and `quickstart.md`.
-**Status**: Blocked after contract and acceptance-test progress: 11 of 101 tasks complete. The supplied 11-item approval is recorded in ADRs 045/046. Approved API deltas are in OpenAPI 1.2.0, contract tests pass, and the three US2 backend acceptance tests compile and fail semantically. No feature behavior or migration is implemented. See [the latest implementation checkpoint](./quickstart.md#implementation-checkpoint--2026-10-30) for actual checks, deferred tasks and required actions.
+**Status**: In progress: 39 of 101 tasks complete. Acceptance tests (backend red recorded), the `servicescope` foundations, usability, memory-adapter bindings, sealed claims, local issuance/narrowing, exchange `scope` recovery and the ExtProc challenge are implemented; PostgreSQL and browser runs are blocked by sandbox tooling. See [the latest implementation checkpoint](./quickstart.md#implementation-checkpoint--2026-10-30-second-run) for checks, deferred tasks and required actions.
 **Tests**: Mandatory red → green → refactor under Principles VIII and XIII. Write each test first, make it compile with only minimal structural scaffolding, and observe a semantic failure before implementing its behavior. Never use pending/skip markers, vacuous assertions, or red-phase annotations in test files.
 **Organization**: Setup → mandatory design preconditions → shared foundations → US1 (P1) → US3 (P1) → US2 (P1) → US4 (P2) → mandatory compliance. The three P1 stories share priority; this order follows the plan's dependency order, not a change to their priorities.
 

@@ -5,6 +5,64 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-10-30 (second run)
+
+**In progress; 39 of 101 tasks complete. Acceptance tests, shared foundations, local issuance,
+exchange recovery and the ExtProc challenge are implemented. Authorization/consent integration,
+the session detail page, SPA work, local refresh recheck, proxy stripping, docs and final gates
+remain.** This run supersedes the earlier 2026-10-30 checkpoint below for status; that section
+keeps its original validation evidence.
+
+### Completed in this run
+
+- **T011–T014, T016–T017** acceptance tests: the shared cast fixtures, mock-provider refresh and
+  scope controls, nine local journeys (`incremental_authorization_test.go`), two broker-plus-ExtProc
+  gateway journeys, two proxy journeys, the operator-guide/discovery check and two browser journeys
+  with page-object locators. All 17 backend scenarios compiled and failed on missing behavior before
+  any feature code (red evidence: 17 failures, e.g. no `requested_service_ids`, 200 instead of
+  `invalid_scope`, unstripped upstream scope, missing guide).
+- **T019–T023** `internal/domain/servicescope/`: configured-origin grammar/emission, requested-set
+  resolution with eligibility and binding pinning, the shared coverage rule and requested-service
+  evaluation. Token exchange now uses the shared rule; all existing exchange tests pass unchanged,
+  including the final-entry-wins duplicate-grant case.
+- **T024–T026** `ServiceSessionSnapshot`/`CheckServiceUsability` on top of `GetValidAccessToken`.
+- **T027–T030** binding validation and both memory stores (deep copies, exact successor inheritance,
+  no scope widening).
+- **T036** sealed `requested_service_ids`/`service_scope_bindings` and exposed original expiry.
+- **T037–T038, T047–T048** local issuance: allow-list exemption only with a binding, exact scope
+  forms in response and JWT, code-to-refresh bindings, code-exchange rename/reuse rejection,
+  exact (case-sensitive) non-consuming widening refusal and durable narrowing.
+- **T042, T049–T051** exchange `scope` member on recoverable errors and service-page recovery
+  (ADR 045); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
+  appends both attributes in fixed order with value-free diagnostics.
+- **T072** existing acceptance assertions updated for the approved recovery target and `scope`.
+
+### Validation in this run
+
+| Command | Actual outcome |
+|---|---|
+| `gofmt -l` on changed files; `go vet` on changed packages | Clean. `internal/domain/oauth2/service_test.go` was already unformatted before this branch and is untouched. |
+| `golangci-lint run` | **Not run**: the installed binary is built with Go 1.25 and refuses the Go 1.27.3 module. |
+| `go test -p 2 ./internal/... ./cmd/...` | All packages pass except `internal/adapters/encryption/aws` (`TestBuildAWSConfig_DisableSSL`) and `internal/adapters/outboundhttp` (two SSRF/proxy tests). Both fail identically on the branch's starting commit `28baed0` in this sandbox and are not touched here. |
+| `go test -race ./internal/extproc/...` | Pass. |
+| `ginkgo --procs=2 --label-filter='!performance && !docker' ./tests/e2e/` | Before T072: 896 passed, 32 failed. After T072 the 17 affected existing scenarios pass (33/33 in their focused suites). Remaining failures are the 15 not-yet-implemented Feature 055 scenarios. US1 S1 and US4 S1 (gateway) now pass. |
+| `ginkgo ./tests/e2e/frontend/` | **Blocked**: the playwright-go driver v1.62.1 is not installed and downloading it was not permitted. Both browser scenarios compile; red was not observed. |
+| PostgreSQL migration/repository tests (T031–T034) | **Blocked**: no Docker in this sandbox. Migration SQL, PostgreSQL JSONB mapping and integration tests are written and vet-clean; a self-contained codec unit test passes. |
+| `just …` recipes | `just` is not on PATH in this container; the equivalent underlying commands above were run. |
+
+### Remaining work
+
+| Tasks | Status / next step |
+|---|---|
+| T003, T035, T099–T100 | Unchanged blockers (U4/I2 approvals); T035's authorize-re-entry assertions belong with T039/T074. |
+| T018 | Backend red evidence recorded; browser red needs the playwright-go driver. |
+| T031–T034 | Code written; needs a Docker-capable runner to execute and check. |
+| T039–T041, T043–T046, T052–T056 | Authorization-endpoint requested-service evaluation, consent arrays/submission, protected re-entry, builder wiring (`WithServiceScopes`, bindings through the proceed strategy) and SPA. |
+| T057–T064 | Full binding recheck on local refresh with usability, proxy scope stripping, `client_credentials` rejection. |
+| T065–T071, T073 | Session detail domain read, route and SPA page. |
+| T074–T079 | Boundary regressions, operator guide and reference docs. |
+| T080–T098 | Compliance and the full `just verify` gate. |
+
 ## Implementation checkpoint — 2026-10-30
 
 **Blocked; approved contract and compiling acceptance tests are added, but no feature behavior or migration is implemented.**
