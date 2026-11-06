@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -236,11 +237,15 @@ func TestTransportErrorTypeFollowsStatusCode(t *testing.T) {
 
 // startBlockingServer returns a client and a server that never finishes a response. With
 // sendHeaders, the server sends the response headers first, so the client blocks reading the body.
+// The connection is already open on return, so a short timeout cannot fire during the TLS handshake.
 func startBlockingServer(t *testing.T, protocol string, sendHeaders bool) (*http.Client, string, <-chan struct{}) {
 	t.Helper()
 	reached := make(chan struct{}, 1)
 	release := make(chan struct{})
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodHead {
+			return
+		}
 		if sendHeaders {
 			w.WriteHeader(http.StatusOK)
 			w.(http.Flusher).Flush()
@@ -261,6 +266,9 @@ func startBlockingServer(t *testing.T, protocol string, sendHeaders bool) (*http
 		close(release)
 		server.Close()
 	})
+	opened, err := server.Client().Head(server.URL)
+	require.NoError(t, err)
+	require.NoError(t, opened.Body.Close())
 	return &http.Client{Transport: NewTransport(server.Client().Transport)}, server.URL, reached
 }
 
@@ -305,10 +313,36 @@ func TestTransportCallerCancellationIsNotAnError(t *testing.T) {
 	}
 }
 
+// A response the server already rejected stays a failure when the caller then stops reading it.
+func TestTransportCancellationKeepsErrorResponseStatus(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			recorder := installRecorder(t)
+			base := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: status, Body: io.NopCloser(iotest.ErrReader(context.Canceled))}, nil
+			})
+			request, err := http.NewRequest(http.MethodGet, "http://service.invalid/path", nil)
+			require.NoError(t, err)
+			response, err := NewTransport(base).RoundTrip(request)
+			require.NoError(t, err)
+			_, err = io.ReadAll(response.Body)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NoError(t, response.Body.Close())
+
+			spans := recorder.Ended()
+			require.Len(t, spans, 1)
+			attributes := spanAttributes(spans[0])
+			assert.Equal(t, codes.Error, spans[0].Status().Code)
+			assert.Equal(t, fmt.Sprint(status), attributes["error.type"])
+			assert.Equal(t, "canceled", attributes["telemetryhttp.outcome"])
+		})
+	}
+}
+
 // A timeout is a failed call. It must not look like a caller that gave up, including the
 // http.Client timeout, which also closes the request's Cancel channel.
 func TestTransportTimeoutIsAnError(t *testing.T) {
-	const timeout = 50 * time.Millisecond
+	const timeout = 200 * time.Millisecond
 	tests := []struct {
 		name          string
 		sendHeaders   bool
@@ -322,7 +356,7 @@ func TestTransportTimeoutIsAnError(t *testing.T) {
 			for _, test := range tests {
 				t.Run(protocol+"/"+source+"/"+test.name, func(t *testing.T) {
 					recorder := installRecorder(t)
-					client, url, _ := startBlockingServer(t, protocol, test.sendHeaders)
+					client, url, reached := startBlockingServer(t, protocol, test.sendHeaders)
 					ctx := context.Background()
 					if source == "request deadline" {
 						var cancel context.CancelFunc
@@ -341,6 +375,11 @@ func TestTransportTimeoutIsAnError(t *testing.T) {
 						_ = response.Body.Close()
 					}
 					require.Error(t, err)
+					select {
+					case <-reached:
+					case <-time.After(5 * time.Second):
+						t.Fatal("the request did not reach the handler")
+					}
 
 					spans := recorder.Ended()
 					require.Len(t, spans, 1)
