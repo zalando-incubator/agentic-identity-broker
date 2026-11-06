@@ -99,6 +99,7 @@ var _ = Describe("Feature Name", func() {
 - **Duplicate setup**: Put repeated setup in a `Context` block.
 - **Direct DI**: Tests create services instead of using `bootstrap/` wrappers.
 - **Shared state**: Mutable state crosses `It()` blocks without a `BeforeEach` reset.
+- **Minimal body in a race or conflict scenario**: A write-path scenario omits optional identifiers that the API accepts, such as `canonical_id` and `client_id`. Each unique index or check can return its own error, so send them.
 
 ## Dual Server Pattern
 

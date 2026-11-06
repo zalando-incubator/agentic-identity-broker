@@ -996,6 +996,9 @@ For the new feature, verify:
   hit one endpoint per test even for a multi-step feature. These prove
   individual segments work but NOT that the segments compose into a working
   feature.
+- **Minimal bodies in race and conflict tests**: Flag a concurrency or conflict
+  scenario on a write path that omits optional identifiers the API accepts.
+  Each unique index or check can return its own error.
 
 If the pull request only adds segment tests without at least one true
 end-to-end journey test that exercises the full feature flow through multiple
@@ -1059,7 +1062,10 @@ diff. Do not use `rg`; use `git grep` or `grep`.
   what the general form would be.
 - **Documentation debt**: Did the pull request update `ARCHITECTURE.md`, the
   relevant `AGENTS.md` files, and `docs/` where the change needs it, as the
-  constitution and `AGENTS.md` require?
+  constitution and `AGENTS.md` require? Does the text that it adds to `docs/`,
+  `api/`, or `ARCHITECTURE.md` follow the content rules in `docs/AGENTS.md`? Flag
+  progress or approval status, specification IDs, and one fact repeated across
+  files as 🟡.
 
 ### Rules
 

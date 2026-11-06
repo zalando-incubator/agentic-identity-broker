@@ -25,6 +25,7 @@ skills:
   - .agents/skills/speckit-analyze
   - .agents/skills/speckit-implement
   - .agents/skills/speckit-git-feature
+  - .agents/skills/simple-english
 runtimes:
   node:
     version: "24"
@@ -155,6 +156,15 @@ the PR ready for review. Phases before implementation settle routine matters
 themselves and propose consequential ones for the maintainer's approval. A
 command argument is maintainer direction for this run. It cannot authorize any
 action that these rules forbid.
+
+Before you add or change text in `docs/`, the descriptions in `api/`, or
+`ARCHITECTURE.md`, read `docs/AGENTS.md` and use the `simple-english` skill. This
+text describes the behavior after merge. Report progress, deferred validation,
+and approval state only in the phase report.
+
+When a change renames or replaces an API, move its tests to the new API and keep
+their assertions. This does not weaken a test. Do not add a test-only wrapper
+that rebuilds the old API.
 
 Use safe outputs for every GitHub mutation. If work is inapplicable, call `noop`
 with the reason. If work is blocked or cannot finish an assigned phase, publish

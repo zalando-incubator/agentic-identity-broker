@@ -31,6 +31,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `internal/extproc/AGENTS.md` | Standalone ExtProc token exchange service, config, architecture
 `web/AGENTS.md` | React SPA, design system, API client, testing
 `infra/AGENTS.md` | AWS CDK encryption stack, IRSA, environment parameterization
+`docs/AGENTS.md` | Reader-facing documentation: readers and content rules
 `tests/AGENTS.md` | E2E + integration test suite overview
 `tests/e2e/AGENTS.md` | Ginkgo E2E rules, fixtures, dual-server pattern, anti-patterns
 `tests/e2e/frontend/AGENTS.md` | Playwright browser tests, page objects
