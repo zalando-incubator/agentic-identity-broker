@@ -33,7 +33,8 @@ Infra-backed integration tests use PostgreSQL and an AWS emulator. They require 
 | `tests/integration/` | Standard `go test` / testify assertions | Component behavior and configuration | Self-contained by default | `just test-integration` |
 | Tagged integration packages | Standard `go test` / testify assertions | PostgreSQL, migrations, encryption | PostgreSQL and AWS emulator containers | `just test-integration-infra` |
 
-`just test` excludes E2E and integration suites. `just test-e2e` runs the three functional E2E suites.
+`just test` excludes E2E and integration suites.
+`just test-e2e` runs the backend, Docker-tagged backend, ExtProc, and frontend recipes.
 `just test-integration-all` runs both integration layers.
 
 Keep self-contained tests free of container dependencies.

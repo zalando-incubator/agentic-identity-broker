@@ -11,12 +11,12 @@ Read these sources before you change E2E tests:
 | `.specify/memory/constitution.md` — Principle XIII | Acceptance coverage, isolation, semantic assertions |
 | `ARCHITECTURE.md` — End-to-End Testing Architecture | Stable HTTP scenarios and production bootstrap |
 | `adrs/007-e2e-testing-with-ginkgo.md` | Accepted E2E architecture |
-| `tests/e2e/README.md` | Structure, commands, and anti-patterns |
+| `tests/e2e/README.md` | Structure, commands, positive examples, and anti-patterns |
 | `tests/e2e/fixtures/README.md` | Fixture rules and categories |
 | `.github/instructions/e2e-tests-code-review.instructions.md` | Test review checklist |
 | `api/enduser/openapi.yaml`, `api/admin/openapi.yaml` | HTTP operation contracts |
 
-The guides contain historical inventories and examples. Read current source for helper signatures and feature coverage.
+Read current source for helper signatures and feature coverage.
 Read the governing feature's `spec.md`, `plan.md`, and `tasks.md` under `specs/` before you derive assertions.
 
 ## Acceptance Rules
@@ -171,7 +171,7 @@ just test-e2e-backend-coverage # Backend coverage report
 just test-e2e-backend-watch    # Backend watch mode
 just test-e2e-extproc          # ExtProc suite
 just test-e2e-performance      # Dedicated SC-001 measurement
-just test-e2e                  # Backend, ExtProc, and frontend suites
+just test-e2e                  # Backend, Docker-tagged backend, ExtProc, and frontend
 ginkgo -v --label-filter="!performance && !docker" --focus="pattern" ./tests/e2e/
 ```
 
@@ -183,7 +183,7 @@ It uses a real agentgateway container and the production broker, so it requires 
 Backend functional recipes build the frontend first. Before a direct Ginkgo run that needs frontend assets, run `just web-build`.
 `just test-e2e-performance` runs the warmed, local-mode, signed-subject 100-request SC-001 measurement from `tests/e2e/impersonation_test.go`.
 It uses one Ginkgo worker and reports successes plus p95, maximum, and minimum duration.
-Its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` line is recorded in PR #464.
+Record its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` result in PR #464.
 Functional recipes exclude this machine-sensitive measurement.
 
 ### Parallelism expectations

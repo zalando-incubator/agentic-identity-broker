@@ -30,7 +30,7 @@ description: "Task list for ExtProc approval cache sync and OPA integration"
 
 **Purpose**: Confirm the existing standalone ExtProc module and runners already provide every dependency required by the plan.
 
-- [X] T006 Confirm no dependency installation is needed for OPA, MCP elicitation, `otelhttp`, `net/http`, and `internal/toolpattern` in `go.mod` and `justfile`
+- [X] T006 Confirm no dependency installation is needed for OPA, MCP elicitation, `otelhttp`, `net/http`, and [`internal/domain/approval/toolpattern`](../../internal/domain/approval/toolpattern) in `go.mod` and `justfile`. The shared package follows [accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md).
 
 ---
 
@@ -79,7 +79,7 @@ description: "Task list for ExtProc approval cache sync and OPA integration"
 - [X] T019 Implement optional `Principal` and `AgentID` response fields and populate them from the verified principal plus resolved canonical agent ID in `internal/domain/tokenexchange/response.go` and `internal/domain/tokenexchange/service.go`
 - [X] T020 [P] Add table-driven approval-sync summary tests for projecting `ApprovedAt` only on approved records in `internal/adapters/http/handlers/approval/sync_handler_test.go`
 - [X] T021 Project optional `approved_at` from `ToolApproval.ApprovedAt` in `internal/adapters/http/handlers/approval/sync_handler.go`
-- [X] T023 [P] Add table-driven V1–V7 validation, env/flag precedence, and disabled-by-default tests in `internal/extproc/config/validate_test.go` and `internal/extproc/config/loader_test.go`
+- [X] T023 [P] Add table-driven V1–V7 validation, env/flag precedence, and disabled-by-default tests in [validate_approval_test.go](../../internal/extproc/config/validate_approval_test.go), [loader_approval_test.go](../../internal/extproc/config/loader_approval_test.go), and [loader_test.go](../../internal/extproc/config/loader_test.go).
 - [X] T024 Add `ToolApprovalsConfig` and `SessionsConfig`, defaults, Viper/Cobra bindings, URL normalization, and fail-fast validation in `internal/extproc/config/config.go`, `internal/extproc/config/loader.go`, and `internal/extproc/config/validate.go`
 - [X] T025 [P] Add unit coverage for token-exchange identity propagation and client-assertion access failure in `internal/extproc/server/exchanger_test.go`
 - [X] T026 Extend exchange response parsing and `ExchangeResult` with broker-authoritative identity, and expose the existing client assertion through a narrow accessor in `internal/extproc/server/exchanger.go`
@@ -152,6 +152,10 @@ description: "Task list for ExtProc approval cache sync and OPA integration"
 ## Phase 7: User Story 4 — Long-Poll Goroutine Keeps Cache Current (Priority: P2)
 
 **Goal**: Keep one cache per instance current through ETag long-polling, full-snapshot replacement, live-session parameters, and bounded retry.
+
+The [current synchronization contract](spec.md#current-synchronization-contract) governs these tasks under [accepted ADR 036](../../adrs/036-extproc-approval-cache-and-gate.md).
+Every `200` replaces its full scope and removes omitted records and pairs. Targeted replacement preserves other principals and the background ETag.
+A `304` preserves records and the ETag, and refreshes confirmation time. See [the cache](../../internal/extproc/approval/cache.go) and [the syncer](../../internal/extproc/approval/syncer.go).
 
 **Independent Test**: Observe immediate re-poll after 304, approval propagation within two seconds, ETag replay after a disconnect, and replacement that removes a revoked record after an unknown ETag response.
 

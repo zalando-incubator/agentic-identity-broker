@@ -42,12 +42,12 @@ Read `internal/domain/id/id_test.go` for parse, zero-value, and serialization te
 1. Use `ParseXxxID` in production. Do not use `MustParseXxxID` in production handlers, services, or adapters.
 2. Use `MustParseXxxID` only for test fixtures with constant valid UUIDs.
 3. Authenticate before UUID syntax validation at handler entry points. Unauthenticated requests return 401, not 400.
-4. Use typed IDs for entity values. Convert to strings only when an external API requires it.
+4. Use typed IDs for entity values. If an external API requires strings, convert the IDs at that boundary.
 5. Keep UUID-backed `SigningKeyID` separate from string-backed `KeyID`, which identifies the JWT `kid`.
 6. Use `ServiceID.String()` for `service_id` encryption contexts. Use `KeyID` for `kid` contexts, including CIMD keys.
 7. Supply only one context subject. Read `internal/domain/encryption/subject.go` for the constructors.
 8. Log a `Principal` as the typed value, not `String()`. The principal policy in `coding-standards/LOGGING.md` section 5 depends on the type.
-9. Set a `Principal` on a span only with `Principal.SpanAttribute(key)` under a `.principal` key (`coding-standards/OPENTELEMETRY.md` section 4.3). Until #356 adds `SpanAttribute`, do not add principal span attributes.
+9. Set a `Principal` on a span only with `Principal.SpanAttribute(key)` under a `.principal` key. Read `coding-standards/OPENTELEMETRY.md` section 4.3. Until #356 adds `SpanAttribute`, do not add principal span attributes.
 
 ## Adding a New Entity ID
 

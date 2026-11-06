@@ -84,8 +84,8 @@ The domain validates each local document with `trustanchor.ParseLocalKeySet`.
 | Type | Purpose |
 |---|---|
 | `StaticAdapter` | Implements `ports.JWKSPort`. Serves one validated inline (`jwks`) set for the process lifetime. No network, no refresh. `HealthState()` is always `healthy`. |
-| `FileAdapter` | Implements `ports.JWKSPort`. Reads a `jwks_file` at construction (a failure fails startup) and re-reads it in the background every `jwks_min_refresh`. A valid re-read replaces the set. A failed re-read keeps the last valid set and reports `degraded`. After `jwks_max_refresh` since the last success, `GetKeySet` fails closed. `Shutdown` stops the loop. |
-| `TrustDirectory` | Wraps `os.Root` over `security.trust_material_dir`. Opens a file by its path relative to the directory, so `..` and symbolic links that leave it are refused. Absolute symbolic links are refused even when the target is inside. The caller checks the regular file on the opened descriptor. |
+| `FileAdapter` | Implements `ports.JWKSPort`. Reads a `jwks_file` at construction. A failure fails startup. Re-reads it every `jwks_min_refresh`. A valid re-read replaces the set. A failed re-read keeps the last valid set and reports `degraded`. After `jwks_max_refresh` since the last success, `GetKeySet` fails closed. `Shutdown` stops the loop. |
+| `TrustDirectory` | Wraps `os.Root` over `security.trust_material_dir`. Opens paths relative to the directory. Rejects `..` and symbolic links that leave it. Rejects absolute symbolic links even when the target is inside. The caller checks the regular file on the opened descriptor. |
 
 The builder creates these adapters and injects them.
 `internal/adapters/jwtauth/` receives a `ports.JWKSPort` through its config and never imports `internal/adapters/jwks/`.

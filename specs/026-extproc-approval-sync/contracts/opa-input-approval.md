@@ -50,7 +50,7 @@ When the availability flag is `false`, policy MUST fail closed.
 ### Forbidden: approval records
 
 Approval records MUST NOT appear anywhere in the OPA input. Cache matching happens in ExtProc, outside
-the policy, using `internal/toolpattern` (spec FR-001/FR-015; ADR 035). Policies decide only whether
+the policy, using `internal/domain/approval/toolpattern` (spec FR-001/FR-015; [accepted ADR 035](../../../adrs/035-shared-tool-pattern-matching.md)). Policies decide only whether
 approval is *required*; they stay approval-agnostic.
 
 ---
