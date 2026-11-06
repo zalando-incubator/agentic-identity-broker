@@ -31,7 +31,7 @@ access decisions:
 | Step | The question that somebody must answer |
 |---|---|
 | The assistant reads Lena's Linear tickets | Is this the Linear access of *Lena*, and not of the last user or of a shared bot account? |
-| The assistant reads GitHub pull requests | Can it read only, or can it also merge and delete, because the provider scope is `repo`? |
+| The assistant reads GitHub pull requests | Does it get only the access it needs, or the broad `repo` scope that another agent on the same OAuth app asked for? |
 | The assistant sends an email to people outside the company | Did Lena see and approve *this* email, or only "Gmail access" three months ago? |
 | The request starts in Slack | Nobody is at a browser to click through an OAuth consent screen. Who proves that the request is from Lena? |
 | Next month Lena changes teams | Can she remove the assistant's GitHub access, and keep the coding agent's GitHub access? |
@@ -52,41 +52,54 @@ the summarizing assistant from the coding agent. The broker records a separate g
 each person and each agent.
 
 **Provider scopes are coarse.** GitHub's `repo` scope gives read and write access to all
-private repositories. Google scopes are similar for mail and files. A user who wants
-"read my calendar" often must approve much more. In the broker, an administrator defines
+private repositories. Google scopes are similar for mail and files. When one OAuth app
+serves many agents, it tends to ask for the union of what all of them need. In the
+broker, an administrator defines
 [permission sets](/docs/concepts/delegation-and-consent) in business terms, such as
-*Read repositories*. The user approves those sets. A grant can also expire, for example
-at the end of a project.
+*Read repositories*, and each agent requests only the sets it needs. The user approves
+those sets, and a grant can expire, for example at the end of a project. A permission set
+cannot be finer than the provider's scopes: if it contains `repo`, the provider token can
+still write. When you need finer control, an optional
+[OPA policy at the gateway](/docs/guides/token-exchange-gateway#optional-opa-gate) can
+deny specific tool calls.
 
 **Consent is scattered.** Without a broker, every MCP server runs its own authorization
 server and its own token store. Lena consents three times for the assistant. When a team
 adds a second agent, she consents three more times. No single page shows which agents can
 act for her, and no single button removes one agent. The broker gives each user
 [one consent interface](/docs/concepts/delegation-and-consent) for all agents and
-services. It gives administrators one place to revoke an agent for all users.
+services. It gives administrators one place to revoke an agent for all users. The gateway
+can cache an exchanged token for a short, configurable time, so a revocation takes
+effect when that cache entry ends. See the
+[ExtProc token cache](/docs/reference/extproc-token-cache).
 
 **OAuth consent is for a scope, not for an action.** After Lena approves Gmail access,
 OAuth has no way to ask "send *this* email to *these* people?" A prompt injection in a
 ticket can make the agent send a different email. Some agent products ask for
 confirmation in their own interface. Other products do not, and you cannot enforce it
 across products. The broker supports [tool approvals](/docs/api/approval-endpoints) at the
-gateway. The gateway holds a sensitive tool call until the user approves it once, for the
-session, or permanently. This works for every agent that goes through the gateway.
+gateway. When an OPA policy marks a tool call as `approval_required`, the gateway holds
+the call until the user approves it once, for the session, or permanently. This works
+for every agent that goes through the gateway. You must
+[enable approval gating](/docs/guides/token-exchange-gateway#enable-approval-gating)
+together with OPA. Without that policy, the gateway does not ask for approval.
 
 **OAuth expects a person at a browser.** Many agent requests start in Slack, in Google
 Chat, in a scheduled job, or in another agent. There is no redirect and no consent screen.
-The broker lets a trusted bridge request a token for the user with
-[impersonation](/docs/reference/token-exchange#user-impersonation). The broker issues the
+When the broker runs in `local`
+[server mode](/docs/concepts/oauth2-server-modes), it lets a trusted bridge request a
+token for the user with
+[impersonation](/docs/reference/token-exchange#user-impersonation). Proxy and hybrid
+modes do not support this flow. The broker issues the
 token only when that user has already delegated access to the target agent. If the user
 has not, the bridge receives a link to the consent page.
 
 **Every MCP server must do the OAuth work.** An MCP server that calls a third-party
 service must get, store, encrypt, and refresh that service's tokens for each user. With
 many internal MCP servers, you operate many authorization flows, token stores, and
-refresh loops. With the
-broker and a gateway, MCP servers only implement tools. The gateway
-[exchanges the agent's token](/docs/concepts/token-exchange) for the correct provider
-token on each request. The provider token never reaches the agent.
+refresh loops. With the broker and a gateway, MCP servers only implement tools. The
+gateway [exchanges the agent's token](/docs/concepts/token-exchange) for the correct
+provider token and gives it to the MCP server. The provider token never reaches the agent.
 
 ## If IT already approved the agent, what is left to solve?
 

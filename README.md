@@ -41,12 +41,12 @@ AI agents now read tickets, review code, and send email for the people they work
 A normal Monday: Lena asks the company assistant in Slack to *"summarize my team's open Linear tickets, check which GitHub pull requests are blocked, and email a status update to the launch stakeholders."* IT approved the assistant. The company runs MCP servers for Linear, GitHub, and Gmail. Plain OAuth still leaves these questions open:
 
 - **Which agent is this?** GitHub sees one OAuth app. It cannot tell the assistant from the coding agent that uses the same app.
-- **How much access?** GitHub's `repo` scope lets the assistant merge and delete, but it only needs to read.
+- **How much access?** When one OAuth app serves several agents, it asks for the union of their scopes. The summarizing assistant ends up with GitHub's `repo` scope, which can merge and delete.
 - **Is this email acceptable?** Lena approved "Gmail access" once. Nobody asks her about *this* email to external people, even if a prompt injection in a ticket wrote it.
 - **Who is asking?** The request starts in Slack. Nobody is at a browser to click an OAuth consent screen.
 - **How does she take it back?** Next month Lena changes teams. She wants to remove the assistant's GitHub access and keep the coding agent's access. Today, every MCP server has its own consent flow and its own token store.
 
-IT approval answers *which agents may exist in the company*. The broker answers *what each agent can do for each person, right now*: per-agent grants in business terms, expiry and revocation in one consent interface, approvals for sensitive tool calls, and token exchange at the gateway so that MCP servers only implement tools.
+IT approval answers *which agents may exist in the company*. The broker answers *what each agent can do for each person, right now*: per-agent grants in business terms, expiry and revocation in one consent interface, approvals for sensitive tool calls (with an OPA policy at the gateway), and token exchange at the gateway so that MCP servers only implement tools.
 
 Read [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/why) for the full answers to *"Why is OAuth delegation not enough?"*, *"What is left after IT approves an agent?"*, and *"Is this only for enterprises?"*
 
@@ -71,7 +71,7 @@ Read [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/
 
 ### Internal MCP Servers
 
-**The problem:** An MCP server that calls GitHub or Google must get, store, encrypt, and refresh a token for every user. With twenty internal MCP servers, you run twenty authorization flows and twenty token stores, and users consent again for every server. **With the broker:** a gateway such as [Agentgateway](https://agentgateway.dev) exchanges the agent's token for the correct provider token on each request. MCP servers only implement tools, and agents reach hundreds of MCP servers through one channel.
+**The problem:** An MCP server that calls GitHub or Google must get, store, encrypt, and refresh a token for every user. With twenty internal MCP servers, you run twenty authorization flows and twenty token stores, and users consent again for every server. **With the broker:** a gateway such as [Agentgateway](https://agentgateway.dev) exchanges the agent's token for the correct provider token and passes it to the MCP server. The gateway can cache that token briefly, so a revocation takes effect when the cache entry ends. MCP servers only implement tools, and agents reach hundreds of MCP servers through one channel.
 
 ### MCP Servers for SaaS
 
@@ -83,11 +83,11 @@ Read [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/
 
 ### Delegation Chains Without User Presence
 
-**The problem:** A user asks for something in Slack or Google Chat. There is no browser and no OAuth redirect, but the work still needs that user's permissions in another system. **With the broker:** a trusted chat bridge requests a token for the user with impersonation. The broker issues it only when the user has already delegated access to that agent. Otherwise the bridge gets a link to the consent page.
+**The problem:** A user asks for something in Slack or Google Chat. There is no browser and no OAuth redirect, but the work still needs that user's permissions in another system. **With the broker:** in `local` server mode, a trusted chat bridge requests a token for the user with impersonation. The broker issues it only when the user has already delegated access to that agent. Otherwise the bridge gets a link to the consent page.
 
 ### Central Authorization Prompts
 
-**The problem:** An agent is about to send an email to an external address or share a document. Some agent products ask the user first, others do not, and you cannot enforce it across products. **With the broker:** the gateway holds the tool call until the user approves it once, for the session, or permanently. This works for every agent that goes through the gateway and leaves a central audit trail.
+**The problem:** An agent is about to send an email to an external address or share a document. Some agent products ask the user first, others do not, and you cannot enforce it across products. **With the broker:** when an OPA policy at the gateway marks the call as `approval_required`, the gateway holds it until the user approves it once, for the session, or permanently. This works for every agent that goes through the gateway and leaves a central audit trail.
 
 ## Documentation
 
