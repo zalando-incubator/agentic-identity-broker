@@ -5,7 +5,75 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-10-30
+
+**Blocked; approved contract and compiling acceptance tests are added, but no feature behavior or migration is implemented.**
+
+### Progress
+
+- T008: `api/enduser/openapi.yaml` is now version **1.2.0** and carries the approved authorization,
+  protected continuation, local/proxy scope, exchange-recovery, consent and session-detail deltas.
+  The legacy UUID session route and its schemas remain unchanged. The new dependent-agent list
+  references the approved existing `AffectedAgent` schema (`agent_id`, `display_name`).
+- T101: `tests/integration/incremental_authorization_contract_test.go` validates nullable session
+  detail, required fields, all four public baseline/candidate usability values, required requested
+  arrays and response examples. The first run compiled and failed because `allOf` with nullable
+  did not admit `session: null`, and the token error enum omitted `invalid_scope`. An explicit
+  null-only alternative and the approved error enum made these tests green without weakening the
+  non-null `SessionStatus` requirements or changing legacy schemas.
+- T015: `tests/e2e/service_session_page_test.go` now owns exactly the three US2 backend scenarios
+  S1/S3/S4. It uses fresh production bootstrap/storage and existing fixtures per scenario, checks
+  both identifier forms, principal-owned dependent agents and absence of read-triggered refresh,
+  and includes provider sign-in/return and recovery/exchange retry without grant mutation.
+  These are executable acceptance tests, not passing feature behavior. The full backend run
+  proves all three compile and fail on missing functionality: known-service detail is 404 instead
+  of 200, unknown-service error is plain text instead of JSON, and recovery lacks `scope`.
+- `ARCHITECTURE.md` now identifies the 1.2.0 approved contract separately from incomplete runtime
+  implementation. `spec.md`, `plan.md` and the supplied approval are unchanged.
+
+### Validation in this run
+
+| Command | Actual outcome |
+|---|---|
+| `just check` | Exit 0 after formatting; vet and installed golangci-lint pass with 0 issues. An earlier formatting failure was corrected. |
+| `just test` | Exit 0. The first attempt timed out after 180 seconds; the subsequent complete run passed. Baseline package coverage does not implement Feature 055. |
+| `just test-integration` | Exit 0, including the new contract tests. Initial dependency setup timed out; the first completed run exposed the two schema failures described above, then the corrected contract passed. |
+| `go test ./tests/integration -run '^TestIncrementalAuthorization' -count=1 -v` | Exit 0 after the observed semantic-red schema failures. |
+| `ginkgo --label-filter='!performance' --focus='Incremental Authorization Service Session Page' ./tests/e2e/` | Exit 1; all 3 new scenarios compile and fail for missing behavior. |
+| `just test-e2e-backend` | Exit 1 after successful frontend build: 911 passed, the 3 new Feature 055 scenarios failed, 0 pending, 10 excluded by the existing suite labels. This is semantic-red evidence, not a passing acceptance gate. |
+
+Ginkgo and golangci-lint are now exposed by the workflow's existing setup. The earlier missing-tool
+blocker no longer applies to them. No tool versions or installation steps were changed here.
+Real PostgreSQL/container validation and the complete frontend/ExtProc journeys and full
+`just verify` gate are still outstanding; no new result is claimed for those gates. Docker-in-Docker
+is unsupported in this sandbox, so the real database gate needs a supported execution environment.
+
+### Remaining work and required maintainer actions
+
+The supplied approval still covers only its original 11 items. The two contract revisions below
+remain unapproved; this run neither edits their accepted ADR text nor implements them.
+
+1. **T099 / I2**: approve the proposed pre-forward grammar/service/agent-eligibility validation and
+   exact proxy-refresh errors, or an explicit constitution-compatible alternative. Authoritative
+   proposal and alternative remain in the previous checkpoint's **Remaining reanalysis contract
+   boundaries** section. Do not add a usability check or post-upstream-response veto.
+2. **T100 / U4**: approve UUID-only emission/recovery for complete canonical IDs `.` and `..`, or
+   a compatible alternative. Reconcile the spec/plan in an authorized pre-implementation run;
+   implementation cannot silently amend them or widen the existing approval.
+3. Provide a supported real-PostgreSQL execution environment for migration/repository validation
+   and the final full gate; do not waive those tasks.
+
+| Deferred tasks | Remaining work / reason |
+|---|---|
+| T003, T099–T100 | The emission model and the two API/ADR boundary revisions need authorized reconciliation and sign-off. T008 contains only the original approved deltas. |
+| T011–T014, T016–T018 | Finish shared fixtures and the other 16 owning scenarios, including both browser journeys; run all 19 compiling semantic-red tests before foundations. The three T015 scenarios are written but not green. |
+| T019–T038 | Shared scope/coverage/usability, bindings in both adapters, real migration tests/SQL, JWE continuity and local issuance remain behind the incomplete T018 checkpoint. |
+| T039–T079 | All user-story behavior, domain/handler/frontend tests, integrated operator/API documentation and green acceptance journeys remain. The three new tests intentionally expose the absent session-detail and recovery behavior. |
+| T080–T098 | All final compliance gates, real persistence validation, all acceptance journeys, four screenshots and `just verify` remain. No checklist marker is changed or gate waived. |
+
 ## Implementation checkpoint — 2026-10-29
+
+This historical checkpoint is superseded by the 2026-10-30 progress and validation above.
 
 **Blocked; setup/design-precondition progress only. No feature behavior, migration or new acceptance test is implemented.**
 
