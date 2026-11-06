@@ -36,7 +36,11 @@ just test-integration-infra
 
 Expected: migration `046_add_service_scope_bindings` applies, rolls back, and reapplies. Bindings
 survive the round trip on `authorization_codes` and `refresh_token_sessions`, and `NULL` rows stay
-readable.
+readable. Both adapters enforce exact successor binding inheritance and scope subset. Exercise code
+issuance with full scopes → successful narrowed refresh → scope-less successor refresh: successor
+`Scope` and response/JWT stay narrowed, every original binding survives and is rechecked, and neither
+a scope-less refresh nor a retained binding can restore a removed scope. Include third-step service
+failure and re-requested removed-scope refusal, both without token consumption.
 
 ## 3. Backend acceptance journeys (spec Journeys 1, 3, and 4)
 
@@ -59,6 +63,23 @@ The [task mapping](./tasks.md#acceptance-scenario--task-mapping) assigns exactly
 to each of the 19 scenarios; supporting unit/integration assertions do not duplicate acceptance
 ownership. Run `just test-e2e-backend` for these broker-plus-ExtProc and proxy journeys, and
 `just test-e2e-frontend` for the two browser journeys.
+
+### Required regression variants
+
+Keep these variants inside their existing owning scenarios, with semantic-red assertions first:
+
+- US1 S4/S7: all-scopes and no-explicit-requirements agents, empty configured required scopes,
+  selected Read Access needing `repo user:email`, but valid access with only `repo`. Selecting the
+  failing candidate disables Save, deselecting it can enable Save; direct submission and refresh
+  cannot claim usability until the effective union is present. Complete login/Save/issuance/exchange.
+- US4 S2: Save successfully, deterministically reassign the canonical ID, then follow the returned
+  authorize URL with its original JWE. Assert `invalid_scope`, no authorization code and no proxy
+  redirect, even when the replacement service has a usable session and grant coverage.
+- US3 S1: full → narrowed → scope-less refresh retains narrowed scopes and every assurance binding;
+  test subsequent unusability and attempts to restore removed scopes without consuming the token.
+- Supporting T024 unit cases: valid scope-sufficient, identity-matching access with absent refresh
+  and with expired refresh is usable without provider calls; expired access with those same refresh
+  states is unusable.
 
 ### Maintained UI captures
 

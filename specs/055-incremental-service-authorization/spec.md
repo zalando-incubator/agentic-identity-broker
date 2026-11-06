@@ -65,6 +65,34 @@ approved yet. All of them are registered in `plan.md` Approval Items.
 - **`client_credentials` (API-LOCAL-SCOPES)**: A virtual scope has no user session to check, so the
   `client_credentials` grant rejects it with `invalid_scope`. FR-002 is updated.
 
+### Remediation — analysis U1, U2, U3 and I1
+
+- **U1 — Effective provider scopes (API-CONSENT, API-LOCAL-SCOPES, ADR-SCOPES; Proposed)**:
+  FR-003/FR-008–FR-010 now distinguish configured required-scope coverage from session usability
+  for the selected permission-set union after exchange's ceiling rule. All-scopes and agents without
+  explicit requirements use the full union even when configured `required_scopes` is empty.
+  Consent returns candidate contribution usability so unsaved toggles can gate Save without exposing
+  raw scopes. *Reason*: prevent a successful step-up/refresh followed by scope-insufficient exchange.
+  *Main alternative*: check only configured scopes, which misses these two cases. The new candidate
+  field is part of the Proposed API-CONSENT item, not an approved API.
+- **U2 — Protected authorize re-entry (API-CONSENT, ADR-SCOPES; Proposed)**: FR-007/FR-011/FR-019
+  require the post-Save `redirect_url` to carry the same JWE as `session_token`; authorization
+  independently validates original request, expiry, user, agent and scope-to-UUID bindings before
+  issuing a code or proxy redirect. Journey 1 Step 7 is corrected. *Reason*: Save-time validation
+  alone does not cover canonical reassignment before re-entry. *Main alternative*: a plain original
+  URL, which loses identity continuity. Reuse existing JWE protection rather than add a state store.
+- **U3 — Durable refresh narrowing (API-LOCAL-SCOPES, DEC-004, ADR-SCOPES; Proposed)**:
+  FR-012/FR-020 define response/JWT/successor `Scope` as the requested subset (or predecessor current
+  `Scope` when omitted). All original bindings remain immutable for continuing-service checks, even
+  when their scope is removed; they cannot restore removed privileges. *Reason*: distinguish the
+  successor's grantable scopes from its assurance set. *Main alternative*: retain full successor
+  `Scope`, which would restore dropped scopes on scope-less refresh. The existing JSONB design is
+  sufficient; no extra column is proposed.
+- **I1 — Mutually exclusive usability**: FR-008 explicitly permits valid, scope-sufficient,
+  identity-matching access with absent/expired refresh and makes absent/expired refresh definitive
+  only once access expires. *Reason*: match the existing valid-access edge case and actual calls.
+  *Main alternative*: require refreshability even for valid access, causing unnecessary login.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Recover an optional-service tool call through focused consent (Priority: P1)
@@ -83,7 +111,7 @@ An MCP client learns which broker-managed service its current operation needs. I
 4. **Given** two optional permission sets cover GitHub and neither is selected, **When** the user chooses a set or combination of sets that includes GitHub and supplies all configured required provider scopes, logs in, and saves, **Then** no other optional set is automatically selected or locked, the original authorization resumes unchanged, and the retried tool call succeeds.
 5. **Given** consent requests GitHub, **When** a client submits a grant without GitHub covered by a selected permission set, **Then** the broker rejects the submission without replacing the existing grant or completing authorization, even if a usable GitHub session exists.
 6. **Given** a request includes multiple permitted service scopes with one service not covered or unusable, **When** authorization runs, **Then** all requested services are treated as required for that request, every unsatisfied service is explained, and authorization proceeds only after all are satisfied; the agent's permanent service requirements do not change.
-7. **Given** an access token is expired but its provider refresh succeeds, **When** interactive authorization checks the requested service, **Then** it uses the refreshed session and continues without unnecessary login when the grant already covers the configured scopes.
+7. **Given** an access token is expired but its provider refresh succeeds, **When** interactive authorization checks the requested service, **Then** it uses the refreshed session and continues without unnecessary login when grant coverage and effective provider scopes are satisfied. For `require_all_scopes` and agents without explicit requirements, a refreshed or already-valid token missing any selected permission-set scope instead requires repair; empty configured required scopes cannot make it usable.
 
 ### User Story 2 - Repair the service by opening its scope link (Priority: P1)
 
@@ -110,7 +138,7 @@ A user and client should not mistake a broker refresh for proof that an unusable
 
 **Acceptance Scenarios**:
 
-1. **Given** a locally issued refresh token already carries GitHub's virtual scope and its grant remains active, **When** a subsequent refresh finds GitHub still covered and usable, **Then** refresh succeeds; if a later refresh finds GitHub unusable, it returns `invalid_scope` instead of issuing another unusable token.
+1. **Given** a locally issued refresh token already carries GitHub's virtual scope and its grant remains active, **When** a subsequent refresh finds GitHub still covered and usable for the effective permission-set scopes, **Then** refresh succeeds; if a later refresh finds GitHub unusable, including a valid token missing a permission-set scope under all-scopes/no-requirements configuration, it returns non-consuming `invalid_scope`. A successful narrowed refresh persists only the narrowed `Scope` while retaining all service bindings; the next scope-less refresh cannot restore removed scopes and must still recheck GitHub.
 2. **Given** a proxy-mode authorization request with ordinary scopes plus GitHub's virtual scope, **When** the broker verifies coverage and usability, **Then** it sends only the ordinary scopes upstream, retains the original request for consent continuation, and never modifies the upstream token's signed claims to add a virtual scope.
 3. **Given** a proxy-mode refresh carrying GitHub's virtual scope and an unusable GitHub session, **When** it is forwarded, **Then** no broker-only scope reaches the upstream provider, the broker forwards the upstream outcome including any rotated refresh token without a post-response service-usability veto, and the next attempted GitHub exchange still fails with its service-specific challenge and recovery action until repaired.
 4. **Given** a local authorization code obtained after GitHub step-up, **When** the code is exchanged, **Then** both the granted token-response `scope` and signed access-token `scope` claim include the granted GitHub virtual scope, subsequent local refresh retains and rechecks that service even without a request `scope`, and existing PKCE, client authentication, code replay protection and grant revocation rules remain enforced.
@@ -134,11 +162,11 @@ Operators can explain and deploy the scope challenge without publishing a catalo
 
 - Duplicate canonical/UUID scopes for one service resolve to one requested service, not duplicate requirements or banners.
 - An optional service omitted from the requested scopes remains optional. Existing required-service checks still apply even if none is requested.
-- A valid access token does not require waiting for a refresh solely to satisfy this feature. An expired token without usable refresh or configured required provider scopes is not a usable session.
+- A valid, effective-scope-sufficient and identity-matching access token is usable without refresh, including when its refresh token is absent or expired. Expired access without usable refresh is unusable; missing effective provider scopes or client-identity mismatch is unusable even with valid access.
 - A timeout, rate limit, or transient provider/server/storage failure must not be recorded as definitive provider revocation or permit authorization without a verified usable session.
 - A refresh rejection recorded earlier must be visible to consent, session detail/listing, tool exchange and background maintenance. Successful deliberate re-login clears the unusable condition.
 - Concurrent successful reconnect and an older failing refresh must not cause the new session to be marked unusable. Termination must not be undone by late refresh or callback work.
-- Permission sets can cover the same service with different scope subsets. Coverage must include the service and the agent's configured required scopes; marking a set as a candidate must not imply that selecting it alone always suffices.
+- Permission sets can cover the same service with different scope subsets. Coverage must include the service and the agent's configured required scopes; marking a set as a candidate must not imply that selecting it alone always suffices. Session usability additionally checks the effective selected union: intersect with configured required scopes for fixed-scope requirements, but use the full union for `require_all_scopes` or no explicit requirements. Live toggles combine candidate usability; an unselected failing candidate does not block Save.
 - If no available selection can supply configured required scopes, consent explains the unsatisfied requirement and cannot save its way into a loop; operator configuration repair may be needed.
 - Service removal or requirement changes during consent are revalidated before continuation. Forged, expired, wrong-agent or wrong-user authorization context cannot change the request's service requirements.
 - A grant denial with an existing session needs consent, not simply another provider login. Opening a service page alone does not grant an agent permission.
@@ -328,10 +356,17 @@ Content-Type: application/json
 HTTP/1.1 201 Created
 Content-Type: application/json
 
-{"data":{"id":"990e8400-e29b-41d4-a716-446655440020","principal":"alice@example.com","agent_id":"550e8400-e29b-41d4-a716-446655440000","granted_permission_sets":{"770e8400-e29b-41d4-a716-446655440002":["880e8400-e29b-41d4-a716-446655440011"],"770e8400-e29b-41d4-a716-446655440001":["880e8400-e29b-41d4-a716-446655440010"]},"created_at":"2026-10-26T09:00:00Z","updated_at":"2026-10-27T09:30:45Z"},"redirect_url":"/oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcallback&scope=openid%20offline_access%20https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256"}
+{"data":{"id":"990e8400-e29b-41d4-a716-446655440020","principal":"alice@example.com","agent_id":"550e8400-e29b-41d4-a716-446655440000","granted_permission_sets":{"770e8400-e29b-41d4-a716-446655440002":["880e8400-e29b-41d4-a716-446655440011"],"770e8400-e29b-41d4-a716-446655440001":["880e8400-e29b-41d4-a716-446655440010"]},"created_at":"2026-10-26T09:00:00Z","updated_at":"2026-10-27T09:30:45Z"},"redirect_url":"/oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcallback&scope=openid%20offline_access%20https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&session_token=SYNTHETIC_JWE"}
 ```
 
-The browser repeats that request; the now-satisfied checks produce `302 Location: https://agent.example.com/callback?code=SplxlOBeZQQYbYS6WxSbIA&state=af0ifjsldkj`.
+The browser follows that server-built URL unchanged. Authorization authenticates the same JWE's
+original expiry, principal and agent, compares the request excluding only `session_token` with the
+sealed original URL, and re-resolves the scopes against the original UUID bindings. Only then do
+the now-satisfied checks produce `302 Location: https://agent.example.com/callback?code=SplxlOBeZQQYbYS6WxSbIA&state=af0ifjsldkj`.
+The continuation token is not sent to the callback or upstream. If `github` is reassigned after
+Save but before this request, the result is `error=invalid_scope` at the validated client redirect,
+with the original `state`, no code and no upstream redirect; neither current grant coverage nor a
+usable replacement service can substitute for the original binding.
 
 **Step 8 — 09:30:47: code exchange and tool retry**
 
@@ -368,6 +403,38 @@ The response above illustrates FR-020's **Proposed visible-scope contract**, res
 ```
 
 Audience is absent in this example because no audience-adding claims policy is configured; this feature does not change existing audience validation. `iat` is 09:30:47 and `exp` is 10:30:47. The next tool call obtains GitHub's fresh access token and succeeds. A later local refresh rechecks GitHub even if the request omits the optional `scope` parameter, using the previously granted scope set. Definitive service failure returns `invalid_scope` rather than silently restarting the loop.
+
+**Step 9 — Narrowing and the next scope-less refresh (Story 3, Scenario 1 variant)**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=SYNTHETIC_REFRESH_2&client_id=550e8400-e29b-41d4-a716-446655440000&scope=openid%20offline_access
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"SYNTHETIC_NARROW_JWT","token_type":"Bearer","expires_in":3600,"refresh_token":"SYNTHETIC_REFRESH_3","scope":"openid offline_access"}
+```
+
+Decoded synthetic JWT payload: `{"iss":"https://broker.example.com","sub":"alice@example.com","agent_id":"550e8400-e29b-41d4-a716-446655440000","scope":"openid offline_access","iat":1793093507,"exp":1793097107,"jti":"b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6f"}`.
+Audience remains absent as in Step 8. The successor's persisted `Scope` is also `openid offline_access`;
+its immutable GitHub binding remains an assurance obligation, not a grantable scope. A subsequent
+scope-less refresh with `SYNTHETIC_REFRESH_3` returns only `openid offline_access` after rechecking
+GitHub. If GitHub has become unusable it instead returns `400 invalid_scope`, without consuming
+that token. Re-requesting the dropped GitHub scope is widening and requires interactive consent.
+
+**Effective-scope variant (Story 1, Scenarios 4/7; Story 3, Scenario 1)**: Set the GitHub requirement
+to `require_all_scopes: true` with empty `required_scopes`, or remove explicit service requirements
+while keeping declared permission sets. A valid session containing only `repo` cannot satisfy
+selected GitHub Read Access (`repo user:email`), even though configured required scopes are empty.
+The baseline may be usable, but Read Access's candidate usability is `unusable` and Save is disabled.
+Choosing only Issue Triage (`repo`) enables Save; selecting Read Access disables it again until
+provider login supplies `user:email`. Direct submission and local refresh apply that same effective
+union and fail closed before writes/rotation. A successful full-scope login then permits Save,
+protected re-entry, issuance and a successful exchange. Candidate scope lists are not exposed.
 
 **Observable result**: One service-focused consent interaction restores the tool call without changing optional permission selections behind Alice's back. Variant: when expired GitHub credentials refresh successfully at Step 4, existing coverage permits proceeding without this login screen. With multiple service requests, the same completion rule applies to every requested service.
 
@@ -520,16 +587,16 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 
 - **FR-001**: Define a broker-only virtual scope per configured third-party service: the configured public origin plus `/sessions/{identifier}`. Emit the canonical ID when present, otherwise the UUID; accept both current identifier forms.
 - **FR-002**: Recognize virtual scopes only under the configured broker public origin and the service-session path. Reject malformed, unknown or agent-unconfigured broker service scopes without creating a grant or forwarding them upstream. Do not derive trusted origins from request Host or user input. The `client_credentials` grant rejects every virtual scope with `invalid_scope`.
-- **FR-003**: A virtual scope means the authenticated user needs a usable session for that service, covered by their selected grant and the agent's configured required provider scopes. It does not independently grant provider scopes or choose permission sets.
+- **FR-003**: A virtual scope means the authenticated user needs a usable session for that service, covered by their selected grant and the agent's configured required provider scopes. Usability requires the same effective provider scopes as exchange: selected permission-set union intersected with the required-scope ceiling for an explicit fixed-scope requirement, or the full union for `require_all_scopes` and agents without explicit requirements. Preserve exchange's structural/inclusion/definition and empty-intersection denials. It does not independently grant provider scopes or choose permission sets.
 - **FR-004**: A missing/unusable service session or insufficient service grant during token exchange MUST include the resolved service's canonical virtual scope alongside the existing appropriate recovery action. Nonrecoverable errors MUST NOT acquire misleading service recovery information.
 - **FR-005**: The gateway MUST propagate the broker-provided service scope into its existing 403 `insufficient_scope` challenge, preserve its recovery URL and URL-elicitation body, and include a configured protected-resource metadata URL when available.
 - **FR-006**: Recoverable service-session action links MUST return the signed-in user to that service's session page after provider login rather than the generic list. Grant-denial recovery MUST still take the user to consent rather than falsely imply login grants permission.
-- **FR-007**: Interactive authorization MUST enforce all requested services in addition to permanent required services, preserving the original request through consent and not permanently changing the agent configuration.
-- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require configured provider scopes and existing client-identity checks. Definitive provider rejection MUST persist unusability consistently for all session consumers. Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
-- **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the required scopes, verified usability and each candidate set's supplied required scopes; it MUST show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
-- **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable. The broker MUST enforce the same rule on submitted grants before changing the grant or continuing authorization.
-- **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
-- **FR-012**: Local refresh MUST NOT widen its original scope set; adding a virtual scope requires interactive authorization and returns `invalid_scope` without consuming an otherwise valid refresh token. Local refresh with already-granted virtual scopes MUST recheck all those services, including when `scope` is omitted, and return a scope error if they are no longer covered or usable. Existing revoked-grant errors retain their existing handling.
+- **FR-007**: Interactive authorization MUST enforce all requested services in addition to permanent required services, preserving the original request and authenticated scope-to-UUID bindings through consent submission and subsequent browser authorize re-entry, and not permanently changing the agent configuration. Re-entry MUST validate the sealed context independently before code issuance or proxy redirect.
+- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require effective provider scopes (FR-003) and existing client-identity checks. Valid access with sufficient effective scopes and matching identity remains usable when refresh is absent or expired; refresh absence/expiry disqualifies a session only when access has expired. Definitive provider rejection MUST persist unusability consistently for all session consumers. Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
+- **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the configured required scopes, verified baseline usability and each candidate set's supplied required scopes and effective-contribution usability against the same verified session snapshot; it MUST show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
+- **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable for the live selection's effective scope union. The UI combines baseline usability and every selected candidate's contribution usability; unselected unusable candidates do not block Save. The broker MUST freshly enforce the same rule on submitted grants before changing the grant or continuing authorization.
+- **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Successful Save MUST return a server-built original authorize URL carrying that same JWE as `session_token`; re-entry uses the sealed original request/bindings, rejects request/user/agent/expiry or binding mismatches, and never forwards the continuation token upstream or to the client callback. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
+- **FR-012**: Local refresh MUST NOT widen its original scope set; adding a virtual scope requires interactive authorization and returns `invalid_scope` without consuming an otherwise valid refresh token. Successful narrowing MUST return and persist the narrowed scope set; later scope-less refresh MUST NOT restore removed scopes. Local refresh MUST retain all original service bindings as assurance-only obligations and recheck all those services even after narrowing, including when `scope` is omitted, and return a scope error if they are no longer covered or usable. A removed scope cannot be requested again without interactive authorization. Existing revoked-grant errors retain their existing handling.
 - **FR-013**: Strip virtual scopes from upstream authorization and refresh requests in proxy flows, retaining ordinary scopes and current protocol protections. Never add broker claims to an upstream signed token. Hybrid flows follow the local or proxy behavior chosen for the agent, not a third policy.
 - **FR-014**: Virtual scopes MUST NOT appear in the broker's published discovery scope catalog. Clients learn them from challenges or operator route configuration.
 - **FR-015**: Signed-in users MUST be able to open `/sessions/{canonicalId-or-UUID}` for service identity, session status/scopes/expiry, dependent agents, Login when absent/unusable, and existing Refresh and Terminate actions when applicable. Unknown services show not found; no-session is not unknown-service.
@@ -538,7 +605,7 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 - **FR-018**: Preserve existing refresh concurrency, rotation, reconnect precedence, and update-only termination guarantees when persisting unusability. An older refresh failure MUST NOT invalidate credentials established by a newer successful reconnect.
 
 - **FR-019 (Proposed; DEC-001)**: Only service UUID scopes are durable across canonical-ID renames. Resolve only current canonical IDs and UUIDs; do not retain historical aliases. Emit the current canonical scope after rename. A local refresh bound to a former canonical scope MUST return `invalid_scope` without consuming an otherwise valid refresh token; clients must obtain a fresh challenge and interactively authorize the new scope. Preserve the originally resolved service identity in authorization/refresh continuity so canonical-ID reuse cannot redirect an existing grant to another service. Already-issued signed access tokens retain their normal expiry and are not rewritten.
-- **FR-020 (Proposed; API-LOCAL-SCOPES)**: Broker-issued local access-token `scope` claims and granted token-response `scope` values MUST include the granted virtual scopes consistently, in the exact form the client requested. Retain the granted service set for local refresh revalidation, including when request `scope` is omitted, subject to FR-012 and FR-019. Proxy responses MUST NOT manufacture virtual scopes or change upstream signed claims.
+- **FR-020 (Proposed; API-LOCAL-SCOPES)**: Broker-issued local access-token `scope` claims and granted token-response `scope` values MUST include the granted virtual scopes consistently, in the exact form the client requested. Retain the originally bound service set for local refresh revalidation, including when request `scope` is omitted or narrowed, subject to FR-012 and FR-019. Refresh response/JWT and successor `Scope` equal the requested subset or predecessor current `Scope` when omitted; retained bindings do not restore dropped scopes. Proxy responses MUST NOT manufacture virtual scopes or change upstream signed claims.
 - **FR-021 (Proposed; DEC-002)**: This release's proxy refresh strips virtual scopes and forwards the upstream refresh outcome through the existing proxy handling, preserving any returned rotated refresh token. It MUST NOT add a post-upstream-response service-usability veto. A successful proxy refresh is not proof of broker service coverage/usability; subsequent service exchange and interactive authorization retain their checks, challenges and recovery. No parity with local refresh assurance is promised.
 
 ### Domain Model *(if applicable - document before API or database design)*

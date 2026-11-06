@@ -23,7 +23,11 @@ services.
    scopes.
 2. **Meaning**: A virtual scope requires, for this request only, that the authenticated user hold a
    usable session for the service. A selected permission set must cover that session for the
-   agent, including the agent's configured required provider scopes. A virtual scope never grants
+   agent, including the agent's configured required provider scopes. Usability checks the effective
+   selected permission-set union after exchange's ceiling rule; all-scopes and agents without explicit
+   requirements use the full union even when configured required scopes are empty. Consent combines
+   baseline and selected candidates' verified contribution usability for unsaved toggles, without
+   exposing raw scope lists. A virtual scope never grants
    provider scopes, never selects permission sets, and never adds a service beyond the agent's
    configuration.
 3. **One owner**: A new bounded context, `internal/domain/servicescope/`, owns parsing, formatting,
@@ -33,12 +37,20 @@ services.
    - Granted virtual scopes appear in the token-response `scope` and the access-token `scope`
      claim, in their requested form.
    - Refresh cannot widen to a virtual scope that was not granted (`invalid_scope`).
-   - Refresh re-checks every granted virtual scope, even when `scope` is omitted. The check runs
-     before rotation, so a failure never consumes the refresh token.
+   - Refresh re-checks every original binding, even when `scope` is omitted or narrowed. The check
+     uses current grant-derived effective provider scopes and runs before rotation, so a failure
+     never consumes the refresh token.
+   - Successful narrowing returns and persists the narrowed `Scope`, while inheriting all bindings
+     unchanged as assurance-only obligations. Scope-less successor refresh cannot restore removed
+     scopes, and retained bindings cannot authorize widening. Validation distinguishes code-granted
+     bindings (within `Scope`) from refresh assurance bindings (possibly outside current `Scope`).
 5. **Identity pinning**: Each granted virtual scope's resolved service UUID is persisted as a
    Service-Scope Binding on the authorization code and refresh-token session. Refresh fails closed
    when the scope no longer resolves to the bound UUID. Only UUID scopes survive canonical-ID
-   renames, and no alias history is kept.
+   renames, and no alias history is kept. Successful consent Save returns the sealed original
+   authorize URL with the same JWE `session_token`. Authorize re-entry independently validates the
+   original request, expiry, user, agent and bindings before code issuance or proxy redirect. The
+   token is consumed locally; Save-time validation alone is insufficient.
 6. **Proxy**:
    - Proxy authorization checks requested services exactly as local authorization does, then
      removes virtual scopes from the upstream request.
@@ -61,6 +73,9 @@ services.
 - Agents with a non-empty `allowed_scopes` can request virtual scopes without listing them. The
   broker checks eligibility separately.
 - Proxy refresh gives weaker assurance than local refresh. This is documented.
+- Scope narrowing durably removes privileges without dropping original continuing-service checks.
+- Consent adds per-candidate contribution usability and a protected authorize continuation parameter;
+  both remain Proposed under API-CONSENT, alongside the local narrowing contract under API-LOCAL-SCOPES.
 
 ## Alternatives considered
 
@@ -71,6 +86,12 @@ services.
   recovery page. They were rejected because the spec requires a scope URL that a person can open.
 - **Making requested services permanently mandatory**: This changes agent configuration based on
   client input. It was rejected because it violates FR-007 and SR-001.
+- **Check only configured required scopes**: Rejected because all-scopes and no-requirements agents
+  can have empty required scopes but nonempty effective provider scopes.
+- **Plain post-Save authorize URL**: Rejected because it loses authenticated identity bindings
+  between Save and authorization re-entry.
+- **Retain full successor Scope after narrowing / drop removed bindings**: Rejected because the
+  former restores dropped privileges on scope-less refresh and the latter evades continuing checks.
 - **Canonical-ID alias history**: This adds retention and ownership policy. It was rejected for
   this release (DEC-001).
 

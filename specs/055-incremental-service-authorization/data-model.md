@@ -28,7 +28,9 @@ own UUID primary key (ADR 013).
 ### ServiceScopeBinding
 
 `map[string]id.ServiceID`, keyed by `VirtualServiceScope.Raw`. It is created when the authorization
-endpoint resolves the scope. It is immutable afterwards and inherited by refresh successors. JSON
+endpoint resolves the scope. It is immutable afterwards and inherited in full by refresh successors,
+including after scope narrowing. On refresh rows, keys outside current `Scope` are assurance-only:
+they require continuing-service checks but never authorize re-granting a removed scope. JSON
 form: `{"https://broker.example.com/sessions/github":"880e8400-e29b-41d4-a716-446655440010"}`.
 
 ### RequestedServiceSet
@@ -52,19 +54,24 @@ A repository failure surfaces as `server_error`. It is never treated as unknown.
 | `ServiceID` | The requested service |
 | `CoveringPermissionSetIDs` | The agent's declared sets whose `service_scopes` include the service. These are the candidates, whether or not they are selected. |
 | `Selected` | The service is included in at least one selected grant entry. |
-| `RequiredScopesCovered` | The union of selected-set scopes, intersected with the ceiling, is a superset of the requirement's `required_scopes`. With `require_all_scopes`, inclusion is enough. |
-| `Usability` | One of `usable`, `missing`, `unusable_definitive`, or `unverifiable_transient` (see SessionUsability) |
+| `RequiredScopesCovered` | The union of selected-set scopes, intersected with the ceiling, is a superset of the requirement's `required_scopes`. With `require_all_scopes` or no explicit requirements, inclusion and definition suffice for coverage, but usability still requires the full effective union. |
+| `EffectiveScopes` | Selected permission-set union for this service, intersected with `required_scopes` only for an explicit fixed-scope requirement. All-scopes and agents without requirements use the full union. Preserve exchange's structural/inclusion/definition and empty-intersection denials (research R4). |
+| `Usability` | One of `usable`, `missing`, `unusable_definitive`, or `unverifiable_transient`, verified against `EffectiveScopes`, not just configured required scopes (see SessionUsability) |
 | `Satisfied` | `Selected && RequiredScopesCovered && Usability == usable` |
 
 ### SessionUsability
 
-This value is returned by `OAuth2SessionService.CheckServiceUsability`. It is not persisted.
+This value is returned by `OAuth2SessionService.CheckServiceUsability` for an explicit
+`effectiveScopes` input. It is not persisted. Identity and scope checks apply whether access is
+currently valid or refreshed; the refresh-token state alone cannot disqualify valid access.
+Consent evaluates baseline and candidate contributions against one verified session snapshot,
+then combines the selected candidates (research R4); submission recomputes the full live union.
 
 | Value | Produced when |
 |---|---|
-| `usable` | The access token is valid, or an eligible refresh succeeded, and the stored scopes cover the required scopes. |
+| `usable` | Access is valid (even without a refresh token or with expired refresh), or an eligible expired-access refresh succeeded; stored scopes cover the effective scopes and established client identity matches. |
 | `missing` | No session row exists. |
-| `unusable_definitive` | Any of the following: <br>• the refresh token is absent or expired; <br>• the refresh was rejected with `invalid_grant`, which persists the marker; <br>• the stored scopes are insufficient; <br>• the established client identity does not match. |
+| `unusable_definitive` | Access is expired and refresh is absent, expired, or rejected with `invalid_grant` (only rejection persists the marker); or stored scopes do not cover the effective scopes; or established client identity does not match. |
 | `unverifiable_transient` | Provider 5xx or 429, network error, storage error, or cancellation. No marker is written. |
 
 ## Extended aggregates and records
@@ -77,8 +84,13 @@ This value is returned by `OAuth2SessionService.CheckServiceUsability`. It is no
 | `ServiceScopeBindings` | `service_scope_bindings` (omitted when empty) | Bindings for the virtual scopes in `original_url` |
 
 The TTL (10 min), the principal binding, the agent binding, and `original_url` normalization are
-unchanged (ADR 016). When the token is consumed, the scope in `original_url` is resolved again and
-must reproduce exactly these IDs and bindings. Otherwise the session token is rejected as invalid.
+unchanged (ADR 016). Validate these properties independently at consent detail/submission and
+subsequent authorize re-entry. Successful Save appends the same `session_token` JWE to the sealed
+`original_url` in the server-built continuation URL, without renewing expiry. On re-entry remove
+only that transport parameter for request comparison, use the sealed original request, and freshly
+resolve its scopes against the sealed bindings before code issuance or proxy redirect. Changed
+identity fails with `invalid_scope`; invalid/mismatched context fails existing session validation.
+No code/upstream redirect is produced on failure, and browser-supplied IDs never replace bindings.
 
 ### AuthorizationCode (`internal/domain/storage/`), table `authorization_codes`
 
@@ -92,8 +104,28 @@ must reproduce exactly these IDs and bindings. Otherwise the session token is re
 |---|---|---|---|
 | `ServiceScopeBindings` | `service_scope_bindings` | `JSONB` | Yes. Copied from the code, or from the predecessor in `CreateSuccessor`. |
 
-`Validate()` gains one check: every key in the bindings must also be a member of `Scope`, and every
-value must be a non-zero UUID.
+Validation and inheritance:
+
+- Authorization-code binding keys must be members of the code's granted `Scope`.
+- Every binding key is a syntactically valid Virtual Service Scope and every value a non-zero UUID.
+  Every virtual scope in either record's current `Scope` must have a binding; missing bindings fail
+  closed. Legacy nil bindings are valid only when there are no virtual scopes.
+- For a refresh row, `Scope` is its current maximum grantable scope set; bindings are the immutable
+  original virtual-service assurance set and may include keys outside `Scope` after narrowing.
+- Initial refresh issuance copies bindings and `Scope` from the code. `CreateSuccessor` validates
+  that successor bindings equal predecessor bindings exactly and successor `Scope` is a subset of
+  predecessor `Scope`. It never accepts a caller's fabricated extra assurance binding.
+- A successful narrowed refresh returns the narrowed response/JWT scope and persists that same
+  narrowed `Scope` with all bindings retained. A subsequent scope-less refresh uses this narrowed
+  `Scope`, rechecks all retained bindings and cannot restore removed scopes. Re-requesting a removed
+  ordinary or virtual scope is widening. These checks precede consumption/rotation.
+
+Example three-step sequence (synthetic): code exchange grants `openid offline_access
+https://broker.example.com/sessions/github` and binds GitHub to its UUID; refresh requesting only
+`openid offline_access` returns those two scopes and a successor with that `Scope` plus the original
+GitHub binding; scope-less refresh of the successor returns only `openid offline_access`, still
+checking GitHub. If GitHub is unusable, that third step instead returns non-consuming
+`invalid_scope`. Re-requesting the removed GitHub scope is also non-consuming `invalid_scope`.
 
 ### UserSession (unchanged schema)
 
@@ -102,7 +134,7 @@ is set to the rejection time under `WithLockedSession`. Derived states:
 
 | Derived state | Condition |
 |---|---|
-| Usable now | `HasValidAccessToken()` |
+| Access valid now | `HasValidAccessToken()`; verified usability additionally requires effective scopes and matching client identity. |
 | Refreshable | `CanRefresh()` |
 | Definitively unusable | `IsExpired()`. The access token has expired and no usable refresh token remains, which includes a rejection marker in the past. |
 
@@ -157,11 +189,11 @@ stateDiagram-v2
     [*] --> Requested: authorize with virtual scope(s)
     Requested --> Consent: any requested service unsatisfied
     Consent --> Consent: provider login round trip (selection preserved)
-    Consent --> Requested: Save accepted (re-run same authorize request)
+    Consent --> Requested: Save accepted (same authorize request plus original JWE)
     Requested --> CodeIssued: all satisfied (local)
     Requested --> UpstreamRedirect: all satisfied (proxy; virtual scopes stripped)
     CodeIssued --> RefreshGrant: code exchanged (bindings copied)
-    RefreshGrant --> RefreshGrant: refresh recheck passes (rotated, bindings inherited)
+    RefreshGrant --> RefreshGrant: refresh recheck passes (scope may narrow, all bindings inherited)
     RefreshGrant --> RefreshGrant: recheck fails → invalid_scope (not rotated)
 ```
 
@@ -170,6 +202,6 @@ stateDiagram-v2
 | Term | Definition |
 |---|---|
 | **Virtual Service Scope** | A scope string `<public URL>/sessions/<canonical-id-or-UUID>`. It asks that the authenticated user hold a usable, grant-covered session for one ThirdpartyOAuth2Service. It is never sent upstream and never advertised in discovery. |
-| **Requested Service Set** | The deduplicated services that one authorization or refresh request names through Virtual Service Scopes. These services are required for that request only. |
-| **Service-Scope Binding** | The persisted map from a granted Virtual Service Scope string to the service UUID it resolved to. It pins identity across renames and canonical-ID reuse. |
+| **Requested Service Set** | The deduplicated services named by authorization Virtual Service Scopes or original refresh assurance bindings, including bindings retained after scope narrowing. These requirements do not alter permanent agent configuration. |
+| **Service-Scope Binding** | The protected/persisted map from an originally granted Virtual Service Scope string to its service UUID. It pins identity through consent re-entry, code exchange and refresh. Refresh narrowing retains all bindings as continuing-service assurance without re-granting removed scopes. |
 | **Session Usability** | The verified ability of a UserSession to supply the configured service access now: `usable`, `missing`, `unusable_definitive`, or `unverifiable_transient`. |

@@ -45,8 +45,10 @@ Examples with `public_url: https://broker.example.com`:
    `server_error`.
 4. Duplicate tokens for the same service form one Requested Service Set entry.
 5. When the request carries an existing Service-Scope Binding, the resolved UUID must equal the
-   bound UUID. This applies to consent continuation, code exchange, and refresh. A mismatch returns
-   `invalid_scope` (FR-019).
+   bound UUID. This applies independently at grant submission, protected authorize re-entry after
+   Save, code exchange, and refresh. The post-Save URL carries the same JWE as `session_token`; the
+   authorize endpoint uses its sealed original request/bindings, not fresh unbound browser data.
+   A mismatch returns `invalid_scope` before code issuance or proxy redirect (FR-019).
 
 ## Emission
 
@@ -65,4 +67,10 @@ examples. It uses `<public-url>/sessions/<canonical_id>` when the service has a 
 - The canonical form is valid only while that canonical ID still names the bound service. After a
   rename, local refresh returns `invalid_scope` and does not consume the refresh token. The client
   obtains a fresh challenge and authorizes interactively again.
+- Successful refresh narrowing persists the narrowed `Scope` and returns that same response/JWT
+  scope. All original bindings remain inherited as continuing-service assurance, including removed
+  virtual scopes. Later scope-less refresh uses the narrowed `Scope` and rechecks every binding;
+  retained bindings cannot authorize widening back to removed scopes.
+- Session usability checks the selected grant's effective provider-scope union with the same ceiling
+  as exchange, not merely configured required scopes (research R4).
 - Already-issued access tokens are not rewritten. They expire normally.

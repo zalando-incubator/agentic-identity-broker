@@ -50,4 +50,9 @@ These are the recorded specification answers, not maintainer approvals. The earl
 - Planning selected explicit design details: additive session-detail API, route-local ExtProc metadata, consent coverage data, transient outcomes, userless-grant rejection and migration 046 for code/refresh bindings. These are design proposals, not evidence that application code implements them.
 - Task generation reconciled quickstart test ownership and capture instructions with the plan and current harness. It clarified research R2's duplicate wording: identical tokens deduplicate, distinct canonical/UUID tokens remain granted in their requested form while selecting one requested service. This does not change FR-020 or the data model.
 - Feature scope excludes MCP client implementation, a new Deny action, required metadata hosting, canonical alias history and unrelated refactoring. The `research.md` deferred finding remains outside the implementation backlog.
+- Remediation resolves U1/U2/U3/I1: effective selected provider scopes and candidate contribution
+  usability, the same JWE through post-Save authorize re-entry, narrowed successor `Scope` with all
+  assurance bindings inherited, and valid access usable with absent/expired refresh. These remain
+  Proposed under the existing approval items; supporting tasks retain semantic-red regression
+  requirements and the 19-scenario ownership mapping.
 - Implementation must record only supplied approvals, establish compiling semantic-red tests before business logic, complete all buildable requirements and compliance tasks, and report any unavailable validation or unchecked task as incomplete.
