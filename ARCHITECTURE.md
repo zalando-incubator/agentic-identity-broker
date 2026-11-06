@@ -193,7 +193,8 @@ Accepted [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) d
 The [constitution, Principle XIII](.specify/memory/constitution.md#xiii-end-to-end-acceptance-testing--spec-traceability) requires traceability from acceptance scenarios to complete journeys.
 
 The [bootstrap](tests/e2e/bootstrap/) wraps production construction and server routing.
-The [test server](tests/e2e/bootstrap/test_server.go) exposes separate end-user and admin URLs.
+Each [test server](tests/e2e/bootstrap/test_server.go) exposes one base URL and serves either end-user or admin routes.
+Tests that need both route types require separate end-user and admin `TestServer` instances.
 The [frontend suite](tests/e2e/frontend/frontend_suite_test.go) adds Playwright browser setup.
 Fixtures and helpers belong to [tests/e2e/fixtures/](tests/e2e/fixtures/) and [tests/e2e/helpers/](tests/e2e/helpers/).
 
@@ -961,7 +962,7 @@ A configured detector fully replaces the default and must reference `subject_tok
 
 **Broker HTTP Transport**: ExtProc clones Go's default transport, preserving proxy and keep-alive behavior while enabling HTTP/2 with its configured TLS trust. Each client allows up to 100 idle and 100 total connections per host. New connections have a 1s TCP dial timeout and, for HTTPS, a 2s TLS handshake timeout. These are failure ceilings, not the <200ms typical cache-miss target. The separately configured `oauth2.exchange_timeout` defaults to 5s as an overall failure bound for token exchange and client-credentials grants.
 
-**CachedToken**: The [cache entry](internal/extproc/server/exchanger.go) holds the token, broker-issued identity and permission metadata, expiry, and a separate stale deadline. It can instead hold a short-lived re-authentication error. [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md#implementation-clarification) separates the implemented lifecycle from unresolved policy conflicts.
+**CachedToken**: The [cache entry](internal/extproc/server/exchanger.go) holds the token, broker-issued identity and permission metadata, expiry, and a separate stale deadline. It can instead hold a short-lived re-authentication error. The [ExtProc token-cache reference](docs/reference/extproc-token-cache.md) separates the implemented lifecycle from unresolved policy conflicts.
 
 For positive `expires_in`, the fresh lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`.
 Only absent or null expiry uses `cache.default_ttl`. Known nonpositive lifetime is not cached, including for outage fallback.
@@ -1062,7 +1063,7 @@ See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadat
 
 #### 3.2.5. Security Features
 
-**Exchange outcomes**: Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) defines rejection, re-authentication, and forwarding outcomes. The [exchanger](internal/extproc/server/exchanger.go) can return a cached token after a transient refresh failure. The [token-cache policy conflict](adrs/012-extproc-in-memory-token-cache.md#unresolved-policy-conflict) remains unresolved.
+**Exchange outcomes**: Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) defines rejection, re-authentication, and forwarding outcomes. The [exchanger](internal/extproc/server/exchanger.go) can return a cached token after a transient refresh failure. The [token-cache policy conflict](docs/reference/extproc-token-cache.md#unresolved-policy-conflict) remains unresolved.
 
 **SSRF Mitigation**: `validateResourceURI()` enforces absolute URIs with http/https schemes only.
 
@@ -1072,7 +1073,7 @@ See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadat
 
 **Client Assertion Refresh**: [`TokenExchanger.maybeRefreshAssertion`](internal/extproc/server/exchanger.go) refreshes assertions when remaining lifetime falls below the larger of 20% of total lifetime and 30 seconds.
 
-**Cache Expiry**: [`TokenExchanger.runEviction` and `TokenExchanger.evictExpired`](internal/extproc/server/exchanger.go) sweep every `max(cache.default_ttl / 2, 1s)`. Success entries remain through their stale deadline. Expiry does not guarantee immediate deletion, and no capacity eviction exists. See [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md#retention-capacity-and-cleanup).
+**Cache Expiry**: [`TokenExchanger.runEviction` and `TokenExchanger.evictExpired`](internal/extproc/server/exchanger.go) sweep every `max(cache.default_ttl / 2, 1s)`. Success entries remain through their stale deadline. Expiry does not guarantee immediate deletion, and no capacity eviction exists. See [retention, capacity, and cleanup](docs/reference/extproc-token-cache.md#retention-capacity-and-cleanup).
 
 **TLS Enforcement**: Token endpoint and issuer must use https:// unless `oauth2.tls.allow_http: true` (development only).
 
@@ -1308,7 +1309,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) | Accepted | Separate ExtProc process and configuration |
 | [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) | Accepted | Broker telemetry lifecycle |
 | [012-encryption-layer-separation.md](adrs/012-encryption-layer-separation.md) | Accepted, partly superseded | Two-state `Secret` description replaced by [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) |
-| [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md) | Accepted | Token freshness, stale retention, and eviction |
+| [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md) | Accepted | In-memory token cache, singleflight refresh, periodic eviction, and maximum TTL |
 | [013-strongly-typed-entity-ids.md](adrs/013-strongly-typed-entity-ids.md) | Accepted | Typed entity identifiers |
 | [014-long-poll-listen-notify.md](adrs/014-long-poll-listen-notify.md) | Accepted | Broker approval long polling and PostgreSQL notifications |
 | [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) | Accepted | Proxy, local, and hybrid OAuth2 modes |
@@ -1365,7 +1366,7 @@ The terms that follow describe domain models and their relationships.
 
 **Environment Variable Reference**: A placeholder in configuration (using ${VAR_NAME} syntax) that references an environment variable for runtime substitution. Supports nested expansion with circular reference detection.
 
-**Source Precedence**: The [configuration loader](internal/config/loader.go) applies defaults, YAML, explicit environment bindings, and bound CLI flags in increasing priority. Environment files populate environment values before YAML loading.
+**Source Precedence**: The [configuration loader](internal/config/loader.go) normally applies defaults, YAML, explicit environment bindings, and bound CLI flags in increasing priority. Before YAML loading, `loadEnvFile` overwrites existing process environment values and calls Viper `Set` for each `.env` entry. Thus `.env` files can replace deployment-provided environment values, rather than merely fill missing values. Later `.env` files override earlier files, and explicitly changed CLI flags apply last.
 
 **Sensitive Value**: Configuration value that should be redacted in logs and output. Identified by IDENTITY_BROKER_ prefix or keywords (password, secret, token, key, credential, auth).
 

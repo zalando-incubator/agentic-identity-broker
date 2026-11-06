@@ -23,10 +23,7 @@ A caching strategy must be chosen that:
 
 ## Decision
 
-The accepted decision selects an in-memory map, a struct key, `sync.RWMutex`, singleflight refresh, periodic cleanup, and a maximum cache TTL.
-The [implementation clarification](#implementation-clarification) records current behavior separately. It does not approve changes to the accepted policy.
-
-The original decision described the following cache shape. The current [`cachedToken` type](../internal/extproc/server/exchanger.go) also holds metadata, re-authentication errors, and a stale deadline.
+The token cache is implemented as a `map[tokenCacheKey]*cachedToken` protected by `sync.RWMutex`, where:
 
 ```go
 type tokenCacheKey struct {
@@ -43,83 +40,9 @@ type cachedToken struct {
 
 Concurrent refresh deduplication is handled by `golang.org/x/sync/singleflight`. When multiple goroutines detect a cache miss or expiry for the same key simultaneously, `singleflight` ensures only one token exchange call is made to the identity broker; all waiting goroutines receive the same result.
 
-The original decision called for an expiry sweep every `default_ttl / 2`, with a 30-second minimum.
-Current [`TokenExchanger.runEviction` and `TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go) use a one-second minimum and retain success entries through their stale deadline.
-These differences remain explicit implementation discrepancies, not amendments to the accepted decision.
+A background goroutine runs a periodic eviction sweep at an interval of `default_ttl / 2` (minimum 30 seconds). The sweep removes entries whose `expiresAt` is in the past. This bounds memory growth for long-running deployments with many distinct `(subject_token, resource_uri)` pairs.
 
-The maximum TTL limits cached token reuse and token-bound metadata.
-[`TokenExchanger.computeTTL`](../internal/extproc/server/exchanger.go) caps positive `expires_in` values, or `cache.default_ttl`, at `cache.max_ttl`.
-The defaults in [`applyDefaults`](../internal/extproc/config/loader.go) are five minutes and one hour, respectively.
-
----
-
-## Implementation clarification
-
-### Fresh reads and refresh
-
-A fresh entry returns its token and metadata without a broker call, provided the client assertion remains usable.
-A fresh re-authentication entry returns its cached error instead.
-An absent or expired assertion bypasses both fresh-entry paths and prevents stale fallback.
-Sources: [fresh reads and stale fallback in `TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go), and [assertion check in `TokenExchanger.isAssertionExpired`](../internal/extproc/server/exchanger.go).
-
-An expired entry remains in the map during refresh. A miss or expiry enters singleflight, which checks the cache again.
-Each caller can cancel its wait without canceling the shared exchange.
-Sources: [refresh path in `TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go) and [caller cancellation in `awaitResult`](../internal/extproc/server/exchanger.go).
-
-### Expiry and stale reuse
-
-A successful exchange sets `expiresAt` to insertion time plus the fresh-cache lifetime.
-For positive `expires_in`, that lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`.
-Only absent or null expiry uses `cache.default_ttl`, capped at `cache.max_ttl`.
-Known nonpositive lifetime deletes the entry and is not cached, including for outage fallback.
-Sources: [population](../internal/extproc/server/exchanger.go) and [TTL calculation](../internal/extproc/server/exchanger.go).
-
-The same insertion sets `staleUntil` to insertion time plus the reported lifetime plus five seconds, capped at `cache.max_ttl`.
-Transient failures do not extend this deadline. This can permit reuse after reported token expiry.
-Sources: [five-second constant, population, and fallback](../internal/extproc/server/exchanger.go).
-
-After an exchange error, fallback requires a nonempty cached token, a usable assertion, and a current time strictly before `staleUntil`.
-The classifier permits broker 5xx errors and HTTP 429 without `error_uri`.
-It rejects assertion expiry and other broker errors, including HTTP 429 with `error_uri`.
-Other errors also qualify, including network, circuit-open, and malformed-success-response errors. The classifier does not restrict fallback to transport errors.
-Sources: [fallback and circuit breaker in `TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go), [classifier `isTransientBrokerError`](../internal/extproc/server/exchanger.go), and [response errors in `TokenExchanger.doExchange`](../internal/extproc/server/exchanger.go).
-
-A non-transient broker error with `error_uri` replaces the entry with a five-second re-authentication error.
-Other exchange errors do not delete the previous entry.
-An authoritative rejection returns an error for that call, but does not generally erase the old token.
-Source: [error population and propagation in `TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go).
-
-### Retention, capacity, and cleanup
-
-The sweep runs on a ticker with interval `max(cache.default_ttl / 2, 1s)`.
-It deletes an expired entry only when `staleUntil` is zero or strictly earlier than the sweep time.
-Thus, success entries survive ordinary expiry through their stale window. Re-authentication entries have no stale window.
-Sources: [error entries in `TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go) and [sweep in `TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go).
-
-Neither a fresh read nor a failed refresh guarantees deletion.
-An entry can remain in memory after reuse is forbidden, until a later sweep or replacement.
-The eviction loop also performs assertion refresh, so its ticker interval is not an exact deletion deadline.
-`Shutdown` signals the loop to stop. It does not clear the map.
-Sources: [`TokenExchanger.Exchange`, `TokenExchanger.Shutdown`, and `TokenExchanger.runEviction`](../internal/extproc/server/exchanger.go).
-
-There is no capacity eviction, maximum entry count, or byte limit.
-TTL cleanup limits retention during normal operation, not the number of distinct keys that can arrive before cleanup.
-Sources: [`CacheConfig`](../internal/extproc/config/config.go), and [insertion in `TokenExchanger.Exchange` and eviction in `TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go).
-
-The server uses successful results, including stale results, to replace the Authorization header.
-OPA requests also receive the returned token-bound metadata.
-Sources: [`Server.processRequestHeaders`, `Server.processRequestHeadersOPA`, `Server.processRequestBody`, and `Server.processHeadersOnlyOPA`](../internal/extproc/server/server.go).
-
-### Unresolved policy conflict
-
-[Feature 015, FR-015](../specs/015-extproc-token-exchange/spec.md#functional-requirements) requires eviction before reuse of expired entries.
-The original decision also describes expiry-based removal. Current stale retention and reuse do not satisfy that literal requirement.
-Accepted [036-extproc-approval-cache-and-gate.md](036-extproc-approval-cache-and-gate.md#separate-from-adr-012) acknowledges bounded stale-token reuse but also describes invalidation at token expiry.
-These statements do not establish one consistent expiry policy.
-
-[Constitution II](../.specify/memory/constitution.md#ii-architecture-documentation--decision-records) requires a superseding ADR for deviations from accepted decisions.
-This clarification preserves the accepted status and records the conflict for review.
-It neither approves stale-token reuse as a new security exception nor changes runtime behavior.
+A configurable `cache.max_ttl` cap (defaulting to the value of `expires_in` from the token exchange response, subject to operator-defined ceiling) prevents very large `expires_in` values from defeating token revocation. The same bound applies to any token-bound metadata cached alongside the exchanged access token.
 
 ---
 
@@ -143,16 +66,13 @@ Token exchange produces tokens with lifetimes measured in minutes or hours. Once
 
 When a cached token expires, all in-flight requests for the same `(subject_token, resource)` key detect a cache miss simultaneously. Without deduplication, each goroutine would independently issue a token exchange call to the identity broker — N calls instead of one. `golang.org/x/sync/singleflight` deduplicates these: the first goroutine to detect the miss initiates the exchange; all others block and receive the result when the exchange completes.
 
-### 5. Periodic cleanup limits retention, not capacity
+### 5. Periodic eviction sweep bounds memory growth
 
-[`TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go) removes expired entries after their stale deadline.
-[`CacheConfig`](../internal/extproc/config/config.go) contains TTLs but no capacity limit.
-Periodic cleanup is not a fixed memory bound.
+Without active eviction, expired entries for tokens that are never re-requested remain in the map indefinitely. In a long-running deployment with many distinct `(token, resource)` pairs — for example, many users each accessing many distinct resource URIs — the map would grow without bound. A background ticker running at `default_ttl / 2` scans and removes expired entries. The sweep interval is proportional to the TTL so that the average time an expired entry occupies memory is bounded.
 
-### 6. `cache.max_ttl` limits cached reuse
+### 6. `cache.max_ttl` cap prevents defeating token revocation
 
-The population and fallback paths in [`TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go) apply the maximum TTL to token reuse, including stale fallback.
-Token-bound metadata shares those deadlines. This bound does not provide immediate revocation or deletion at expiry.
+If the identity broker issues tokens with very large `expires_in` values (hours or days), caching them at face value means a revoked token would remain valid in the cache until expiry. A configurable `cache.max_ttl` allows operators to cap the effective cache TTL below the token's stated lifetime, limiting the revocation window. Any token-bound metadata cached with that token inherits the same bound.
 
 ---
 
@@ -168,8 +88,7 @@ Rejected. `sync.Map` is optimised for key-stable workloads (keys written once, r
 
 ### C. LRU cache (e.g., `github.com/hashicorp/golang-lru`)
 
-Rejected in the original decision. The current implementation has no LRU or other capacity eviction.
-[`TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go) does not provide the same memory bound as a size cap.
+Rejected. An LRU eviction policy would evict the _least recently used_ token regardless of whether it has expired. This could evict a valid, frequently-used token simply because another key was accessed more recently. TTL-based eviction correctly keeps all valid tokens in cache until they expire. The periodic sweep achieves the same memory bounding property as an LRU size cap with less complexity.
 
 ### D. SHA256 hash as cache key
 
@@ -184,14 +103,14 @@ Rejected. A `sha256(subjectToken + "|" + resourceURI)` string key was considered
 - **Low latency on cache hit**: Map lookup under read lock is a nanosecond-level operation. Sub-10ms header processing time is achievable on cache hit.
 - **No external dependency**: No Redis, Memcached, or database required for the cache layer.
 - **Thundering herd protection**: Singleflight ensures one exchange call per key regardless of concurrent request volume.
-- **Periodic cleanup**: [`TokenExchanger.evictExpired`](../internal/extproc/server/exchanger.go) removes entries after expiry and their stale deadline. It does not enforce a capacity bound.
+- **Bounded memory**: Periodic eviction prevents unbounded map growth in long-running deployments.
 - **Type-safe key**: Struct key makes the composite cache key explicit and collision-free.
 
 ### Negative
 
 - **Cold cache on restart**: The in-memory cache is not durable. After a restart, every `(subject_token, resource)` pair requires a fresh token exchange.
 - **Single-instance only**: Each binary instance maintains its own independent cache. In a horizontally scaled deployment, cache hits are not shared across instances. This is accepted for MVP.
-- **Token-bound metadata can be stale**: The fallback in [`TokenExchanger.Exchange`](../internal/extproc/server/exchanger.go) returns the same metadata snapshot through `staleUntil`, capped by `cache.max_ttl`.
+- **Bounded revocation lag for token-bound metadata**: Any metadata cached with the exchanged token (for example `granted_permission_sets`) remains a snapshot until token expiry or `cache.max_ttl`, not an independent live authority.
 
 ### Future extension
 

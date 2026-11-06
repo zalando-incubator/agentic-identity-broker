@@ -17,6 +17,7 @@ and configuration keys.
 | [Admin API](/api/admin) | The full OpenAPI contract for the admin server (port 14000): agents, services, permission sets, client credentials, and signing keys. |
 | [API overview](/docs/reference/api) | A hand-authored companion to the two contracts — the auth model, response envelopes, error codes, and a compact endpoint map. |
 | [Token exchange](/docs/reference/token-exchange) | The field-level reference for the RFC 8693 grant on `POST /oauth2/token`. |
+| [ExtProc token cache](/docs/reference/extproc-token-cache) | Current cache lifetimes, stale fallback, metadata, and discrepancies with accepted policy. |
 | [Configuration](/docs/configuration) | Every configuration section and key, and how the configuration sources compose. |
 
 The source OpenAPI specifications generate the end-user and admin API pages. These pages are

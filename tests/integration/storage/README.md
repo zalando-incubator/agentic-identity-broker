@@ -118,9 +118,13 @@ The [bootstrap](../bootstrap/postgres.go) uses a shared image, not an image uniq
 
 ## CI and result evidence
 
-The [CI workflow](../../../.github/workflows/ci.yml) runs `just verify-integration-junit`.
-That [recipe](../../../justfile) runs both integration layers and writes JUnit reports under `test-results/`.
-The infrastructure invocation includes `-count=1` and the `integration` build tag.
+The [CI workflow](../../../.github/workflows/ci.yml) runs `just verify-integration-self-contained-junit`, not `just verify-integration-junit`.
+That [recipe](../../../justfile) writes `test-results/integration-self-contained-junit.xml` without the `integration` build tag.
+That report cannot establish coverage of tagged PostgreSQL or migration infrastructure tests.
+
+For a local run of both integration layers, use `just verify-integration-junit` ([recipe](../../../justfile)).
+It writes separate `integration-self-contained-junit.xml` and `integration-infra-junit.xml` reports, then merges them into `integration-junit.xml`, all under `test-results/`.
+The `verify-integration-infra-junit` recipe uses `INTEGRATION_INFRA_GO_TEST_ARGS`, which includes `-count=1 -tags=integration`.
 
 Use the report from the relevant run for passed, failed, and skipped tests.
 This guide does not claim a fixed test count, pass status, or execution time.

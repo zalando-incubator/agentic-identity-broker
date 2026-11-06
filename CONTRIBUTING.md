@@ -191,8 +191,8 @@ Go package tests generally live next to their sources. Frontend test locations f
 
 Read the [E2E guide](tests/e2e/README.md) and [storage integration guide](tests/integration/storage/README.md) for prerequisites and cleanup limits.
 Browser tests are implemented, not future work. `just test-e2e-frontend` builds and tests the production frontend bundle.
-The [development-mode conflict](specs/agentic-engineering-improvements.md#4-make-frontend-development-tests-safe-by-default) remains open.
-Use the guide's serial-worker override for development mode, not the current recipe default.
+For development mode, use the [serial-worker workaround](tests/e2e/README.md#frontend-e2e-testing): `GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend-dev`.
+Development mode uses fixed broker port 8000, but the recipe still defaults to two workers.
 
 The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
 
