@@ -279,7 +279,7 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	if len(requestedServiceIDs) > 0 {
 		outcomes, err = h.consentService.RequestedServiceCoverage(ctx, userPrincipal, parsedAgentID, requestedServiceIDs)
 		if err != nil {
-			h.logger.Error("failed to evaluate requested services", "agent_id", agentID, "error", err)
+			h.logger.ErrorContext(ctx, "failed to evaluate requested services", "agent_id", agentID, "error", err)
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}

@@ -384,7 +384,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
 		if buildErr != nil {
 			if s.logger != nil {
-				s.logger.Error("failed to build consent URL", "error", buildErr)
+				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
 			}
 			return s.redirectError(req, "server_error", "server error")
 		}

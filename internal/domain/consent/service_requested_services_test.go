@@ -2,7 +2,6 @@ package consent
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -94,7 +93,7 @@ func newRequestedConsentFixture(t *testing.T) *requestedConsentFixture {
 	f.grants.grants[existing.ID] = existing
 	f.snapshots = requestedSnapshotReader{identity: {Usability: servicescope.UsabilityUsable, Scopes: []string{"profile"}}}
 	f.services = &requestedServiceLookup{services: map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity{f.github: {ID: f.github, CanonicalID: &canonical}}}
-	f.svc = NewService(agents, nil, f.grants, sessions, &mockConsentRefreshRepo{}, sets, slog.New(slog.NewTextHandler(io.Discard, nil))).
+	f.svc = NewService(agents, nil, f.grants, sessions, &mockConsentRefreshRepo{}, sets, slog.New(slog.DiscardHandler)).
 		WithRequestedServices(servicescope.NewResolver(f.services, sets, "https://broker.example.com"), servicescope.NewEvaluator(sets, f.snapshots))
 	return f
 }
