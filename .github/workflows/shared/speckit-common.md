@@ -54,12 +54,17 @@ steps:
     with:
       tool: just
   # The agent sandbox inherits XDG_RUNTIME_DIR from the runner but cannot write
-  # to it, so shebang recipes such as `just check` need another script directory.
+  # to it, so shebang recipes such as `just check` and `just render-wireframes`
+  # need another script directory.
   - name: Give just a writable script directory
-    if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
     run: |
       mkdir -p /tmp/gh-aw/just
       echo "JUST_TEMPDIR=/tmp/gh-aw/just" >> "$GITHUB_ENV"
+  # Every phase can edit spec wireframes. This installs the default branch's pinned
+  # renderer without running package scripts; node_modules is gitignored, so it
+  # survives the agent's checkout of the PR head.
+  - name: Install Wireloom renderer
+    run: npm ci --prefix tools/wireloom --ignore-scripts --no-audit --no-fund
   # Restore only: the agent can write to $HOME, so this job must never save a cache that CI restores.
   - name: Restore CI development tools
     if: contains(fromJSON('["implement","remediate-review","apply-review"]'), inputs.phase)
