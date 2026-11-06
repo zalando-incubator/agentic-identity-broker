@@ -351,9 +351,15 @@ func (s *OAuth2SessionService) GetCallbackBaseURL() string {
 
 // ServiceAuthorizeURL starts provider authentication for a resolved service and
 // returns the browser to session management after the callback.
-func (s *OAuth2SessionService) ServiceAuthorizeURL(serviceID id.ServiceID) string {
+func (s *OAuth2SessionService) ServiceAuthorizeURL(service *model.ThirdpartyOAuth2ProviderEntity) string {
 	base := strings.TrimRight(s.config.CallbackBaseURL, "/")
-	return base + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(base+"/sessions")
+	return base + "/api/third-party/" + service.ID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(s.ServiceScope(service))
+}
+
+// ServiceScope returns the service's current Virtual Service Scope, which is also its
+// same-origin service page (ADR 045, ADR 046).
+func (s *OAuth2SessionService) ServiceScope(service *model.ThirdpartyOAuth2ProviderEntity) string {
+	return servicescope.Format(s.config.CallbackBaseURL, service.ID, service.CanonicalID)
 }
 
 // InitiateFlowResult contains the data needed to redirect user to authorization.

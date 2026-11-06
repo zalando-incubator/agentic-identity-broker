@@ -228,9 +228,11 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 					assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
 					assert.Equal(t, "failed to get valid access token", tokenErr.Description())
 					assert.Empty(t, tokenErr.ErrorURI())
+					assert.Empty(t, tokenErr.Scope(), "non-recoverable errors never carry a scope")
 				} else {
 					assert.Equal(t, http.StatusBadRequest, tokenErr.HTTPStatus())
-					assert.Equal(t, "https://broker.example.com/api/third-party/"+svcID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+					assert.Equal(t, "https://broker.example.com/api/third-party/"+svcID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Ffilesystem-provider", tokenErr.ErrorURI())
+					assert.Equal(t, "https://broker.example.com/sessions/filesystem-provider", tokenErr.Scope(), "the current canonical form is emitted")
 				}
 				wantDetail := tc.detail
 				if tc.sourceReason != "" && tc.detail == "" {
