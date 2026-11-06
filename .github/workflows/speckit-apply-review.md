@@ -76,7 +76,7 @@ safe-outputs:
     fallback-as-pull-request: false
   # Recommended remediations can defer a removal to a tracked follow-up.
   create-issue:
-    title-prefix: "[Spec Kit] "
+    title-prefix: "[PR follow-up] "
     max: 1
   add-comment:
     target: ${{ inputs.pr }}
