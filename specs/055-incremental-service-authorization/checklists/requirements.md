@@ -44,6 +44,7 @@
 - Four editable Wireloom states in the spec were rendered successfully to `../wireframes/` using `node tools/wireloom/render.mjs specs/055-incremental-service-authorization/spec.md`. The `just render-wireframes` wrapper could not use its runtime directory in this environment; the repository's documented renderer completed the generation directly. All three renderer tests passed via `node --test tools/wireloom/render.test.mjs`.
 - Optional after-specify agent-context and git-commit hooks were skipped under unattended-run rules. The mandatory git-feature pre-hook completed on `speckit/issue-299`.
 - Items marked incomplete require clarification and spec updates before planning can be considered complete. They do not prevent publishing this draft PR for the clarification session.
+- 2026-10-29 (planning): The clarification session resolved Q1–Q3, which supersedes the open-question notes above. Planning aligned the Journey 2 and Journey 4 examples, Configuration Requirements, API-001 and Database Requirements with the designed contracts. It recorded each change under Clarifications › Session 2026-10-29 (planning). No requirement remains unresolved, and the approval items in `plan.md` await maintainer sign-off.
 
 ## Clarification Handoff
 
