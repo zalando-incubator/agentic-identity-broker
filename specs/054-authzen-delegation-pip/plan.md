@@ -39,6 +39,10 @@ R19). Each ADR 012 token entry is bound to the permit's `resource.scopes` set an
 `grant.updated_at` instant. A cached token whose binding differs from the current permit is not
 forwarded; ExtProc removes it and exchanges again first.
 
+## Current task reconciliation
+
+The original 102-task inventory and D-6 alternative-validation disposition are historical completion records in `quickstart.md` §§11–12, not evidence for the new permit-bound token revision. F4–F6 are recorded complete in §13; F2/F3 remain open as T103/T104. The current 120-task list reopens only T001 for explicit ADR-2 sign-off and adds unchecked T108–T120 for observability design, US3.11, binding/cache/order tests, implementation, documentation and fresh compliance gates. No new approval or implementation is recorded by this design phase. Earlier descriptions of pending API-2/D-5/D-6 sign-off and historical sequencing below describe the original design gates; recorded approval/evidence supersedes them for that original scope only. ADR-2 remains Proposed.
+
 ## Clarifications — planning direction F1 (2026-11-06)
 
 `mjungsbluth`'s planning command for this run decided F1: the permit is authoritative for
@@ -187,7 +191,7 @@ API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must
 | E2E red phase | Historical compliance unresolved | The design requires concrete status/header/JSON/gRPC/count assertions. `quickstart.md` §§7–8 distinguish the historical 28-scenario broker red run and later correction evidence from missing original unit/consumer/startup red evidence. T029–T031 compile-only scaffolding was not performed. See [D-6](./historical-validation-exception.md); T027/T029–T031/T080/T097 remain unchecked. |
 | Frontend Playwright E2E | Not applicable | No React change. Consent and revocation reuse the existing UI and APIs. |
 | Frontend screenshots | Not applicable | No UI state. |
-| Concrete example journeys (XIV) | Pass | The spec has four linked journeys with configuration, HTTP exchanges, and decoded JWT claims. No wireframes, because there is no UI. |
+| Concrete example journeys (XIV) | Pass | The spec has five linked journeys with configuration, HTTP exchanges, and decoded input JWT claims, including Journey 5 for US3.11. No wireframes, because there is no UI. |
 
 ### Implementation considerations
 
@@ -305,11 +309,12 @@ specs/054-authzen-delegation-pip/
 ├── quickstart.md                            # validation guide
 ├── contracts/
 │   ├── authzen-evaluation-api.md            # proposed end-user OpenAPI delta (pending confirmation)
-│   └── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
+│   ├── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
+│   └── observability.md                    # signal inventory, ADR-2 diagnostic, unresolved F2 gate
 ├── adr-048-revision-permit-bound-tokens.md # Proposed ADR 048 revision (ADR-2)
 ├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
-└── tasks.md                                 # /speckit-tasks
+└── tasks.md                                 # 120 stable tasks; ADR-2 continuation is unchecked
 ```
 
 ### Source code and documentation affected
@@ -516,6 +521,8 @@ After stakeholder confirmation:
 
 ### Phase 2: Design preconditions
 
+The current continuation adds **2g Observability Design** (T108/T109): inventory existing signals and the Proposed log-only binding diagnostic in `contracts/observability.md`, review credential safety and standards, and preserve unresolved T103/F2 registry/migration work. No new metric instrument or trace namespace is needed for ADR-2. The original 2a–2f design remains in place; no historical validation is recertified.
+
 - **2a Domain model and ADR**:
   - Record the maintainer's approval (from the approval comment) in the Status line of
     the ADR 048 draft and move it to `adrs/` at the next unused number (done:
@@ -711,6 +718,7 @@ because the stub handlers return 501 and the stub resolver returns an error. No 
 
 ### Integration tests
 
+- Preserve `tests/integration/delegation_contract_test.go` (F5): complete nested producer/consumer field-set and denial-code parity against `api/enduser/openapi.yaml`, without test-only production APIs or broker imports in ExtProc. Include it in the current `just test-integration` regression gate; ADR-2 adds no wire field or token claim.
 - No new infrastructure-backed integration test is needed: there is no persistence or migration.
   The PostgreSQL behavior that matters (the grant-repository outage) is covered by E2E US2.19.
 - `examples/config/extproc-delegation-context.yaml` is added to the explicit example table in
@@ -722,6 +730,4 @@ ExtProc precedence branch, and 100% of the acceptance scenarios (Principle XIII)
 
 ## Complexity Tracking
 
-No constitution violation needs justification. The only deviation from a merged Accepted ADR
-(ADR 028's enabled-mode input schema and ordering) goes through a new superseding ADR, as
-Principle II requires. It is not a violation.
+The historical original test-first/compile-only sequencing deviation requires the explicitly recorded D-6 exception and alternative validation in `historical-validation-exception.md` and `quickstart.md` §§11–12. Those records do not certify the missing sequence or waive tests for new work. US3.11 and ADR-2 require genuine test-first development and fresh validation. ADR 048's partial supersession of merged ADR 028 separately follows Principle II; its Proposed ADR-2 same-PR revision is applied only after supplied approval. F2's remaining observability registration/migration obligation remains open as T103, not a constitutional exception.
