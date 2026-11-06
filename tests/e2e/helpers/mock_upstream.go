@@ -81,6 +81,8 @@ type MockUpstreamOAuth2Server struct {
 	transientFailureStatus  int
 	transientFailuresLeft   int
 	codeChallengesByCode    map[string]pkceChallenge
+	refreshErrorCode        string
+	tokenScope              string
 
 	// RSA key pair for JWT signing (generated on init)
 	privateKeyPEM string
@@ -526,6 +528,15 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+	if r.Form.Get("grant_type") == "refresh_token" {
+		m.requestMutex.RLock()
+		refreshErrorCode := m.refreshErrorCode
+		m.requestMutex.RUnlock()
+		if refreshErrorCode != "" {
+			successfulTokenResp, errorCode, errorDescription = false, refreshErrorCode, "refresh rejected by provider"
+		}
+	}
+
 	// Check for error condition
 	if !successfulTokenResp && errorCode != "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -551,6 +562,11 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	if !omitRefreshToken {
 		tokenResp["refresh_token"] = refreshToken
 	}
+	m.requestMutex.RLock()
+	if m.tokenScope != "" {
+		tokenResp["scope"] = m.tokenScope
+	}
+	m.requestMutex.RUnlock()
 
 	_ = json.NewEncoder(w).Encode(tokenResp)
 }
@@ -641,4 +657,33 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 	}
 
 	return buf[:n], nil
+}
+
+// WithRefreshGrantError makes only refresh_token grants fail with the given OAuth2 error, so
+// provider sign-in (authorization_code) still succeeds. An empty code restores refresh success.
+func (m *MockUpstreamOAuth2Server) WithRefreshGrantError(errorCode string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.refreshErrorCode = errorCode
+	return m
+}
+
+// GetTokenRequestsForGrant returns captured token requests whose grant_type matches.
+func (m *MockUpstreamOAuth2Server) GetTokenRequestsForGrant(grantType string) []CapturedTokenRequest {
+	var matching []CapturedTokenRequest
+	for _, request := range m.GetTokenRequests() {
+		form, err := url.ParseQuery(request.Body)
+		if err == nil && form.Get("grant_type") == grantType {
+			matching = append(matching, request)
+		}
+	}
+	return matching
+}
+
+// WithTokenScope adds a granted scope member to successful token responses.
+func (m *MockUpstreamOAuth2Server) WithTokenScope(scope string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.tokenScope = scope
+	return m
 }
