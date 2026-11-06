@@ -30,14 +30,14 @@ and declared domain libraries.
 | `thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
 | `trustanchor/` | Trust-anchor key-source resolution and local key-set validation | `ResolveKeySetSource()`, `ParseLocalKeySet()` |
-| `urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
+| `urivalidation/` | Redirect and resource URI validation | `IsRegisteredRedirectURI()`, `RedirectURIClientKind`, `IsAgentRedirectURIHostPattern()`, `MatchesRedirectURI()`, `MatchesAgentRedirectURI()`, `NormalizeResourceURI()` |
 
 ## Critical Rules
 
 ### Zero Infrastructure Imports
 
 Do not import `database/sql`, `pgx`, `sqlx`, `chi`, AWS SDKs, `internal/adapters/`, or `internal/app/`. Only `oauth2session`, `storage`, and `oauth2server` import `net/http`.
-Use the Go standard library, `internal/ports/`, other `internal/domain/` packages, and declared domain libraries such as `jwx`, `oauth2`, and `cel-go`.
+Use the Go standard library, `internal/ports/`, other `internal/domain/` packages, and declared domain libraries such as `jwx`, `oauth2`, `cel-go`, and `golang.org/x/net` (`idna`, `publicsuffix`).
 
 ### Domain Services Pattern
 

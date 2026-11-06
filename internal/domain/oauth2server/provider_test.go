@@ -263,6 +263,33 @@ func TestProvider_AuthenticatedCIMDStillEnforcesPKCEAndRedirectURI(t *testing.T)
 }
 
 func TestProvider_HandleAuthorize(t *testing.T) {
+	t.Run("opaque Agent wildcard callback returns authorization code", func(t *testing.T) {
+		provider, agentRepo, _ := newTestProvider(t)
+		agent, _, _ := setupTestCredentials(t, provider, agentRepo)
+		agent.RedirectURIs = []string{"https://preview*.app-*.example.com/api/oidc/callback"}
+		require.NoError(t, agentRepo.Update(context.Background(), agent))
+
+		code, err := provider.HandleAuthorize(
+			context.Background(), agent.ID.String(),
+			"https://preview-pr-123.app-test.example.com/api/oidc/callback",
+			"code", "read", "state", "challenge123", "S256", id.NewPrincipal("user@example.com"),
+		)
+		require.NoError(t, err)
+		assert.NotEmpty(t, code)
+	})
+
+	t.Run("CIMD callback remains exact despite Agent wildcard registration", func(t *testing.T) {
+		provider, agent, clientID := newCIMDProviderForAssertionTest(t, "none", &providerAssertionVerifierFake{})
+		agent.RedirectURIs = []string{"https://preview*.app-*.example.com/api/oidc/callback"}
+
+		_, err := provider.HandleAuthorize(
+			context.Background(), clientID,
+			"https://preview-pr-123.app-test.example.com/api/oidc/callback",
+			"code", "read", "state", "challenge123", "S256", id.NewPrincipal("user@example.com"),
+		)
+		assert.ErrorIs(t, err, ErrInvalidRedirectURI)
+	})
+
 	t.Run("redirect_uri exact match required", func(t *testing.T) {
 		provider, agentRepo, _ := newTestProvider(t)
 		agent, _, _ := setupTestCredentials(t, provider, agentRepo)
