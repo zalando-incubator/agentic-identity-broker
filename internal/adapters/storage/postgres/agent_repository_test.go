@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -161,6 +162,22 @@ func TestAgentRepository_Get_SpanResult(t *testing.T) {
 		readTimeout := adapter.timeouts.Read
 		adapter.timeouts.Read = 100 * time.Millisecond
 		t.Cleanup(func() { adapter.timeouts.Read = readTimeout })
+		span, err := getAgentSpan(t, ctx, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Error, "timeout", "")
+	})
+
+	t.Run("query exceeds the statement timeout", func(t *testing.T) {
+		var database string
+		require.NoError(t, adapter.db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&database))
+		_, err := adapter.db.ExecContext(ctx, fmt.Sprintf(`ALTER DATABASE %q SET statement_timeout = '100ms'`, database))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := adapter.db.ExecContext(ctx, fmt.Sprintf(`ALTER DATABASE %q RESET statement_timeout`, database))
+			require.NoError(t, err)
+		})
+		adapter.db.SetMaxIdleConns(0) // The setting only applies to new connections.
+		blockAgentQueries(t)
 		span, err := getAgentSpan(t, ctx, agent.ID)
 		require.Error(t, err)
 		assertStorageSpanResult(t, span, codes.Error, "timeout", "")

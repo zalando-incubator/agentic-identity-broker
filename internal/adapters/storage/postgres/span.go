@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -52,6 +54,9 @@ func recordStorageResult(ctx context.Context, span trace.Span, err error) {
 		span.SetAttributes(attribute.String("storage.outcome", storageOutcomeCanceled))
 		return
 	}
+	if isStatementTimeout(err) {
+		kind = storage.ErrorKindTimeout
+	}
 	switch kind {
 	case storage.ErrorKindNotFound, storage.ErrorKindConflict, storage.ErrorKindValidation:
 		span.SetAttributes(attribute.String("storage.outcome", string(kind)))
@@ -59,4 +64,12 @@ func recordStorageResult(ctx context.Context, span trace.Span, err error) {
 		span.SetAttributes(attribute.String("error.type", string(kind)))
 		span.SetStatus(codes.Error, "storage operation failed")
 	}
+}
+
+// isStatementTimeout reports whether PostgreSQL ended the query because of statement_timeout. A
+// query canceled by an operator has the same SQLSTATE, so only the message tells them apart. A
+// server that translates its messages keeps reporting the repository's error kind.
+func isStatementTimeout(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "57014" && strings.Contains(pgErr.Message, "statement timeout")
 }

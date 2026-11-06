@@ -157,6 +157,12 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 			wantOutcome:    "not_found",
 		},
 		{
+			name:          "statement timeout",
+			err:           storage.NewStorageError("Op", storage.ErrorKindConnection, &pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}, "query failed"),
+			wantStatus:    codes.Error,
+			wantErrorType: "timeout",
+		},
+		{
 			name:          "query canceled by the server",
 			err:           storage.NewStorageError("Op", storage.ErrorKindConnection, &pgconn.PgError{Code: "57014", Message: "canceling statement due to user request"}, "query failed"),
 			wantStatus:    codes.Error,
