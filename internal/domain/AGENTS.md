@@ -134,6 +134,6 @@ Read `internal/domain/storage/discovery_test.go` before changes to this behavior
 ## Testing
 
 - **TDD**: Use the parent TDD rules. Red-phase tests must compile and fail for the missing behavior.
-- **Files**: Put `_test.go` beside the package. Use the same package (white-box).
-- **Mocking**: Use local port doubles with function fields. Do not use `testify/mock` in domain.
+- **Files**: Put `_test.go` beside the package. Use the local same-package or external-package convention.
+- **Mocking**: Use local port doubles, with function fields or `testify/mock` according to the package convention.
 - **Table-driven tests**: Use them for validation. Put security tests in `_security_test.go` files.
