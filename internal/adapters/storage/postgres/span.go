@@ -28,20 +28,21 @@ func startStorageSpan(ctx context.Context, name, operation string) (context.Cont
 		),
 	)
 	return ctx, func(err error) {
-		recordStorageResult(span, err)
+		recordStorageResult(ctx, span, err)
 		span.End()
 	}
 }
 
-// recordStorageResult sets the error status only when the database failed. A missing row, a
+// recordStorageResult sets the error status only when the operation failed. A missing row, a
 // conflict, rejected input and caller cancellation are results the caller handles, so they are
-// recorded as storage.outcome. The cause is not recorded because it can contain SQL or a
-// connection string.
-func recordStorageResult(span trace.Span, err error) {
+// recorded as storage.outcome. Cancellation is read from the context because the returned error
+// can hide it: a transaction whose connection was closed by the cancellation returns
+// driver.ErrBadConn. The cause is not recorded because it can contain SQL or a connection string.
+func recordStorageResult(ctx context.Context, span trace.Span, err error) {
 	if err == nil {
 		return
 	}
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		span.SetAttributes(attribute.String("storage.outcome", storageOutcomeCanceled))
 		return
 	}

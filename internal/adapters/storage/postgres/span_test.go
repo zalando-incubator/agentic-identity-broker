@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -69,11 +71,12 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 	cause := errors.New("dial " + credential)
 
 	tests := []struct {
-		name          string
-		err           error
-		wantStatus    codes.Code
-		wantErrorType string
-		wantOutcome   string
+		name           string
+		err            error
+		callerCanceled bool
+		wantStatus     codes.Code
+		wantErrorType  string
+		wantOutcome    string
 	}{
 		{name: "success", wantStatus: codes.Unset},
 		{
@@ -119,10 +122,24 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 			wantOutcome: "validation",
 		},
 		{
-			name:        "canceled by the caller",
-			err:         storage.NewStorageError("Op", storage.ErrorKindConnection, fmt.Errorf("query: %w", context.Canceled), "query failed"),
-			wantStatus:  codes.Unset,
-			wantOutcome: "canceled",
+			name:           "canceled by the caller",
+			err:            storage.NewStorageError("Op", storage.ErrorKindConnection, fmt.Errorf("query: %w", context.Canceled), "query failed"),
+			callerCanceled: true,
+			wantStatus:     codes.Unset,
+			wantOutcome:    "canceled",
+		},
+		{
+			name:           "bad connection after the caller canceled",
+			err:            storage.NewStorageError("Op", storage.ErrorKindConnection, driver.ErrBadConn, "query failed"),
+			callerCanceled: true,
+			wantStatus:     codes.Unset,
+			wantOutcome:    "canceled",
+		},
+		{
+			name:          "query canceled by the server",
+			err:           storage.NewStorageError("Op", storage.ErrorKindConnection, &pgconn.PgError{Code: "57014"}, "query failed"),
+			wantStatus:    codes.Error,
+			wantErrorType: "connection",
 		},
 	}
 
@@ -130,7 +147,12 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := recordStorageSpans(t)
 
-			_, endSpan := startStorageSpan(context.Background(), "storage.get.thing", "GetThing")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			_, endSpan := startStorageSpan(ctx, "storage.get.thing", "GetThing")
+			if test.callerCanceled {
+				cancel()
+			}
 			endSpan(test.err)
 
 			spans := recorder.Ended()
