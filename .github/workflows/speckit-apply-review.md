@@ -77,6 +77,7 @@ safe-outputs:
   # Recommended remediations can defer a removal to a tracked follow-up.
   create-issue:
     title-prefix: "[PR follow-up] "
+    labels: [automation, follow-up]
     max: 1
   add-comment:
     target: ${{ inputs.pr }}
