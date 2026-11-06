@@ -5,7 +5,7 @@ targets the eight findings that jbspeakr and x418 raised by hand on PR #293
 (agent-subject impersonation). The eight existing dimensions missed all of them.
 The final dimension is [`behavioral-probe-dimension.md`](behavioral-probe-dimension.md).
 It is also the ninth `## agent:` section in
-[`.github/workflows/architecture-review.md`](../../../.github/workflows/architecture-review.md).
+[`.github/workflows/architecture-review.md`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/.github/workflows/architecture-review.md).
 
 ## Summary
 
