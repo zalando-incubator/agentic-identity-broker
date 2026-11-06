@@ -106,7 +106,6 @@ const config = {
             '**/*.test.{js,jsx,ts,tsx}',
             '**/__tests__/**',
             'AGENTS.md',
-            'CLAUDE.md',
             'ENCRYPTION_INTEGRATION_GUIDE.md',
             'STORAGE_EXTENSION_GUIDE.md',
             'STORAGE_TROUBLESHOOTING.md',
