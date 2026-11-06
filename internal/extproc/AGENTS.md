@@ -164,7 +164,7 @@ RequestHeaders → validate subject metadata → validate resource metadata
                → protocol and transport checks → Exchanger.Exchange(subject, resource)
                → Authorization header mutation + BUFFERED body
 RequestBody    → decode JSON once → InputBuilder.Build(raw body, decoded value)
-               → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: echo body
+               → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: re-serialize parsed MCP body; echo non-MCP body
                                                       → deny: 403 ImmediateResponse {"error":"access_denied","error_description":"...reasons..."}
 
 Header-only requests:
@@ -178,6 +178,7 @@ RequestHeaders(end_of_stream=true) → validate subject metadata → validate re
 `authorization.InputBuilder.Build` selects a parser by `protocol`:
 
 - For `"mcp"`, `ParseMCPMessage` validates the decoded value and produces `type="mcp_tool_call"` for `tools/call` or `type="mcp_method"` for other methods.
+- For MCP bodies, reject duplicate or case-fold-equivalent JSON-RPC envelope and `params` keys before OPA evaluates the request. Reject noncanonical recognized envelope keys and tool-call `name` or `arguments` keys. Reject non-object `tools/call` arguments. Build the approval invocation from the `mcp` input map, not from a second decode of the body. After OPA and the approval gate permit the request, forward a JSON re-serialization of `input.parsed_body`. Preserve numeric lexemes and enforce `authorization.max_body_size` on both the incoming body and the complete serialized body.
 - For all other values, `type="unknown"` contains the raw body in `input.attributes.request.http.body`.
 
 `OPAAuthorizer` has two backends:
