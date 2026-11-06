@@ -271,21 +271,6 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Set principals on spans only through `id.Principal.SpanAttribute`, and add none until #356 provides it. Never put a principal in a metric or a credential in any signal.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
-## Code Review Rules
-
-Use the governing references and feature-selection process in this file before review.
-Read the nearest child `AGENTS.md` for each changed area.
-
-- Prioritize security faults and performance problems that can affect users.
-- Check for exposed secrets, injection, unsafe input handling, and authentication or authorization errors.
-- Check for N+1 queries, inefficient loops, resource leaks, and expensive repeated operations.
-- Identify incomplete implementations and violations of the Code Style rules.
-- Suggest concrete improvements to unclear names, oversized functions, and error handling.
-- Verify changes against `ARCHITECTURE.md`, accepted ADRs, and the constitution.
-- Read the governing feature's full `tasks.md`. Verify that each checked task has a production-quality implementation.
-- Report specific findings with source locations, impact, and actionable corrections.
-- Explain useful patterns as well as problems. Ask for clarification when the source does not establish intent.
-
 ## Database Migrations
 
 Use `NNN_description.{up,down}.sql` in `migrations/`. Test both directions against PostgreSQL with the production migrations.
