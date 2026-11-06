@@ -97,13 +97,53 @@ An operator upgrades to metadata-only token-exchange inputs. ExtProc does not ex
 - **FR-017**: The Agentgateway `jwtAuth` policy MUST validate the bearer token before its global ExtProc policy evaluates `jwt.rawToken.unredacted()` for subject-token metadata.
 
 
+### User Story 4 - Preserve Authoritative Broker Denials (Priority: P1)
+
+A gateway caller receives an authorization denial, not a server failure, when the
+broker rejects exchange with `access_denied` and offers no recovery URL.
+[ADR 048](../../adrs/048-extproc-authoritative-access-denial.md) records the scoped
+response amendment requested in issue #416.
+
+**Acceptance Scenarios**:
+
+1. **US4-S1**: **Given** valid exchange metadata and a broker `403 access_denied`
+   without `error_uri`, **when** a caller requests any protocol through ExtProc,
+   **then** ExtProc returns HTTP 403 with JSON `access_denied` and the broker
+   description, no challenge, elicitation, or authorization mutation. If the
+   broker subsequently permits exchange, retrying the same request forwards only
+   the exchanged token. The denial is not cached as a successful exchange.
+
+**Example journey (US4-S1)**: The gateway publishes validated synthetic subject
+`<subject-jwt>` and resource `https://mcp.example.com/mcp` in `aib.tokenexchange`.
+The sidecar's existing client assertion authenticates its exchange:
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=%3Csubject-jwt%3E&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&resource=https%3A%2F%2Fmcp.example.com%2Fmcp&client_assertion=%3Cassertion-jwt%3E&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{"error":"access_denied","error_description":"Caller is not authorized for this resource"}
+```
+
+The gateway returns the same status and JSON error to the caller, without
+`WWW-Authenticate` or a recovery URL. No request reaches the protected service.
+After the broker permits this caller, an unchanged retry obtains
+`<exchanged-token>` and forwards `Authorization: Bearer <exchanged-token>`.
+These markers are synthetic opaque credentials, not new broker JWT issuance.
+
 #### `exchangeErrorResponse` matrix
 
-Amended 2026-10-26 by the [Feature 023 User Story 1 Amendment](../023-extproc-mcp-elicitation/spec.md).
+Amended 2026-10-26 by the [Feature 023 User Story 1 Amendment](../023-extproc-mcp-elicitation/spec.md), and 2026-11-05 by [ADR 048](../../adrs/048-extproc-authoritative-access-denial.md) for US4-S1.
 
 | Condition | Response |
 |---|---|
-| Generic exchange error, broker 4xx without `error_uri`, transient 429 or 5xx, network error, or timeout | HTTP 500, `content-type: application/json`, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}` |
+| Nontransient broker `access_denied` without `error_uri`, any protocol | HTTP 403, `content-type: application/json`, JSON `{"error":"access_denied","error_description":"<broker description>"}`; no challenge or elicitation |
+| Generic exchange error, other broker 4xx without `error_uri`, transient 429 or 5xx, network error, or timeout | HTTP 500, `content-type: application/json`, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}` |
 | `ErrAssertionExpired` | HTTP 503, `{"error":"service_unavailable","error_description":"client assertion expired"}` |
 | `ErrCircuitOpen` | HTTP 503, `{"error":"service_unavailable","error_description":"circuit breaker is open"}` |
 | Nontransient broker error with `error_uri`, any protocol | HTTP 403, `content-type: application/json`, `WWW-Authenticate: Bearer error="insufficient_scope"` (plus `error_description`/`error_uri` when RFC 6750-valid), JSON-RPC 2.0 URL elicitation body with code `-32042` and `"id": null` |
