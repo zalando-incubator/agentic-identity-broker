@@ -139,3 +139,33 @@ describe('PermissionSetsList — per-service toggle regression', () => {
     expect(screen.getByLabelText(/Service A \(required\)/i)).toBeTruthy();
   });
 });
+
+describe('PermissionSetsList — requested-service candidates (Feature 055)', () => {
+  it('marks covering sets without selecting or locking optional sets', () => {
+    const optionalPS = {
+      permission_set: {
+        id: 'ps-triage',
+        name: 'Issue Triage',
+        description: 'Triage issues',
+        service_scopes: [{ service_id: SERVICE_C, requirement_type: 'optional' as const }],
+      },
+      requirement_type: 'optional' as const,
+    };
+    const onSelectionChange = vi.fn();
+    render(
+      <PermissionSetsList
+        permissionSets={[mandatoryPS, optionalPS]}
+        availableServices={availableServices}
+        serviceRequirements={serviceRequirements}
+        requestedCandidates={{ 'ps-triage': ['Service C'] }}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    const badges = screen.getAllByTestId('requested-candidate-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent('Covers requested Service C');
+    const toggle = screen.getByRole('switch', { name: 'Toggle Issue Triage' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).not.toBeDisabled();
+  });
+});

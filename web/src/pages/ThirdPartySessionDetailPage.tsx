@@ -129,7 +129,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
           <EmptyState
             title="Service not found"
             description="No third-party service matches this link. Check the address or open your sessions list."
-            action={{ label: 'View all sessions', onClick: () => navigate('/sessions') }}
+            primaryAction={{ label: 'View all sessions', onClick: () => navigate('/sessions') }}
           />
         );
       case 'error':
@@ -147,7 +147,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
         const { service, session, dependent_agents: agents } = state.detail;
         const needsLogin = !session || session.is_expired;
         return (
-          <Stack spacing="lg">
+          <Stack gap="lg">
             <div>
               <h2 className="font-display text-2xl font-semibold text-trust-deep">{service.display_name}</h2>
               <p className="mt-1 font-mono text-sm text-neutral-600 break-all">{service.scope_url}</p>
@@ -203,7 +203,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                   </Button>
                 ) : (
                   <>
-                    <Button variant="secondary" loading={refreshing} onClick={() => void handleRefresh(service.id)}>
+                    <Button variant="secondary" isLoading={refreshing} onClick={() => void handleRefresh(service.id)}>
                       Refresh
                     </Button>
                     <Button variant="danger" onClick={() => setConfirmingTermination(true)}>
