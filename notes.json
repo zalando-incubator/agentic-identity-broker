@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 131
+    "investigation_after": 206
   },
   "issues": [
     {
@@ -36,10 +36,22 @@
       "note": "Maintainer explicitly parked usage terms on 2026-10-08; documentation_url may suffice. Do not implement or repeat clarification without new human activity."
     },
     {
+      "number": 188,
+      "state": "commented",
+      "updated_at": "2026-11-06",
+      "note": "Verified #381 excludes user activity API/UI and external events. Commented with remaining acceptance slices: authenticated user-scoped projection and separate trusted external ingestion. Keep issue open after ledger merge; do not duplicate #381."
+    },
+    {
+      "number": 206,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-06",
+      "note": "Asked whether assessment belongs at ExtProc policy boundary or asynchronously after broker pending creation, plus allowed argument egress/retention. Existing OPA arguments and pending-only creation verified; no dependency or policy bypass added."
+    },
+    {
       "number": 314,
       "state": "deferred",
       "updated_at": "2026-11-06",
-      "note": "oauth2_token.go still rejects non-RFC8693 grants without form client_id before Basic parsing. Separate security-focused fix needs decoding, duplicate-method rejection, 401 challenge and mode metadata tests; coordinate with OAuth provider migration #431."
+      "note": "Form-only client-ID gate, credential DTO/CIMD guard and form-only proxy port still apply. Race package tests pass, not Basic coverage. Needs method provenance, duplicate-method rejection, 401 challenge and mode metadata matrix; coordinate #431 and overlapping #381 token seams."
     }
   ],
   "fixes": [
@@ -65,15 +77,15 @@
       "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
       "status": "open",
       "updated_at": "2026-11-06",
-      "note": "Append-only update accepted: stale metadata-input generic-failure fixture now uses invalid_target, not access_denied. Reproduced before edit; 99 non-Agentgateway race E2E scenarios, check/build/test passed. Await fresh CI, including containers."
+      "note": "Verified follow-up head 4426935: pipeline, unit, integration, backend, ExtProc and frontend E2E statuses passed after fixture correction. Draft still awaits human review; no further CI push needed."
     },
     {
       "issue": 244,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-244-service-api-docs",
+      "pr": 433,
+      "branch": "repo-assist/fix-issue-244-service-api-docs-1136b4beeff18f5b",
       "status": "open",
       "updated_at": "2026-11-06",
-      "note": "Committed ea677f5e; final draft submission consolidates service rules/examples into OpenAPI. Verify published PR before retry; no duplicate. Docs build, 459 internal links/fragments, check/build/test passed; external link checker network-blocked."
+      "note": "Verified live draft #433 and actual published branch; pipeline and unit/integration/all E2E statuses passed. Replaces unresolved publication record; do not duplicate."
     }
   ],
   "checks": [
@@ -90,24 +102,6 @@
       "follow_up": "Await maintainer review; do not duplicate snapshot-index work."
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-05",
-      "result": "#416: added narrow access_denied mapping using existing accessDeniedResponse; no unrelated cleanup. Added scoped superseding ADR 048, updated response contracts and US4-S1 journey.",
-      "follow_up": "Track published draft; no duplicate fix."
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-06",
-      "result": "#244 consolidated service overview and operator guide; added canonical CIMD confidential OpenAPI example. docs-build passed; all 459 local links/fragments passed. Targeted Markdown lint retains pre-existing violations.",
-      "follow_up": "docs-check-links failed on external network access, not local routes. No dependency or runtime changes; npm lockfile drift restored."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-06",
-      "result": "#432 reproduced stale 500 expectation for access_denied; generic fixture changed to invalid_target. All 99 non-Agentgateway ExtProc scenarios passed with race detection. just test passed on docs and maintenance branches.",
-      "follow_up": "Container-backed ExtProc execution failed to start Agentgateway here; wait for normal CI. No full container/E2E pass claimed."
-    },
-    {
       "area": "tooling",
       "checked_at": "2026-11-06",
       "result": "just check passed on docs and maintenance branches, including 0 linter issues. Ginkgo CLI absent; ran compiled Ginkgo suite with go test flags.",
@@ -120,21 +114,45 @@
       "follow_up": null
     },
     {
-      "area": "repo_assist_prs",
+      "area": "dependencies",
       "checked_at": "2026-11-06",
-      "result": "Read check runs AND commit statuses for all four existing PRs. #403/#420/#424 pipelines passed; #432 ExtProc stage failed. Locally reproduced stale fixture and accepted append-only push to #432. One new docs draft planned within cap.",
-      "follow_up": "Recheck #432 CI after published update. #403/#420 require maintainer classification labels; #424 non-draft. Resolve #244 draft number before duplicate work."
+      "result": "Only Dependabot #233 is open: unit/frontend E2E logs fail npm ci because typescript-eslint 8.70.0 requires TS <6.1.0, but bump is TS 7.0.2. Posted installation-root-cause comment. Compress security update already has passing #440; no duplicate.",
+      "follow_up": "Hold TS major until ESLint chain supports it; no peer-check bypass. No compatible multi-PR bundle exists."
     },
     {
       "area": "ci",
       "checked_at": "2026-11-06",
-      "result": "#432 stale metadata-input generic-error fixture reproduced locally and corrected without production edits. Initial push required local branch rename to existing remote name; second accepted.",
-      "follow_up": "CI is not yet verified after append-only update. Do not infer success from the accepted push."
+      "result": "Read checks and statuses for all five Repo Assist PRs plus #233/#440. #432 follow-up and #433 pipelines passed. #403/#420 only retain classification-label failures. #233 installation failure is dependency incompatibility, not a test regression.",
+      "follow_up": "Maintainers must supply appropriate required classification labels for #403/#420; do not apply misleading documentation labels."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-06",
+      "result": "Investigated #314 form-only token seam, local credential extraction, CIMD guard and form-only proxy port. Blind Basic-to-form normalization loses method provenance and cannot satisfy proxy forwarding/challenge contracts. No security fix attempted.",
+      "follow_up": "Coordinate provider #431 and overlapping ledger #381; add explicit authentication-method and all-mode regression matrix."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-06",
+      "result": "Verified #381 branch docs/spec exclude user activity API/UI and external producer ingestion. #188 remains broader; posted remaining acceptance slices. Confirmed #244 docs fix is live draft #433 with passing pipeline.",
+      "follow_up": "Keep #188 open after ledger merge; later API needs authenticated subject scope, safe reasons and bounded cursor pagination."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-06",
+      "result": "Maintained just test with GO_FAST_TEST_PACKAGES override passed all four affected packages under race: ExtProc authorization, approval domain, end-user HTTP and OAuth2 provider. No production edits or new behavior coverage claimed.",
+      "follow_up": "New assessor and Basic-auth implementation still need dedicated tests; no full verification gate run this session."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-06",
+      "result": "All five live Repo Assist PRs have passing pipeline statuses. #432 correction passed; #433 publication resolved. #424 remains non-draft, others drafts. #403/#420 require classification labels. Monthly checklist repaired without redundant PR comments.",
+      "follow_up": "Await human reviews; no further #432 CI update or duplicate #244 PR needed."
     },
     {
       "area": "release",
       "checked_at": "2026-11-06",
-      "result": "Latest release remains v0.1.136 (2026-11-05). Documentation consolidation and an unmerged PR test correction do not justify a separate release PR.",
+      "result": "Latest release v0.1.141 published 2026-11-06. Investigation-only work and unmerged existing fixes do not justify a separate release PR.",
       "follow_up": null
     }
   ],
@@ -150,19 +168,14 @@
   ],
   "priorities": [
     {
-      "task": 6,
-      "item": "Recheck #432 after E2E fixture update",
-      "note": "Accepted append-only push preserves generic failure coverage; all 99 non-Agentgateway race scenarios passed. Read both checks and statuses; containers need CI."
-    },
-    {
       "task": 2,
-      "item": "Resume oldest-first investigation after #131",
-      "note": "Next #188; avoid active fixes. #105 is parked; #27/#37/#59 await clarification. #56 needs design. Confirm published #244 docs draft number before retry."
+      "item": "Resume oldest-first after #206",
+      "note": "Next #212 has active #424; inspect #222 implementation status, then #243. #188 ledger acceptance gaps recorded; #206 awaits placement/egress answers. Respect #105 hold and #27/#37/#59 unanswered clarification."
     },
     {
       "task": 3,
       "item": "Plan #314 Basic client authentication",
-      "note": "Verified form-only client_id gate remains. Separate authentication tests and metadata alignment needed; coordinate with provider migration #431 rather than mixing it into docs work."
+      "note": "Resolve method provenance, proxy forwarding contract and challenge handling with all-mode regression tests. Coordinate #431 provider migration and overlapping #381 token seams rather than implementing blind form normalization."
     }
   ]
 }
