@@ -93,6 +93,7 @@ web/src/
     ConsentOverviewPage     /delegations — agent delegation list
     AgentGrantDetailPage    /agents/:agentId — per-agent grants
     ThirdPartySessionsPage  /sessions — session management
+    ThirdPartySessionDetailPage /sessions/:service — one service's session (Virtual Service Scope page)
     ApprovalPage            /approvals/:id — tool-approval review
     ToolAuthorizationsPage  /approvals — permanent approvals
     ErrorPage               * — fallback
@@ -215,6 +216,7 @@ Preserve redirect URL validation and full-page navigation, as required by ADR 01
 | DELETE | `/api/consent/agents/:id/grants`       | `consentApi.deleteGrant(id)`                  |
 | GET    | `/api/third-party/sessions`            | `sessionsApi.listSessions()`                  |
 | GET    | `/api/third-party/:id/session`         | `sessionsApi.getSessionDetails(id)`           |
+| GET    | `/api/third-party/sessions/:service`   | `sessionsApi.getServiceSessionDetail(service)` |
 | DELETE | `/api/third-party/:id/session`         | `sessionsApi.terminateSession(id)`            |
 | POST   | `/api/third-party/:id/session/refresh` | `sessionsApi.refreshSession(id)`              |
 | GET    | `/api/approvals/pending`               | `approvalApi.listPendingApprovals()`          |

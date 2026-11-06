@@ -135,7 +135,7 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 - [X] T061 [US3] Strip broker virtual scopes in the domain-built upstream authorization URL in `internal/domain/oauth2/service.go` and through a domain-owned pure scope operation consumed by `internal/adapters/http/enduser/oauth2_token_proxy.go`; omit empty scope, leave upstream bodies/status/headers/rotation unchanged, and preserve startup strategy and hybrid dispatch rather than introducing a third policy (FR-013, FR-021; DEC-002; Principle VI).
 - [X] T062 [US3] Add credential-free audit assertions in `internal/domain/oauth2server/provider_test.go` for definitive/transient local refresh refusal and in `internal/adapters/http/enduser/oauth2_token_proxy_test.go` for response preservation, ensuring no broker scope claim is fabricated in upstream tokens (FR-013, FR-021; SR-005).
 - [X] T063 [US3] Add zero-extra-I/O regressions for requests without virtual scopes or retained assurance bindings in `internal/domain/oauth2/service_test.go` and `internal/domain/oauth2server/provider_test.go` using dependency call counts, then retain that fast path in both services (plan Performance Goals; FR-007, FR-012; Principle VIII).
-- [ ] T064 [US3] Make US3 S1–S4 green in `tests/e2e/incremental_authorization_test.go` and `incremental_authorization_proxy_test.go`; run `just check`, `just test`, and `just test-e2e-backend`, proving no unusable local success and zero virtual scopes in recorded upstream requests (SC-004–SC-005; Principles VIII, XIII).
+- [X] T064 [US3] Make US3 S1–S4 green in `tests/e2e/incremental_authorization_test.go` and `incremental_authorization_proxy_test.go`; run `just check`, `just test`, and `just test-e2e-backend`, proving no unusable local success and zero virtual scopes in recorded upstream requests (SC-004–SC-005; Principles VIII, XIII).
 
 ## Phase 5: User Story 2 — Repair the service by opening its scope link (Priority: P1)
 
@@ -200,7 +200,7 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 **Architecture & Documentation** (Principle II):
 
-- [ ] T087 Update `ARCHITECTURE.md` OAuth2 modes, consent, exchange recovery, session management, ExtProc challenge, ADR index and API-version note; update package maps/API routing notes in `AGENTS.md`, `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/extproc/AGENTS.md`, and `web/AGENTS.md`; verify moved ADR links/pointers and the single shared rule agree with final accepted ADRs (Principles II, V).
+- [X] T087 Update `ARCHITECTURE.md` OAuth2 modes, consent, exchange recovery, session management, ExtProc challenge, ADR index and API-version note; update package maps/API routing notes in `AGENTS.md`, `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/extproc/AGENTS.md`, and `web/AGENTS.md`; verify moved ADR links/pointers and the single shared rule agree with final accepted ADRs (Principles II, V).
 
 **Configuration** (Principle VII):
 
