@@ -1,6 +1,7 @@
 package sessiontoken
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -210,5 +211,39 @@ func TestService_ValidateAuthorizationSessionToken_PrincipalMismatch(t *testing.
 func TestService_ValidateAuthorizationSessionToken_InvalidToken(t *testing.T) {
 	svc := newTestService(t)
 	_, err := svc.ValidateAuthorizationSessionToken("garbage-token", id.NewAgentID(), id.NewPrincipal("x"))
+	assert.ErrorIs(t, err, ports.ErrSessionInvalidToken)
+}
+
+// Continuity claims from specs/055-incremental-service-authorization (FR-007, FR-011, FR-019, SR-002).
+func TestRequestedServiceClaimsSurviveSealing(t *testing.T) {
+	svc := newTestService(t)
+	agentID := id.NewAgentID()
+	principal := id.NewPrincipal("alice@example.com")
+	serviceID := id.MustParseServiceID("880e8400-e29b-41d4-a716-446655440010")
+	scope := "https://broker.example.com/sessions/github"
+
+	claims, err := NewAuthorizationSessionClaims(agentID, principal, "/oauth2/authorize?client_id=agent&scope=openid", nil)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(claims)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "requested_service_ids", "empty fields are omitted")
+	assert.NotContains(t, string(encoded), "service_scope_bindings")
+
+	claims.RequestedServiceIDs = []id.ServiceID{serviceID}
+	claims.ServiceScopeBindings = map[string]id.ServiceID{scope: serviceID}
+	token, err := svc.Create(claims)
+	require.NoError(t, err)
+
+	session, err := svc.ValidateAuthorizationSessionToken(token, agentID, principal)
+	require.NoError(t, err)
+	assert.Equal(t, []id.ServiceID{serviceID}, session.RequestedServiceIDs)
+	assert.Equal(t, map[string]id.ServiceID{scope: serviceID}, session.ServiceScopeBindings)
+	assert.WithinDuration(t, claims.ExpiresAt, session.ExpiresAt, time.Second, "the original expiry is exposed, never renewed")
+
+	_, err = svc.ValidateAuthorizationSessionToken(token, id.NewAgentID(), principal)
+	assert.ErrorIs(t, err, ports.ErrSessionAgentMismatch)
+	_, err = svc.ValidateAuthorizationSessionToken(token, agentID, id.NewPrincipal("mallory@example.com"))
+	assert.ErrorIs(t, err, ports.ErrSessionPrincipalMismatch)
+	_, err = svc.ValidateAuthorizationSessionToken(token[:len(token)-2]+"xx", agentID, principal)
 	assert.ErrorIs(t, err, ports.ErrSessionInvalidToken)
 }
