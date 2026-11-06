@@ -59,8 +59,12 @@ each `change` describes. Apply the recommended `change` of each item, not its
 line `Accepted (approved by <login> on <date>: <proposal url>)`. Keep
 `spec.md` and `plan.md` consistent with the applied changes, recording each
 requirement change under Clarifications with the proposal URL as its reason.
-Add a task to `tasks.md` for each item and tick it when done. Do not change
-anything the selected items do not cover.
+Add a ticked task to `tasks.md` for each item you resolve. Leave an item that
+stays unresolved out of `tasks.md` and explain it in the report. Remove every
+unticked task an earlier apply-review run added, whether or not its item is
+selected again. When selected items call for follow-up issues, open one
+issue with `create_issue` that covers all of them. Do not change anything
+the selected items do not cover.
 
 ## Publish this session's result
 
