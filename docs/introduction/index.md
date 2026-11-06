@@ -25,9 +25,19 @@ never sees the user's long-lived credentials.
 
 ## The problem
 
-AI agents often call services for the people they work for. They can read a repository,
-file a ticket, query a warehouse, or send a calendar invite. Each common access method
-has a failure mode that an IAM team can recognize:
+AI agents often call services for the people they work for. Picture a normal morning. An
+employee asks the company assistant in Slack to summarize the open Linear tickets of the
+team, check the blocked GitHub pull requests, and email a status update to the launch
+stakeholders. That one sentence needs the employee's Linear, GitHub, and Gmail access.
+Somebody must decide which part of that access the assistant gets, whether the email to
+external people is acceptable, and how to take the access back next month.
+
+OAuth lets the employee connect each service. It does not show which agent uses the
+token, it cannot ask about one specific email, and it expects the employee at a browser,
+not in Slack. Read [Why does this exist?](/docs/introduction/why) for the full story and
+answers to the common questions.
+
+Each common access method has a failure mode that an IAM team can recognize:
 
 | Approach | Why it breaks down |
 |---|---|
@@ -79,6 +89,8 @@ existing corporate authorization server or issue its own tokens.
 
 ## Where to go next
 
+- **[Why does this exist?](/docs/introduction/why)** — why OAuth delegation alone is not
+  enough, and what is left after IT approves an agent.
 - **[Use cases](/docs/introduction/use-cases)** — concrete scenarios where delegated agent
   access is the hard part.
 - **[Why not a traditional IdP?](/docs/introduction/why-not-idp)** — how the broker
