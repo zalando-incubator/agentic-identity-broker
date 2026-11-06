@@ -49,8 +49,20 @@ func (s *scopeServices) GetByCanonicalID(_ context.Context, canonicalID string) 
 
 type scopePermissionSets struct{}
 
-func (scopePermissionSets) GetByIDs(context.Context, []id.PermissionSetID) ([]*dstorage.PermissionSet, error) {
-	return nil, nil
+func (scopePermissionSets) GetByIDs(_ context.Context, ids []id.PermissionSetID) ([]*dstorage.PermissionSet, error) {
+	sets := make([]*dstorage.PermissionSet, len(ids))
+	for i, setID := range ids {
+		sets[i] = &dstorage.PermissionSet{ID: setID, ServiceScopes: []dstorage.ServiceScope{{ServiceID: scopeGitHubID, Scopes: []string{"repo"}}}}
+	}
+	return sets, nil
+}
+
+type scopeSnapshots struct {
+	snapshot servicescope.SessionSnapshot
+}
+
+func (s *scopeSnapshots) ServiceSessionSnapshot(context.Context, id.Principal, id.ServiceID) servicescope.SessionSnapshot {
+	return s.snapshot
 }
 
 type serviceScopeFixture struct {
@@ -59,6 +71,7 @@ type serviceScopeFixture struct {
 	agent     *dstorage.Agent
 	secret    string
 	services  *scopeServices
+	snapshots *scopeSnapshots
 	refreshes ports.RefreshTokenSessionRepository
 }
 
@@ -73,8 +86,13 @@ func newServiceScopeFixture(t *testing.T) *serviceScopeFixture {
 	services := &scopeServices{services: map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity{
 		scopeGitHubID: {ID: scopeGitHubID, CanonicalID: ptr.To("github")},
 	}}
-	provider.WithServiceScopes(servicescope.NewResolver(services, scopePermissionSets{}, scopePublicURL))
-	return &serviceScopeFixture{provider: provider, agents: agentRepo, agent: agent, secret: secret, services: services, refreshes: provider.fositeStorage.refreshRepo}
+	snapshots := &scopeSnapshots{snapshot: servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: []string{"repo"}}}
+	provider.WithServiceScopes(servicescope.NewResolver(services, scopePermissionSets{}, scopePublicURL), servicescope.NewEvaluator(scopePermissionSets{}, snapshots))
+	grant, err := provider.fositeStorage.verifier.(*testConsentVerifier).grants.FindByPrincipalAndAgent(context.Background(), id.Principal("user@example.com"), agent.ID)
+	require.NoError(t, err)
+	grant.GrantedPermissionSets = []dstorage.GrantedPermissionSetEntry{{PermissionSetID: agent.PermissionSets[0].PermissionSetID, IncludedServiceIDs: []id.ServiceID{scopeGitHubID}}}
+	require.NoError(t, provider.fositeStorage.verifier.(*testConsentVerifier).grants.Update(context.Background(), grant))
+	return &serviceScopeFixture{provider: provider, agents: agentRepo, agent: agent, secret: secret, services: services, snapshots: snapshots, refreshes: provider.fositeStorage.refreshRepo}
 }
 
 func (f *serviceScopeFixture) authorize(t *testing.T, scope string, bindings map[string]id.ServiceID) (string, error) {
@@ -215,5 +233,76 @@ func TestProviderRefreshServiceScopeWidening(t *testing.T) {
 		scopeless, err := f.refresh(narrowed.RefreshToken, "")
 		require.NoError(t, err)
 		assert.Equal(t, "offline_access read", scopeless.Scope)
+	})
+}
+
+// Continuing local refresh assurance from specs/055-incremental-service-authorization
+// (FR-008, FR-012, FR-019–FR-020; SR-003; API-LOCAL-SCOPES).
+func TestProviderRefreshRechecksBoundServices(t *testing.T) {
+	bindings := map[string]id.ServiceID{githubScope: scopeGitHubID}
+	unsatisfied := "scope " + githubScope + " is no longer satisfied; interactive authorization required"
+	issue := func(t *testing.T, f *serviceScopeFixture) string {
+		t.Helper()
+		code, err := f.authorize(t, "read offline_access "+githubScope, bindings)
+		require.NoError(t, err)
+		issued, err := f.exchange(code)
+		require.NoError(t, err)
+		return issued.RefreshToken
+	}
+
+	t.Run("usable services refresh and narrowing keeps rechecking every binding", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		token := issue(t, f)
+		narrowed, err := f.refresh(token, "read offline_access")
+		require.NoError(t, err)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnusableDefinitive}
+		_, err = f.refresh(narrowed.RefreshToken, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: []string{"repo"}}
+		again, err := f.refresh(narrowed.RefreshToken, "")
+		require.NoError(t, err, "a refused refresh does not consume the token")
+		assert.Equal(t, "read offline_access", again.Scope)
+	})
+
+	t.Run("a valid token missing an effective scope is unusable", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		token := issue(t, f)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: []string{"read:org"}}
+		_, err := f.refresh(token, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+	})
+
+	t.Run("transient usability failures are non-consuming server errors", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		token := issue(t, f)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnverifiableTransient}
+		_, err := f.refresh(token, "")
+		requireRFC6749(t, err, "server_error", "requested service usability cannot be verified")
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUsable, Scopes: []string{"repo"}}
+		_, err = f.refresh(token, "")
+		require.NoError(t, err)
+	})
+
+	t.Run("grant coverage loss and canonical renames fail closed without consumption", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		token := issue(t, f)
+		f.services.services[scopeGitHubID].CanonicalID = ptr.To("github-production")
+		_, err := f.refresh(token, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+		f.services.services[scopeGitHubID].CanonicalID = ptr.To("github")
+
+		grants := f.provider.fositeStorage.verifier.(*testConsentVerifier).grants
+		grant, err := grants.FindByPrincipalAndAgent(context.Background(), id.Principal("user@example.com"), f.agent.ID)
+		require.NoError(t, err)
+		grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+		require.NoError(t, grants.Update(context.Background(), grant))
+		_, err = f.refresh(token, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+	})
+
+	t.Run("client_credentials cannot request service scopes", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		_, err := f.provider.HandleClientCredentials(context.Background(), f.agent.ID.String(), f.secret, "read "+githubScope)
+		requireRFC6749(t, err, "invalid_scope", "service scopes require a user authorization")
 	})
 }
