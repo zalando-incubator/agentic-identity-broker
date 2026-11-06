@@ -623,11 +623,13 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
+	recorder := recordStorageSpans(t)
 	created, err := createPatternedApproval(ctx, repo, invalid)
 	require.Nil(t, created)
 	var storageErr *storage.StorageError
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConnection, storageErr.Kind)
+	assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.tool_approval"), codes.Error, "connection", "")
 
 	_, err = repo.Get(ctx, invalid.ID)
 	require.ErrorAs(t, err, &storageErr)
@@ -636,10 +638,12 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 	conflict := *existing
 	conflict.CreatedAt = now
 	conflict.ExpiresAt = now.Add(time.Hour)
+	recorder = recordStorageSpans(t)
 	created, err = createPatternedApproval(ctx, repo, &conflict)
 	require.Nil(t, created)
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConnection, storageErr.Kind)
+	assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.tool_approval"), codes.Error, "connection", "")
 
 	after, err := repo.Get(ctx, existing.ID)
 	require.NoError(t, err)
@@ -753,10 +757,7 @@ func TestToolApprovalRepository_UndecodableStoredValue(t *testing.T) {
 				err = test.call(approval)
 
 				assertStorageErrorKind(t, err, test.operation, storage.ErrorKindUnknown)
-				spans := recorder.Ended()
-				require.Len(t, spans, 1)
-				assert.Equal(t, test.span, spans[0].Name())
-				assertStorageSpanResult(t, spans[0], codes.Error, "unknown", "")
+				assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, test.span), codes.Error, "unknown", "")
 			})
 		}
 	}

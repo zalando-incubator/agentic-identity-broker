@@ -223,9 +223,7 @@ func TestAgentRepository_UndecodableStoredValue(t *testing.T) {
 			recorder := recordStorageSpans(t)
 			_, err = repo.Get(ctx, withClientID.ID)
 			assertStorageErrorKind(t, err, "GetAgent", storage.ErrorKindUnknown)
-			spans := recorder.Ended()
-			require.Len(t, spans, 1)
-			assertStorageSpanResult(t, spans[0], codes.Error, "unknown", "")
+			assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.get.agent"), codes.Error, "unknown", "")
 
 			_, err = repo.GetByClientID(ctx, clientID)
 			assertStorageErrorKind(t, err, "GetAgentByClientID", storage.ErrorKindUnknown)

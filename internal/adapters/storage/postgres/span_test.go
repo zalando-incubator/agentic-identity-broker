@@ -57,6 +57,15 @@ func assertStorageSpanResult(t *testing.T, span sdktrace.ReadOnlySpan, wantStatu
 	assertOptionalAttribute(t, attributes, "storage.outcome", wantOutcome)
 }
 
+// requireOneStorageSpan returns the only span the recorder has ended, after checking its name.
+func requireOneStorageSpan(t *testing.T, recorder *tracetest.SpanRecorder, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, name, spans[0].Name())
+	return spans[0]
+}
+
 func assertOptionalAttribute(t *testing.T, attributes map[string]string, key, want string) {
 	t.Helper()
 	if want == "" {
@@ -278,10 +287,7 @@ func TestStorageSpans_FailedRepositoryCalls(t *testing.T) {
 
 			require.Error(t, test.call(context.Background()), "an adapter without a database must fail")
 
-			spans := recorder.Ended()
-			require.Len(t, spans, 1)
-			assert.Equal(t, test.span, spans[0].Name())
-			assertStorageSpanResult(t, spans[0], codes.Error, "connection", "")
+			assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, test.span), codes.Error, "connection", "")
 		})
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 )
 
 func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
@@ -33,11 +34,13 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 		grant.ID = id.NewGrantID()
 		before := grant.Copy()
 
+		recorder := recordStorageSpans(t)
 		err := grantRepo.Create(ctx, grant)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 		assert.Equal(t, before, grant, "failed create must not publish metadata")
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Unset, "", "conflict")
 
 		var count int
 		require.NoError(t, adapter.db.QueryRowContext(ctx,
@@ -53,10 +56,12 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 		grant := newUserGrant(principal, agentID, newGrantedPermissionSetEntry(t, adapter))
 		grant.ID = id.NewGrantID()
 
+		recorder := recordStorageSpans(t)
 		err := grantRepo.Create(ctx, grant)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Unset, "", "not_found")
 
 		var count int
 		require.NoError(t, adapter.db.QueryRowContext(ctx,
@@ -64,6 +69,31 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 			grant.ID, principal, agentID,
 		).Scan(&count))
 		require.Zero(t, count)
+	})
+
+	t.Run("canceled create records the cancellation", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "create-canceled")
+		grant := newUserGrant(id.Principal("create-canceled@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		recorder := recordStorageSpans(t)
+		require.ErrorIs(t, grantRepo.Create(canceled, grant), context.Canceled)
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Unset, "", "canceled")
+	})
+
+	t.Run("invalid stored grant JSON fails ListByPrincipal", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "list-invalid-json")
+		principal := id.Principal("list-invalid-json-" + id.NewAgentID().String() + "@example.com")
+		grant := newUserGrant(principal, agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		require.NoError(t, grantRepo.Create(ctx, grant))
+		_, err := adapter.db.ExecContext(ctx, `UPDATE user_grants SET granted_permission_sets = '{}'::jsonb WHERE id = $1`, grant.ID)
+		require.NoError(t, err)
+
+		recorder := recordStorageSpans(t)
+		_, err = grantRepo.ListByPrincipal(ctx, principal)
+		assertStorageErrorKind(t, err, "ListByPrincipal", storage.ErrorKindUnknown)
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.list.user_grants_by_principal"), codes.Error, "unknown", "")
 	})
 
 	t.Run("missing permission set rolls back update", func(t *testing.T) {
@@ -179,7 +209,9 @@ func TestUserGrantRepositoryCommitFailureDoesNotPublishMetadata(t *testing.T) {
 		grant.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
 		before := grant.Copy()
 		installGrantCommitFailure(t, adapter)
+		recorder := recordStorageSpans(t)
 		require.Error(t, grantRepo.Create(ctx, grant))
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Error, "connection", "")
 		assert.Equal(t, before, grant)
 		_, err := grantRepo.Get(ctx, grant.ID)
 		var storageErr *storage.StorageError
@@ -192,7 +224,9 @@ func TestUserGrantRepositoryCommitFailureDoesNotPublishMetadata(t *testing.T) {
 		grant := newUserGrant(id.Principal("commit-generated-id@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
 		before := grant.Copy()
 		installGrantCommitFailure(t, adapter)
+		recorder := recordStorageSpans(t)
 		require.Error(t, grantRepo.Create(ctx, grant))
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Error, "connection", "")
 		assert.Equal(t, before, grant)
 		_, err := grantRepo.FindByPrincipalAndAgent(ctx, grant.Principal, agent.ID)
 		var storageErr *storage.StorageError
@@ -213,7 +247,9 @@ func TestUserGrantRepositoryCommitFailureDoesNotPublishMetadata(t *testing.T) {
 		attempt.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
 		before := attempt.Copy()
 		installGrantCommitFailure(t, adapter)
+		recorder := recordStorageSpans(t)
 		require.Error(t, grantRepo.Create(ctx, attempt))
+		assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Error, "connection", "")
 		assert.Equal(t, before, attempt)
 		after, err := grantRepo.Get(ctx, stored.ID)
 		require.NoError(t, err)
