@@ -204,9 +204,10 @@ The [justfile](justfile) defines the maintained commands:
 |---|---|
 | `just test` | Fast Go/package tests, excluding E2E and integration suites |
 | `just test-e2e-backend` | Backend functional E2E, after a frontend build |
+| `just test-e2e-docker` | Docker-tagged backend E2E; requires Docker |
 | `just test-e2e-extproc` | ExtProc E2E |
 | `just test-e2e-frontend` | Browser E2E against the built frontend |
-| `just test-e2e` | All three E2E suites |
+| `just test-e2e` | Backend, Docker-tagged backend, ExtProc, and browser E2E; requires Docker |
 | `just test-e2e-performance` | Separate performance-labelled measurement |
 | `just test-integration` | Default self-contained integration suites |
 | `just test-integration-infra` | Tagged infrastructure-backed suites |

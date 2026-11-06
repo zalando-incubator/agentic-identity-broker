@@ -330,7 +330,12 @@ The [frontend harness](frontend/frontend_suite_test.go) owns browser startup and
 The [frontend instructions](frontend/AGENTS.md) describe page objects, selectors, screenshots, and browser cleanup.
 
 For built assets, use `just test-e2e-frontend` ([recipe](../../justfile)).
-For development mode, start Vite in another terminal, then use one worker ([development-mode guidance](frontend/AGENTS.md#running-frontend-e2e-tests)):
+Built mode is recommended until the development identities match.
+The [Vite proxy](../../web/vite.config.ts) sends `dev@example.com`, but consent tests seed sessions for `user@example.com`.
+This mismatch can leave the approval button disabled. A single worker does not fix it.
+
+For development-mode debugging, stop the broker started with `just run` to free port 8000.
+Start Vite in another terminal, then use one worker ([development-mode guidance](frontend/AGENTS.md#running-frontend-e2e-tests)):
 
 ```bash
 just web-dev
