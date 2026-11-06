@@ -199,6 +199,7 @@ For **outbound trace propagation** (US1-S1 to US1-S3): Use a real `TokenExchange
 | US1-S4 | `tests/e2e/extproc/telemetry_test.go` | `It("records error status and description on failed token exchange spans")` |
 | US1-S5 | `tests/e2e/extproc/telemetry_test.go` | `It("emits no telemetry when disabled")` |
 | US1-S6 | `tests/e2e/extproc/telemetry_test.go` | `It("forwards trace context without creating spans when traces.enabled=false")` |
+| US1-S7 | `tests/e2e/extproc/telemetry_test.go` | `It("US1-S7: leaves the status unset when the client receives a 4xx response")` |
 | US2-S1 | `tests/e2e/extproc/telemetry_test.go` | `It("starts normally with no telemetry section in config")` — exercises real startup path |
 | US2-S2 | `tests/e2e/extproc/telemetry_test.go` | `It("exports traces under configured service name")` |
 | US2-S3 | `tests/e2e/extproc/telemetry_test.go` | `It("exports via gRPC when protocol is grpc")` |

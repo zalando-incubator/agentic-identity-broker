@@ -22,16 +22,17 @@ The per-process store of approval records synced from the broker.
 | `mu` | `sync.RWMutex` | ADR 012 pattern; not `sync.Map` (research R-004) |
 | `pairs` | `map[pairKey]*pairEntry` | Keyed by the verified identity pair |
 | `sessions` | `map[string]time.Time` | Active `agent_session_id` → last-seen; drives FR-004 query params and FR-009 eviction |
-| `etag` | `string` | Last ETag returned by the broker; `""` before bootstrap |
-| `lastSync` | `time.Time` | Most recent successful broker synchronization (`200` or `304`); zero before the first success. Source for `extproc.approval.sync_age` |
+| `etag` | `string` | Last background snapshot ETag, unchanged by targeted reads. See [the cache](../../internal/extproc/approval/cache.go). |
+| `lastSync` | `time.Time` | Last successful background synchronization (`200` or `304`), unchanged by targeted reads. See [the cache](../../internal/extproc/approval/cache.go) and [syncer](../../internal/extproc/approval/syncer.go). |
 | `maxStaleness` | `time.Duration` | `tool_approvals.max_staleness`; maximum age of a cache entry that can authorize (FR-019) |
 | `idleTTL` | `time.Duration` | `tool_approvals.approval_cache_idle_ttl` |
 
 **Invariants**
 
-- A `200` sync response **replaces** the full state of every pair in its scope; it is never merged (research R-005 — the broker sends snapshots, not deltas).
-- A filtered (`?principal=`) response leaves entries for other principals untouched. An absent pair for the requested principal is removed.
-- `lastSync` is set after every accepted broker synchronization, including a `304`. It remains unchanged after an error, malformed response, or rejected targeted ETag.
+- A `200` replaces its full scope, including removal of omitted records and pairs. An empty snapshot clears its scope.
+- A principal-filtered response preserves other principals and the background ETag. It removes absent pairs and records for the requested principal.
+- Background synchronization refreshes `lastSync`, including on `304`. Targeted reads refresh only returned pairs, not global `lastSync`.
+- Sources: [accepted ADR 036](../../adrs/036-extproc-approval-cache-and-gate.md), [the cache](../../internal/extproc/approval/cache.go), and [the syncer](../../internal/extproc/approval/syncer.go).
 - `syncedAt` is set only when an accepted snapshot installs a pair. `Cache.Match` uses the more recent of `lastSync` and the pair timestamp. It returns no record when this value is zero or older than `maxStaleness`.
 - `lastSeen` is updated on every request that consults the pair, not on sync delivery. This prevents polling from defeating FR-010 idle eviction.
 

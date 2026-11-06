@@ -124,33 +124,18 @@ which has entirely different caching, circuit-breaking, and singleflight semanti
 
 ---
 
-## R-002: Reuse of `internal/toolpattern` from ExtProc
+## R-002: Reuse of `internal/domain/approval/toolpattern` from ExtProc
 
-**Decision**: `internal/extproc/approval/cache.go` imports `internal/toolpattern` directly and uses
-`toolpattern.Matches` for per-record matching and `toolpattern.SelectBest` for precedence. Cross-service
-agreement is pinned by the embedded vectors via `toolpattern.MatchVectors()`,
-`toolpattern.CanonicalVectors()`, and `toolpattern.PrecedenceVectors()`.
+**Decision**: The shared matcher resides in `internal/domain/approval/toolpattern`.
+The accepted [ADR 035: Shared Tool Pattern Matching](../../adrs/035-shared-tool-pattern-matching.md) permits this exact domain import from ExtProc.
+No other domain package receives that exception.
 
-**Rationale**: ADR 035 is accepted and names this exact import as the single sanctioned exception to
-ExtProc's broker-package isolation:
+The shared package owns grammar, canonicalization, validation, matching, formatting, and embedded match and canonicalization vectors.
+ExtProc owns candidate ranking, selection, and precedence vectors beside the cache.
+See [ADR 035](../../adrs/035-shared-tool-pattern-matching.md), [selection](../../internal/extproc/approval/precedence.go), and [precedence vectors](../../internal/extproc/approval/precedence_vectors.go).
 
-> `internal/toolpattern` is a neutral, dependency-free leaf package that both `internal/domain/*` and
-> `internal/extproc/*` may import. It owns the approval-pattern grammar, canonicalization, matching,
-> formatting, precedence, and embedded language-neutral test vectors.
-> — `adrs/035-shared-tool-pattern-matching.md:13-17`
-
-`internal/extproc/AGENTS.md:118` already records the exception. The relevant surface is:
-
-```go
-func Matches(toolPattern string, paramsPattern map[string]string, toolName string, args map[string]any) bool
-func SelectBest(candidates []Candidate, toolName string, args map[string]any) int
-type Candidate struct { ID string; ToolPattern string; ParamsPattern map[string]string; DecidedAt time.Time }
-```
-
-`SelectBest` returns the index of the winning candidate or `-1`, ranking exact-tool over wildcard,
-then more constrained params, then fewer wildcards, with ties broken by later `DecidedAt` then
-lexicographically smaller `ID` (`internal/toolpattern/toolpattern.go:202-283`). That final ID
-tie-breaker makes cache selection deterministic across replicas.
+`selectBest` calls `toolpattern.Matches`. It prefers exact tools, more constrained parameters, fewer wildcards, later decisions, then smaller IDs.
+See [the selection implementation](../../internal/extproc/approval/precedence.go).
 
 **Alternatives rejected**: reimplementing glob matching inside ExtProc (ADR 035 exists precisely to
 prevent broker/ExtProc divergence); passing patterns into OPA (FR-001 forbids approval records in the
@@ -231,9 +216,9 @@ with `Authorization: Bearer {client_assertion}`, `If-None-Match: {lastETag}`,
 per currently-active session. HTTP client timeout is `long_poll_timeout_seconds + a fixed margin`, so a
 server-side hold never trips the client timeout.
 
-- `200 OK` → replace the state of every returned `(principal, agent_id)` pair atomically, store the new
-  `ETag`, reset backoff, re-poll immediately.
-- `304 Not Modified` → re-poll immediately with the same ETag.
+- `200 OK` → atomically replace all cached pairs, including omitted-record and omitted-pair removal. Store the ETag and refresh confirmation time.
+- `304 Not Modified` → retain records and the ETag, refresh confirmation time, and re-poll.
+- Sources: [the syncer](../../internal/extproc/approval/syncer.go) and [the cache](../../internal/extproc/approval/cache.go).
 - any error / non-2xx → exponential backoff 1s → 60s, then re-poll.
 
 **Rationale**: ADR 014 fixes the server contract — the ETag is the global `approval_sync_state.version`
@@ -242,18 +227,15 @@ state immediately (`adrs/014-long-poll-listen-notify.md:24-32`). The handler cla
 `X-Long-Poll-Timeout` to 120s and defaults invalid values to 30s
 (`internal/adapters/http/handlers/approval/sync_handler.go:19-22, 120-128`).
 
-**Critical finding — there are no deltas and no retention window**. Spec US4 scenario 3 says the broker
-"returns all changes since that ETag (or the full state if the ETag is stale beyond a server-side
-retention window)". That retention window **does not exist**. The handler parses `If-None-Match` as an
-optionally quoted, optionally `v`-prefixed `int64`; *any* value that is not exactly equal to the current
-version — older, newer, or unparseable — yields an immediate `200` with the complete current state
-(`sync_handler.go:105-118, 130-195`). `Service.GetSyncState` always returns full active state grouped by
-`(principal, agent_id)` (`internal/domain/approval/service.go:527-573`).
+**Historical correction — no deltas or retention window**. The original US4 scenario 3 described changes since an ETag.
+That description is superseded by [accepted ADR 036](../../adrs/036-extproc-approval-cache-and-gate.md) and the [current synchronization contract](spec.md#current-synchronization-contract).
+The broker accepts an optionally quoted, optionally `v`-prefixed integer version.
+A different, absent, or unparseable version returns the full current snapshot. A matching version permits `304`.
+See [the broker handler](../../internal/adapters/http/handlers/approval/sync_handler.go).
 
-Therefore ExtProc MUST treat every `200` as a **full-state snapshot for the requested filter scope**, not
-an incremental patch, and MUST replace rather than merge the returned pairs. US4 scenarios 3 and 4
-collapse to the same observable behavior, which simplifies the implementation and removes the
-"stale ETag" special case entirely.
+Every `200` replaces the requested scope, including omitted records and pairs. An empty snapshot clears that scope.
+Targeted reads preserve other principals, the background ETag, and global confirmation time. They refresh only returned pairs.
+See [the cache replacement methods](../../internal/extproc/approval/cache.go).
 
 **Backoff attribution**: ADR 014's `1s → 30s` backoff governs the *broker's* PostgreSQL
 `ApprovalSyncSubscriber` reconnect (`adrs/014-long-poll-listen-notify.md:93-96`), not this HTTP client.
@@ -468,10 +450,10 @@ wire types in `tests/e2e/helpers/approval_types.go:5-143` — whose `ApprovalSum
 
 ---
 
-## R-013: No new ADR required
+## R-013: Governing ADRs
 
-**Decision**: Feature 026 needs no new ADR. Every architectural choice it makes is already governed by
-an accepted decision.
+**Historical correction**: Initial planning proposed no new ADR. The accepted [ADR 036: ExtProc Approval Cache and Gate](../../adrs/036-extproc-approval-cache-and-gate.md) now governs this feature.
+It defines verified identity, full-snapshot replacement, freshness, targeted reads, and one-time consumption.
 
 | Concern | Governing ADR |
 |---|---|
@@ -479,16 +461,11 @@ an accepted decision.
 | Per-endpoint create/sync/consume authentication split | ADR 018 |
 | In-process cache concurrency and eviction | ADR 012 |
 | Exchange-before-OPA body-bearing pipeline | ADR 028 |
-| ExtProc importing `internal/toolpattern` | ADR 035 |
+| ExtProc importing `internal/domain/approval/toolpattern` | [Accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md) |
 | ExtProc as a standalone binary with its own config schema | ADR 011 |
 
-The highest existing ADR number is **035**; the next free number is 036 if one becomes necessary.
-
-**Caveat**: the two broker changes (R-000 identity → FR-017, R-014 `approved_at` → FR-018) are *API*
-changes, not architectural ones — they are governed by Principle X (confirmation recorded in the
-spec's 2026-09-04 Clarifications session) and recorded in `api/enduser/openapi.yaml`, not by a new
-ADR. Had the identity extension been rejected in favor of a different mechanism, that replacement
-decision would have warranted ADR 036.
+The [accepted cache-and-gate ADR](../../adrs/036-extproc-approval-cache-and-gate.md) complements the decisions in this table.
+References use full filenames to distinguish records in the [ADR directory](../../adrs/).
 
 ---
 
@@ -498,11 +475,9 @@ decision would have warranted ADR 036.
 
 ### The gap
 
-Spec FR-015 requires that when several cached records match one invocation, "the most specific wins
-(exact tool > wildcard tool; then more constrained params; then fewer wildcards; **ties broken by
-later decision time**) via `toolpattern.SelectBest`". The shared matcher implements exactly that:
-equal-rank candidates are ordered by later `Candidate.DecidedAt`, then by lexicographically smaller
-`Candidate.ID` (`internal/toolpattern/toolpattern.go:266-283`).
+FR-015 ranks matches by exact tool, constrained parameters, wildcard count, and later decision time.
+Equal candidates then use the smaller approval ID. ExtProc owns this selection under [accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md).
+See [`selectBest`](../../internal/extproc/approval/precedence.go).
 
 **The sync response carries no timestamp of any kind.** `toolApprovalSummary` is exactly
 `id`, `tool_name`, `arguments_hash`, `tool_pattern`, `params_pattern`, `status`, `persistence`,

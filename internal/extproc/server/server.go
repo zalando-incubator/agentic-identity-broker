@@ -135,7 +135,8 @@ func (r *inputRejection) Diagnostic() Diagnostic {
 	if detail == "" {
 		detail = DetailRequestMalformed
 	}
-	return NewDiagnostic(StageRequestValidation, detail)
+	// inputRejectionResponse answers every rejected input with a 503.
+	return NewDiagnostic(StageRequestValidation, detail).asServerError(KindRejected)
 }
 
 type requestLoggerKey struct{}
@@ -305,7 +306,7 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 	metricsEnabled := s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Metrics.Enabled
 	var span trace.Span
 	if tracesEnabled {
-		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
+		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange", trace.WithSpanKind(trace.SpanKindServer))
 	}
 	finished := false
 	return ctx, func(diagnostic Diagnostic) {
@@ -320,7 +321,8 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 				n = 4
 			}
 			span.SetAttributes(attrs[:n]...)
-			if diagnostic.Outcome() != OutcomeSuccess {
+			if diagnostic.serverError != "" && diagnostic.Outcome() != OutcomeCanceled {
+				span.SetAttributes(attribute.String("error.type", string(diagnostic.serverError)))
 				span.SetStatus(otelcodes.Error, "token exchange failed")
 			}
 			span.End()
@@ -962,7 +964,7 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extproc
 		return reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description), diagnostic
 	}
 
-	return s.tokenExchangeErrorResponse(ctx, err), diagnostic
+	return s.tokenExchangeErrorResponse(ctx, err), diagnostic.asServerError(metadata.Kind())
 }
 
 func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeInput, *inputRejection) {
