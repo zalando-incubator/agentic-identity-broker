@@ -77,6 +77,7 @@ safe-outputs:
       - "examples/**"
       - "configs/**"
       - "docs/**"
+      - "coding-standards/**"
       - "adrs/**"
       - "specs/**"
       - "tools/**"
@@ -92,6 +93,12 @@ safe-outputs:
       - ".dockerignore"
     protected-files: request-review
     fallback-as-pull-request: false
+  # Approved tasks can change coding standards or defer work to a tracked follow-up.
+  create-issue:
+    title-prefix: "[PR follow-up] "
+    labels: [automation, follow-up]
+    deduplicate-by-title: true
+    max: 1
   add-comment:
     target: ${{ inputs.pr }}
     discussions: false
