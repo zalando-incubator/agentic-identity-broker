@@ -3043,32 +3043,7 @@ func TestServer_TokenExchangeSpan_CallerCancellationIsNotAnError(t *testing.T) {
 	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stream, err := client.Process(ctx)
-	require.NoError(t, err)
-	require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
-		MetadataContext: validTokenExchangeMetadata(""),
-		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: extProcHeaders(nil, false),
-		},
-	}))
-	<-exchangeStarted
-	cancel()
-
-	var span sdktrace.ReadOnlySpan
-	require.Eventually(t, func() bool {
-		for _, ended := range recorder.Ended() {
-			if ended.Name() == "extproc.token_exchange" {
-				span = ended
-				return true
-			}
-		}
-		return false
-	}, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, "canceled", attributeMap(span.Attributes())["token_exchange.outcome"])
-	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
-	assert.Equal(t, otelcodes.Unset, span.Status().Code)
+	assertCanceledExchangeSpan(t, recorder, client, exchangeStarted)
 }
 
 // Spec: US3 S1 — Metrics are recorded with outcome attribute
