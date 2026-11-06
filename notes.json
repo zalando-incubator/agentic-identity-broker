@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 59
+    "investigation_after": 131
   },
   "issues": [
     {
@@ -28,6 +28,18 @@
       "state": "awaiting_clarification",
       "updated_at": "2026-11-05",
       "note": "Current guide/ADR 036 document metadata contract. Asked for credential-free Envoy Gateway v1.4.6 filter/extension policy and forwarding config before adding a verified non-Agentgateway producer example."
+    },
+    {
+      "number": 105,
+      "state": "deferred",
+      "updated_at": "2026-11-06",
+      "note": "Maintainer explicitly parked usage terms on 2026-10-08; documentation_url may suffice. Do not implement or repeat clarification without new human activity."
+    },
+    {
+      "number": 314,
+      "state": "deferred",
+      "updated_at": "2026-11-06",
+      "note": "oauth2_token.go still rejects non-RFC8693 grants without form client_id before Basic parsing. Separate security-focused fix needs decoding, duplicate-method rejection, 401 challenge and mode metadata tests; coordinate with OAuth provider migration #431."
     }
   ],
   "fixes": [
@@ -49,11 +61,19 @@
     },
     {
       "issue": 416,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-416-broker-access-denied",
+      "pr": 432,
+      "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
       "status": "open",
-      "updated_at": "2026-11-05",
-      "note": "Committed 9dba446b; final draft submission uses #432. Verify published PR/branch before retry. Preserves transient/recovery handling; INFO denial logged only at server."
+      "updated_at": "2026-11-06",
+      "note": "Append-only update accepted: stale metadata-input generic-failure fixture now uses invalid_target, not access_denied. Reproduced before edit; 99 non-Agentgateway race E2E scenarios, check/build/test passed. Await fresh CI, including containers."
+    },
+    {
+      "issue": 244,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-244-service-api-docs",
+      "status": "open",
+      "updated_at": "2026-11-06",
+      "note": "Committed ea677f5e; final draft submission consolidates service rules/examples into OpenAPI. Verify published PR before retry; no duplicate. Docs build, 459 internal links/fragments, check/build/test passed; external link checker network-blocked."
     }
   ],
   "checks": [
@@ -76,39 +96,45 @@
       "follow_up": "Track published draft; no duplicate fix."
     },
     {
-      "area": "build",
-      "checked_at": "2026-11-05",
-      "result": "#416 just build and just extproc-build passed.",
-      "follow_up": null
+      "area": "docs",
+      "checked_at": "2026-11-06",
+      "result": "#244 consolidated service overview and operator guide; added canonical CIMD confidential OpenAPI example. docs-build passed; all 459 local links/fragments passed. Targeted Markdown lint retains pre-existing violations.",
+      "follow_up": "docs-check-links failed on external network access, not local routes. No dependency or runtime changes; npm lockfile drift restored."
     },
     {
       "area": "tests",
-      "checked_at": "2026-11-05",
-      "result": "#416 regression unit/E2E tests failed semantically first. Final just test and just extproc-test (race) passed. Focused E2E: 5/5 passed, 113 unselected.",
-      "follow_up": "Full E2E/container suites not run; require normal CI."
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-05",
-      "result": "just docs-build passed. ADR 048 lint and whitespace checks passed. just docs-lint still fails on existing Markdown issues; modified gateway-guide paragraph has no new violations.",
-      "follow_up": "No broad Markdown cleanup; restored npm-generated lockfile drift."
+      "checked_at": "2026-11-06",
+      "result": "#432 reproduced stale 500 expectation for access_denied; generic fixture changed to invalid_target. All 99 non-Agentgateway ExtProc scenarios passed with race detection. just test passed on docs and maintenance branches.",
+      "follow_up": "Container-backed ExtProc execution failed to start Agentgateway here; wait for normal CI. No full container/E2E pass claimed."
     },
     {
       "area": "tooling",
-      "checked_at": "2026-11-05",
-      "result": "just check passed with 0 lint issues. Ginkgo CLI absent; focused suite ran via go test and Ginkgo flags.",
+      "checked_at": "2026-11-06",
+      "result": "just check passed on docs and maintenance branches, including 0 linter issues. Ginkgo CLI absent; ran compiled Ginkgo suite with go test flags.",
+      "follow_up": null
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-06",
+      "result": "just build passed on both branches; just extproc-build passed for #432 maintenance. docs-build passed for #244.",
       "follow_up": null
     },
     {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-05",
-      "result": "Read check runs and commit statuses: #403/#420/#424 pipelines passed. #403/#420 remain drafts with required classification-label failure; #424 non-draft. Preparing one #416 draft (limit 4).",
-      "follow_up": "Maintainers must apply required label to #403/#420; bugfix/minor are not allowed safe-output labels."
+      "checked_at": "2026-11-06",
+      "result": "Read check runs AND commit statuses for all four existing PRs. #403/#420/#424 pipelines passed; #432 ExtProc stage failed. Locally reproduced stale fixture and accepted append-only push to #432. One new docs draft planned within cap.",
+      "follow_up": "Recheck #432 CI after published update. #403/#420 require maintainer classification labels; #424 non-draft. Resolve #244 draft number before duplicate work."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-06",
+      "result": "#432 stale metadata-input generic-error fixture reproduced locally and corrected without production edits. Initial push required local branch rename to existing remote name; second accepted.",
+      "follow_up": "CI is not yet verified after append-only update. Do not infer success from the accepted push."
     },
     {
       "area": "release",
-      "checked_at": "2026-11-05",
-      "result": "Latest release v0.1.136 published today. No separate release PR justified by this unmerged ExtProc fix.",
+      "checked_at": "2026-11-06",
+      "result": "Latest release remains v0.1.136 (2026-11-05). Documentation consolidation and an unmerged PR test correction do not justify a separate release PR.",
       "follow_up": null
     }
   ],
@@ -124,9 +150,19 @@
   ],
   "priorities": [
     {
+      "task": 6,
+      "item": "Recheck #432 after E2E fixture update",
+      "note": "Accepted append-only push preserves generic failure coverage; all 99 non-Agentgateway race scenarios passed. Read both checks and statuses; containers need CI."
+    },
+    {
       "task": 2,
-      "item": "Resume investigation after #59",
-      "note": "Await #27/#37/#59 clarification. #56 needs an API/domain/UI design, not a relaxed parser. Confirm #416 published draft before more fix work."
+      "item": "Resume oldest-first investigation after #131",
+      "note": "Next #188; avoid active fixes. #105 is parked; #27/#37/#59 await clarification. #56 needs design. Confirm published #244 docs draft number before retry."
+    },
+    {
+      "task": 3,
+      "item": "Plan #314 Basic client authentication",
+      "note": "Verified form-only client_id gate remains. Separate authentication tests and metadata alignment needed; coordinate with provider migration #431 rather than mixing it into docs work."
     }
   ]
 }
