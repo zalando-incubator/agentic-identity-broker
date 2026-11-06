@@ -250,7 +250,7 @@ or provides a stronger race bound. This residual limitation is explicitly approv
 
 ## Revision history
 
-- **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved ADR-2, API-7, ADR-3, D-7 and D-8 at `2026-11-06T15:30:38Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). §10 incorporates ADR-2 and its API-7/D-8 constraints. ADR-3 incorporation remains pending the required maintainer-created follow-up issue. D-7 telemetry migration remains pending the permitted namespace-registration publication path.
+- **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved ADR-2, API-7, ADR-3, D-7 and D-8 at `2026-11-06T15:30:38Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). §10 incorporates ADR-2 and its API-7/D-8 constraints. ADR-3 incorporation remains pending the required maintainer-created follow-up issue. D-7 telemetry migration is implemented in run 42297225880/1 after the publication path became available: the broker span/events use `tokenexchange.access_evaluation*`, both required namespaces are registered, span kinds are explicit, and the breaking-telemetry changelog/query migration is published. Test-first and current validation evidence are in quickstart §16.
 
 - **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved P3/F4 on
   [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
