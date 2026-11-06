@@ -1,4 +1,4 @@
-# Broker overlay for the approved Feature 055 design (implementation pending).
+# Broker overlay for incremental service authorization (docs/guides/incremental-authorization.md).
 # Merge with a complete deployment configuration, including authentication,
 # encryption, storage and signing-key settings; this is not a standalone deployment.
 server:

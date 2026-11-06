@@ -181,9 +181,9 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 `sessions.extraction.http_header` defaults to `Mcp-Session-Id`. ExtProc uses this value to scope session approvals.
 
 
-## Incremental service authorization (approved design)
+## Incremental service authorization
 
-Feature 055's implementation is pending. The approved design reuses
+Incremental service authorization ([guide](guides/incremental-authorization.md)) reuses
 `server.enduser.public_url` for service scopes and recovery URLs, and
 `oauth2_authorization_server.mode` for local/proxy/hybrid behavior. It adds no broker
 or ExtProc process configuration key. See the
