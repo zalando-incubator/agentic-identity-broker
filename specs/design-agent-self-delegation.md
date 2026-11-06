@@ -104,7 +104,7 @@ different access levels: one identity per level, each bootstrapped with exactly 
 An **agent grant** is an administrator's delegation of permission sets to an agent for its own
 identity. It is stored as a `UserGrant` whose principal is the agent UUID, so `VerifyAgentAccess`,
 `resolveEffectiveScopes`, and the ExtProc `granted_permission_sets` input work unchanged. It differs
-from a user grant in who may create it and in one extra field per entry:
+from a user grant in who may create it and in one extra field on the grant itself:
 
 ```
 UserGrant
@@ -113,20 +113,30 @@ UserGrant
   granted_permission_sets[]:
     permission_set_id
     included_service_ids
-    identity_bindings: { service_id: service_identity_id }   (new, optional)
+  identity_bindings: { service_id: service_identity_id }   (new, optional, grant level)
   valid_until
 ```
+
+The binding sits on the grant, not on the permission-set entries. Effective scopes are already
+computed per service as the union across every granted permission set, so one service needs exactly
+one identity per agent regardless of how many permission sets mention it. A per-entry binding would
+let two entries name the same service with different identities, and the resolver would have to
+either pick one or reject the grant. Keeping a single map keyed by service also means adding or
+removing a permission set never silently changes which credential an existing service uses.
 
 Rules:
 
 - Created, replaced, and deleted only through the admin API. The consent UI never lists or edits
   grants whose principal is an agent UUID.
 - Every permission set must be declared on the agent (same rule as user grants).
-- For every included service, the effective scopes must be a subset of the bound identity's
-  ceiling. Validated at write time and again at exchange, because ceilings and permission sets can
-  change later.
+- For every service covered by the grant, the per-service effective scopes (the union across all
+  granted permission sets) must be a subset of the bound identity's ceiling. Validated at write time
+  and again at exchange, because ceilings and permission sets can change later.
 - A service with exactly one identity needs no binding. A service with several requires one, so an
   administrator chooses the blast radius explicitly instead of the broker picking.
+- A binding for a service that no granted permission set covers is rejected, so stale bindings cannot
+  accumulate; removing the last permission set that covers a service requires removing its binding in
+  the same write.
 
 ### 3.4 Machine Token Source
 
