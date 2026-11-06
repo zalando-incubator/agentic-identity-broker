@@ -3,6 +3,8 @@ package oauth2server
 import (
 	"context"
 	"maps"
+	"net/http"
+	"slices"
 
 	"github.com/ory/fosite"
 
@@ -96,4 +98,27 @@ func sessionBindings(session fosite.Session) storage.ServiceScopeBindings {
 	}
 	bindings, _ := extra.GetExtraClaims()[claimServiceScopeBindings].(storage.ServiceScopeBindings)
 	return bindings.Clone()
+}
+
+// narrowRefreshScope grants the requested subset of the predecessor's current scope; fosite
+// itself always re-grants the full original scope. Any requested scope outside the current
+// scope, including one removed by an earlier narrowing, is widening and is refused before the
+// refresh token is rotated (FR-012).
+func narrowRefreshScope(req *fosite.AccessRequest, scope string) error {
+	requested := fosite.Arguments(oauth2.SplitScope(scope))
+	if len(requested) == 0 {
+		return nil
+	}
+	current := req.GetGrantedScopes()
+	var narrowed fosite.Arguments
+	for _, value := range requested {
+		if !slices.Contains(current, value) {
+			return NewRFC6749Error("invalid_scope", "scope "+value+" requires interactive authorization", http.StatusBadRequest, ErrInvalidScope)
+		}
+		if !slices.Contains(narrowed, value) {
+			narrowed = append(narrowed, value)
+		}
+	}
+	req.GrantedScope = narrowed
+	return nil
 }

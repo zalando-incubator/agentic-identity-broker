@@ -55,6 +55,7 @@ func (scopePermissionSets) GetByIDs(context.Context, []id.PermissionSetID) ([]*d
 
 type serviceScopeFixture struct {
 	provider  *Provider
+	agents    ports.AgentRepository
 	agent     *dstorage.Agent
 	secret    string
 	services  *scopeServices
@@ -73,7 +74,7 @@ func newServiceScopeFixture(t *testing.T) *serviceScopeFixture {
 		scopeGitHubID: {ID: scopeGitHubID, CanonicalID: ptr.To("github")},
 	}}
 	provider.WithServiceScopes(servicescope.NewResolver(services, scopePermissionSets{}, scopePublicURL))
-	return &serviceScopeFixture{provider: provider, agent: agent, secret: secret, services: services, refreshes: provider.fositeStorage.refreshRepo}
+	return &serviceScopeFixture{provider: provider, agents: agentRepo, agent: agent, secret: secret, services: services, refreshes: provider.fositeStorage.refreshRepo}
 }
 
 func (f *serviceScopeFixture) authorize(t *testing.T, scope string, bindings map[string]id.ServiceID) (string, error) {
@@ -153,4 +154,66 @@ func decodeJWTPayload(t *testing.T, token string) map[string]any {
 	var claims map[string]any
 	require.NoError(t, json.Unmarshal(payload, &claims))
 	return claims
+}
+
+func (f *serviceScopeFixture) refresh(token, scope string) (*ports.TokenResponse, error) {
+	return f.provider.HandleRefreshToken(context.Background(), f.agent.ID.String(), ports.ClientCredentials{Secret: f.secret}, token, scope)
+}
+
+func requireRFC6749(t *testing.T, err error, code, description string) {
+	t.Helper()
+	var rfcErr *RFC6749Error
+	require.ErrorAs(t, err, &rfcErr)
+	assert.Equal(t, code, rfcErr.Code())
+	assert.Equal(t, description, rfcErr.Description())
+}
+
+// Refresh widening and narrowing from specs/055-incremental-service-authorization (FR-012, US1 S2, API-LOCAL-SCOPES).
+func TestProviderRefreshServiceScopeWidening(t *testing.T) {
+	for _, allowList := range [][]string{{"read"}, nil} {
+		t.Run(strings.Join(allowList, ",")+" allow-list", func(t *testing.T) {
+			f := newServiceScopeFixture(t)
+			f.agent.AllowedScopes = allowList
+			require.NoError(t, f.agents.Update(context.Background(), f.agent))
+			code, err := f.authorize(t, "read offline_access", nil)
+			require.NoError(t, err)
+			issued, err := f.exchange(code)
+			require.NoError(t, err)
+
+			_, err = f.refresh(issued.RefreshToken, "read offline_access "+githubScope)
+			requireRFC6749(t, err, "invalid_scope", "scope "+githubScope+" requires interactive authorization")
+
+			refreshed, err := f.refresh(issued.RefreshToken, "")
+			require.NoError(t, err, "the refused widening must not consume the refresh token")
+			assert.Equal(t, "read offline_access", refreshed.Scope)
+		})
+	}
+
+	t.Run("narrowing persists and a scope-less successor cannot restore removed scopes", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		code, err := f.authorize(t, "read offline_access "+githubScope, map[string]id.ServiceID{githubScope: scopeGitHubID})
+		require.NoError(t, err)
+		issued, err := f.exchange(code)
+		require.NoError(t, err)
+
+		narrowed, err := f.refresh(issued.RefreshToken, "offline_access read")
+		require.NoError(t, err)
+		assert.Equal(t, "offline_access read", narrowed.Scope)
+		assert.Equal(t, "offline_access read", decodeJWTPayload(t, narrowed.AccessToken)["scope"])
+		session, err := f.refreshes.FindBySignature(context.Background(), f.provider.refreshStrategy.RefreshTokenSignature(context.Background(), narrowed.RefreshToken))
+		require.NoError(t, err)
+		assert.Equal(t, "offline_access read", session.Scope)
+		assert.Equal(t, dstorage.ServiceScopeBindings{githubScope: scopeGitHubID}, session.ServiceScopeBindings, "narrowing retains assurance bindings")
+
+		_, err = f.refresh(narrowed.RefreshToken, "read offline_access "+githubScope)
+		requireRFC6749(t, err, "invalid_scope", "scope "+githubScope+" requires interactive authorization")
+		_, err = f.refresh(narrowed.RefreshToken, "READ offline_access")
+		requireRFC6749(t, err, "invalid_scope", "scope READ requires interactive authorization")
+		_, err = f.refresh(narrowed.RefreshToken, "read write offline_access")
+		requireRFC6749(t, err, "invalid_scope", "scope write requires interactive authorization")
+
+		scopeless, err := f.refresh(narrowed.RefreshToken, "")
+		require.NoError(t, err)
+		assert.Equal(t, "offline_access read", scopeless.Scope)
+	})
 }
