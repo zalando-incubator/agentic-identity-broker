@@ -1,9 +1,11 @@
 package oauth2server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -29,9 +31,11 @@ var scopeGitHubID = id.MustParseServiceID("880e8400-e29b-41d4-a716-446655440010"
 
 type scopeServices struct {
 	services map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity
+	calls    int
 }
 
 func (s *scopeServices) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	s.calls++
 	if service, ok := s.services[serviceID]; ok {
 		return service, nil
 	}
@@ -39,6 +43,7 @@ func (s *scopeServices) Get(_ context.Context, serviceID id.ServiceID) (*model.T
 }
 
 func (s *scopeServices) GetByCanonicalID(_ context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	s.calls++
 	for _, service := range s.services {
 		if service.CanonicalID != nil && *service.CanonicalID == canonicalID {
 			return service, nil
@@ -304,5 +309,43 @@ func TestProviderRefreshRechecksBoundServices(t *testing.T) {
 		f := newServiceScopeFixture(t)
 		_, err := f.provider.HandleClientCredentials(context.Background(), f.agent.ID.String(), f.secret, "read "+githubScope)
 		requireRFC6749(t, err, "invalid_scope", "service scopes require a user authorization")
+	})
+}
+
+// Audit and fast-path regressions from specs/055-incremental-service-authorization (SR-005; plan Performance Goals).
+func TestProviderRefreshRecheckAuditAndFastPath(t *testing.T) {
+	t.Run("refresh without bindings performs no service lookup", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		code, err := f.authorize(t, "read offline_access", nil)
+		require.NoError(t, err)
+		issued, err := f.exchange(code)
+		require.NoError(t, err)
+		_, err = f.refresh(issued.RefreshToken, "")
+		require.NoError(t, err)
+		assert.Zero(t, f.services.calls)
+	})
+
+	t.Run("refusals are logged with their kind and without token values", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		var logs bytes.Buffer
+		f.provider.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+		code, err := f.authorize(t, "read offline_access "+githubScope, map[string]id.ServiceID{githubScope: scopeGitHubID})
+		require.NoError(t, err)
+		issued, err := f.exchange(code)
+		require.NoError(t, err)
+
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnusableDefinitive}
+		_, err = f.refresh(issued.RefreshToken, "")
+		require.Error(t, err)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnverifiableTransient}
+		_, err = f.refresh(issued.RefreshToken, "")
+		require.Error(t, err)
+
+		output := logs.String()
+		assert.Contains(t, output, `"msg":"refresh_service_recheck_failed"`)
+		assert.Contains(t, output, `"kind":"definitive"`)
+		assert.Contains(t, output, `"kind":"transient"`)
+		assert.NotContains(t, output, issued.RefreshToken)
+		assert.NotContains(t, output, issued.AccessToken)
 	})
 }

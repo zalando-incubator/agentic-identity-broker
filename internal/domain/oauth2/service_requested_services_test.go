@@ -287,3 +287,14 @@ func (failingServices) Get(context.Context, id.ServiceID) (*model.ThirdpartyOAut
 func (failingServices) GetByCanonicalID(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	return nil, errors.New("storage unavailable")
 }
+
+// Discovery non-advertisement from specs/055-incremental-service-authorization (FR-014).
+func TestGenerateMetadataNeverAdvertisesServiceScopes(t *testing.T) {
+	f := newRequestedFixture(t, &OAuth2Config{
+		ModeStrategy:    NewLocalModeStrategy(),
+		SupportedScopes: []string{"openid", requestedGitHub, requestedGitHub + "/", "https://other.example.com/sessions/github"},
+	}, true)
+	metadata, err := f.svc.GenerateMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openid", "https://other.example.com/sessions/github"}, metadata.ScopesSupported)
+}
