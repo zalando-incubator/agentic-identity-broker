@@ -17,8 +17,7 @@ It covers API-4–API-6 and the thirteen-item decision set, including D-5's unch
 exchange cooldown below. The Proposed wording in §3 is retained as decision history, not an
 outstanding sign-off request. Quickstart §11 records the approval and validation separately.
 
-**Proposed revision (2026-11-06, approval item ADR-2)**: §3.1 records the maintainer's F1
-direction that the permit is authoritative for upstream scopes. No approval above covers §3.1.
+**Proposed revisions (ADR-2, API-7, D-8 and ADR-3)**: §3.1 defines binding-consistent token reuse, not provider downscoping or exchange provenance; §4.1 designates the canonical field while preserving compatibility today. No approval above covers these revisions.
 
 ## 1. Configuration
 
@@ -126,30 +125,28 @@ approval does not automatically cover this consequence.
 
 ### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 revision draft](../adr-048-revision-permit-bound-tokens.md))
 
-In enabled mode the permit is authoritative for the scopes under which a token goes upstream.
-An exchanged token from the ADR 012 cache carries a **token binding**: the set of
-`resource.scopes` and the instant of `grant.updated_at` from the permit that it was exchanged
-or first used under.
+The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit resource scope set and grant update instant that first claimed a result handle.
 
-| Situation (after the precedence above) | Behavior |
+**Binding-aware port/result**: retain disabled `Exchange` semantics. The body path's initial exchange returns the credential plus an opaque result handle (entry identity and synchronized binding cell); the enabled binding-aware call accepts that observed handle and the desired `TokenBinding`. Header-only supplies no initial handle and exchanges after allow. Both return either a validated compatible handle with original token/identities/extensions or a typed exchange/binding error. Every successful flight, including a non-cacheable success, creates one handle shared by all followers. New installations have distinct identities even for identical token bytes. Atomic `BindOnce` claims an unbound cell; subsequent callers compare, never rebind. The exchanger never parses permits. Caller/leader status confers no exclusive ownership of a shared result.
+
+| Situation (after body precedence, or header policy allow) | Behavior |
 |---|---|
-| The token was exchanged by this request | Bind it to this request's permit and forward it. |
-| Cached token with no binding yet | Bind it to this request's permit and forward it. |
-| Cached token whose binding equals the permit's scopes (as a set) and `grant.updated_at` (as an instant) | Forward it. No broker call. |
-| Cached token whose scopes or `grant.updated_at` differ | Do **not** forward it. Remove the entry only if it still holds that token, exchange again once, bind the new token to this permit, and forward the new token. |
-| The re-exchange fails | Existing exchange-error handling (`exchangeErrorResponse`). The removed token is never a stale-on-error fallback. Nothing is forwarded. |
-| A re-consent cooldown entry (no token) | Unchanged D-5 behavior. A cooldown entry has no binding. |
+| Unbound handle, whether cached, initial exchange, detached or singleflight delivery | Atomically claim with this permit. If another caller wins, compare its binding using the rows below; never overwrite. |
+| Handle matches scope set and grant instant | Use that result; cache reuse adds no broker call. |
+| Initial handle mismatches | Never forward it; compare-and-delete the observed entry identity only. |
+| Delete succeeds or observed entry is absent | Perform at most one additional exchange, with stale-on-error forbidden for removed/mismatched results. |
+| Delete fails because a replacement exists | Preserve and read the replacement once. Compare/claim its handle; use it if compatible, otherwise perform the one additional exchange. Never delete by token bytes, including equal-token/different-binding replacements. |
+| Concurrent permits share the additional exchange | All receive the same handle. First atomic claim wins; equal-binding followers may use it. Different-binding followers take the terminal conflict row, not another exchange. |
+| Additional exchange delivers a mismatched handle, including one bound by another live permit | **API-7 Proposed**: return `503`, `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}`. Nothing forwarded; no further retry, rebind, competing-entry deletion or fallback. |
+| Additional exchange fails (timeout, cancellation, broker error or breaker rejection) | Existing `exchangeErrorResponse`; nothing forwarded, no removed/mismatched stale fallback. |
+| Permit expires before policy use or final forwarding | Existing `503 service_unavailable` / `delegation context unavailable`; no expired-context forwarding or re-resolution. |
+| Cooldown entry (no token) | Unchanged D-5; no binding. |
 
-- Body path: the comparison runs after both concurrent calls complete, before the body is
-  buffered for policy. The Authorization mutation carries the forwarded token.
-- Header-only path: the exchange after a policy allow uses the binding of the permit that
-  policy evaluated.
-- Each request exchanges again at most once. Disabled mode is unchanged.
-- The forwarded token is the broker's exchange result, which is the provider session's current
-  token. Upstream receives narrowed provider scopes only when that session carries them; the
-  broker does not narrow provider tokens (limitation in the ADR 048 revision draft).
-- A re-exchange caused by a binding mismatch writes a Debug record with
-  `delegation_binding=mismatch`. It holds no token, scope, or principal.
+Body validation precedes buffering and Authorization mutation; header validation uses the exact permit policy evaluated. Check deadlines immediately before every policy decision and final forwarding, including expiry during header exchange or retry. Each request has at most one additional exchange; revalidating its result cannot restart the loop. Disabled cache keys, TTLs, singleflight and cooldown remain unchanged. Successful non-cacheable results follow identical claim/compare and terminal rules.
+
+**Guarantee and limitations (D-8 Proposed)**: a request never forwards a handle bound to a different permit scope set/grant instant. It may forward identical broader provider token bytes under a new handle when the provider session is unchanged. First use does not attest exchange provenance; concurrent grant reads can differ. Only provider-session re-authorization in Journey 5 demonstrates upstream narrowing. Stronger broker downscoping or exchange-version response members require separately approved API/ADR scope.
+
+The log-only Debug diagnostic remains `delegation_binding=mismatch`, without credentials, scopes or principal.
 
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval gate, and policy fail-closed behavior are unchanged and still apply.
@@ -202,8 +199,8 @@ step 3:
 | `agent`, `resource`, `grant`, `permission_sets` | The documented fields of the corresponding permit members, with the received values. Timestamps are the received RFC 3339 strings. |
 | `canonical_id` (all levels), `grant.valid_until` | **Omitted** when the permit omits them, never `null` |
 | `scopes` (all levels) | Always an array; `[]` when empty |
-| `granted_permission_sets` | `{permission_sets[].id: [permission_sets[].services[].id]}`, derived from the permit. Never taken from exchange extensions in enabled mode. Retained permanently. |
-| `granted_permission_sets_available` | Always `true` in enabled mode. This is the only availability signal, and it guarantees that the five members above are present. Retained permanently. |
+| `granted_permission_sets` | `{permission_sets[].id: [permission_sets[].services[].id]}`, derived from the permit. Never taken from exchange extensions in enabled mode. Retained in this increment; see Proposed §4.1. |
+| `granted_permission_sets_available` | Always `true` in enabled mode. This is the only availability signal, and it guarantees that the five members above are present. Retained in this increment; see Proposed §4.1. |
 | `agent_session_id` | Unchanged existing behavior (omitted when absent) |
 
 A denial (403), a resolution error (503), or an expired deadline (503) returns before policy
@@ -215,10 +212,11 @@ runs. Enabled mode therefore never produces `granted_permission_sets_available: 
 path, and `false` without permission sets on the header-only path. The serialized input is
 byte-for-byte unchanged.
 
-**Compatibility**: The OPA members `granted_permission_sets` and
-`granted_permission_sets_available` are permanent. FR-019 deprecates only the
-`granted_permission_sets` field of the `/oauth2/token` *response*. ExtProc continues to read
-that field in disabled mode until its separately approved removal.
+### 4.1 Canonical permission-set field and compatibility boundary (Proposed ADR-3)
+
+`input.context.permission_sets` is the canonical enabled-mode permission-set field for new policies. It carries typed IDs, canonical IDs and included-service contributions; `resource.scopes` remains the effective scope ceiling. `granted_permission_sets` and `granted_permission_sets_available` remain permit-derived compatibility inputs on both enabled paths, with exactly today's shape and values. This designation changes guidance, not serialization, availability, disabled behavior or policy execution.
+
+The previous permanent-retention commitment is revised only to allow a future, separately approved removal; this feature does not remove or deprecate either OPA member. ADR-3 records the rationale and alternative. T104 requires a maintainer-created follow-up issue before its implementation revision is recorded; issue creation is an external prerequisite, not permission to implement removal here. The issue must cover OPA policy migration, enabled/disabled behavior, availability replacement and versioned contract approval. FR-019's separate exchange-response deprecation is unchanged; ExtProc still reads that response in disabled mode until its separately approved removal.
 
 **Example canonical-ID policy** (`tests/e2e/fixtures/policies/delegation_canonical.rego`, illustrative):
 

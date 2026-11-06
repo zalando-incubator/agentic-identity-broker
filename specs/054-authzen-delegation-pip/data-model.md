@@ -228,8 +228,8 @@ There is no `delegation` wrapper, no `subject` member, and no `delegation_availa
 
 | Member | Go type (package `authorization`) | Disabled mode | Enabled mode (body, batch, and header-only) |
 |---|---|---|---|
-| `granted_permission_sets_available` | `bool` (existing) | Unchanged (`true` only when the exchange returned the field; `false` on header-only) | `true`, permanently retained |
-| `granted_permission_sets` | `map[string][]string` (existing) | Unchanged (from exchange) | `{ps.ID: [ps.Services[].ID]}` in permit order, `[]` for no services; never from exchange; permanently retained |
+| `granted_permission_sets_available` | `bool` (existing) | Unchanged (`true` only when the exchange returned the field; `false` on header-only) | `true`, retained today; canonical/compatibility guidance in contract §4.1 (Proposed ADR-3) |
+| `granted_permission_sets` | `map[string][]string` (existing) | Unchanged (from exchange) | `{ps.ID: [ps.Services[].ID]}` in permit order, `[]` for no services; never from exchange; retained today under contract §4.1 (Proposed ADR-3) |
 | `agent_session_id` | `string` (existing) | Unchanged | Unchanged |
 | `principal` | `string`, `omitempty` | **omitted** | `Context.Principal` |
 | `agent` | `*AgentContext{ID; CanonicalID omitempty}`, `omitempty` | **omitted** | `Context.Agent` |
@@ -249,30 +249,26 @@ denial, a resolution error, or an expired deadline returns 403 or 503 before pol
 
 ### 3.6 Token binding on the ADR 012 cache (Proposed ADR 048 revision draft, research R19)
 
-The ExtProc token cache (`server.cachedToken`) gains one field. The key, TTLs, and the
-re-consent cooldown entries are unchanged.
+The cache key, TTL calculation and cooldown remain unchanged. All successful enabled-mode results, not only cached ones, carry binding ownership.
 
 | Element | Definition |
 |---|---|
-| `TokenBinding` | `{Scopes: sorted, de-duplicated set of Context.Resource.Scopes; GrantUpdatedAt: time.Time parsed from Context.Grant.UpdatedAt}`. Equal when both sets and both instants are equal. |
-| `cachedToken.binding` | `*TokenBinding`. `nil` means unbound: the token was exchanged in a request whose permit has not bound it yet. Always `nil` in disabled mode and on cooldown entries. |
-| Derivation | The server derives the binding from the validated permit (`delegation.Result`). The exchanger never parses permits. |
+| `TokenBinding` | `{Scopes: sorted, de-duplicated set of Context.Resource.Scopes; GrantUpdatedAt: time.Time parsed from Context.Grant.UpdatedAt}`. Equal when both sets and both instants match. Represents the first claiming permit, not broker exchange provenance. |
+| Result handle | Opaque entry identity plus a shared synchronized binding cell. One fresh identity per successful exchange/cache installation; singleflight followers and cache hits carry the same handle. Never derived from token bytes. Non-cacheable successes still share a request-result handle across followers. |
+| `cachedToken.binding` | Shared binding cell reached by the handle; initially nil/unbound. Atomic first claim sets it once; never rebound. Disabled-mode and tokenless cooldown entries have no binding. |
+| Delivered result | Original token, principal, agent ID/extensions plus the handle. Copies retain handle identity, not independent mutable binding copies. |
+| Derivation | Server derives binding from validated permit; exchanger does not parse permits. Copy scope slices. |
+| Compare-and-delete | Under cache lock, compare observed handle identity with current entry identity; delete only if identical. A same-token replacement has a different identity and survives. |
+| Terminal error | Typed binding-conflict result after the one allowed additional exchange; mapped to API-7 503. No credentials/permit in the error. |
 
-**Per-key token states (enabled mode)**:
+**Claim/compare state machine**:
 
-```text
-  ABSENT ──exchange──▶ UNBOUND(token) ──first permit──▶ BOUND(token, b)
-                                                        │
-                       permit binding == b ─────────────┤ forward cached token
-                                                        │
-                       permit binding != b ──▶ remove if the entry still holds token
-                                               ──▶ exchange once ──success──▶ BOUND(token', b')
-                                                                  └─failure──▶ ABSENT or cooldown (no stale use)
-```
+`UNBOUND(handle) → atomic first claim → BOUND(handle, b)`.
+Thereafter equal binding permits use the handle; unequal binding permits cannot use or rebind it. This applies to leaders, followers, initial results, retries, cache hits and non-cacheable successes alike. A compatible detached handle remains usable; cache replacement does not change its cell.
 
-`BOUND` and `UNBOUND` entries still expire under the existing ADR 012 rules. A failed
-re-exchange leaves no token entry (a re-authentication error may record the existing cooldown), so the existing stale-on-error window cannot serve the removed
-token.
+An initial mismatch compare-and-deletes only its own identity. On a failed delete, read the preserved replacement once and compare/claim it; use if compatible. Otherwise perform at most one additional per-key singleflight exchange. Compare/claim its delivered handle again: success permits use, mismatch yields terminal API-7 503 without another retry/delete/rebind. Exchange errors retain existing handling without removed/mismatched stale fallback. A failure may leave a concurrent replacement or cooldown in the cache; it need not leave the cache absent. No failing request forwards a mismatched result.
+
+Contract §3.1 is the authoritative concurrency outcome table. Deadline checks before policy and final forwarding still apply. First claim and new-generation identical-token binding establish reuse ownership only; neither proves downscoping nor the grant read by exchange (D-8).
 
 ## 4. Relationships
 
