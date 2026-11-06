@@ -285,7 +285,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (_ *stora
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgent",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal service_requirements from JSON",
 			)
@@ -296,7 +296,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (_ *stora
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgent",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal permission_sets from JSON",
 			)
@@ -615,12 +615,12 @@ func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, ope
 		}
 		if len(serviceReqsJSON) > 0 {
 			if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
-				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal service_requirements from JSON")
 			}
 		}
 		if len(permissionSetsJSON) > 0 {
 			if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
-				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal permission_sets from JSON")
 			}
 		}
 		agents = append(agents, agent)
@@ -740,7 +740,7 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgentByClientID",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal service_requirements from JSON",
 			)
@@ -751,7 +751,7 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgentByClientID",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal permission_sets from JSON",
 			)
@@ -891,13 +891,13 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 
 	if len(serviceReqsJSON) > 0 {
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
-			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
+			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindUnknown, err, "failed to unmarshal service_requirements from JSON")
 		}
 	}
 
 	if len(permissionSetsJSON) > 0 {
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
-			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
+			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindUnknown, err, "failed to unmarshal permission_sets from JSON")
 		}
 	}
 

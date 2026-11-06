@@ -174,6 +174,52 @@ func TestAgentRepository_Get_SpanResult(t *testing.T) {
 	})
 }
 
+// TestAgentRepository_UndecodableStoredValue checks that a stored value that cannot be decoded is
+// reported as a failure, not as rejected input.
+func TestAgentRepository_UndecodableStoredValue(t *testing.T) {
+	const (
+		clientID  = id.ClientID("undecodable-client")
+		clientURI = "https://example.com/undecodable-client"
+	)
+	corruptions := map[string]string{
+		"service_requirements": `UPDATE agents SET service_requirements = '"not a list"'`,
+		"permission_sets":      `UPDATE agents SET permission_sets = '"not a list"'`,
+	}
+
+	for column, corrupt := range corruptions {
+		t.Run(column, func(t *testing.T) {
+			adapter, cleanup := setupAgentTestDB(t)
+			defer cleanup()
+
+			repo := NewAgentRepository(adapter)
+			ctx := context.Background()
+			now := time.Now().UTC()
+			withClientID := &storage.Agent{ClientID: ptr.To(clientID), DisplayName: "Client ID", Description: "Client ID", CreatedAt: now, UpdatedAt: now}
+			withClientURI := &storage.Agent{ClientURIs: []string{clientURI}, DisplayName: "Client URI", Description: "Client URI", CreatedAt: now, UpdatedAt: now}
+			for _, agent := range []*storage.Agent{withClientID, withClientURI} {
+				attachTestPermissionSet(t, adapter, agent)
+				require.NoError(t, repo.Create(ctx, agent))
+			}
+			_, err := adapter.db.ExecContext(ctx, corrupt)
+			require.NoError(t, err)
+
+			recorder := recordStorageSpans(t)
+			_, err = repo.Get(ctx, withClientID.ID)
+			assertStorageErrorKind(t, err, "GetAgent", storage.ErrorKindUnknown)
+			spans := recorder.Ended()
+			require.Len(t, spans, 1)
+			assertStorageSpanResult(t, spans[0], codes.Error, "unknown", "")
+
+			_, err = repo.GetByClientID(ctx, clientID)
+			assertStorageErrorKind(t, err, "GetAgentByClientID", storage.ErrorKindUnknown)
+			_, err = repo.GetByClientURI(ctx, clientURI)
+			assertStorageErrorKind(t, err, "GetAgentByClientURI", storage.ErrorKindUnknown)
+			_, err = repo.List(ctx)
+			assertStorageErrorKind(t, err, "ListAgents", storage.ErrorKindUnknown)
+		})
+	}
+}
+
 // setupAgentTestDB creates an isolated migrated test database backed by the shared PostgreSQL container.
 func setupAgentTestDB(t *testing.T) (*Adapter, func()) {
 	t.Helper()

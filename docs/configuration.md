@@ -1910,7 +1910,7 @@ When tracing is enabled, the following operations emit child spans:
 | `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
 | `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
 
-`storage.*` spans have span kind `Client`. A failed database call sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
+`storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
 
 These results are not failures. They leave the status unset and set `storage.outcome`:
 
@@ -1918,7 +1918,7 @@ These results are not failures. They leave the status unset and set `storage.out
 |---|---|
 | `not_found` | No matching row, or a referenced row does not exist |
 | `conflict` | The write conflicts with existing data |
-| `validation` | The repository rejected the input or could not decode a stored value |
+| `validation` | The repository rejected the input |
 | `canceled` | The caller canceled the operation |
 
 ### Security notes

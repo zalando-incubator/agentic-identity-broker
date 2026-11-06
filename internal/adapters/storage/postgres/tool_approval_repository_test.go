@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // seedAgent inserts a minimal agent row into the test database to satisfy the
@@ -647,6 +648,118 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 	versionAfterFailure, err := syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, baseline, versionAfterFailure)
+}
+
+// TestToolApprovalRepository_UndecodableStoredValue checks that a stored value that cannot be
+// decoded is reported as a failure, not as rejected input.
+func TestToolApprovalRepository_UndecodableStoredValue(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+
+	repo := NewToolApprovalRepository(adapter)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+
+	corruptions := map[string]string{
+		"arguments":      `UPDATE tool_approvals SET arguments = '"not an object"' WHERE id = $1`,
+		"params_pattern": `UPDATE tool_approvals SET params_pattern = '{"key": 1}' WHERE id = $1`,
+	}
+
+	// newApproval stores an approval with its own principal, so a list only returns that approval.
+	// An empty persistence leaves it pending.
+	newApproval := func(t *testing.T, persistence storage.ApprovalPersistence) *storage.ToolApproval {
+		t.Helper()
+		approval, err := createPatternedApproval(ctx, repo, &storage.ToolApproval{
+			ID:              id.NewApprovalID(),
+			Principal:       id.Principal(id.NewApprovalID().String() + "@example.com"),
+			AgentID:         agentID,
+			GatewayClientID: "test-gateway",
+			ToolName:        "read_file",
+			Arguments:       map[string]any{"path": "/tmp/file"},
+			ArgumentsHash:   "undecodable",
+			Description:     "Read a file",
+			RiskLevel:       "low",
+			Status:          storage.ApprovalStatusPending,
+			ApprovalURL:     "https://broker.example.com/approvals/undecodable",
+			CreatedAt:       now,
+			ExpiresAt:       now.Add(10 * time.Minute),
+		})
+		require.NoError(t, err)
+		if persistence != "" {
+			decision := storage.ApprovalDecision{Persistence: persistence, ToolPattern: approval.ToolName, ParamsPattern: approval.ParamsPattern}
+			_, err = repo.Approve(ctx, approval.ID, decision, now)
+			require.NoError(t, err)
+		}
+		return approval
+	}
+
+	tests := []struct {
+		span        string
+		operation   string
+		persistence storage.ApprovalPersistence
+		skipColumn  string
+		call        func(approval *storage.ToolApproval) error
+	}{
+		{span: "storage.create.tool_approval", operation: "CreateToolApproval", call: func(approval *storage.ToolApproval) error {
+			duplicate := *approval
+			duplicate.ID = id.NewApprovalID()
+			_, err := createPatternedApproval(ctx, repo, &duplicate)
+			return err
+		}},
+		{span: "storage.get.tool_approval", operation: "GetToolApproval", call: func(approval *storage.ToolApproval) error {
+			_, err := repo.Get(ctx, approval.ID)
+			return err
+		}},
+		{span: "storage.approve.tool_approval", operation: "ApproveToolApproval", skipColumn: "params_pattern", call: func(approval *storage.ToolApproval) error {
+			decision := storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: approval.ParamsPattern}
+			_, err := repo.Approve(ctx, approval.ID, decision, now)
+			return err
+		}},
+		{span: "storage.deny.tool_approval", operation: "DenyToolApproval", call: func(approval *storage.ToolApproval) error {
+			_, err := repo.Deny(ctx, approval.ID, nil, now)
+			return err
+		}},
+		{span: "storage.consume.tool_approval", operation: "ConsumeToolApproval", persistence: storage.ApprovalPersistenceOnce, call: func(approval *storage.ToolApproval) error {
+			_, err := repo.Consume(ctx, approval.ID, now)
+			return err
+		}},
+		{span: "storage.revoke_permanent.tool_approval", operation: "RevokePermanentToolApproval", persistence: storage.ApprovalPersistencePermanent, call: func(approval *storage.ToolApproval) error {
+			_, err := repo.RevokePermanent(ctx, approval.ID, now)
+			return err
+		}},
+		{span: "storage.list_active.tool_approval", operation: "ListAllActiveToolApprovals", call: func(approval *storage.ToolApproval) error {
+			_, err := repo.ListAllActive(ctx, &approval.Principal, nil)
+			return err
+		}},
+		{span: "storage.list_permanent.tool_approval", operation: "ListPermanentToolApprovals", persistence: storage.ApprovalPersistencePermanent, call: func(approval *storage.ToolApproval) error {
+			_, err := repo.ListPermanentByPrincipal(ctx, approval.Principal)
+			return err
+		}},
+	}
+
+	for _, test := range tests {
+		for column, corrupt := range corruptions {
+			if column == test.skipColumn {
+				continue // Approve overwrites this column, so its stored value is never decoded.
+			}
+			t.Run(test.span+"/"+column, func(t *testing.T) {
+				approval := newApproval(t, test.persistence)
+				_, err := adapter.db.ExecContext(ctx, corrupt, approval.ID)
+				require.NoError(t, err)
+
+				recorder := recordStorageSpans(t)
+				err = test.call(approval)
+
+				assertStorageErrorKind(t, err, test.operation, storage.ErrorKindUnknown)
+				spans := recorder.Ended()
+				require.Len(t, spans, 1)
+				assert.Equal(t, test.span, spans[0].Name())
+				assertStorageSpanResult(t, spans[0], codes.Error, "unknown", "")
+			})
+		}
+	}
 }
 
 func TestApprovalSyncStateRepository(t *testing.T) {

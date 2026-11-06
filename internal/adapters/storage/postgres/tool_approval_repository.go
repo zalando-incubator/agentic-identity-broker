@@ -235,14 +235,14 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		if err := json.Unmarshal(argumentsJSON, &existing.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"CreateToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(existingParamsPatternJSON, &existing.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -354,14 +354,14 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"GetToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("GetToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("GetToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -472,14 +472,14 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ApproveToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(storedParamsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -584,14 +584,14 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"DenyToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("DenyToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("DenyToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -695,14 +695,14 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ConsumeToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("ConsumeToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("ConsumeToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -774,11 +774,11 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 	}
 	if len(argumentsJSON) > 0 {
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
-			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal arguments from JSON")
+			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal arguments from JSON")
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 	return approval, nil
 }
@@ -1011,14 +1011,14 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 			if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 				return nil, storage.NewStorageError(
 					operation,
-					storage.ErrorKindValidation,
+					storage.ErrorKindUnknown,
 					err,
 					"failed to unmarshal arguments from JSON",
 				)
 			}
 		}
 		if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-			return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+			return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 		}
 		approvals = append(approvals, approval)
 	}
