@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,7 +121,7 @@ func TestTransportNetworkPreservesSecretsWithoutRecordingThem(t *testing.T) {
 	assert.Equal(t, codes.Error, clientSpan.Status().Code)
 	assert.Equal(t, "HTTP request rejected", clientSpan.Status().Description)
 	assert.Empty(t, clientSpan.Events())
-	assert.Len(t, clientSpan.Attributes(), 2, "only method and status are exported")
+	assert.Len(t, clientSpan.Attributes(), 3, "only method, status and error type are exported")
 	assertNoSpanSecrets(t, spans, host, path, query, fragment, user, password, body, header, responseBody, responseHeader, baggageValue)
 }
 
@@ -188,6 +189,169 @@ func TestTransportNetworkBodyFailureIsRecordedOnce(t *testing.T) {
 	assert.Equal(t, codes.Error, spans[0].Status().Code)
 	assert.Equal(t, "HTTP response failed", spans[0].Status().Description)
 	assertNoSpanSecrets(t, spans, "truncated-body-secret-sentinel", "path-secret-sentinel", "query-secret-sentinel", server.URL)
+}
+
+func spanAttributes(span sdktrace.ReadOnlySpan) map[string]string {
+	attributes := make(map[string]string, len(span.Attributes()))
+	for _, keyValue := range span.Attributes() {
+		attributes[string(keyValue.Key)] = keyValue.Value.AsString()
+	}
+	return attributes
+}
+
+func TestTransportErrorTypeFollowsStatusCode(t *testing.T) {
+	tests := []struct {
+		status        int
+		wantCode      codes.Code
+		wantErrorType string
+	}{
+		{http.StatusOK, codes.Unset, ""},
+		{http.StatusNotModified, codes.Unset, ""},
+		{http.StatusBadRequest, codes.Error, "400"},
+		{http.StatusForbidden, codes.Error, "403"},
+		{http.StatusTooManyRequests, codes.Error, "429"},
+		{http.StatusInternalServerError, codes.Error, "500"},
+		{http.StatusServiceUnavailable, codes.Error, "503"},
+		{999, codes.Error, "_OTHER"},
+	}
+	for _, test := range tests {
+		t.Run(fmt.Sprint(test.status), func(t *testing.T) {
+			recorder := installRecorder(t)
+			base := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: test.status, Body: http.NoBody}, nil
+			})
+			request, err := http.NewRequest(http.MethodGet, "http://service.invalid/path", nil)
+			require.NoError(t, err)
+			response, err := NewTransport(base).RoundTrip(request)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+
+			spans := recorder.Ended()
+			require.Len(t, spans, 1)
+			assert.Equal(t, test.wantCode, spans[0].Status().Code)
+			assert.Equal(t, test.wantErrorType, spanAttributes(spans[0])["error.type"])
+		})
+	}
+}
+
+// startBlockingServer returns a client and a server that never finishes a response. With
+// sendHeaders, the server sends the response headers first, so the client blocks reading the body.
+func startBlockingServer(t *testing.T, protocol string, sendHeaders bool) (*http.Client, string, <-chan struct{}) {
+	t.Helper()
+	reached := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if sendHeaders {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+		}
+		reached <- struct{}{}
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
+	}))
+	if protocol == "HTTP/2" {
+		server.EnableHTTP2 = true
+		server.StartTLS()
+	} else {
+		server.Start()
+	}
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+	return &http.Client{Transport: NewTransport(server.Client().Transport)}, server.URL, reached
+}
+
+func TestTransportCallerCancellationIsNotAnError(t *testing.T) {
+	for _, protocol := range []string{"HTTP/1.1", "HTTP/2"} {
+		for _, stage := range []string{"waiting for the response", "reading the body"} {
+			t.Run(protocol+"/"+stage, func(t *testing.T) {
+				recorder := installRecorder(t)
+				readingBody := stage == "reading the body"
+				client, url, reached := startBlockingServer(t, protocol, readingBody)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+				require.NoError(t, err)
+
+				if readingBody {
+					response, err := client.Do(request)
+					require.NoError(t, err)
+					<-reached
+					cancel()
+					_, err = io.ReadAll(response.Body)
+					require.ErrorIs(t, err, context.Canceled)
+					_ = response.Body.Close()
+				} else {
+					go func() {
+						<-reached
+						cancel()
+					}()
+					_, err = client.Do(request)
+					require.ErrorIs(t, err, context.Canceled)
+				}
+
+				spans := recorder.Ended()
+				require.Len(t, spans, 1)
+				attributes := spanAttributes(spans[0])
+				assert.Equal(t, trace.SpanKindClient, spans[0].SpanKind())
+				assert.Equal(t, codes.Unset, spans[0].Status().Code)
+				assert.NotContains(t, attributes, "error.type")
+				assert.Equal(t, "canceled", attributes["telemetryhttp.outcome"])
+			})
+		}
+	}
+}
+
+// A timeout is a failed call. It must not look like a caller that gave up, including the
+// http.Client timeout, which also closes the request's Cancel channel.
+func TestTransportTimeoutIsAnError(t *testing.T) {
+	const timeout = 50 * time.Millisecond
+	tests := []struct {
+		name          string
+		sendHeaders   bool
+		wantErrorType string
+	}{
+		{"waiting for the response", false, "network_error"},
+		{"reading the body", true, "response_read_failed"},
+	}
+	for _, protocol := range []string{"HTTP/1.1", "HTTP/2"} {
+		for _, source := range []string{"request deadline", "client timeout"} {
+			for _, test := range tests {
+				t.Run(protocol+"/"+source+"/"+test.name, func(t *testing.T) {
+					recorder := installRecorder(t)
+					client, url, _ := startBlockingServer(t, protocol, test.sendHeaders)
+					ctx := context.Background()
+					if source == "request deadline" {
+						var cancel context.CancelFunc
+						ctx, cancel = context.WithTimeout(ctx, timeout)
+						defer cancel()
+					} else {
+						client.Timeout = timeout
+					}
+					request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+					require.NoError(t, err)
+
+					response, err := client.Do(request)
+					if test.sendHeaders {
+						require.NoError(t, err)
+						_, err = io.ReadAll(response.Body)
+						_ = response.Body.Close()
+					}
+					require.Error(t, err)
+
+					spans := recorder.Ended()
+					require.Len(t, spans, 1)
+					attributes := spanAttributes(spans[0])
+					assert.Equal(t, codes.Error, spans[0].Status().Code)
+					assert.Equal(t, test.wantErrorType, attributes["error.type"])
+					assert.NotContains(t, attributes, "telemetryhttp.outcome")
+				})
+			}
+		}
+	}
 }
 
 func assertNoSpanSecrets(t *testing.T, spans []sdktrace.ReadOnlySpan, secrets ...string) {

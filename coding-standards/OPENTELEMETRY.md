@@ -67,6 +67,7 @@ oauth2session.background_refresh
 - Use lowercase `snake_case` segments separated by dots.
 - Use a constant string. Do not put IDs, URLs, principals, tool names, or other values in a span name. Put values in attributes (section 4).
 - A span name is a contract for trace queries. A rename is a breaking change. Record it in the changelog.
+- Exception: the span in the `telemetryhttp` scope is named `http.request`. It describes a protocol call, not a domain operation, and a rename would break existing trace queries.
 
 ### 3.3 Kind
 
@@ -140,6 +141,7 @@ if err != nil {
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
 | `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
+| `telemetryhttp` | Results of outbound HTTP calls | `docs/configuration.md#what-is-instrumented` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
