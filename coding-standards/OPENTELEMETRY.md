@@ -108,7 +108,7 @@ if err != nil {
   - Tail-sampling backends can keep every trace that has an error on a `Client` or `Server` span, so a false error also changes which traces are kept.
 - Use a constant status description. Do not use `err.Error()`.
 - Do not call `span.RecordError`. A wrapped cause can contain a URL with its query, a provider body, or a SQL fragment. Record typed metadata instead (section 4).
-- Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code.
+- Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code. The ExtProc request span sets the error status only for the 5xx responses it sends.
 - Record caller cancellation as an outcome, for example `canceled`. Do not set `codes.Error`.
 
 ### 3.5 Background Work
