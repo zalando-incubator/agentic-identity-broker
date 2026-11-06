@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
@@ -81,6 +82,28 @@ func TestServer_TokenExchangeSpan_CancelDuringBrokerCallIsNotAnError(t *testing.
 	defer cleanup()
 
 	assertCanceledExchangeSpan(t, recorder, client, started)
+}
+
+// A body-bearing request finishes its token exchange in the headers phase, so the span ends before
+// OPA evaluates the body. A denial at that point belongs to extproc.opa.evaluate.
+func TestServer_TokenExchangeSpan_BodyPhaseDenialIsNotOnTheSpan(t *testing.T) {
+	recorder := installSpanRecorder(t)
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: "deny", Reasons: []string{"tool denied"}}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfig(t, testConfigWithTelemetry(), exchanger, auth)
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{":method": "POST"},
+		tokenExchangeMetadataWithMCPServer("mcp"), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	require.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(bodyResp.GetImmediateResponse().GetStatus().GetCode()))
+
+	span := findTokenExchangeSpan(t, recorder.Ended())
+	assert.Equal(t, "success", attributeMap(span.Attributes())["token_exchange.outcome"])
+	assert.Equal(t, otelcodes.Unset, span.Status().Code)
 }
 
 // assertCanceledExchangeSpan sends a request, cancels the stream once the exchange has started,
