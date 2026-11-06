@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -106,11 +107,13 @@ func TestUserGrantRepositoryFailedWritesLeaveMetadataUnchanged(t *testing.T) {
 					validityPointer := attempt.ValidUntil
 					adapter := newUnitTestSigningKeyRepo(t, tc.cfg).adapter
 					repo := NewUserGrantRepository(adapter)
+					recorder := recordStorageSpans(t)
 					var err error
 					if update {
 						err = repo.Update(context.Background(), attempt)
 					} else {
 						err = repo.Create(context.Background(), attempt)
+						assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.create.user_grant"), codes.Error, "connection", "")
 					}
 					require.Error(t, err)
 					assert.Equal(t, before, attempt)

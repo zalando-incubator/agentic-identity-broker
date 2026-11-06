@@ -1902,13 +1902,24 @@ When tracing is enabled, the following operations emit child spans:
 |---|---|---|
 | HTTP span (per route) | All inbound HTTP requests (via otelchi) | `http.method`, `http.route`, `http.status_code` |
 | `storage.get.agent` | PostgreSQL `AgentRepository.Get` | `db.system=postgresql`, `db.operation=GetAgent` |
-| `storage.list.userGrants` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql` |
-| `storage.upsert.userGrant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql` |
-| `storage.get.thirdPartyService` | PostgreSQL `ThirdpartyServiceRepository.Get` | `db.system=postgresql` |
+| `storage.list.user_grants_by_principal` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql`, `db.operation=ListByPrincipal` |
+| `storage.create.user_grant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql`, `db.operation=CreateUserGrant` |
+| `storage.*.tool_approval`, `storage.*.approval_sync` | PostgreSQL tool approval and approval sync repositories | `db.system=postgresql`, `db.operation` |
 | `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
 | `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
 | `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
+
+`storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
+
+These results are not failures. They leave the status unset and set `storage.outcome`:
+
+| `storage.outcome` | Meaning |
+|---|---|
+| `not_found` | No matching row, or a referenced row does not exist |
+| `conflict` | The write conflicts with existing data |
+| `validation` | The repository rejected the input |
+| `canceled` | The caller canceled the operation |
 
 ### Security notes
 
