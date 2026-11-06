@@ -20,7 +20,7 @@ Evaluation and RFC 8693 exchange share one authoritative resolution. Steps 2–9
 Evaluation reuses the unchanged caller CEL policy with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`.
 
-The standalone ExtProc gains an opt-in `DelegationResolver`, its fourth port. At startup it
+The standalone ExtProc gains an opt-in `DelegationContextResolver`, its fourth port. At startup it
 discovers and verifies the PDP. It caches only permits, until a deadline of
 `requestStart + min(max-age, max_staleness)` that is computed once. A permit without a usable
 positive `max-age` fails closed. ExtProc supplies the delegation to OPA before every policy
@@ -33,6 +33,31 @@ it fills the permanently retained `granted_permission_sets` and
 
 The `granted_permission_sets` field of the exchange response is marked deprecated. Its removal
 is a later, separately approved 2.0.0 contract change.
+
+## Clarifications — approved review remediation (2026-11-06)
+
+[The proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407),
+selected by `mjungsbluth` at `2026-11-06T06:59:39Z`, is the reason for these scoped changes:
+
+- **F4**: Rename only the ExtProc port to `DelegationContextResolver`; the broker domain
+  `DelegationResolver` and existing `WithDelegationResolver` composition method stay unchanged.
+  The permit and enabled OPA context expose `resource.service_id`, not `resource.id`.
+  Update OpenAPI first, then producer, typed consumer, policy fixtures, docs and glossary.
+- **F5**: Add `tests/integration/delegation_contract_test.go` to compare nested producer/wire
+  field sets and both denial-code sets to the authoritative OpenAPI declarations without
+  exposing test-only production APIs or introducing a broker dependency into ExtProc.
+- **F6**: Add bounded event identifiers to ExtProc denial, unavailability and permit-expiry
+  records and assert them in the existing credential-safe log tests.
+
+F2 remains unchanged because the publication allowlist rejects its required namespace
+registration in `coding-standards/OPENTELEMETRY.md`; its partial implementation was withdrawn
+before publication. F3 remains unchanged because this workflow cannot create the required
+follow-up issue. Its selected recommendation is not replaced with the immediate-removal alternative. F1 is not
+assigned. New tasks T103–T107 below the historical task inventory cover this run only.
+Validation: `just check`, `just test`, `just extproc-test`, `just test-integration`,
+`just test-e2e-backend` and `ginkgo -v --procs=2 --skip=Agentgateway ./tests/e2e/extproc/`.
+The unfiltered `just test-e2e-extproc` includes container scenarios; those and the other
+container suites are deferred downstream.
 
 ## Technical Context
 
@@ -148,7 +173,7 @@ API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
 | Migration testing | Not applicable | No migration. |
-| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `DelegationResolver` port in `server`, with its implementation in `delegation/`. |
+| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `DelegationContextResolver` port in `server`, with its implementation in `delegation/`. |
 | Persistence patterns | Not applicable | No persistence. |
 | Configuration system | Pass | Broker: none. ExtProc: `internal/extproc/config` with file, env, and flag precedence and startup validation (Principle VII, standalone exception under ADR 011). |
 | DI via Builder | Pass | `AuthZENHandlers` are created in `builder.go` and passed through `EnduserHandlers`. Routing only registers. ExtProc wiring is in `cmd/extproc-token-exchange/root.go`, the existing composition root. |
@@ -285,7 +310,7 @@ internal/
     │   ├── client.go                                     # AuthZEN POST, typed permit decode and validation, max-age, deadline
     │   └── resolver.go                                   # permit-only cache, singleflight, eviction
     ├── authorization/input.go, input_builder.go          # ContextInput: principal, agent, resource, grant, permission_sets (R15); header-only input
-    └── server/server.go                                  # DelegationResolver port; contextInputFromDelegation; body concurrency; header-only ordering; deadline check; responses
+    └── server/server.go                                  # DelegationContextResolver port; contextInputFromDelegation; body concurrency; header-only ordering; deadline check; responses
 
 cmd/extproc-token-exchange/root.go                        # Discovery at startup; resolver wiring; shutdown
 
@@ -314,7 +339,7 @@ internal/extproc/config/loader_test.go                    # example ExtProc conf
 bounded context that already owns every delegation invariant (R1). A new package would be
 anemic or cyclic. The HTTP surface is a driving adapter in `internal/adapters/http/enduser/`,
 next to the token handler. The ExtProc consumer is a new leaf package,
-`internal/extproc/delegation/`, behind a `server.DelegationResolver` port. This preserves the
+`internal/extproc/delegation/`, behind a `server.DelegationContextResolver` port. This preserves the
 ADR 011 isolation.
 
 ## Design and Implementation Approach

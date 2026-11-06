@@ -37,7 +37,7 @@ type AgentContext struct {
 
 // ResourceContext describes the resolved protected resource and its effective scopes.
 type ResourceContext struct {
-	ID          string   `json:"id"`
+	ServiceID   string   `json:"service_id"`
 	CanonicalID string   `json:"canonical_id,omitempty"`
 	ResourceURI string   `json:"resource_uri"`
 	Scopes      []string `json:"scopes"`

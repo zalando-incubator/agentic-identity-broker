@@ -14,9 +14,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
-// DelegationResolver is the fourth ExtProc port (ADR 047). It returns a fresh broker
+// DelegationContextResolver is the fourth ExtProc port (ADR 047). It returns a fresh broker
 // delegation permit, a *delegation.DeniedError, or an error. hit reports a cache hit.
-type DelegationResolver interface {
+type DelegationContextResolver interface {
 	Resolve(ctx context.Context, subjectToken, resourceURI string) (result delegation.Result, hit bool, err error)
 	Shutdown()
 }
@@ -24,7 +24,7 @@ type DelegationResolver interface {
 const delegationUnavailableBody = `{"error":"service_unavailable","error_description":"delegation context unavailable"}`
 
 // WithDelegationResolver enables delegation context. It requires an authorizer.
-func (s *Server) WithDelegationResolver(resolver DelegationResolver) *Server {
+func (s *Server) WithDelegationResolver(resolver DelegationContextResolver) *Server {
 	s.delegationResolver = resolver
 	return s
 }
@@ -44,14 +44,14 @@ func (s *Server) resolveDelegation(ctx context.Context, logger *slog.Logger, sub
 	if err != nil {
 		var denied *delegation.DeniedError
 		if errors.As(err, &denied) {
-			logDiagnostic(ctx, logger.With("delegation.code", denied.Code), slog.LevelInfo, "delegation denied", NewDiagnostic(StageClientAuthorization, DetailDelegationDenied))
+			logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.denied", "delegation.code", denied.Code), slog.LevelInfo, "delegation denied", NewDiagnostic(StageClientAuthorization, DetailDelegationDenied))
 		} else {
 			category := "unavailable"
 			var resolveErr *delegation.Error
 			if errors.As(err, &resolveErr) {
 				category = resolveErr.Category
 			}
-			logDiagnostic(ctx, logger.With("delegation.error", category), slog.LevelWarn, "delegation context unavailable", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
+			logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "delegation.error", category), slog.LevelWarn, "delegation context unavailable", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
 		}
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (s *Server) delegationExpired(ctx context.Context, logger *slog.Logger, res
 	if s.now().Before(result.Deadline) {
 		return nil, false
 	}
-	logDiagnostic(ctx, logger.With("operation", "delegation_resolution"), slog.LevelWarn, "delegation permit expired before policy evaluation", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
+	logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.permit_expired", "operation", "delegation_resolution"), slog.LevelWarn, "delegation permit expired before policy evaluation", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
 	return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), true
 }
 
@@ -107,7 +107,7 @@ func contextInputFromDelegation(result *delegation.Result, agentSessionID string
 		AgentSessionID:                 agentSessionID,
 		Principal:                      c.Principal,
 		Agent:                          &authorization.AgentContext{ID: c.Agent.ID, CanonicalID: c.Agent.CanonicalID},
-		Resource: &authorization.ResourceContext{ID: c.Resource.ID, CanonicalID: c.Resource.CanonicalID,
+		Resource: &authorization.ResourceContext{ServiceID: c.Resource.ServiceID, CanonicalID: c.Resource.CanonicalID,
 			ResourceURI: c.Resource.ResourceURI, Scopes: copyStrings(c.Resource.Scopes)},
 		Grant:          &authorization.GrantContext{ID: c.Grant.ID, UpdatedAt: c.Grant.UpdatedAt, ValidUntil: c.Grant.ValidUntil},
 		PermissionSets: permissionSets,

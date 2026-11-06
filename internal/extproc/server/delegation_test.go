@@ -57,7 +57,7 @@ func samplePermit(deadline time.Time) delegation.Result {
 	return delegation.Result{Deadline: deadline, Context: delegation.Context{
 		Principal: "alice@example.com",
 		Agent:     delegation.EntityRef{ID: "agent-uuid", CanonicalID: "data-assistant"},
-		Resource:  delegation.Resource{ID: "svc-uuid", CanonicalID: "repo-api", ResourceURI: "https://api.example.com/repos", Scopes: []string{"read:repo"}},
+		Resource:  delegation.Resource{ServiceID: "svc-uuid", CanonicalID: "repo-api", ResourceURI: "https://api.example.com/repos", Scopes: []string{"read:repo"}},
 		Grant:     delegation.Grant{ID: "grant-uuid", UpdatedAt: "2026-10-26T09:59:00Z"},
 		PermissionSets: []delegation.PermissionSet{{ID: "ps-uuid", CanonicalID: "repo-reader",
 			Services: []delegation.Service{{ID: "svc-uuid", CanonicalID: "repo-api", Scopes: []string{"read:repo"}}}}},
@@ -155,7 +155,7 @@ func TestDelegation_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) 
 		"agent_session_id": "sess-1",
 		"principal": "alice@example.com",
 		"agent": {"id": "agent-uuid", "canonical_id": "data-assistant"},
-		"resource": {"id": "svc-uuid", "canonical_id": "repo-api", "resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
+		"resource": {"service_id": "svc-uuid", "canonical_id": "repo-api", "resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
 		"grant": {"id": "grant-uuid", "updated_at": "2026-10-26T09:59:00Z"},
 		"permission_sets": [{"id": "ps-uuid", "canonical_id": "repo-reader",
 			"services": [{"id": "svc-uuid", "canonical_id": "repo-api", "scopes": ["read:repo"]}]}]

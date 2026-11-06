@@ -142,7 +142,7 @@ This is intentional. Evaluation is never more permissive than exchange, and it i
 |---|---|
 | `subject.id` | Extracted principal |
 | `agent.id`, `agent.canonical_id` | Loaded `storage.Agent`. The canonical ID is omitted when nil (FR-008). |
-| `resource.id` | Resolved service UUID |
+| `resource.service_id` | Resolved service UUID (F4 revision approved in the 2026-11-06 remediation proposal) |
 | `resource.canonical_id` | `ThirdpartyOAuth2ProviderEntity.CanonicalID`, omitted when nil |
 | `resource.resource_uri` | The *normalized* resource URI (US1.5: equivalent URIs give the same result) |
 | `resource.scopes` | `effectiveScopes[serviceID]`, sorted, after agent ceilings (FR-007). A declared zero-scope service yields `[]`. |
@@ -485,7 +485,7 @@ directly beside `granted_permission_sets_available`, `granted_permission_sets`, 
 |---|---|---|---|
 | `principal` | `Principal string` | `principal,omitempty` | `context.subject.id` |
 | `agent` | `Agent *AgentContext` (`ID string`; `CanonicalID string`, `canonical_id,omitempty`) | `agent,omitempty` | `context.agent` |
-| `resource` | `Resource *ResourceContext` (`ID`, `CanonicalID` with `omitempty`, `ResourceURI`, `Scopes []string`) | `resource,omitempty` | `context.resource` |
+| `resource` | `Resource *ResourceContext` (`ServiceID`, `CanonicalID` with `omitempty`, `ResourceURI`, `Scopes []string`) | `resource,omitempty` | `context.resource` |
 | `grant` | `Grant *GrantContext` (`ID`, `UpdatedAt string`, `ValidUntil string` with `omitempty`) | `grant,omitempty` | `context.grant` |
 | `permission_sets` | `PermissionSets []PermissionSetContext` (`ID`, `CanonicalID` with `omitempty`, `Services []ServiceContext{ID, CanonicalID omitempty, Scopes}`) | `permission_sets,omitempty` | `context.permission_sets` |
 
@@ -499,7 +499,7 @@ level are ignored. They are never copied, so they cannot reach Rego. The client 
 the documented shape. Any violation is an `invalid_response` resolution error: ExtProc returns
 503 and does not cache or use the permit. The client checks these rules:
 
-- `subject.id`, `agent.id`, `resource.id`, `resource.resource_uri`, `grant.id`, and every
+- `subject.id`, `agent.id`, `resource.service_id`, `resource.resource_uri`, `grant.id`, and every
   `permission_sets[].id` and `services[].id` are non-empty strings.
 - `resource.scopes`, every `permission_sets[].services`, and every `services[].scopes` are
   arrays (empty arrays are allowed).

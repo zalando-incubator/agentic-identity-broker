@@ -1,6 +1,8 @@
 # ADR 047: AuthZEN Delegation Policy Information Point
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-05: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255); original approval on 2026-10-30: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937; see Revision history
+**Status**: Accepted (approved by mjungsbluth on 2026-11-06: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
+
+Approval scope: F4 vocabulary and service-identity naming revision only. Earlier decision approvals remain recorded in Revision history; F3's permission-set follow-up is not applied in this run.
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -73,9 +75,9 @@ evaluation is never more permissive than exchange, and it issues no token.
   `now < deadline`. Otherwise it returns 503 without policy evaluation, forwarding, or
   re-resolution.
 
-### 4. ExtProc `DelegationResolver` (fourth port) and ordering — supersedes ADR 028 ordering when enabled
+### 4. ExtProc `DelegationContextResolver` (fourth port) and ordering — supersedes ADR 028 ordering when enabled
 
-- `server.DelegationResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
+- `server.DelegationContextResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
   implementation lives in `internal/extproc/delegation` and imports no broker package (ADR 011).
 - At startup ExtProc discovers the metadata from the expected PDP identifier (default: the origin
   of `oauth2.token_endpoint`), compares `policy_decision_point` by exact string, and refuses to
@@ -121,6 +123,14 @@ after the ExtProc resolver ships, as a separately approved end-user API `2.0.0` 
 
 ### 9. Standard-defined naming
 
+The permit's `context.resource.service_id` and the enabled OPA context's
+`resource.service_id` identify the resolved owning service UUID. `resource.resource_uri`
+identifies the protected resource. The AuthZEN request's `resource.id` remains the URI,
+unchanged. This separates service identity from protected-resource identity (ADR 030).
+The ExtProc port is `server.DelegationContextResolver`, distinct from the broker's
+`tokenexchange.DelegationResolver`; the former retrieves fresh permit context, the latter
+enforces delegation invariants shared by exchange and evaluation.
+
 The AuthZEN paths (`/access/v1/...`, `/.well-known/authzen-configuration`) and snake_case members
 are defined by the standard and are a documented exception to general REST naming conventions.
 
@@ -160,6 +170,14 @@ are defined by the standard and are a documented exception to general REST namin
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved P3/F4 on
+  [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
+  at `2026-11-06T06:59:39Z`: rename the ExtProc resolver port to
+  `DelegationContextResolver`, define Delegation and Access Evaluation in the architecture
+  glossary, and use `resource.service_id` in permits and enabled OPA input. The request URI
+  member is unchanged. P2/F3's issue-dependent permission-set revision remains unapplied
+  because this workflow cannot create its required follow-up issue.
 
 - **2026-11-05 (same PR, before merge)**: Supplied maintainer approval by `mjungsbluth` at
   `2026-11-05T16:38:49Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255)
