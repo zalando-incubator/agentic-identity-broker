@@ -7,6 +7,10 @@
 Paths in this file are relative to the repository root. Read the nearest child `AGENTS.md` before you change an area.
 Use the indexes to select relevant sources, not as a requirement to read every document.
 
+Maintain shared instructions in the root or nearest child `AGENTS.md`.
+Keep tool-specific instruction files limited to scope metadata and routes to those owners.
+Read routed files before implementation or review. A route is not a substitute for its instructions.
+
 ## Docs Index (Retrieval Targets)
 
 Read the source that governs the change. The summaries here do not replace the constitution, accepted ADRs, or API contracts.
