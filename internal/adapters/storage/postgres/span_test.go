@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -143,6 +144,33 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 			callerCanceled: true,
 			wantStatus:     codes.Unset,
 			wantOutcome:    "canceled",
+		},
+		{
+			name:           "bad connection with another kind after the caller canceled",
+			err:            storage.NewStorageError("Op", storage.ErrorKindUnknown, driver.ErrBadConn, "failed to lock rows"),
+			callerCanceled: true,
+			wantStatus:     codes.Unset,
+			wantOutcome:    "canceled",
+		},
+		{
+			name:           "commit of a rolled back transaction after the caller canceled",
+			err:            storage.NewStorageError("Op", storage.ErrorKindConnection, sql.ErrTxDone, "failed to commit"),
+			callerCanceled: true,
+			wantStatus:     codes.Unset,
+			wantOutcome:    "canceled",
+		},
+		{
+			name:          "bad connection without a cancellation",
+			err:           storage.NewStorageError("Op", storage.ErrorKindConnection, driver.ErrBadConn, "query failed"),
+			wantStatus:    codes.Error,
+			wantErrorType: "connection",
+		},
+		{
+			name:           "connection failure after the caller canceled",
+			err:            storage.NewStorageError("Op", storage.ErrorKindConnection, cause, "query failed"),
+			callerCanceled: true,
+			wantStatus:     codes.Error,
+			wantErrorType:  "connection",
 		},
 		{
 			name:           "undecodable value after the caller canceled",

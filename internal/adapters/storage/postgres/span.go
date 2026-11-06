@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"strings"
 
@@ -37,22 +39,20 @@ func startStorageSpan(ctx context.Context, name, operation string) (context.Cont
 
 // recordStorageResult sets the error status only when the operation failed. A missing row, a
 // conflict, rejected input and caller cancellation are results the caller handles, so they are
-// recorded as storage.outcome. A connection error after the caller canceled counts as cancellation,
-// because the cancellation closes the connection and a transaction can then return
-// driver.ErrBadConn instead of context.Canceled. The cause is not recorded because it can contain
-// SQL or a connection string.
+// recorded as storage.outcome. The cause is not recorded because it can contain SQL or a connection
+// string.
 func recordStorageResult(ctx context.Context, span trace.Span, err error) {
 	if err == nil {
+		return
+	}
+	if canceledByCaller(ctx, err) {
+		span.SetAttributes(attribute.String("storage.outcome", storageOutcomeCanceled))
 		return
 	}
 	kind := storage.ErrorKindUnknown
 	var storageErr *storage.StorageError
 	if errors.As(err, &storageErr) {
 		kind = storageErr.Kind
-	}
-	if errors.Is(err, context.Canceled) || (kind == storage.ErrorKindConnection && errors.Is(ctx.Err(), context.Canceled)) {
-		span.SetAttributes(attribute.String("storage.outcome", storageOutcomeCanceled))
-		return
 	}
 	if isStatementTimeout(err) {
 		kind = storage.ErrorKindTimeout
@@ -64,6 +64,17 @@ func recordStorageResult(ctx context.Context, span trace.Span, err error) {
 		span.SetAttributes(attribute.String("error.type", string(kind)))
 		span.SetStatus(codes.Error, "storage operation failed")
 	}
+}
+
+// canceledByCaller reports whether err comes from the caller canceling the operation. A transaction
+// can hide the cancellation: a statement on the connection that the cancellation closed returns
+// driver.ErrBadConn, and a commit after the resulting rollback returns sql.ErrTxDone. Any other
+// error after a cancellation is a real failure.
+func canceledByCaller(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return errors.Is(ctx.Err(), context.Canceled) && (errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrTxDone))
 }
 
 // isStatementTimeout reports whether PostgreSQL ended the query because of statement_timeout. A
