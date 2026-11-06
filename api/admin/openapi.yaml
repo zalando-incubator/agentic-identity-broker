@@ -773,6 +773,21 @@ paths:
                       description: Access user profile information
                     - scope_value: corporate_data
                       description: Access corporate data systems
+              cimd_confidential:
+                summary: Create a CIMD confidential client with a usable broker-global ES256 key
+                value:
+                  display_name: Corporate SSO with CIMD
+                  client_registration: cimd
+                  token_endpoint_auth_method: private_key_jwt
+                  issuer_uri: https://sso.corp.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://sso.corp.example.com/oauth/token
+                    authorize_endpoint: https://sso.corp.example.com/oauth/authorize
+                  scopes:
+                    - scope_value: profile
+                      description: Basic user profile
               cimd_public:
                 summary: Create a CIMD public ServiceNow client without credentials
                 value:
