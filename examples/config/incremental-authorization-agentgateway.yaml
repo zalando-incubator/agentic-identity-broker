@@ -1,0 +1,31 @@
+# Agentgateway route for the approved Feature 055 design (implementation pending).
+# This is not a broker or ExtProc process configuration.
+binds:
+  - port: 4000
+    listeners:
+      - routes:
+          - policies:
+              jwtAuth:
+                mode: strict
+                preserveToken: false
+                providers:
+                  - issuer: "https://issuer.example.com"
+                    audiences:
+                      - "mcp-server"
+                    jwks:
+                      url: "https://issuer.example.com/.well-known/jwks.json"
+              extProc:
+                host: "extproc-token-exchange:50051"
+                failureMode: failClosed
+                metadataContext:
+                  aib.tokenexchange:
+                    subject_token: "jwt.rawToken.unredacted()"
+                    resource_uri: "'https://agentgateway.example.com/mcp'"
+                    # Remove this field for the default, metadata-absent variant.
+                    resource_metadata_url: "'https://agentgateway.example.com/.well-known/oauth-protected-resource/mcp'"
+            backends:
+              - mcp:
+                  targets:
+                    - name: tools
+                      mcp:
+                        host: "https://agentgateway.example.com/mcp"

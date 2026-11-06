@@ -181,6 +181,31 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 `sessions.extraction.http_header` defaults to `Mcp-Session-Id`. ExtProc uses this value to scope session approvals.
 
 
+## Incremental service authorization (approved design)
+
+Feature 055's implementation is pending. The approved design reuses
+`server.enduser.public_url` for service scopes and recovery URLs, and
+`oauth2_authorization_server.mode` for local/proxy/hybrid behavior. It adds no broker
+or ExtProc process configuration key. See the
+[broker overlay](../examples/config/incremental-authorization.yaml) and
+[Agentgateway example](../examples/config/incremental-authorization-agentgateway.yaml).
+
+Agentgateway owns the optional route field
+`extProc.metadataContext.aib.tokenexchange.resource_metadata_url`; `aib.tokenexchange`
+is one literal namespace. Its value is a CEL string expression producing an absolute HTTPS
+URL with a nonempty host, no userinfo or fragment, at most 2048 bytes, and only bytes
+`0x21`–`0x7E` excluding double quote and backslash. ExtProc validates the resulting string
+only when generating a challenge. Absent values omit `resource_metadata`; invalid or
+non-string values also omit it and produce a value-free `challenge_metadata_invalid`
+diagnostic without changing the exchange outcome. Service `scope`, `error_uri` and URL
+elicitation remain independent of this advisory field.
+
+There is no default URL, environment variable, CLI flag or configuration-source precedence
+for route metadata. Do not put it in `internal/ports/config.go`, ExtProc YAML, or the broker
+Helm values/ConfigMap. Agentgateway and ExtProc are deployed separately from the broker chart
+under ADRs 011 and 036. Metadata hosting remains an operator responsibility, not a new service
+provided by this feature.
+
 ## Environment-Specific Configuration
 
 Use the `GO_ENV` environment variable to control which .env files are loaded:

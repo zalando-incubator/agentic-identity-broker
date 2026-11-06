@@ -5,6 +5,85 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-10-29
+
+**Blocked; setup/design-precondition progress only. No feature behavior, migration or new acceptance test is implemented.**
+
+### Supplied approval
+
+All 11 items in the immutable plan match the supplied approval by **mjungsbluth** on
+**2026-10-29**, [approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189).
+ADRs [045](../../adrs/045-service-session-recovery-return.md) and
+[046](../../adrs/046-virtual-service-scopes.md) now record that approval in `adrs/`.
+Their feature-local paths remain reference-only pointers. Approval is not evidence that the
+feature is implemented. The original spec and plan are intentionally unchanged.
+
+### Tooling and validation blocker
+
+The installed executables report Go **1.27.3**, Node **24.22.1**, npm **11.19.1** and
+just **1.58.0**. Migration number **046** is available after existing migration 045.
+`ginkgo`, `golangci-lint` and `wireloom` are not on PATH. Tool versions have not changed in
+this feature; no tool installation or permission workaround was attempted.
+
+| Command | Actual outcome |
+|---|---|
+| `just check` | Exit 0. Formatting/vet pass; the recipe reports missing `golangci-lint` and falls back to vet. This is not a full lint run. |
+| `just test` | Exit 0 on the existing application; not evidence of Feature 055 coverage. |
+| `just test-integration` | Exit 0 on the existing self-contained suites; does not validate the new examples through dedicated Feature 055 assertions or replace real PostgreSQL tests. |
+| `just test-e2e-backend` | Exit 1 after successful frontend build: `ginkgo is not installed`. No acceptance spec executed. |
+| `just test-e2e-frontend` | Exit 127 after successful frontend build: `ginkgo: command not found`. No browser journey or capture executed. |
+| `just test-integration-infra` | The attempt timed out after 30 seconds; no completed migration/repository validation. Container-backed validation is not available in this sandbox (Docker-in-Docker is unsupported). |
+| `just verify` | Timed out after 90 seconds during security-tool dependency setup; the full gate did not complete. |
+
+**Required maintainer action**: make the workflow's existing tool setup expose its pinned
+Ginkgo, lint and Wireloom executables to the agent, and provide a supported runner for the
+required real PostgreSQL/container suites. No failed/missing gate is waived. Once the harness
+is available, finish the acceptance fixtures/tests and observe all 19 semantic-red scenarios
+(T011–T018) before implementing foundations or user stories. Existing baseline tests passing
+cannot substitute for that checkpoint.
+
+### Remaining reanalysis contract boundaries
+
+The supplied approval covers the 11 published items, not an unlisted exception or contract
+revision that resolves the remaining findings. No unapproved behavior is implemented.
+
+- **I2 (proxy-refresh validation)**: FR-002 requires rejecting malformed, unknown and ineligible
+  broker scopes, but the approved proxy-refresh text only specifies stripping and preserving
+  upstream outcomes. Recommended **Proposed API clarification**: validate syntax, resolve the
+  request's agent through the existing client-resolution path, and check service existence and
+  eligibility before forwarding; use `400 invalid_scope` with `requested service scope is not
+  permitted` for the three invalid-scope categories and `500 server_error` for lookup failure.
+  Ordinary-scope-only requests retain their existing path. Do not check provider usability or
+  veto any upstream response. Rationale: satisfy FR-002 without losing rotated credentials.
+  Main alternative: explicitly approve a proxy-refresh exception to FR-002. The newly specified
+  pre-forward response contract requires explicit approval before code; T099 tracks it.
+- **U4 (dot-segment IDs)**: existing canonical validation permits the complete identifiers `.`
+  and `..`, while the approved emission/recovery contract always prefers an existing canonical
+  ID. Browser path normalization prevents those URLs from reliably naming one service.
+  Recommended **Proposed API/ADR revision**: emit UUID scope and recovery/page URLs only for
+  those two complete identifiers, retain both existing canonical records and raw-scope parsing,
+  and preserve exact granted strings/bindings and UUID rename durability. Do not tighten the
+  global canonical-ID validator. Rationale: browser-safe recovery without invalidating existing
+  records. Main alternative: explicitly approve a canonical-ID migration/restriction, which is
+  broader and backward-incompatible. This fallback is not covered by the approved always-prefer-
+  canonical text. T100 requires approval and regression coverage before implementation.
+
+**Required maintainer action**: approve the proposed pre-forward API clarification and the
+UUID-only emission/recovery exception for `.` and `..` (or supply a compatible approved
+alternative). The immutable spec/plan must be reconciled in an authorized pre-implementation
+run before those revisions are implemented. The existing approved ADR text is not silently
+changed to imply that either revision was approved.
+
+### Deferred work and resumption
+
+| Tasks | Why unfinished / required next work |
+|---|---|
+| T003, T008, T099–T100 | Reconcile the two contract boundaries above under explicit approval, then finish the model review and complete OpenAPI 1.2.0 before behavior changes. |
+| T011–T018 | Fixtures, 19 acceptance tests and semantic-red evidence remain unwritten/unexecuted. Expose Ginkgo, finish these tests and run the actual backend/browser suites. |
+| T019–T038 | Foundations depend on T018. Keep migration SQL behind failing real-PostgreSQL tests; complete scope, usability, identity binding, both adapters and issuance in test-first pairs. |
+| T039–T079 | All user-story tests, implementation and integrated documentation remain; they depend on the acceptance checkpoint and foundations. Continue the approved TDD sequence, including both reanalysis regression sets. |
+| T080–T098 | Final compliance, complete lint, real database suites, all E2E journeys, four screenshots and `just verify` remain. Supply the supported tooling/runtime and rerun every required gate after implementation; do not treat baseline passes as feature completion. |
+
 ## Prerequisites
 
 - `just install-tools` has completed, including Playwright browsers.
@@ -93,8 +172,36 @@ E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
 The harness stages captures under `coverage/screenshots/` relative to the frontend suite working
 directory. Retain the four plan-named images under `tests/e2e/screenshots/` using existing screenshot
 handling; do not modify workflows. Verify consent C/D and session A/B against the spec's Wireloom
-states. Task T010 records the design-system composition decisions here during implementation;
-no frontend design review or capture is claimed by task generation.
+states. The design composition review below records T010; captures and runtime accessibility validation
+remain unfinished.
+
+### Design-system composition review (T010)
+
+The review uses the design-system index, common-mistake guidance, decision trees and component
+pairing guide, together with the existing `PermissionSetCard`, `SessionCard` and
+`TerminationDialog` source. Both new compositions are application-specific, not universal
+components; no design-system primitive or visual-direction change is needed.
+
+| Wireloom state | Existing composition and behavior |
+|---|---|
+| Consent C — requested service needs login | Keep agent header, End Date and the existing permission-set/service switches. Use one application `RequestedServiceBanner` per service built from `Alert`/`Card`, text and `Badge` markers for every covering candidate. Use warning semantics plus explicit text, not color alone. Explain partial required-scope coverage and the selected candidate's usability separately; keep optional toggles editable and never auto-select them. |
+| Consent D — ready to save | Change the banner to success with a textual ready explanation only when the baseline and every selected contribution are usable and the selected union covers required scopes. Unselected unusable candidates do not block Save. Save remains the single primary action for submission; separate the existing destructive revoke action visually. Preserve end date, unrelated toggles and protected request context through login. |
+| Session A — missing/unusable | Use `Card` with service identity, scope URL, text-labelled warning state, the principal's dependent agents and a primary Login action. Distinguish an existing unusable row from no row. A loading skeleton, authenticated not-found state and retryable `Alert` are separate states, not fabricated empty sessions. |
+| Session B — active | Reuse `SessionCard` content and UUID-based Refresh/Terminate actions, plus `TerminationDialog` confirmation. Show scopes, expiry, encryption and the principal-owned dependent agents. Successful refresh refetches detail; termination returns to State A. Login/management never mutates an agent grant. |
+
+Use the existing design-system semantic tokens and variants (surface, trust, success, warning,
+error and secondary text), not raw palette utilities, custom CSS, inline color values or external
+assets. Use `Card padding="default"`, existing layout spacing and the existing switch keyboard
+behavior/labels. Retain visible focus indicators. Requested-service markers must have readable
+text as well as status color. Keep disabled-Save reasons outside the button, visible to keyboard
+and screen-reader users, with stable IDs linked via `aria-describedby`; announce changing
+satisfaction/retry status without moving focus on each toggle.
+
+The existing light/dark tokens are the source of truth. Implementation must test both themes for
+4.5:1 text and 3:1 UI contrast, keyboard focus/order, switch names/state and confirmation focus
+restoration. Reusing an existing component does not prove accessibility or matching usability
+semantics; T067/T071/T096 must cover any minimum adaptation needed by this feature without
+unrelated restyling. Four maintained browser captures and those runtime checks are still required.
 
 ## 4. Manual spot check (optional)
 

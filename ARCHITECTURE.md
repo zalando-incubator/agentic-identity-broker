@@ -1346,6 +1346,8 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
+| [045-service-session-recovery-return.md](adrs/045-service-session-recovery-return.md) | Accepted | Service-page recovery return (`/sessions/<identifier>`). Partly supersedes [044-service-specific-session-recovery-url.md](adrs/044-service-specific-session-recovery-url.md); rejected sessions follow [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) |
+| [046-virtual-service-scopes.md](adrs/046-virtual-service-scopes.md) | Accepted | Virtual Service Scopes, shared usability and coverage in [internal/domain/servicescope/](internal/domain/servicescope/), and immutable refresh assurance |
 
 ## 11. Project Identification
 
@@ -1548,6 +1550,13 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 **Refresh Rejection**: An observed terminal provider `invalid_grant` for a stored refresh token, recorded as `UserSession.RefreshRejectedAt`. The broker never predicts refresh-token expiry; a stored, not-rejected refresh token permits refresh attempts but does not guarantee acceptance.
 
 **Requires Reauthentication**: A `UserSession` with a recorded refresh rejection, or with an expired access token and no stored refresh token. The domain predicate controls token issuance, consent connection status, active-session reads, and the `requires_reauthentication` API field.
+**Session Usability**: The verified ability of a `UserSession` to supply a service's effective provider scopes with matching established client identity now. ADR 046 defines `usable`, `missing`, `unusable_definitive`, and `unverifiable_transient`. Valid, scope-sufficient access remains usable with absent or expired refresh; expired access requires a successful eligible refresh. Stored refreshability is only eligibility to attempt refresh, not verification of current usability. Unknown refresh-token expiry permits an attempt but does not guarantee success.
+
+**Virtual Service Scope**: A broker-only scope `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered session for one ThirdpartyOAuth2Service. It never grants provider scopes, selects permission sets, or changes permanent Agent requirements. ADR 046 defines the approved design; implementation is tracked in Feature 055.
+
+**Requested Service Set**: The deduplicated services selected by authorization Virtual Service Scopes or original refresh assurance bindings. It adds request-local requirements without changing the Agent's configuration.
+
+**Service-Scope Binding**: The protected/persisted map from each originally granted Virtual Service Scope string to its service UUID. It pins identity through consent re-entry, code exchange and refresh. Narrowing retains every binding as continuing-service assurance without re-granting removed scopes.
 
 **Callback Generation**: The private `UserSession.CallbackID` identifying the last successful authorization-code credential write. OAuth2 state seals the generation observed when authorization starts. A reconnect compares and replaces it atomically; refresh preserves it. This distinguishes deliberate reconnects from callbacks competing for the same connection state without relying on clock ordering.
 

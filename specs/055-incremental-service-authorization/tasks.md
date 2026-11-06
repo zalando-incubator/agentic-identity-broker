@@ -1,7 +1,7 @@
 # Tasks: Incremental Service Authorization
 
 **Input**: `specs/055-incremental-service-authorization/` — `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, and `quickstart.md`.
-**Status**: Implementation backlog only. All tasks are unchecked; no approval or implementation is recorded here.
+**Status**: Blocked after setup/design-precondition progress: 8 of 100 tasks complete. The supplied 11-item approval is recorded in ADRs 045/046. No feature behavior, migration or new acceptance test is implemented. See [the implementation checkpoint](./quickstart.md#implementation-checkpoint--2026-10-29) for actual checks, deferred tasks and required actions.
 **Tests**: Mandatory red → green → refactor under Principles VIII and XIII. Write each test first, make it compile with only minimal structural scaffolding, and observe a semantic failure before implementing its behavior. Never use pending/skip markers, vacuous assertions, or red-phase annotations in test files.
 **Organization**: Setup → mandatory design preconditions → shared foundations → US1 (P1) → US3 (P1) → US2 (P1) → US4 (P2) → mandatory compliance. The three P1 stories share priority; this order follows the plan's dependency order, not a change to their priorities.
 
@@ -11,14 +11,14 @@
 
 ## 🔒 Feature Scope [MANDATORY]
 
-Implement only the items covered by the maintainer's `context.approval`; `plan.md` registers 11 Proposed items, none approved by this task list. If an item is not covered, leave its dependent tasks unchecked, explain why, and continue independent approved work. Do not infer approval from a draft, task, or existing implementation. Keep `spec.md` and `plan.md` unchanged during implementation.
+Implement only the items covered by the maintainer's `context.approval`; the supplied approval by mjungsbluth on 2026-10-29 covers the 11 published items in `plan.md` ([approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189)). The immutable plan still labels them Proposed; this record does not extend approval to the new contract revisions in T099/T100. If an item is not covered, leave its dependent tasks unchecked, explain why, and continue independent approved work. Do not infer approval from a draft, task, or existing implementation. Keep `spec.md` and `plan.md` unchanged during implementation.
 
 No new dependencies, broker configuration keys, historical aliases, client retry implementation, gateway metadata hosting service, or unrelated refactoring are included. Preserve accepted ADRs; ADR 045 partially supersedes only the specified ADR 044 clauses. Do not edit the merged ADR 044. Phase 0 refactoring and Phase 2.7 entity boilerplate are inapplicable: the coverage extraction is small and there is no new entity, typed ID, or repository.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Verify the supplied maintainer approval against `specs/055-incremental-service-authorization/plan.md` Approval Items; for each covered draft in `specs/055-incremental-service-authorization/adrs/045-service-session-recovery-return.md` and `specs/055-incremental-service-authorization/adrs/046-virtual-service-scopes.md`, record `Accepted (approved by <login> on <date>: <url>)` and move it to `adrs/045-service-session-recovery-return.md` or `adrs/046-virtual-service-scopes.md`; repair moved relative links and leave reference-only pointers at the feature-local paths so immutable spec/plan links still resolve. Record only supplied approvals; leave uncovered work unchecked (Principles II, IV, X; ADR-RECOVERY, ADR-SCOPES).
-- [ ] T002 Read the nearest area instructions for the paths in this backlog and confirm available `justfile` commands, installed tool versions, migration 046 availability, and test prerequisites; record genuine infrastructure blockers in `specs/055-incremental-service-authorization/quickstart.md` without weakening checks or changing workflows, skills, hooks, the constitution, or automation scripts (Principles VIII, IX, XIII).
+- [X] T001 Verify the supplied maintainer approval against `specs/055-incremental-service-authorization/plan.md` Approval Items; for each covered draft in `specs/055-incremental-service-authorization/adrs/045-service-session-recovery-return.md` and `specs/055-incremental-service-authorization/adrs/046-virtual-service-scopes.md`, record `Accepted (approved by <login> on <date>: <url>)` and move it to `adrs/045-service-session-recovery-return.md` or `adrs/046-virtual-service-scopes.md`; repair moved relative links and leave reference-only pointers at the feature-local paths so immutable spec/plan links still resolve. Record only supplied approvals; leave uncovered work unchecked (Principles II, IV, X; ADR-RECOVERY, ADR-SCOPES).
+- [X] T002 Read the nearest area instructions for the paths in this backlog and confirm available `justfile` commands, installed tool versions, migration 046 availability, and test prerequisites; record genuine infrastructure blockers in `specs/055-incremental-service-authorization/quickstart.md` without weakening checks or changing workflows, skills, hooks, the constitution, or automation scripts (Principles VIII, IX, XIII).
 
 ## 🔒 Phase 2: Design Preconditions (Blocking Prerequisites) [MANDATORY]
 
@@ -27,13 +27,13 @@ No new dependencies, broker configuration keys, historical aliases, client retry
 ### Phase 2a: Domain Model & Glossary [MANDATORY]
 
 - [ ] T003 Confirm all value objects, extended aggregates, invariants, and state transitions in `specs/055-incremental-service-authorization/data-model.md`, including immutable scope-to-UUID bindings, request-local requirements, four usability outcomes, and no new entity/repository; reconcile only editable supporting artifacts if needed (Principles V, VI; FR-003, FR-007, FR-019).
-- [ ] T004 Add Virtual Service Scope, Requested Service Set, and Service-Scope Binding to `ARCHITECTURE.md` and `AGENTS.md` glossaries; refine the existing Session Usability definition to distinguish stored refreshability from verified current usability rather than duplicating that term (Principles II, V; FR-008).
+- [X] T004 Add Virtual Service Scope, Requested Service Set, and Service-Scope Binding to `ARCHITECTURE.md` and `AGENTS.md` glossaries; refine the existing Session Usability definition to distinguish stored refreshability from verified current usability rather than duplicating that term (Principles II, V; FR-008).
 
 ### Phase 2b: Configuration Design [MANDATORY]
 
-- [ ] T005 Create `examples/config/incremental-authorization.yaml` using existing `server.enduser.public_url` and `oauth2_authorization_server.mode`, plus `examples/config/incremental-authorization-agentgateway.yaml` showing strict JWT authentication, `preserveToken: false`, fail-closed ExtProc, and route metadata including optional `aib.tokenexchange.resource_metadata_url`; show the absent/default variant without inventing a global configuration key (FR-017; API-METADATA-CONFIG; ADR 036).
-- [ ] T006 Reference both examples from `examples/config/README.md` and document owning configuration, absence/default and validation semantics in `docs/configuration.md`; the metadata field has no environment/CLI equivalent or precedence chain because it is a route input, not a deployable-process setting (Principle VII; FR-017).
-- [ ] T007 Verify and document in `docs/guides/token-exchange-gateway.md` that Agentgateway owns the metadata producer under ADRs 011/036 and `charts/agentic-identity-broker/` does not deploy that setting; leave broker chart values, templates, and README unchanged (Principle VII; API-METADATA-CONFIG).
+- [X] T005 Create `examples/config/incremental-authorization.yaml` using existing `server.enduser.public_url` and `oauth2_authorization_server.mode`, plus `examples/config/incremental-authorization-agentgateway.yaml` showing strict JWT authentication, `preserveToken: false`, fail-closed ExtProc, and route metadata including optional `aib.tokenexchange.resource_metadata_url`; show the absent/default variant without inventing a global configuration key (FR-017; API-METADATA-CONFIG; ADR 036).
+- [X] T006 Reference both examples from `examples/config/README.md` and document owning configuration, absence/default and validation semantics in `docs/configuration.md`; the metadata field has no environment/CLI equivalent or precedence chain because it is a route input, not a deployable-process setting (Principle VII; FR-017).
+- [X] T007 Verify and document in `docs/guides/token-exchange-gateway.md` that Agentgateway owns the metadata producer under ADRs 011/036 and `charts/agentic-identity-broker/` does not deploy that setting; leave broker chart values, templates, and README unchanged (Principle VII; API-METADATA-CONFIG).
 
 ### Phase 2c: API Design [MANDATORY]
 
@@ -41,11 +41,11 @@ No new dependencies, broker configuration keys, historical aliases, client retry
 
 ### Phase 2d: Database Design [MANDATORY]
 
-- [ ] T009 Verify the approved paired SQL design in `specs/055-incremental-service-authorization/data-model.md` for `migrations/046_add_service_scope_bindings.up.sql` and `migrations/046_add_service_scope_bindings.down.sql`: nullable JSONB on both existing records, default transaction, no backfill, no user-session schema change, and coordinated code/schema rollback with binding loss explicitly documented (Principle IX; DEC-003, DEC-004; FR-019).
+- [X] T009 Verify the approved paired SQL design in `specs/055-incremental-service-authorization/data-model.md` for `migrations/046_add_service_scope_bindings.up.sql` and `migrations/046_add_service_scope_bindings.down.sql`: nullable JSONB on both existing records, default transaction, no backfill, no user-session schema change, and coordinated code/schema rollback with binding loss explicitly documented (Principle IX; DEC-003, DEC-004; FR-019).
 
 ### Phase 2e: Frontend/Design System Review [MANDATORY IF FRONTEND]
 
-- [ ] T010 Review `web/src/design-system/docs/INDEX.md`, `COMMON_MISTAKES.md`, `DECISION_TREES.md`, and `COMPONENT_PAIRING_GUIDE.md`; document composition for the four Wireloom states in `specs/055-incremental-service-authorization/quickstart.md`, using existing Card/Badge/Alert/Button and existing toggle primitives, semantic tokens, keyboard focus, light/dark contrast, and accessible Save reasons; confirm the banner and detail page are application-specific, not new universal components (Principle XI; FR-009–FR-011, FR-015).
+- [X] T010 Review `web/src/design-system/docs/INDEX.md`, `COMMON_MISTAKES.md`, `DECISION_TREES.md`, and `COMPONENT_PAIRING_GUIDE.md`; document composition for the four Wireloom states in `specs/055-incremental-service-authorization/quickstart.md`, using existing Card/Badge/Alert/Button and existing toggle primitives, semantic tokens, keyboard focus, light/dark contrast, and accessible Save reasons; confirm the banner and detail page are application-specific, not new universal components (Principle XI; FR-009–FR-011, FR-015).
 
 ### Phase 2f: E2E Acceptance Test Design [MANDATORY]
 
@@ -237,6 +237,15 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 - [ ] T097 Run the feature's full required gate `just verify` from `justfile`, including real infra-backed migrations and all E2E suites; fix change-caused failures without weakening checks and report unavailable infrastructure as a blocker, not success; update `specs/055-incremental-service-authorization/quickstart.md` with actual outcomes and any deferred task/path/reason (Principles VIII, IX, XIII).
 - [ ] T098 Verify `specs/055-incremental-service-authorization/checklists/requirements.md` is satisfied by evidence and every completed task in `tasks.md` is accurately checked; leave unfinished tasks/checklist items unchecked and report their dependency/blocker and required maintainer action, while keeping the PR draft and spec/plan unchanged (Principles II, VIII, XIII; implementation handoff rules).
 
+## Implementation Follow-ups from Reanalysis
+
+These tasks retain the two MEDIUM findings from the supplied reanalysis. The recommended
+contract revisions and alternatives are recorded in [quickstart.md](./quickstart.md#remaining-reanalysis-contract-boundaries),
+not silently added to the immutable spec/plan or accepted ADR text. Both remain unchecked.
+
+- [ ] T099 [US3] Resolve I2's externally visible proxy-refresh pre-forward contract under explicit approval: grammar validation, existing client-to-agent resolution, current-service lookup and eligibility before forwarding; proposed `400 invalid_scope` / `500 server_error` outcomes are detailed in `quickstart.md`. Reconcile editable supporting contracts/research and approved ADR text only after approval; keep spec/plan revisions in an authorized pre-implementation run. Add malformed, unknown and ineligible variants to US3 S3 in T014 and to T058/T061; assert zero upstream calls on rejection, no credential consumption, and no provider-usability check or post-response veto. Ordinary-only requests and upstream response/rotation remain unchanged (FR-002, FR-013, FR-021; reanalysis I2).
+- [ ] T100 [US2] Resolve U4 under explicit API/ADR approval: the recommended exception emits UUID scopes and recovery/page URLs for complete canonical IDs `.` and `..` while keeping existing records, canonical validation, raw requested scope strings and immutable bindings unchanged. Reconcile the immutable spec/plan in an authorized pre-implementation run, then supporting contracts/data model/research/ADRs and OpenAPI. Add grammar/emission variants to T019, recovery variants to T049 and browser direct-navigation/provider-return variants inside US2 S1 (T015), with exact-form grant and UUID durability regressions; do not silently tighten global canonical-ID validation or implement an unapproved fallback (FR-001, FR-006, FR-015, FR-019–FR-020; reanalysis U4).
+
 ## Acceptance Scenario → Task Mapping
 
 The plan's exact `It` descriptions remain authoritative. The following assigns one owning test to every scenario; unit/integration tests add depth without duplicating acceptance ownership.
@@ -327,6 +336,6 @@ There is no blanket story-level parallelism: authorization/provider/session/ExtP
 
 ## Notes
 
-The task-generation phase changes feature documents only. No task above has been executed by generating this backlog. The implementation phase must still establish red/green evidence, approvals and passing validation.
+Task generation did not execute implementation work. The current checked tasks record only the setup/design-precondition progress described in the implementation checkpoint. Acceptance red/green evidence, feature behavior and final passing validation remain unfinished. The existing specification-quality checklist is read-only and is not implementation evidence.
 
 **Future Work**: The unrelated unrequested-service refresh behavior in `research.md` remains deferred, not an implementation task. No new issue is authorized here.
