@@ -5,6 +5,69 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-10-31
+
+**Feature behavior implemented; 79 of 101 tasks complete. All 17 backend acceptance scenarios
+pass. Remaining tasks need infrastructure this sandbox lacks or maintainer approval.** This
+supersedes the earlier checkpoints below for status.
+
+### Completed since the previous checkpoint
+
+- **US1 (T039–T046, T055):** authorization resolves virtual scopes after redirect validation,
+  exempts them from `allowed_scopes`, evaluates every requested service for grant coverage and
+  verified usability (`temporarily_unavailable` when unverifiable), seals requested IDs and bindings
+  in the consent JWE and revalidates the same JWE on protected re-entry before code issuance or an
+  upstream redirect. Consent returns `requested_service_ids`/`requested_service_coverage`, rejects
+  unsatisfied submissions with `400 requested service not satisfied` before persistence and returns
+  the continuation with the same `session_token`. One resolver and evaluator are wired for
+  authorization, consent and local issuance in `internal/app/builder.go`.
+- **US3 (T057, T058, T060–T064):** local refresh rechecks every immutable binding, including
+  bindings narrowed out of `Scope`, before rotation (`invalid_scope` definitive, `server_error`
+  transient, never consuming the token); `client_credentials` rejects service scopes; proxy
+  authorization and token requests drop virtual scopes and omit an empty `scope`.
+- **US2 (T065–T071):** `GET /api/third-party/sessions/{service}` and the `/sessions/:service` SPA
+  page with Login (returning to the same page), Refresh and confirmed termination.
+- **US4/docs (T074–T079, T087):** discovery never advertises virtual scopes; the operator guide
+  `docs/guides/incremental-authorization.md`; updated gateway guide, token-exchange reference,
+  end-user API overview, configuration reference, examples, `ARCHITECTURE.md` and agent context.
+- **Consent UI (T043, T052–T054):** requested-service banner, candidate markers that never select or
+  lock optional sets, and live Save gating with an `aria-describedby` reason.
+- **Compliance verified (T081, T085, T086, T088, T090–T092):** no new broker or ExtProc config key and
+  no chart change; `servicescope` imports only `canonical`, `id`, `model`, `storage` and `ports`;
+  ExtProc imports no broker package; new adapters do not import each other; structured, credential-
+  free events `incremental_authorization_required`, `requested_service_submission_rejected`,
+  `refresh_service_recheck_failed` and `challenge_metadata_invalid` plus presence-only challenge
+  booleans.
+
+Two decisions taken within the approved contracts:
+
+- For submissions carrying requested services, the requested-service check runs after structural
+  validation but before the existing session-presence (FR-020) check, so the response names the
+  unsatisfied requested service rather than the generic `unconnected services` error.
+- ExtProc's existing 5-second re-authentication cooldown (ADR 012) is unchanged; the gateway
+  acceptance test retries within that bound, consistent with client-owned bounded retries.
+
+### Validation in this run
+
+| Command | Actual outcome |
+|---|---|
+| `go test -p 2 ./internal/... ./cmd/...` | All pass except the same three sandbox-network tests in `internal/adapters/encryption/aws` and `internal/adapters/outboundhttp` that fail identically on base commit `28baed0`. |
+| `go test ./tests/integration/...` (self-contained) | Pass, including the new overlay/route example contract test. |
+| `ginkgo --procs=2 --label-filter='!performance && !docker' ./tests/e2e/` | After updating one existing consent-continuation assertion: all specs pass (17/17 Feature 055 scenarios). |
+| `ginkgo --label-filter='!docker' ./tests/e2e/extproc/` | 98 passed; 1 failed starting the Agentgateway container (no Docker in this sandbox). |
+| `npx vitest run` (web) | 34 files, 280 tests pass. `npm run build` succeeds; `npx eslint src` reports 0 errors (2 pre-existing warnings). |
+| PostgreSQL migration/repository tests, browser E2E, `golangci-lint`, `just verify` | **Not run** — no Docker, no playwright-go driver, golangci-lint built with Go 1.25, `just` not installed. |
+
+### Remaining tasks and required actions
+
+| Tasks | Status / required action |
+|---|---|
+| T003, T099–T100 | Maintainer approval for the U4/I2 contract revisions (unchanged). |
+| T018, T056, T073, T094–T095 | Browser journeys (US1 S4, US2 S2) and screenshots: install the playwright-go driver v1.62.1 and run `just test-e2e-frontend`. The Agentgateway ExtProc journey needs Docker. |
+| T031–T034, T089, T097 | Run `just test-integration-infra` and `just verify` on a Docker-capable runner; the SQL, PostgreSQL mapping and tests are written. |
+| T059 | Hybrid/CIMD continuity variants beyond the covered `client_credentials` rejection. |
+| T080, T082–T084, T093, T096, T098 | Final review gates: spec journey re-check, OpenAPI/migration sign-off, red-evidence audit, contrast measurement in both themes and checklist sign-off. |
+
 ## Implementation checkpoint — 2026-10-30 (second run)
 
 **In progress; 39 of 101 tasks complete. Acceptance tests, shared foundations, local issuance,

@@ -1,7 +1,7 @@
 # Tasks: Incremental Service Authorization
 
 **Input**: `specs/055-incremental-service-authorization/` — `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, and `quickstart.md`.
-**Status**: In progress: 39 of 101 tasks complete. Acceptance tests (backend red recorded), the `servicescope` foundations, usability, memory-adapter bindings, sealed claims, local issuance/narrowing, exchange `scope` recovery and the ExtProc challenge are implemented; PostgreSQL and browser runs are blocked by sandbox tooling. See [the latest implementation checkpoint](./quickstart.md#implementation-checkpoint--2026-10-30-second-run) for checks, deferred tasks and required actions.
+**Status**: In progress: 79 of 101 tasks complete. All feature behavior is implemented and all 17 backend acceptance scenarios pass; remaining work is blocked on sandbox tooling (PostgreSQL/Docker, playwright-go driver, Go 1.27 golangci-lint, `just`) or on maintainer approval (T003, T099–T100). See [the latest implementation checkpoint](./quickstart.md#implementation-checkpoint--2026-10-31) for checks, deferred tasks and required actions.
 **Tests**: Mandatory red → green → refactor under Principles VIII and XIII. Write each test first, make it compile with only minimal structural scaffolding, and observe a semantic failure before implementing its behavior. Never use pending/skip markers, vacuous assertions, or red-phase annotations in test files.
 **Organization**: Setup → mandatory design preconditions → shared foundations → US1 (P1) → US3 (P1) → US2 (P1) → US4 (P2) → mandatory compliance. The three P1 stories share priority; this order follows the plan's dependency order, not a change to their priorities.
 
@@ -183,7 +183,7 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 #### Design Phase Verification [MANDATORY]
 
 - [ ] T080 Verify every task and implemented change traces to the feature requirements or a binding constraint, and the 11 sign-off items in `specs/055-incremental-service-authorization/plan.md` are covered by supplied approval before their implementation; verify accepted ADR status/approval URLs in `adrs/045-service-session-recovery-return.md` and `adrs/046-virtual-service-scopes.md`, with no edit to merged ADR 044 (Principles II, IV, X; Feature Scope & Deferred Findings).
-- [ ] T081 Verify `ARCHITECTURE.md` has the model/glossary and `examples/config/README.md` links both concrete examples; verify `docs/configuration.md` and the owning gateway guide explain absence/default/validation and the standalone deployment boundary without irrelevant broker-chart configuration (Principles II, V, VII).
+- [X] T081 Verify `ARCHITECTURE.md` has the model/glossary and `examples/config/README.md` links both concrete examples; verify `docs/configuration.md` and the owning gateway guide explain absence/default/validation and the standalone deployment boundary without irrelevant broker-chart configuration (Principles II, V, VII).
 - [ ] T082 Verify `api/enduser/openapi.yaml` exactly captures approved contracts and version 1.2.0, the admin/legacy UUID APIs remain unchanged, and migration 046 matches `specs/055-incremental-service-authorization/data-model.md`, including rollback binding loss (Principles IV, IX, X).
 - [ ] T083 Verify `specs/055-incremental-service-authorization/spec.md` Journeys 1–4 still match implemented configuration, HTTP, decoded synthetic JWT claims and ordered Wireloom source/SVGs; verify the design-system composition decisions are documented in `quickstart.md` without editing immutable spec/plan during implementation (Principles XI, XIV).
 - [ ] T084 Verify all 19 scenario mappings below exist in `tests/e2e/`, each `It` maps to exactly one scenario with a nearby reference, uses production bootstrap/fixtures and independent state, and has recorded compiling semantic-red evidence before implementation with no skipped/pending specs or vacuous assertions; verify browser tests and four maintained screenshot captures (Principles VIII, XIII).
@@ -192,11 +192,11 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 **Feature Scope** (Development Requirements):
 
-- [ ] T085 Review the diff against `specs/055-incremental-service-authorization/tasks.md` and `research.md` Deferred Findings; exclude independent refactoring/hardening and leave unrelated findings as non-task notes, with only user-approved issue URLs under Future Work; do not create issues without authorization (Feature Scope & Deferred Findings).
+- [X] T085 Review the diff against `specs/055-incremental-service-authorization/tasks.md` and `research.md` Deferred Findings; exclude independent refactoring/hardening and leave unrelated findings as non-task notes, with only user-approved issue URLs under Future Work; do not create issues without authorization (Feature Scope & Deferred Findings).
 
 **API & Documentation** (Principles IV, X):
 
-- [ ] T086 Verify handler responses and error precedence against `api/enduser/openapi.yaml` and `specs/055-incremental-service-authorization/contracts/enduser-api.md`; reconcile `docs/api/enduser-api.md` and `docs/reference/token-exchange.md` with implementation without introducing an unapproved contract change (Principles IV, X).
+- [X] T086 Verify handler responses and error precedence against `api/enduser/openapi.yaml` and `specs/055-incremental-service-authorization/contracts/enduser-api.md`; reconcile `docs/api/enduser-api.md` and `docs/reference/token-exchange.md` with implementation without introducing an unapproved contract change (Principles IV, X).
 
 **Architecture & Documentation** (Principle II):
 
@@ -204,7 +204,7 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 **Configuration** (Principle VII):
 
-- [ ] T088 Verify `internal/ports/config.go` remains the broker configuration source, no ad-hoc loader or new process key was introduced, the route metadata remains confined to `aib.tokenexchange`, and `charts/agentic-identity-broker/` is unchanged for the documented standalone setting (Principle VII; ADRs 011/036).
+- [X] T088 Verify `internal/ports/config.go` remains the broker configuration source, no ad-hoc loader or new process key was introduced, the route metadata remains confined to `aib.tokenexchange`, and `charts/agentic-identity-broker/` is unchanged for the documented standalone setting (Principle VII; ADRs 011/036).
 
 **Database & Persistence** (Principle IX):
 
@@ -212,12 +212,12 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 **Security** (Principles I, III):
 
-- [ ] T090 Verify security tests in `internal/domain/servicescope/`, `oauth2/`, `oauth2server/`, `oauth2session/`, `consent/`, and `tokenexchange/` prove fail-closed eligibility/coverage/usability, JWE principal/agent/TTL protection, canonical-ID pinning, no provider-scope leakage and safe configured-origin recovery; preserve existing JWE/fosite/PKCE/signature mechanisms with no custom crypto or optional bypass (Principles I, III; SR-001–SR-004).
-- [ ] T091 Verify credential-free structured denial/refresh-transition logs in `internal/domain/oauth2/service.go`, `consent/service.go`, `oauth2server/provider.go`, `oauth2session/service.go`, and `internal/extproc/server/reauth_challenge.go`, including required event names, definitive/transient distinctions, value-free invalid metadata diagnostics and presence-only challenge attributes; verify other users' agent relationships never appear (Principle I; SR-005).
+- [X] T090 Verify security tests in `internal/domain/servicescope/`, `oauth2/`, `oauth2server/`, `oauth2session/`, `consent/`, and `tokenexchange/` prove fail-closed eligibility/coverage/usability, JWE principal/agent/TTL protection, canonical-ID pinning, no provider-scope leakage and safe configured-origin recovery; preserve existing JWE/fosite/PKCE/signature mechanisms with no custom crypto or optional bypass (Principles I, III; SR-001–SR-004).
+- [X] T091 Verify credential-free structured denial/refresh-transition logs in `internal/domain/oauth2/service.go`, `consent/service.go`, `oauth2server/provider.go`, `oauth2session/service.go`, and `internal/extproc/server/reauth_challenge.go`, including required event names, definitive/transient distinctions, value-free invalid metadata diagnostics and presence-only challenge attributes; verify other users' agent relationships never appear (Principle I; SR-005).
 
 **Architecture Patterns** (Principles VI, XII):
 
-- [ ] T092 Verify `internal/domain/servicescope/` is the sole invariant owner with no infrastructure imports, handlers do no conditional business orchestration or direct repository access, adapters do not import each other, fosite remains contained, and `internal/extproc/` does not import broker scope packages; verify all DI in `internal/app/builder.go` and route registration only in `internal/adapters/http/routing/enduser.go` (Principles VI, XII; ADRs 014/036).
+- [X] T092 Verify `internal/domain/servicescope/` is the sole invariant owner with no infrastructure imports, handlers do no conditional business orchestration or direct repository access, adapters do not import each other, fosite remains contained, and `internal/extproc/` does not import broker scope packages; verify all DI in `internal/app/builder.go` and route registration only in `internal/adapters/http/routing/enduser.go` (Principles VI, XII; ADRs 014/036).
 
 **Testing** (Principle VIII - Unit & Integration Tests):
 
