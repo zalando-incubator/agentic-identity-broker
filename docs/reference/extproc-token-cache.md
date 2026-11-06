@@ -38,13 +38,16 @@ Sources: [five-second constant, population, and fallback](https://github.com/zal
 
 After an exchange error, fallback requires a nonempty cached token, a usable assertion, and a current time strictly before `staleUntil`.
 The classifier permits broker 5xx errors and HTTP 429 without `error_uri`.
-It rejects assertion expiry and other broker errors, including HTTP 429 with `error_uri`.
+It rejects assertion expiry and other `BrokerExchangeError` values, including HTTP 429 with `error_uri`.
 Other errors also qualify, including network, circuit-open, and malformed-success-response errors. The classifier does not restrict fallback to transport errors.
+If a response body read fails, `doExchange` returns the read error before it creates a `BrokerExchangeError`, even for HTTP 403.
+The classifier treats that error as transient, even for an HTTP 403 response.
+Fallback can return a cached token within its stale window if the assertion remains usable.
 Sources: [fallback and circuit breaker in `TokenExchanger.Exchange`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/internal/extproc/server/exchanger.go), [classifier `isTransientBrokerError`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/internal/extproc/server/exchanger.go), and [response errors in `TokenExchanger.doExchange`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/internal/extproc/server/exchanger.go).
 
 A non-transient broker error with `error_uri` replaces the entry with a five-second re-authentication error.
 Other exchange errors do not delete the previous entry.
-An authoritative rejection returns an error for that call, but does not generally erase the old token.
+A rejection represented by `BrokerExchangeError` returns an error for that call, but does not generally erase the old token.
 Source: [error population and propagation in `TokenExchanger.Exchange`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/internal/extproc/server/exchanger.go).
 
 ## Retention, capacity, and cleanup
