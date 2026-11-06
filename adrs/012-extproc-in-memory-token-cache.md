@@ -68,15 +68,15 @@ Sources: [refresh path in `TokenExchanger.Exchange`](../internal/extproc/server/
 
 ### Expiry and stale reuse
 
-A successful exchange sets `expiresAt` to insertion time plus the effective TTL.
-Positive `expires_in` values supply that TTL. Missing, zero, or negative values use `cache.default_ttl`.
-The calculation caps either value at `cache.max_ttl`.
-Sources: [population](../internal/extproc/server/exchanger.go#L282-L299) and [TTL calculation](../internal/extproc/server/exchanger.go#L470-L483).
+A successful exchange sets `expiresAt` to insertion time plus the fresh-cache lifetime.
+For positive `expires_in`, that lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`.
+Only absent or null expiry uses `cache.default_ttl`, capped at `cache.max_ttl`.
+Known nonpositive lifetime deletes the entry and is not cached, including for outage fallback.
+Sources: [population](../internal/extproc/server/exchanger.go) and [TTL calculation](../internal/extproc/server/exchanger.go).
 
-The same insertion sets `staleUntil` to the earlier of `expiresAt + 5s` and insertion time plus `cache.max_ttl`.
-Transient failures do not extend this deadline.
-If the effective TTL equals `cache.max_ttl`, there is no stale-reuse window after expiry.
-Sources: [five-second constant](../internal/extproc/server/exchanger.go#L46-L51), [population](../internal/extproc/server/exchanger.go#L282-L299), and [fallback](../internal/extproc/server/exchanger.go#L302-L321).
+The same insertion sets `staleUntil` to insertion time plus the reported lifetime plus five seconds, capped at `cache.max_ttl`.
+Transient failures do not extend this deadline. This can permit reuse after reported token expiry.
+Sources: [five-second constant, population, and fallback](../internal/extproc/server/exchanger.go).
 
 After an exchange error, fallback requires a nonempty cached token, a usable assertion, and a current time strictly before `staleUntil`.
 The classifier permits broker 5xx errors and HTTP 429 without `error_uri`.

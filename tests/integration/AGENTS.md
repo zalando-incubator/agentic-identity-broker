@@ -17,7 +17,8 @@ The infra recipe includes PostgreSQL repository tests under `internal/adapters/s
 
 ```bash
 go test -v ./tests/integration/...
-go test -count=1 -tags=integration -p 2 -v ./tests/integration/infra/... \
+go test -count=1 -tags=integration -p 2 -v ./tests/integration/bootstrap/... \
+  ./tests/integration/infra/... \
   ./tests/integration/migrations/... \
   ./tests/integration/storage/infra/... \
   ./internal/adapters/storage/postgres/...
