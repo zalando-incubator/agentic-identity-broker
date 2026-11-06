@@ -5,7 +5,6 @@ package postgres
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -170,10 +169,10 @@ func TestAgentRepository_Get_SpanResult(t *testing.T) {
 	t.Run("query exceeds the statement timeout", func(t *testing.T) {
 		var database string
 		require.NoError(t, adapter.db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&database))
-		_, err := adapter.db.ExecContext(ctx, fmt.Sprintf(`ALTER DATABASE %q SET statement_timeout = '100ms'`, database))
+		_, err := adapter.db.ExecContext(ctx, `ALTER DATABASE "`+database+`" SET statement_timeout = '100ms'`)
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			_, err := adapter.db.ExecContext(ctx, fmt.Sprintf(`ALTER DATABASE %q RESET statement_timeout`, database))
+			_, err := adapter.db.ExecContext(ctx, `ALTER DATABASE "`+database+`" RESET statement_timeout`)
 			require.NoError(t, err)
 		})
 		adapter.db.SetMaxIdleConns(0) // The setting only applies to new connections.
