@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -91,18 +92,90 @@ func (f *PostgresFixture) initialize(ctx context.Context) error {
 	}
 	f.ConnectionURL = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 
+	return f.MigrateTo(0)
+}
+
+// NewPostgresFixtureAtVersion provides an isolated historical schema for upgrade journeys.
+func NewPostgresFixtureAtVersion(ctx context.Context, version uint) (*PostgresFixture, error) {
+	fixture, err := NewPostgresFixture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fixture.MigrateTo(version); err != nil {
+		_ = fixture.Close(ctx)
+		return nil, err
+	}
+	return fixture, nil
+}
+
+func (f *PostgresFixture) migrationRunner() (*migrate.Migrate, error) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return fmt.Errorf("locate E2E bootstrap source")
+		return nil, fmt.Errorf("locate E2E bootstrap source")
 	}
 	migrationsDir := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "migrations")
-	migrationRunner, err := migrate.New("file://"+migrationsDir, f.ConnectionURL)
+	return migrate.New("file://"+migrationsDir, f.ConnectionURL)
+}
+
+// MigrateTo uses zero to apply all migrations.
+func (f *PostgresFixture) MigrateTo(version uint) error {
+	runner, err := f.migrationRunner()
 	if err != nil {
 		return err
 	}
-	defer func() { _, _ = migrationRunner.Close() }()
-	if err := migrationRunner.Up(); err != nil && err != migrate.ErrNoChange {
+	defer func() { _, _ = runner.Close() }()
+	if version == 0 {
+		err = runner.Up()
+	} else {
+		err = runner.Migrate(version)
+	}
+	if err == migrate.ErrNoChange {
+		return nil
+	}
+	return err
+}
+
+func (f *PostgresFixture) MigrationVersion() (uint, bool, error) {
+	runner, err := f.migrationRunner()
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _, _ = runner.Close() }()
+	return runner.Version()
+}
+
+// RecoverExternalIDMigration mirrors the runbook's schema guard before clearing dirty metadata.
+func (f *PostgresFixture) RecoverExternalIDMigration(ctx context.Context) error {
+	version, dirty, err := f.MigrationVersion()
+	if err != nil {
 		return err
 	}
-	return nil
+	if version != 47 || !dirty {
+		return fmt.Errorf("expected dirty migration 47, got version %d dirty %t", version, dirty)
+	}
+	db, err := sql.Open("pgx", f.ConnectionURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	var oldIndex, newIndex, check bool
+	err = db.QueryRowContext(ctx, `SELECT to_regclass('idx_agents_external_id') IS NOT NULL,
+		to_regclass('uq_agents_external_id') IS NOT NULL,
+		EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'agents'::regclass AND conname = 'chk_agents_external_id_not_empty')`).Scan(&oldIndex, &newIndex, &check)
+	if err != nil {
+		return err
+	}
+	if !oldIndex || newIndex || check {
+		return fmt.Errorf("migration 47 schema is not unchanged; refusing recovery")
+	}
+	return f.ForceVersion(46)
+}
+
+func (f *PostgresFixture) ForceVersion(version int) error {
+	runner, err := f.migrationRunner()
+	if err != nil {
+		return err
+	}
+	defer func() { _, _ = runner.Close() }()
+	return runner.Force(version)
 }

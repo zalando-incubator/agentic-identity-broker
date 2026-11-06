@@ -45,6 +45,7 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 
 		// Agent management routes
 		r.Route("/agents", func(r chi.Router) {
+			r.Put("/", h.Agents.ReconcileAgent)
 			r.Post("/", h.Agents.CreateAgent)             // POST /api/agents
 			r.Get("/", h.Agents.ListAgents)               // GET /api/agents
 			r.Get("/{agent-id}", h.Agents.GetAgent)       // GET /api/agents/:agent-id

@@ -14,6 +14,8 @@ import (
 var (
 	// ErrNotFound is returned when a requested entity does not exist.
 	ErrNotFound = errors.New("entity not found")
+	// ErrExternalIDConflict identifies a set external ID held by another agent.
+	ErrExternalIDConflict = errors.New("external_id already held by another agent")
 )
 
 // IsNotFoundErr returns true if err represents a not-found condition from any
@@ -108,6 +110,8 @@ type UserRepository interface {
 // Agents represent AI agents registered in the identity broker.
 // Following Interface Segregation Principle: focused interface for agent operations.
 type AgentRepository interface {
+	// Create and Update atomically reject external IDs held by another agent with
+	// ErrorKindConflict wrapping ErrExternalIDConflict; empty IDs are invalid.
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
@@ -116,7 +120,8 @@ type AgentRepository interface {
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
-	ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error)
+	// GetByExternalID returns an independent copy of the exact match, or ErrNotFound.
+	GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
 	// GetByClientURI resolves an exact CIMD URL first, then a URI pattern.

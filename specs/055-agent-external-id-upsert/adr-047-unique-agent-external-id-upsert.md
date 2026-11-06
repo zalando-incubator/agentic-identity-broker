@@ -1,0 +1,5 @@
+# ADR 047: Unique Agent External ID and Create-or-Update by External ID
+
+The approved revision is maintained in [adrs/047-unique-agent-external-id-reconcile.md](../../adrs/047-unique-agent-external-id-reconcile.md).
+
+**Status**: Accepted (approved by mjungsbluth on 2026-11-04: https://github.com/zalando-incubator/agentic-identity-broker/pull/336#issuecomment-6625694887). This replaces the earlier timestamp design; Admin Agent timestamps retain whole-second UTC RFC 3339 presentation and current-time assignment.

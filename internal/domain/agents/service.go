@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -25,6 +24,7 @@ var ErrInvalidExternalID = errors.New("invalid external_id")
 type Service struct {
 	repo              ports.AgentRepository
 	providerService   ServiceRequirementValidator
+	permissionSets    PermissionSetResolver
 	logger            *slog.Logger
 	multiAgentEnabled bool
 }
@@ -35,18 +35,24 @@ type ServiceRequirementValidator interface {
 	ValidateServiceRequirements(ctx context.Context, reqs []storage.ServiceRequirement) error
 }
 
+type PermissionSetResolver interface {
+	GetByIDs(context.Context, []id.PermissionSetID) ([]*storage.PermissionSet, error)
+}
+
 // NewService creates a new agent domain service.
 func NewService(
 	repo ports.AgentRepository,
 	providerService ServiceRequirementValidator,
 	logger *slog.Logger,
 	multiAgentEnabled bool,
+	permissionSets PermissionSetResolver,
 ) *Service {
 	if logger == nil {
 		panic("agents.NewService: logger must not be nil")
 	}
 	return &Service{
 		repo:              repo,
+		permissionSets:    permissionSets,
 		providerService:   providerService,
 		logger:            logger,
 		multiAgentEnabled: multiAgentEnabled,
@@ -81,6 +87,9 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 		return storage.NewStorageError("Create", storage.ErrorKindValidation, err, err.Error())
 	}
 
+	if err := s.validateServiceRequirementsCoverage(ctx, agent.ServiceRequirements, agent.PermissionSets); err != nil {
+		return err
+	}
 	if err := s.providerService.ValidateServiceRequirements(ctx, agent.ServiceRequirements); err != nil {
 		return err
 	}
@@ -106,45 +115,62 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 	return nil
 }
 
-// Update validates and persists changes to an existing agent. When clientID is nil
-// and clearClientID is false, the existing client_id is preserved (ADR 017). When
-// clearClientID is true, client_id is set to nil regardless of the existing value.
-// When multiAgentEnabled is false, uniqueness is enforced for the effective client_id.
-func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage.Agent, clearClientID bool) error {
+// UpdateInput carries explicit clear/presence instructions independently of nullable values.
+type UpdateInput struct {
+	ClearClientID      bool
+	CanonicalIDPresent bool
+}
+
+// Update validates and persists the effective definition, preserving omitted identities (ADR 017).
+func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage.Agent, input UpdateInput) error {
 	existing, err := s.repo.Get(ctx, agentID)
 	if err != nil {
 		return err
 	}
-	previous := (&storage.Agent{
-		PermissionSets: existing.PermissionSets, ServiceRequirements: existing.ServiceRequirements,
-		UpdatedAt: existing.UpdatedAt,
-	}).Copy()
+	candidate, err := s.updateCandidate(ctx, existing, agent, input)
+	if err != nil {
+		return err
+	}
+	*agent = *candidate
+	return s.persistUpdate(ctx, existing, agent)
+}
 
-	agent.ID = agentID
-	if agent.ClearCanonicalID {
-		agent.CanonicalID = nil
-	} else if agent.CanonicalID == nil {
+func (s *Service) updateCandidate(ctx context.Context, existing, desired *storage.Agent, input UpdateInput) (*storage.Agent, error) {
+	agent := desired.Copy()
+	agent.ID = existing.ID
+	if agent.CanonicalID == nil && !input.CanonicalIDPresent {
 		agent.CanonicalID = existing.CanonicalID
 	}
 	agent.CreatedAt = existing.CreatedAt
 
-	if agent.ClientID == nil && !clearClientID {
+	if input.ClearClientID {
+		agent.ClientID = nil
+	} else if agent.ClientID == nil {
 		agent.ClientID = existing.ClientID
 	}
 
 	if err := agent.Validate(); err != nil {
-		return storage.NewStorageError("Update", storage.ErrorKindValidation, err, err.Error())
+		return nil, storage.NewStorageError("Update", storage.ErrorKindValidation, err, err.Error())
 	}
 
+	if err := s.validateServiceRequirementsCoverage(ctx, agent.ServiceRequirements, agent.PermissionSets); err != nil {
+		return nil, err
+	}
 	if err := s.providerService.ValidateServiceRequirements(ctx, agent.ServiceRequirements); err != nil {
-		return err
+		return nil, err
 	}
 
 	if !s.multiAgentEnabled && agent.ClientID != nil {
-		if err := s.checkClientIDUniqueness(ctx, *agent.ClientID, &agentID); err != nil {
-			return err
+		if err := s.checkClientIDUniqueness(ctx, *agent.ClientID, &existing.ID); err != nil {
+			return nil, err
 		}
 	}
+
+	return agent, nil
+}
+
+func (s *Service) persistUpdate(ctx context.Context, existing, agent *storage.Agent) error {
+	previous := existing.Copy()
 
 	if err := s.repo.Update(ctx, agent); err != nil {
 		return err
@@ -208,30 +234,68 @@ func (s *Service) List(ctx context.Context) ([]*storage.Agent, error) {
 
 // ListByExternalID rejects unusable filters before querying storage.
 func (s *Service) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
-	value := string(externalID)
-	count := 0
-	for len(value) > 0 {
-		r, size := utf8.DecodeRuneInString(value)
-		if r == utf8.RuneError && size == 1 {
-			return nil, invalidExternalID("external_id must be valid UTF-8 text")
-		}
-		if r == 0 {
-			return nil, invalidExternalID("external_id must not contain a NUL character")
-		}
-		count++
-		if count > 255 {
-			return nil, invalidExternalID("external_id must be 1 to 255 characters")
-		}
-		value = value[size:]
+	if err := validateExternalID(externalID); err != nil {
+		return nil, err
 	}
-	if count == 0 {
-		return nil, invalidExternalID("external_id must be 1 to 255 characters")
+	agent, err := s.repo.GetByExternalID(ctx, externalID)
+	if errors.Is(err, ports.ErrNotFound) {
+		return []*storage.Agent{}, nil
 	}
-	return s.repo.ListByExternalID(ctx, externalID)
+	if err != nil {
+		return nil, err
+	}
+	return []*storage.Agent{agent}, nil
+}
+
+func validateExternalID(externalID id.ExternalID) error {
+	if err := storage.ValidateExternalID(externalID); err != nil {
+		return invalidExternalID(err.Error())
+	}
+	return nil
 }
 
 func invalidExternalID(message string) error {
 	return storage.NewStorageError("ValidateExternalID", storage.ErrorKindValidation, ErrInvalidExternalID, message)
+}
+
+// FR-019 requires every service requirement to be covered by a declared permission set.
+func (s *Service) validateServiceRequirementsCoverage(ctx context.Context, serviceReqs []storage.ServiceRequirement, psEntries []storage.AgentPermissionSetEntry) error {
+	if len(serviceReqs) == 0 {
+		return nil
+	}
+
+	if s.permissionSets == nil {
+		return storage.NewStorageError("ValidateAgent", storage.ErrorKindValidation, nil, "permission set resolver is required for service coverage")
+	}
+	psIDs := make([]id.PermissionSetID, len(psEntries))
+	for i, e := range psEntries {
+		psIDs[i] = e.PermissionSetID
+	}
+
+	resolvedSets, err := s.permissionSets.GetByIDs(ctx, psIDs)
+	if err != nil {
+		return fmt.Errorf("failed to resolve permission sets for coverage check: %w", err)
+	}
+
+	coveredServiceIDs := make(map[id.ServiceID]bool)
+	for _, ps := range resolvedSets {
+		for _, ss := range ps.ServiceScopes {
+			coveredServiceIDs[ss.ServiceID] = true
+		}
+	}
+
+	var uncoveredIDs []string
+	for _, sr := range serviceReqs {
+		if !coveredServiceIDs[sr.ServiceID] {
+			uncoveredIDs = append(uncoveredIDs, sr.ServiceID.String())
+		}
+	}
+
+	if len(uncoveredIDs) > 0 {
+		return storage.NewStorageError("ValidateAgent", storage.ErrorKindValidation, nil, fmt.Sprintf("service_requirements reference services not covered by any permission set: %v", uncoveredIDs))
+	}
+
+	return nil
 }
 
 // checkClientIDUniqueness returns an error if another agent already uses the given client_id.

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,12 +24,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// PermissionSetValidator is an interface for validating permission set IDs
-// and resolving permission sets for coverage invariant checks.
-// Implemented by *permissionset.Service.
+// PermissionSetValidator resolves and validates permission-set references at the HTTP boundary.
 type PermissionSetValidator interface {
 	ValidateIDs(ctx context.Context, ids []id.PermissionSetID) error
-	GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error)
 	ResolveID(ctx context.Context, value string) (id.PermissionSetID, error)
 	CanonicalIDs(ctx context.Context, ids []id.PermissionSetID) (map[id.PermissionSetID]string, error)
 }
@@ -85,6 +83,24 @@ type AgentRequest struct {
 	ClientURIs           []string                    `json:"client_uris,omitempty"`
 }
 
+func (req AgentRequest) toAgent(serviceReqs []storage.ServiceRequirement, permissionSets []storage.AgentPermissionSetEntry) *storage.Agent {
+	return &storage.Agent{
+		CanonicalID:          req.CanonicalID,
+		ClientID:             clientIDFromRequest(req.ClientID),
+		ExternalID:           convertExternalID(req.ExternalID),
+		DisplayName:          req.DisplayName,
+		Description:          req.Description,
+		GovernanceURL:        req.GovernanceURL,
+		UserDocumentationURL: req.UserDocumentationURL,
+		AgentInterfaceURL:    req.AgentInterfaceURL,
+		ServiceRequirements:  serviceReqs,
+		PermissionSets:       permissionSets,
+		RedirectURIs:         req.RedirectURIs,
+		AllowedScopes:        req.AllowedScopes,
+		ClientURIs:           req.ClientURIs,
+	}
+}
+
 // ServiceRequirementResponse represents a service requirement in the response.
 type ServiceRequirementResponse struct {
 	ServiceID        string   `json:"service_id"`
@@ -126,6 +142,98 @@ type ErrorResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
+func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Prefer")
+	selector, present, message := externalIDFromQuery(r.URL.RawQuery)
+	if !present && message == "" {
+		message = "external_id selector is required"
+	}
+	if message != "" {
+		h.logger.WarnContext(r.Context(), "external_id selector validation failed", "error", errors.New(message))
+		h.writeError(w, http.StatusBadRequest, "invalid external_id", message)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "failed to read request body", "error", errors.New("request body exceeds limit or cannot be read"))
+		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body exceeds limit or cannot be read")
+		return
+	}
+	var req AgentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.logger.WarnContext(r.Context(), "failed to decode request body", "error", errors.New("request body must be an AgentCreateRequest"))
+		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body must be an AgentCreateRequest")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		h.logger.WarnContext(r.Context(), "invalid request body", "error", errors.New("request body must be an object"))
+		h.writeError(w, http.StatusBadRequest, "validation failed", "request body must be an object")
+		return
+	}
+	if raw, ok := fields["client_id"]; ok && (bytes.Equal(raw, []byte("null")) || req.ClientID == nil || strings.TrimSpace(*req.ClientID) == "") {
+		h.logger.WarnContext(r.Context(), "client_id validation failed", "error", errors.New("client_id must be a nonempty string when supplied"))
+		h.writeError(w, http.StatusBadRequest, "validation failed", "client_id must be a nonempty string when supplied")
+		return
+	}
+	ctx := r.Context()
+	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
+	if err != nil {
+		h.logger.WarnContext(ctx, "permission set validation failed", "error", errors.New("invalid permission sets"))
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
+	if err != nil {
+		h.logger.WarnContext(ctx, "invalid service requirements", "error", errors.New("invalid service requirements"))
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
+		h.logger.WarnContext(ctx, "client_uris validation failed", "error", errors.New("invalid client_uris"))
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	_, canonicalPresent := fields["canonical_id"]
+	rawExternal, externalPresent := fields["external_id"]
+	input := agents.ReconcileInput{CanonicalIDPresent: canonicalPresent, ExternalIDPresent: externalPresent, ExternalIDNull: externalPresent && bytes.Equal(rawExternal, []byte("null"))}
+	httpmiddleware.FinalizeRequestSecurityContext(ctx)
+	agent, outcome, err := h.agentService.ReconcileByExternalID(ctx, selector, req.toAgent(serviceReqs, permissionSets), input)
+	if err != nil {
+		var storageErr *storage.StorageError
+		if !errors.As(err, &storageErr) {
+			h.logger.WarnContext(ctx, "agent reconciliation validation failed", "error", errors.New("invalid agent definition"))
+			h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
+			return
+		}
+		if storageErr.Kind == storage.ErrorKindValidation {
+			h.logger.WarnContext(ctx, "agent reconciliation validation failed", "error", errors.New("invalid agent definition"))
+		}
+		h.handleDomainError(w, r, "ReconcileAgent", err)
+		return
+	}
+	resp, err := h.toResponseWithServiceMap(agent, h.batchLoadServices(ctx, []*storage.Agent{agent}))
+	if err != nil {
+		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		return
+	}
+	if requestsCanonicalReferences(r.Header.Get("Prefer")) {
+		if err := h.applyCanonicalReferences(ctx, []*storage.Agent{agent}, []*AgentResponse{&resp}); err != nil {
+			h.handleDomainError(w, r, "ReconcileAgent", err)
+			return
+		}
+		w.Header().Set("Preference-Applied", "reference-id=canonical")
+	}
+	status := http.StatusOK
+	if outcome == agents.ReconcileCreated {
+		status = http.StatusCreated
+		w.Header().Set("Location", "/api/agents/"+agent.ID.String())
+	}
+	h.writeJSON(w, status, resp)
+}
+
 // CreateAgent handles POST /api/agents
 func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -152,13 +260,6 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FR-019: Validate that every SR service_id is covered by at least one PS ServiceScope
-	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
-		h.logger.WarnContext(ctx, "FR-019 coverage invariant violated", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-		return
-	}
-
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
 		h.logger.WarnContext(ctx, "client_uris validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
@@ -166,23 +267,9 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	agent := &storage.Agent{
-		CanonicalID:          req.CanonicalID,
-		ClientID:             clientIDFromRequest(req.ClientID),
-		ExternalID:           convertExternalID(req.ExternalID),
-		DisplayName:          req.DisplayName,
-		Description:          req.Description,
-		GovernanceURL:        req.GovernanceURL,
-		UserDocumentationURL: req.UserDocumentationURL,
-		AgentInterfaceURL:    req.AgentInterfaceURL,
-		ServiceRequirements:  serviceReqs,
-		PermissionSets:       permissionSets,
-		RedirectURIs:         req.RedirectURIs,
-		AllowedScopes:        req.AllowedScopes,
-		ClientURIs:           req.ClientURIs,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-	}
+	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.CreatedAt = now
+	agent.UpdatedAt = now
 
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.agentService.Create(ctx, agent); err != nil {
@@ -292,13 +379,6 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FR-019: Validate that every SR service_id is covered by at least one PS ServiceScope
-	if err := h.validateServiceRequirementsCoverage(ctx, serviceReqs, permissionSets); err != nil {
-		h.logger.WarnContext(ctx, "FR-019 coverage invariant violated", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-		return
-	}
-
 	// Enforce client URI cardinality on admin writes. Validate() (called by the storage
 	// adapter on Update) skips cardinality to allow CIMD snapshot refreshes — so this
 	// explicit check is required for admin mutations.
@@ -308,35 +388,11 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := &storage.Agent{
-		CanonicalID:          req.CanonicalID,
-		ClearCanonicalID:     canonicalIDPresent && bytes.Equal(rawFields["canonical_id"], []byte("null")),
-		ClientID:             clientIDFromRequest(req.ClientID),
-		ExternalID:           convertExternalID(req.ExternalID),
-		DisplayName:          req.DisplayName,
-		Description:          req.Description,
-		GovernanceURL:        req.GovernanceURL,
-		UserDocumentationURL: req.UserDocumentationURL,
-		AgentInterfaceURL:    req.AgentInterfaceURL,
-		ServiceRequirements:  serviceReqs,
-		PermissionSets:       permissionSets,
-		RedirectURIs:         req.RedirectURIs,
-		AllowedScopes:        req.AllowedScopes,
-		ClientURIs:           req.ClientURIs,
-		UpdatedAt:            time.Now().UTC(),
-	}
-
-	if !canonicalIDPresent {
-		existing, err := h.agentService.Get(ctx, parsedAgentID)
-		if err != nil {
-			h.handleDomainError(w, r, "GetAgent", err)
-			return
-		}
-		agent.CanonicalID = existing.CanonicalID
-	}
+	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.UpdatedAt = time.Now().UTC()
 
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
-	if err := h.agentService.Update(ctx, parsedAgentID, agent, clearClientID); err != nil {
+	if err := h.agentService.Update(ctx, parsedAgentID, agent, agents.UpdateInput{ClearClientID: clearClientID, CanonicalIDPresent: canonicalIDPresent}); err != nil {
 		h.handleDomainError(w, r, "UpdateAgent", err)
 		return
 	}
@@ -417,8 +473,8 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 				ClientID:    clientIDToString(agent.ClientID),
 				DisplayName: agent.DisplayName,
 				Description: agent.Description,
-				CreatedAt:   agent.CreatedAt.Format(time.RFC3339),
-				UpdatedAt:   agent.UpdatedAt.Format(time.RFC3339),
+				CreatedAt:   agent.CreatedAt.UTC().Format(time.RFC3339),
+				UpdatedAt:   agent.UpdatedAt.UTC().Format(time.RFC3339),
 			}
 		}
 		responses[i] = resp
@@ -498,9 +554,9 @@ func (h *AgentsHandler) toResponseWithServiceMap(agent *storage.Agent, serviceMa
 		AgentInterfaceURL:    agent.AgentInterfaceURL,
 		RedirectURIs:         agent.RedirectURIs,
 		AllowedScopes:        agent.AllowedScopes,
-		ClientURIs:           agent.ClientURIs,
-		CreatedAt:            agent.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:            agent.UpdatedAt.Format(time.RFC3339),
+		ClientURIs:           slices.Sorted(slices.Values(agent.ClientURIs)),
+		CreatedAt:            agent.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:            agent.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 
 	if len(agent.ServiceRequirements) > 0 {
@@ -659,7 +715,11 @@ func (h *AgentsHandler) handleDomainError(w http.ResponseWriter, r *http.Request
 		case storage.ErrorKindConflict:
 			h.writeError(w, http.StatusConflict, "conflict", storageErr.Message)
 		case storage.ErrorKindValidation:
-			h.writeError(w, http.StatusBadRequest, "validation failed", storageErr.Message)
+			code := "validation failed"
+			if errors.Is(err, agents.ErrInvalidExternalID) {
+				code = "invalid external_id"
+			}
+			h.writeError(w, http.StatusBadRequest, code, storageErr.Message)
 		case storage.ErrorKindTimeout:
 			h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 		default:
@@ -724,46 +784,4 @@ func clientIDToString(c *id.ClientID) *string {
 	}
 	s := c.String()
 	return &s
-}
-
-// validateServiceRequirementsCoverage enforces FR-019: every service_requirements[].service_id
-// must be covered by at least one permission set's ServiceScope.
-// Returns a descriptive error listing uncovered service IDs if the invariant is violated.
-func (h *AgentsHandler) validateServiceRequirementsCoverage(ctx context.Context, serviceReqs []storage.ServiceRequirement, psEntries []storage.AgentPermissionSetEntry) error {
-	if len(serviceReqs) == 0 || h.psService == nil {
-		return nil
-	}
-
-	// Resolve permission sets to get their ServiceScopes
-	psIDs := make([]id.PermissionSetID, len(psEntries))
-	for i, e := range psEntries {
-		psIDs[i] = e.PermissionSetID
-	}
-
-	resolvedSets, err := h.psService.GetByIDs(ctx, psIDs)
-	if err != nil {
-		return fmt.Errorf("failed to resolve permission sets for coverage check: %w", err)
-	}
-
-	// Collect all service IDs covered by any PS ServiceScope
-	coveredServiceIDs := make(map[id.ServiceID]bool)
-	for _, ps := range resolvedSets {
-		for _, ss := range ps.ServiceScopes {
-			coveredServiceIDs[ss.ServiceID] = true
-		}
-	}
-
-	// Check every SR service_id is covered
-	var uncoveredIDs []string
-	for _, sr := range serviceReqs {
-		if !coveredServiceIDs[sr.ServiceID] {
-			uncoveredIDs = append(uncoveredIDs, sr.ServiceID.String())
-		}
-	}
-
-	if len(uncoveredIDs) > 0 {
-		return fmt.Errorf("service_requirements reference services not covered by any permission set: %v", uncoveredIDs)
-	}
-
-	return nil
 }
