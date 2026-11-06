@@ -120,7 +120,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `DelegationContextResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 047) |
+| `DelegationContextResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
@@ -155,7 +155,7 @@ Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 - If a request has a body and OPA is enabled, exchange tokens in `RequestHeaders`. Then evaluate OPA in `RequestBody`.
 - For header-only requests, evaluate first.
 - Run `ApprovalGate` only after OPA returns `approval_required` for a standalone MCP tool call.
-- `DelegationContextResolver` (ADR 047) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
+- `DelegationContextResolver` (ADR 048) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
 - Use mock or stub implementations of all four interfaces in tests.
 
 ### 2a. OPA Authorization Pipeline (when enabled)
@@ -187,7 +187,7 @@ RequestHeaders(end_of_stream=true) → validate subject metadata → validate re
                                                                          → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```
 
-With `delegation_context.enabled` (ADR 047 supersedes ADR 028's ordering and input in this mode):
+With `delegation_context.enabled` (ADR 048 supersedes ADR 028's ordering and input in this mode):
 
 ```
 Body-bearing:  RequestHeaders → metadata/protocol/transport checks

@@ -182,7 +182,7 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 
 ## ExtProc delegation context configuration
 
-The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 047](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/047-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
+The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 048](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
 
 | Key | Environment variable | Flag | Default |
 |---|---|---|---|

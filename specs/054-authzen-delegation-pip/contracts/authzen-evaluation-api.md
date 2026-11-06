@@ -5,7 +5,7 @@
 applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification against the AuthZEN 1.0
 source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
 requires receivers to ignore unknown request fields. The request contract in §2.1 therefore
-follows the AuthZEN 1.0 HTTPS binding (ADR 047 §1, research R10): unknown members, AuthZEN
+follows the AuthZEN 1.0 HTTPS binding (ADR 048 §1, research R10): unknown members, AuthZEN
 `properties` and `context` members other than `agent` are ignored and never influence the
 decision. Error bodies keep `ErrorResponse`. The maintainer confirmed this revision of API-2 on
 2026-10-31 and directed the artifacts to agree with it on 2026-11-05; the revised API-2 row is
@@ -104,7 +104,7 @@ AccessEvaluationRequest:
             token; a mismatch returns 400 before any grant is read.
 ```
 
-**Request member handling** (research R10, ADR 047 §1):
+**Request member handling** (research R10, ADR 048 §1):
 
 - Receivers ignore unknown fields, as the AuthZEN 1.0 HTTPS binding requires. Unknown top-level
   members, unknown members of `subject`, `action` and `resource`, AuthZEN `properties` objects at

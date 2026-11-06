@@ -1,4 +1,4 @@
-# ExtProc configuration with broker delegation context (AuthZEN, ADR 047)
+# ExtProc configuration with broker delegation context (AuthZEN, ADR 048)
 #
 # When delegation_context.enabled is true, ExtProc discovers the identity broker's
 # AuthZEN Policy Decision Point at startup and asks POST /access/v1/evaluation for a

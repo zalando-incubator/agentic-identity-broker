@@ -20,6 +20,20 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func mapAgentExternalIDError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	if pgErr.Code == "23505" && pgErr.ConstraintName == "uq_agents_external_id" {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id is already held by another agent")
+	}
+	if pgErr.Code == "23514" && pgErr.ConstraintName == "chk_agents_external_id_not_empty" {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "external_id cannot be empty when provided")
+	}
+	return nil
+}
+
 // emptyIfNil converts a nil string slice to an empty slice.
 // pq.Array returns SQL NULL for a nil slice, which violates NOT NULL constraints.
 func emptyIfNil(s []string) []string {
@@ -202,6 +216,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.AllowedScopes)), agent.CreatedAt, agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("CreateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("CreateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
@@ -448,6 +465,9 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.RedirectURIs)), pq.Array(emptyIfNil(agent.AllowedScopes)), agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("UpdateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("UpdateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
@@ -578,9 +598,9 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	return r.scanAgentRows(queryCtx, rows, "ListAgents")
 }
 
-func (r *AgentRepository) ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+func (r *AgentRepository) GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("ListAgentsByExternalID", storage.ErrorKindConnection, nil, "database not initialized")
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -591,18 +611,25 @@ func (r *AgentRepository) ListByExternalID(ctx context.Context, externalID id.Ex
 		`SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
-		 FROM agents WHERE external_id = $1 ORDER BY created_at DESC`,
+		 FROM agents WHERE external_id = $1`,
 		externalID,
 	)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, storage.NewStorageError("ListAgentsByExternalID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return nil, storage.NewStorageError("ListAgentsByExternalID", storage.ErrorKindConnection, err, "failed to list agents")
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindConnection, err, "failed to list agents")
 	}
 	defer func() { _ = rows.Close() }()
 
-	return r.scanAgentRows(queryCtx, rows, "ListAgentsByExternalID")
+	agents, err := r.scanAgentRows(queryCtx, rows, "GetAgentByExternalID")
+	if err != nil {
+		return nil, err
+	}
+	if len(agents) == 0 {
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+	}
+	return agents[0], nil
 }
 
 func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, operation string) ([]*storage.Agent, error) {

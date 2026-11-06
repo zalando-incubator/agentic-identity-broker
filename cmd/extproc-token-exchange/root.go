@@ -215,7 +215,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	default:
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
 	}
-	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 047).
+	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 048).
 	if cfg.DelegationContext.Enabled {
 		resolver, err := delegation.NewResolverFromConfig(sigCtx, cfg, exchanger)
 		if err != nil {

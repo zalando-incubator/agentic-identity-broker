@@ -20,7 +20,7 @@ Before any implementation, these preconditions must hold:
    [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
-   ADR draft [adr-047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md).
+   ADR draft [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md).
 2. T001 has recorded only the supplied approval in each covered ADR's Status line and moved the approved draft to `adrs/`. Review direction alone is not sign-off.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
@@ -187,13 +187,13 @@ absence does not block independent local tasks and is never a validation pass.
   could not read reaction authors or times through its GitHub tools, so the recorded date is
   2026-10-30, the day of the `/speckit-implement` command
   (<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6520726517>).
-- ADR 047 moved to `adrs/047-authzen-delegation-pip.md` (renumbered from 045, which main assigned to agent-subject impersonation) with
+- ADR 048 moved to `adrs/048-authzen-delegation-pip.md` (renumbered from 045 and then 047, which main assigned to agent-subject impersonation and unique agent external IDs) with
   `Accepted (approved by mjungsbluth on 2026-10-30: <url>)`. The draft covers every point T001
   lists.
 - **Same-PR revision of API-2 (needs maintainer confirmation in review)**: T013 found that AuthZEN 1.0
   requires receivers to ignore unknown request fields. The user running this session chose
   "follow the standard: ignore unknown members and `properties`" and "keep the approved
-  `ErrorResponse` body". ADR 047 §1, its revision history, the OpenAPI and the docs record this.
+  `ErrorResponse` body". ADR 048 §1, its revision history, the OpenAPI and the docs record this.
   It is user direction in this session, not the pipeline approval. The maintainer confirmed it on
   2026-10-31 (see "Maintainer acceptance" below).
 
@@ -301,9 +301,9 @@ The maintainer accepted the four items raised at the end of the implementation s
 1. The API-2 revision: unknown request members, AuthZEN `properties` and other `context`
    members are ignored per AuthZEN 1.0, and error bodies keep `ErrorResponse`.
 2. Finding F-1: on the body path, consent after a denial takes effect once the existing ADR 012
-   5 s re-consent cooldown lapses; the exchange cache stays unchanged (recorded in ADR 047
+   5 s re-consent cooldown lapses; the exchange cache stays unchanged (recorded in ADR 048
    Consequences).
-3. The approval record in ADR 047 (mjungsbluth, 2026-10-30, approval comment
+3. The approval record in ADR 048 (mjungsbluth, 2026-10-30, approval comment
    `issuecomment-6504077937`).
 4. The Phase 0 resolver extraction as commit `b882d7b` in this PR instead of a separate PR.
 
@@ -342,11 +342,11 @@ remain unfulfilled. No test, check, approval or constitutional requirement was w
 
 The supplied approval identifies `mjungsbluth`, `2026-10-30T10:40:47Z`, and
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>.
-ADR 047 already records that provenance. This run records no new approval and changes neither
+ADR 048 already records that provenance. This run records no new approval and changes neither
 `spec.md` nor `plan.md`.
 
 The inherited API-2 revision and body-path cooldown are recorded as accepted in the historical
-section above and in `adrs/047-authzen-delegation-pip.md:44-49,151-156,162-172`. However, the
+section above and in `adrs/048-authzen-delegation-pip.md:44-49,151-156,162-172`. However, the
 supplied approval list still names a strict-member request contract, while the implementation,
 OpenAPI and revised contract ignore unknown members. The data model §2.5 and research R10
 also retain rejection language. No new slash-command direction or approval for the later
@@ -356,7 +356,7 @@ or to the existing exchange cooldown.
 
 The 2026-11-05 planning run reconciled these artifacts at the maintainer's direction: spec
 FR-003, research R10, data model §2.5 and the evaluation contract §2.1 now ignore unknown
-request members, matching ADR 047 §1 and the OpenAPI. The revised API-2 and the body-path
+request members, matching ADR 048 §1 and the OpenAPI. The revised API-2 and the body-path
 cooldown (D-5) are registered in the plan's Approval Items for sign-off.
 
 ### New red-to-green evidence
@@ -432,7 +432,7 @@ establish past compliance. No approval or exception is recorded by task generati
 Current requirements are in `spec.md`, `plan.md` and the contracts, not stale historical
 strict-rejection descriptions or old separate-PR handoffs. API-003 verification above remains
 valid. Revised API-2 and D-5 are Proposed for sign-off; implementation must use its supplied
-`context.approval` and preserve ADR 047's existing provenance. All applicable non-container
+`context.approval` and preserve ADR 048's existing provenance. All applicable non-container
 work continues independently of downstream container evidence. This section supersedes only
 obsolete directions in earlier entries, not their reported observations or failures.
 
@@ -471,9 +471,9 @@ final-standard check and ignore-unknown-fields outcome.
 It covers the thirteen items listed by reanalysis: API-1–API-6, ADR-1 and D-1–D-6,
 matching every row of `plan.md`'s Approval Items. In particular it covers revised API-2
 (ignore unknown fields), D-5 (unchanged 5 s body-path exchange cooldown), and D-6 (the
-conditional historical sequencing exception). ADR 047's Status and Revision history record
+conditional historical sequencing exception). ADR 048's Status and Revision history record
 the supplied approval while preserving its original approval. No draft move is needed:
-ADR 047 is already in `adrs/` and is not on the default branch.
+ADR 048 is already in `adrs/` and is not on the default branch.
 
 D-6's original test-first/compile-only obligations were **not performed; covered by approved
 D-6**, subject to its independent review and local/downstream validation conditions. Approval
@@ -485,7 +485,7 @@ New corrections remain test-first. No existing validation or security guarantee 
 - **I1 — frozen plan status inconsistency**: `plan.md:650-654`'s blanket “No constitution
   violation needs justification” is obsolete. The historical VIII/XIII deviation needs the
   approved D-6 disposition and all alternative-validation conditions in
-  `historical-validation-exception.md:49-78`. Superseding ADR 028 through ADR 047 independently
+  `historical-validation-exception.md:49-78`. Superseding ADR 028 through ADR 048 independently
   follows Principle II and is not a violation. This correction is recorded here rather than
   editing `plan.md`, which the implementation phase must keep unchanged. The source wording
   remains a documentation follow-up; this note does not claim that it was edited.
@@ -621,7 +621,7 @@ security guarantee, test assertion or approved scope changed in this session.
 
 The supplied approval is unchanged: `mjungsbluth`, `2026-11-05T16:38:49Z`, on
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255>.
-It covers all thirteen approval items, including D-6. ADR 047 already records this approval;
+It covers all thirteen approval items, including D-6. ADR 048 already records this approval;
 its accepted design and revision history need no further change.
 
 D-6 conditions 1–2 use the independent contract-to-test review and concrete coverage table
@@ -708,7 +708,7 @@ these results. No task or checklist item remains unchecked.
 `plan.md:652-654` still contains the obsolete blanket statement that no constitutional
 violation needs justification. The authoritative D-6 document, supplied approval and this
 closure record explicitly preserve the historical VIII/XIII deviation and its completed
-alternative validation. ADR 047's partial supersession of ADR 028 separately follows
+alternative validation. ADR 048's partial supersession of ADR 028 separately follows
 Principle II. This implementation leaves the frozen plan unchanged as required; it does not
 claim the source wording was repaired. The remaining LOW wording inconsistency is disclosed,
 not used to gate independently completed implementation or to conceal the original deviation.

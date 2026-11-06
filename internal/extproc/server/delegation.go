@@ -14,7 +14,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
-// DelegationContextResolver is the fourth ExtProc port (ADR 047). It returns a fresh broker
+// DelegationContextResolver is the fourth ExtProc port (ADR 048). It returns a fresh broker
 // delegation permit, a *delegation.DeniedError, or an error. hit reports a cache hit.
 type DelegationContextResolver interface {
 	Resolve(ctx context.Context, subjectToken, resourceURI string) (result delegation.Result, hit bool, err error)

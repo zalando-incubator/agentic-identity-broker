@@ -16,7 +16,7 @@ type Config struct {
 	ToolApprovals  ToolApprovalsConfig  `mapstructure:"tool_approvals"`
 	Sessions       SessionsConfig       `mapstructure:"sessions"`
 	Telemetry      TelemetryConfig      `mapstructure:"telemetry"`
-	// DelegationContext opts into fresh broker delegation context before every policy decision (ADR 047).
+	// DelegationContext opts into fresh broker delegation context before every policy decision (ADR 048).
 	DelegationContext DelegationContextConfig `mapstructure:"delegation_context"`
 }
 

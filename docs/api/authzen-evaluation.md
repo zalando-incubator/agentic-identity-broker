@@ -1,7 +1,7 @@
 # AuthZEN Delegation Evaluation
 
 The broker acts as an AuthZEN 1.0 Policy Decision Point (PDP) for user delegations
-([ADR 047](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/047-authzen-delegation-pip.md)).
+([ADR 048](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md)).
 A gateway asks whether a verified user's delegation to an agent covers one protected resource and
 receives a credential-free answer. Both endpoints exist on the end-user server whenever token
 exchange is configured; there is no separate broker setting. Without token exchange, both return

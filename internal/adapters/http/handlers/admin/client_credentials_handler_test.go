@@ -69,7 +69,7 @@ func (g credentialGeneratorFake) GenerateCredentials(agentID id.AgentID) (*stora
 
 func newClientCredentialsHandlerForTest(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, credentialRepo ports.ClientCredentialRepository, generator ports.CredentialGenerator) *ClientCredentialsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
+	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true, nil)
 	credentialService := oauth2server.NewCredentialService(agentRepo, credentialRepo, memory.NewRefreshTokenSessionStore(), generator, slog.Default())
 	return NewClientCredentialsHandler(credentialService, agentService, slog.Default())
 }

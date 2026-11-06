@@ -1,4 +1,4 @@
-# ADR 047: AuthZEN Delegation Policy Information Point
+# ADR 048: AuthZEN Delegation Policy Information Point
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-06: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
 

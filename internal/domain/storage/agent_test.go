@@ -315,6 +315,35 @@ func TestAgent_Copy(t *testing.T) {
 	assert.Equal(t, id.ExternalID("modified"), *copy.ExternalID)
 }
 
+func TestAgent_Copy_StringCollections(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []string
+	}{
+		{name: "nil"},
+		{name: "empty", values: []string{}},
+		{name: "populated", values: []string{"first", "second"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := &Agent{
+				RedirectURIs:  tc.values,
+				AllowedScopes: tc.values,
+				ClientURIs:    tc.values,
+			}
+			cloned := original.Copy()
+			require.Equal(t, original, cloned)
+			if len(tc.values) > 0 {
+				cloned.RedirectURIs[0] = "changed redirect"
+				cloned.AllowedScopes[0] = "changed scope"
+				cloned.ClientURIs[0] = "changed client URI"
+				assert.Equal(t, "first", original.RedirectURIs[0])
+				assert.Equal(t, "first", original.AllowedScopes[0])
+				assert.Equal(t, "first", original.ClientURIs[0])
+			}
+		})
+	}
+}
+
 func TestAgent_Copy_Nil(t *testing.T) {
 	var agent *Agent
 	copy := agent.Copy()
