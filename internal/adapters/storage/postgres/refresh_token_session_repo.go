@@ -32,14 +32,19 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 		return storage.NewStorageError("RefreshTokenSessionRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
+	if err := session.ServiceScopeBindings.Validate(session.Scope, false); err != nil {
+		return err
+	}
+
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
-		`INSERT INTO refresh_token_sessions (signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name, grant_id, client_auth_method)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		`INSERT INTO refresh_token_sessions (signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name, grant_id, client_auth_method, service_scope_bindings)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		session.Signature, session.RequestID, session.AgentID, session.ClientID, session.Principal,
 		session.Scope, session.ExpiresAt, session.UsedAt, session.CreatedAt, session.Email, session.DisplayName, session.GrantID, session.ClientAuthMethod,
+		serviceScopeBindingsColumn(session.ServiceScopeBindings),
 	)
 	if err != nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.Create", storage.ErrorKindUnknown, err, "failed to create refresh token session")
@@ -47,9 +52,29 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 	return nil
 }
 
-func (r *RefreshTokenSessionRepo) CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, _ string) error {
-	if _, ok := storageTransaction(ctx); !ok {
+func (r *RefreshTokenSessionRepo) CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error {
+	tx, ok := storageTransaction(ctx)
+	if !ok {
 		return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindValidation, nil, "rotation transaction required")
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	var previous struct {
+		Scope    string                     `db:"scope"`
+		Bindings serviceScopeBindingsColumn `db:"service_scope_bindings"`
+	}
+	if err := tx.GetContext(queryCtx, &previous,
+		`SELECT scope, service_scope_bindings FROM refresh_token_sessions WHERE signature = $1`, previousSignature); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+			return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindNotFound, err, "refresh chain is no longer active")
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+		}
+		return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindConnection, err, "failed to query predecessor refresh token session")
+	}
+	if !session.ServiceScopeBindings.Equal(storage.ServiceScopeBindings(previous.Bindings)) || !storage.ScopeSubset(session.Scope, previous.Scope) {
+		return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindValidation, nil, "successor must inherit service scope bindings and must not widen scope")
 	}
 	return r.Create(ctx, session)
 }
@@ -62,9 +87,9 @@ func (r *RefreshTokenSessionRepo) FindBySignature(ctx context.Context, signature
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	var session storage.RefreshTokenSession
-	err := r.adapter.db.GetContext(queryCtx, &session,
-		`SELECT signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name, grant_id, client_auth_method
+	var row refreshTokenSessionRow
+	err := r.adapter.db.GetContext(queryCtx, &row,
+		`SELECT signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name, grant_id, client_auth_method, service_scope_bindings
 		 FROM refresh_token_sessions WHERE signature = $1`, signature)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -75,6 +100,8 @@ func (r *RefreshTokenSessionRepo) FindBySignature(ctx context.Context, signature
 		}
 		return nil, storage.NewStorageError("RefreshTokenSessionRepo.FindBySignature", storage.ErrorKindConnection, err, "failed to query refresh token session")
 	}
+	session := row.RefreshTokenSession
+	session.ServiceScopeBindings = storage.ServiceScopeBindings(row.Bindings)
 	return &session, nil
 }
 
