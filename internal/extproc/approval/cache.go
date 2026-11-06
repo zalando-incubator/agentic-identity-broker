@@ -226,19 +226,26 @@ func snapshotRecords(records, previous []Record) []Record {
 		return nil
 	}
 
+	previousByID := make(map[string]*Record, len(previous))
+	for i := range previous {
+		old := &previous[i]
+		if old.ID == "" {
+			continue
+		}
+		if _, exists := previousByID[old.ID]; !exists {
+			previousByID[old.ID] = old
+		}
+	}
+
 	snapshot := make([]Record, len(records))
 	for i, record := range records {
 		snapshot[i] = cloneRecord(record)
 		if snapshot[i].Status == "approved" && snapshot[i].ApprovedAt == nil {
 			slog.Warn("approval broker record missing approved_at", "approval_id", snapshot[i].ID)
 		}
-		for _, old := range previous {
-			if snapshot[i].ID == "" || old.ID != snapshot[i].ID {
-				continue
-			}
+		if old := previousByID[snapshot[i].ID]; old != nil {
 			snapshot[i].Consumed = snapshot[i].Consumed || old.Consumed
 			snapshot[i].reserved = !snapshot[i].Consumed && old.reserved
-			break
 		}
 	}
 	return snapshot
