@@ -1920,7 +1920,7 @@ When tracing is enabled, the following operations emit child spans:
 | `_OTHER` | A status code above 599 |
 | `response_read_failed`, `response_close_failed` | The response body failed, including a timeout |
 
-If the caller cancels the request, the status stays unset and `telemetryhttp.outcome` is `canceled`.
+If the caller cancels the request, the status stays unset and `telemetryhttp.outcome` is `canceled`. A 4xx or 5xx response received before the cancellation stays an error, with both attributes set.
 
 `storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
 
