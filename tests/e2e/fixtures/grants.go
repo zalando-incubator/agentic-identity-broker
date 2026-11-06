@@ -322,7 +322,7 @@ func SeedIncrementalCast(ctx context.Context, store *storageadapter.Adapter, pri
 			return nil, err
 		}
 	}
-	cast.Agent = DataAnalysisAssistant(cast.IdentityAccess.ID, cast.GitHubRead.ID, cast.IssueTriage.ID, cast.GitHub.ID)
+	cast.Agent = DataAnalysisAssistant(cast.IdentityAccess.ID, cast.GitHubRead.ID, cast.IssueTriage.ID, cast.Identity.ID, cast.GitHub.ID)
 	if err := store.Agents().Create(ctx, cast.Agent); err != nil {
 		return nil, err
 	}
