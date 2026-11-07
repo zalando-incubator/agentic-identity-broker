@@ -20,6 +20,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -221,6 +222,14 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 	return rawJWT
 }
 
+// logJWKSFetchFailure logs the fetch failure once. The jwx cause names the full JWKS URL,
+// so it is neither logged nor returned.
+func (a *JWXAuthenticator) logJWKSFetchFailure(ctx context.Context, err error) {
+	a.logger.ErrorContext(ctx, "failed to fetch JWKS",
+		"url", security.RedactURL(a.jwksURL),
+		"error_kind", security.ClassifyOutboundError(err))
+}
+
 // parseAndVerify parses the JWT and verifies its signature using JWKS.
 func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) (jwt.Token, error) {
 	if a.keySet != nil {
@@ -236,15 +245,15 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 		// JWKS verification mode: ensure cache is ready, then fetch keyset
 		if !a.jwksCache.Ready(ctx, a.jwksURL) {
 			if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
-				a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
-				return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
+				a.logJWKSFetchFailure(ctx, err)
+				return nil, fmt.Errorf("%w: JWKS fetch failed", jwtauth.ErrJWKSUnavailable)
 			}
 		}
 
 		keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
 		if err != nil {
-			a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
-			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
+			a.logJWKSFetchFailure(ctx, err)
+			return nil, fmt.Errorf("%w: JWKS fetch failed", jwtauth.ErrJWKSUnavailable)
 		}
 
 		return a.verifyWithKeySet(tokenStr, keySet)

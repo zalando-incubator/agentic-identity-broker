@@ -164,8 +164,8 @@ These data classes are prohibited at all levels, including `Debug`.
 | Data | Permitted form |
 |---|---|
 | Principal | `id.Principal` through the principal policy (section 5) |
-| URL (CIMD `client_id`, `redirect_uri`, resource URI) | Scheme, host, and path only. If a registered ID exists, log the ID (`service_id`, `agent_id`), not the URL. |
-| Error from an external system | Typed metadata (`slog.LogValuer`), an enumerated `error_kind`, or an allowlisted code (section 4) |
+| URL (CIMD `client_id`, `redirect_uri`, resource URI) | Scheme, host, and path only, through `security.RedactURL`. If a registered ID exists, log the ID (`service_id`, `agent_id`), not the URL. |
+| Error from an external system | Typed metadata (`slog.LogValuer`), an enumerated `error_kind` (for example `security.ClassifyOutboundError`), or an allowlisted code (section 4) |
 | User-Agent | `SecurityContext.UserAgent` or `security.TruncateUserAgent` |
 | Request method, path, client IP | `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`). Take values from `SecurityContext`. |
 | Caller-supplied header (for example `X-Request-ID`) | Validate the format and limit the length before you log it. If it is not valid, generate a new value. |

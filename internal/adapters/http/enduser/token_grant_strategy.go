@@ -14,6 +14,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -62,13 +63,13 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 		case ports.TokenProxyRequestCreationFailed:
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to create upstream token request",
-					"upstream_url", s.upstreamTokenURL, "error", err)
+					"upstream_url", security.RedactURL(s.upstreamTokenURL), "error_kind", security.ClassifyOutboundError(err))
 			}
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to create upstream request")
 		default:
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "upstream token request failed",
-					"upstream_url", s.upstreamTokenURL, "error", err)
+					"upstream_url", security.RedactURL(s.upstreamTokenURL), "error_kind", security.ClassifyOutboundError(err))
 			}
 			writeOAuth2ErrorJSON(w, http.StatusBadGateway, "server_error", "failed to contact upstream server")
 		}
@@ -92,7 +93,7 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
 					"agent_id", agentID.String(),
 					"reason", "failed to read upstream response body",
-					"error", err,
+					"error_kind", security.ClassifyOutboundError(err),
 				)
 			}
 			w.Header().Del("Content-Length")

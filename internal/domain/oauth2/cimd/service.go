@@ -50,14 +50,14 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// RFC §3 SHOULD NOT: warn when client_id URL contains a query string
 	if parsed, parseErr := url.Parse(rawURL); parseErr == nil && (parsed.RawQuery != "" || parsed.ForceQuery) {
 		s.logger.WarnContext(ctx, "client_id URL contains query string (discouraged by RFC)",
-			"url", rawURL)
+			"agent_id", agent.ID)
 	}
 
 	// Cache hit
 	if entry := s.cache.Get(rawURL); entry != nil {
-		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "url", rawURL)
+		s.logger.DebugContext(ctx, "cimd_document_cache_hit", "agent_id", agent.ID)
 		if err := entry.Document.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-			s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+			s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindRedirectURINotAllowlisted)
 			return nil, err
 		}
 		return entry.Document, nil
@@ -66,11 +66,11 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Fetch from remote
 	result, err := s.fetcher.Fetch(ctx, rawURL)
 	if err != nil {
-		var ssrfErr *ports.SSRFBlockedError
-		if errors.As(err, &ssrfErr) {
-			s.logger.WarnContext(ctx, "cimd_fetch_blocked", "url", rawURL, "error", err)
+		kind := fetchErrorKind(err)
+		if kind == ErrorKindSSRFBlocked {
+			s.logFailure(ctx, "cimd_fetch_blocked", agent, kind)
 		} else {
-			s.logger.WarnContext(ctx, "cimd_fetch_failed", "url", rawURL, "error", err)
+			s.logFailure(ctx, "cimd_fetch_failed", agent, kind)
 		}
 		return nil, err
 	}
@@ -78,11 +78,11 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	// Parse and validate the raw response body
 	doc, err := ParseDocument(result.Body, rawURL, s.nameBlocklist)
 	if err != nil {
-		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+		s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindInvalidDocument)
 		return nil, err
 	}
 	if err := doc.ValidatePrivateUseRedirectURIs(agent.RedirectURIs); err != nil {
-		s.logger.WarnContext(ctx, "cimd_document_invalid", "url", rawURL, "error", err)
+		s.logFailure(ctx, "cimd_document_invalid", agent, ErrorKindRedirectURINotAllowlisted)
 		return nil, err
 	}
 
@@ -98,10 +98,36 @@ func (s *Service) Resolve(ctx context.Context, rawURL string, agent *storage.Age
 	s.cache.Set(rawURL, doc, CacheHeaders{CacheControl: result.CacheControl, Expires: result.Expires}, time.Now())
 
 	s.logger.InfoContext(ctx, "cimd_document_fetched",
-		"url", rawURL,
+		"agent_id", agent.ID,
 		"client_name", doc.ClientName,
 		"redirect_uris_count", len(doc.RedirectURIs),
 	)
 
 	return doc, nil
+}
+
+// CIMD resolution error kinds. A fetch or validation error can carry the client_id URL
+// query (*url.Error) or document content, so only the kind is logged.
+const (
+	ErrorKindSSRFBlocked               = "ssrf_blocked"
+	ErrorKindUnavailable               = "unavailable"
+	ErrorKindFetchFailed               = "fetch_failed"
+	ErrorKindInvalidDocument           = "invalid_document"
+	ErrorKindRedirectURINotAllowlisted = "redirect_uri_not_allowlisted"
+)
+
+func fetchErrorKind(err error) string {
+	var ssrfErr *ports.SSRFBlockedError
+	if errors.As(err, &ssrfErr) {
+		return ErrorKindSSRFBlocked
+	}
+	var unavailable *ports.CIMDUnavailableError
+	if errors.As(err, &unavailable) {
+		return ErrorKindUnavailable
+	}
+	return ErrorKindFetchFailed
+}
+
+func (s *Service) logFailure(ctx context.Context, msg string, agent *storage.Agent, kind string) {
+	s.logger.WarnContext(ctx, msg, "agent_id", agent.ID, "error_kind", kind)
 }
