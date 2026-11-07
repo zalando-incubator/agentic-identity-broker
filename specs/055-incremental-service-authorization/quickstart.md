@@ -5,6 +5,69 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-11-07
+
+**85 of 101 tasks complete; all 19 feature acceptance scenarios pass locally.** The supplied
+approval still does not cover the I2/U4 revisions. This checkpoint supersedes earlier status and
+missing-tool reports below; those sections retain their historical evidence.
+
+### Completed work
+
+- **T031/T033:** migration apply/down/reapply and PostgreSQL binding/succession tests are written;
+  both integration-tagged suites compile via `go test -c` without starting containers. Real-database
+  execution is deferred to the container tests; compilation is not red/green persistence evidence.
+- **T059:** hybrid authorization regression coverage now exercises proxy, local and CIMD agents
+  with a requested service: all enforce usability, only proxy forwards upstream, and forwarded
+  scopes contain only ordinary values. Public (`none`) and confidential (`private_key_jwt`) CIMD
+  code/refresh tests verify exact virtual scopes, authentication failure without consumption,
+  service failure without rotation, successful retry and immutable successor bindings. Existing
+  PKCE, code replay, client-credentials rejection and refresh-chain regressions pass unchanged.
+  These are additional regression tests of already implemented behavior, not new feature logic
+  or evidence of a historical semantic-red run.
+- **T056/T073:** both complete browser journeys pass: focused consent preserves selections and end
+  date through login/Save and succeeds on tool retry; service management refreshes and terminates
+  back to the no-session state. All 17 backend scenarios also pass.
+- **T095:** the capture-enabled serial browser run produced the four plan-named images under
+  `tests/e2e/frontend/coverage/screenshots/`. They were reviewed against consent C/D and session
+  A/B; the existing maintained images under `tests/e2e/screenshots/` remain intact. The active
+  session state follows merged ADR 046 and no longer displays predicted refresh expiry.
+
+### Passed validation
+
+| Command | Outcome |
+|---|---|
+| `just check` | Pass after the added regressions; formatting, vet and lint pass. |
+| `just test` | Pass with race detection after the added regressions. |
+| `just extproc-test` | Pass with race detection. |
+| `just web-test` | 34 files / 279 tests pass. |
+| `just test-integration` | Self-contained suites pass, including Feature 055 contract/config checks. |
+| `just test-e2e-backend` | 977 pass; 18 excluded by existing suite selection. All 17 feature backend scenarios pass. |
+| `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` | 69 pass, none pending/skipped; both feature browser scenarios pass and all four captures are produced. |
+| `just cdk-test mock-sample-agent-test mock-upstream-oauth2-test` | All three recipes pass. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Prepared default-branch security scan passes. |
+
+The non-container recipes of the required full gate have passed, except that the ExtProc E2E
+selection attempts did not restrict execution to non-container cases: 99 cases passed, but the
+Agentgateway setup was attempted and failed for unavailable containers. This is **not** a passing
+ExtProc suite. No test, skip marker or workflow was changed. The whole Agentgateway/container
+portion remains deferred to the container tests, alongside `just test-integration-infra` and
+`just test-e2e-docker`; no real PostgreSQL or container-backed result is claimed here.
+
+### Remaining tasks
+
+| Tasks | Remaining work / evidence |
+|---|---|
+| T003, T099, T100 | Unapproved proxy-refresh pre-forward errors and dot-segment UUID emission/recovery exception. Authoritative proposals and alternatives remain in [Remaining reanalysis contract boundaries](#remaining-reanalysis-contract-boundaries). Neither is implemented; spec/plan and accepted ADRs stay unchanged. |
+| T018, T084, T093 | Backend semantic-red evidence is recorded historically. Historical compiling browser semantic-red evidence before feature logic is not established; green browser runs now cannot retroactively prove it. Unit/contract/Vitest red evidence and the complete traceability audit also need final review. No exception or waiver is recorded. |
+| T032, T034, T089 | SQL, PostgreSQL mappings and compiled migration/repository tests are present; container tests must establish their real-database apply/down/reapply and successor-inheritance evidence. Test-writing tasks T031/T033 do not wait for that evidence. Deferred validation, not a missing-Docker blocker. |
+| T080, T082, T083 | Final approval/contract/spec-journey reconciliation is incomplete because I2/U4 remain unresolved. Immutable examples also predate merged ADR 046's observed-rejection API and removal of predicted refresh expiry. Supporting data model/accepted ADRs already follow that binding default-branch decision. |
+| T094, T097 | All 19 feature journeys are green; final full-gate evidence still includes the deferred PostgreSQL/Agentgateway/container suites. No container suite is reported as validated. |
+| T096 | Runtime keyboard/focus/screen-reader and measured text/UI contrast evidence in both themes remains incomplete; light-theme captures alone do not establish WCAG 2.1 AA. |
+| T098 | Final checklist/evidence sign-off remains incomplete while the tasks above are open. The reviewer-owned checklist markers are unchanged. |
+
+The required maintainer decisions are still the two API/ADR proposals below. The pipeline owns
+routine remaining audits; their unfinished state is not an additional sign-off item.
+
 ## Implementation checkpoint — 2026-10-31
 
 **Feature behavior implemented; 79 of 101 tasks complete. All 17 backend acceptance scenarios
@@ -434,6 +497,8 @@ just verify
 ```
 
 All tasks, including migration/repository validation and the complete acceptance journeys, remain
-required. Unavailable PostgreSQL/container/browser infrastructure is a validation blocker, not a
-passing or optional check. The implementation report must distinguish successful commands from
-remaining validation and leave unfinished tasks unchecked.
+required. In this automation sandbox, run every non-container recipe of `just verify`, using the
+prepared default-branch security scan in place of `just security`. Defer container-backed suites
+to the container tests on the pushed commit; their absence is not a sandbox blocker and never
+counts as passing evidence. Distinguish successful commands from deferred validation and leave
+unfinished tasks unchecked.
