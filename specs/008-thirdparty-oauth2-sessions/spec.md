@@ -69,6 +69,7 @@ A user needs to authenticate with a third-party service by initiating an OAuth2 
 9. **Given** token exchange request fails due to network error, **When** system attempts token exchange, **Then** system retries up to 3 times with exponential backoff (1s, 2s, 4s), and if all retries fail, displays error message allowing user to restart OAuth2 flow
 10. **Given** a session with a usable stored refresh token exists, **When** the user re-connects the same service and the provider's token response omits `refresh_token`, **Then** system accepts the reconnect, replaces the access token, and clears the stored refresh token and any recorded rejection. This prevents combining credentials from different upstream accounts. The new access token remains usable until its expiry, after which token exchange requires re-authentication rather than refreshing with the old account's token. A subsequent reconnect with a new refresh token restores automatic refresh.
 11. **Given** multiple flows begin for the same user and service before any completes, with or without an existing session, **When** their callbacks succeed, **Then** only the first callback to persist credentials replaces or creates the connection; competing callbacks return success without changing its tokens. A deliberate reconnect begun after that success may replace credentials. Refresh does not change callback precedence, and a reconnect cannot recreate a deleted session.
+12. **Given** a signed-in user opens the third-party GET authorize endpoint without `redirect_uri` or with an empty value, **When** they complete provider authorization, **Then** the broker establishes the session and returns them to the configured public URL's `/sessions` page with `success=true` and `service_id`. Request Host and forwarded headers do not choose the return origin. Explicit return URIs still require the configured public origin; the POST consent-state flow still requires both form fields.
 
 ---
 
@@ -153,7 +154,7 @@ The consent page stores its selections and original return URL in current-tab `s
 - **Reauthentication**: A session remains active until it requires reauthentication: the provider rejected its refresh token, or its access token expired without a stored refresh token. An expired access token with a stored, not-rejected refresh token refreshes transparently. A recorded rejection stops token issuance even while the access token is still valid. The broker never predicts or displays refresh-token expiry.
 - **Third-party service deletion with active sessions**: System blocks service deletion and returns error message showing count of active user sessions. Admin must manually terminate all user sessions before service can be deleted (enforced by ON DELETE RESTRICT foreign key constraint).
 - **Malformed or missing callback parameters**: When third-party returns malformed callback (missing code or state), system redirects to sessions page with error message "Invalid callback parameters" and allows retry via Login button. Missing code treated same as access_denied error.
-- **Redirect URI domain mismatch**: When redirect_uri parameter in authorize request does not match the Host header of the incoming request, system returns 400 Bad Request with error "invalid_redirect_uri" and message "redirect_uri must match the host of the request". Flow does not proceed.
+- **Redirect URI origin mismatch**: When an explicit redirect_uri in the authorize request does not match the configured public origin, system returns 400 Bad Request with error "invalid_redirect_uri" and message "redirect_uri must be on the same origin as the configured public URL". Flow does not proceed.
 - **PKCE validation failures**: When PKCE code_verifier from state token fails validation at third-party token endpoint (invalid_grant error), system logs security event, redirects to sessions page with error "Authorization failed - please try again", and allows retry via Login button.
 
 ## Concrete Example Journeys *(mandatory)*
@@ -489,6 +490,45 @@ annotation "Next: Journey 1, Step 4\nwith this service ID" target="login" positi
 At 17:00:00 it shows "Login required" and offers Login next to Terminate. Login starts the same flow
 as Journey 1, Step 4.
 
+### Journey 3 — Alice manually verifies GitHub setup (User Story 2, Scenario 12; #212)
+
+Alice (`alice@example.com`) opens the bare GitHub authorize path. The broker is configured with:
+
+```yaml
+server:
+  enduser:
+    public_url: "https://broker.example.com"
+```
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://github.com/login/oauth/authorize?client_id=github-client&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440010%2Foauth2%2Fcallback&response_type=code&code_challenge=<S256-challenge>&code_challenge_method=S256&state=<sealed-state>
+```
+
+The synthetic `<sealed-state>` JWE contains Alice's principal, the service UUID,
+PKCE verifier, issued/expiry times, and `redirect_uri=https://broker.example.com/sessions`.
+The provider-facing `redirect_uri` remains the broker callback, not the sessions page.
+After Alice approves at GitHub, the provider redirects her browser to the callback:
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/callback?code=<authorization-code>&state=<sealed-state> HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/sessions?service_id=880e8400-e29b-41d4-a716-446655440010&success=true
+```
+
+The broker validates the sealed state, exchanges the code with the PKCE verifier,
+and stores encrypted session tokens before returning Alice to session management.
+`?redirect_uri=` has the same result. An explicit same-origin URI keeps its existing
+behavior; a foreign-origin URI receives `400 invalid_redirect_uri` before provider login.
+The consent page's POST continues to require `redirect_uri` and `consent_state_id`.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -497,8 +537,8 @@ as Journey 1, Step 4.
 - **FR-002**: System MUST display session existence, initiation timestamp, dependent agent count, encryption status, and the domain-owned reauthentication status. A session requires reauthentication when the provider rejected its refresh token, or when its access token expired and no refresh token is stored. The system MUST NOT display a predicted refresh-token expiry.
 - **FR-003**: System MUST provide a "Login" button, next to the Terminate button, for sessions that require reauthentication. System MUST NOT offer Login for other sessions. The Login button MUST use the same style as the Login button on the consent screen.
 - **FR-004**: System MUST provide a "Terminate Session" button for services with established sessions
-- **FR-005**: System MUST expose `GET /api/third-party/{serviceId}/oauth2/authorize` accepting a `redirect_uri` query parameter and a same-origin `POST /api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` and `consent_state_id` form fields to initiate OAuth2 authorization code flow with PKCE
-- **FR-006**: System MUST validate that `redirect_uri` parameter in authorize endpoint matches the host of the incoming request (same-origin validation)
+- **FR-005**: System MUST expose `GET /api/third-party/{serviceId}/oauth2/authorize` accepting an optional `redirect_uri` query parameter (omitted or empty defaults to the configured public URL's `/sessions` page) and a same-origin `POST /api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` and `consent_state_id` form fields to initiate OAuth2 authorization code flow with PKCE
+- **FR-006**: System MUST validate that an explicit `redirect_uri` parameter in the authorize endpoint matches the configured public origin (scheme and host), not the request Host or forwarded headers
 - **FR-007**: System MUST generate PKCE code verifier (32-128 bytes per RFC 7636, using crypto/rand.Reader for entropy) and code challenge (SHA256 hash of verifier, base64url encoded) for each OAuth2 flow
 - **FR-008**: System MUST create JWE state token containing: principal (current user), pkce_verifier, service_id, redirect_uri, and an optional consent_state_id claim for a consent-selection login
 - **FR-009**: System MUST redirect user to third-party authorization endpoint with parameters: client_id, redirect_uri (callback endpoint), response_type=code, code_challenge, code_challenge_method=S256, scope, and state (JWE token)
@@ -588,7 +628,7 @@ third_party_oauth2:
 
 - **SR-001**: State tokens MUST use authenticated encryption (JWE) to prevent tampering
 - **SR-002**: PKCE MUST be used for all OAuth2 authorization code flows (code_challenge_method=S256)
-- **SR-003**: redirect_uri MUST be validated to match the host of the incoming request (prevent open redirect)
+- **SR-003**: An explicit redirect_uri MUST be validated against the configured public origin (prevent open redirect); the GET default MUST use that same configuration
 - **SR-004**: State token validation MUST verify principal matches current authenticated user (prevent CSRF)
 - **SR-005**: OAuth2 tokens (access and refresh) MUST be encrypted before storage using EncryptionPort
 - **SR-006**: System MUST fail closed if state token validation fails (reject callback)
