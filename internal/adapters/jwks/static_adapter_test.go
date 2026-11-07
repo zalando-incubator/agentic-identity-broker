@@ -2,11 +2,11 @@ package jwks
 
 import (
 	"context"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -20,9 +20,8 @@ func parsedTestKeySet(t *testing.T) trustanchor.LocalKeySet {
 }
 
 func TestStaticAdapterServesTheInlineSet(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	adapter := NewStaticAdapter(parsedTestKeySet(t))
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "an inline set starts no background work")
 
 	set, err := adapter.GetKeySet(context.Background())
 	require.NoError(t, err)
