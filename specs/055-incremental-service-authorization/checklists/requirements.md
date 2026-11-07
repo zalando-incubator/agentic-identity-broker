@@ -43,9 +43,17 @@ These are the recorded specification answers, not maintainer approvals. The earl
 
 ## Current Validation Notes
 
+- Latest remediation corrects Journey 2's `AffectedAgent.agent_id` example, specifies exact authorize
+  continuation errors within Proposed API-CONSENT, and completes all six security-record entries
+  plus the redirect-build diagnostic. T011/T012/T024/T106 and new T115 cover those obligations.
+- The independent historical browser-evidence audit now gates final compliance, not unrelated
+  approved work. [validation-evidence.md](../validation-evidence.md) records the unavailable
+  contemporaneous red output and proposes DEC-006's narrow conditional alternative. No waiver is
+  granted, no historical red is claimed, and no completion checkbox changes in this remediation.
+
 - All 19 numbered acceptance scenarios have one owning E2E `It` assigned in [tasks.md](../tasks.md#acceptance-scenario--task-mapping), matching the plan. Historical implementation evidence is retained in quickstart; new US3 S3 variants remain unchecked. Generating tasks does not satisfy red/green or completion gates.
 - Four editable Wireloom states and their rendered SVGs remain under `../wireframes/`: consent needs login/ready and service session absent/active. Playwright must capture the corresponding meaningful states using the existing harness and retain maintained images under `tests/e2e/screenshots/`.
-- All 14 current items in [plan.md Approval Items](../plan.md#approval-items) remain Proposed and await maintainer sign-off in their current wording. ADRs 048/049 already moved to `adrs/` record historical supplied approval; feature-local files are reference pointers. ADR 049 Revision 1 remains Proposed. No approval is granted or extended by this checklist.
+- All 15 current items in [plan.md Approval Items](../plan.md#approval-items) remain Proposed and await maintainer sign-off in their current wording. ADRs 048/049 already moved to `adrs/` record historical supplied approval; feature-local files are reference pointers. ADR 049 Revision 1 remains Proposed. No approval is granted or extended by this checklist.
 - ADR 048 records partial supersession of ADR 044's generic `/sessions` return and unchanged rejected-session clauses. Merged ADR 046's `RefreshRejectedAt` is the single observed-rejection marker, with no user-session schema change. ADR 049 documents virtual scope semantics, the single shared context and identity pinning. Merged ADR 044 is not edited; unrelated Proposed ADR 037 is not promoted.
 - Planning selected explicit design details: additive session-detail API, route-local ExtProc metadata, consent coverage data, transient outcomes, userless-grant rejection and migration 048 for code/refresh bindings. These are design proposals, not evidence that application code implements them.
 - Task generation reconciled quickstart test ownership and capture instructions with the plan and current harness. It clarified research R2's duplicate wording: identical tokens deduplicate, distinct canonical/UUID tokens remain granted in their requested form while selecting one requested service. This does not change FR-020 or the data model.
@@ -58,4 +66,4 @@ These are the recorded specification answers, not maintainer approvals. The earl
   Proposed under the existing approval items; supporting tasks retain semantic-red regression
   requirements and the 19-scenario ownership mapping.
 - Implementation must record only supplied approvals, establish compiling semantic-red tests before new business logic, complete all buildable requirements and compliance tasks, and preserve the unresolved historical browser-red gap. Unavailable local validation and unfinished work remain incomplete; container-backed suites are deferred to container tests on the pushed commit, never claimed as locally validated.
-- Task generation adds mandatory Phase 2g and the feature-local observability contract for feature-owned security records and credential/principal safety tests. No metric, span namespace, exception or unrelated telemetry cleanup is proposed. Existing specification-quality checkbox markers remain unchanged.
+- Task generation adds mandatory Phase 2g and the feature-local observability contract for feature-owned security records and credential/principal safety tests. No metric, span namespace, coding-standard exception or unrelated telemetry cleanup is proposed. Existing specification-quality checkbox markers remain unchanged.

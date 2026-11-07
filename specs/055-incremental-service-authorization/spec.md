@@ -29,7 +29,7 @@ approved yet. All of them are registered in `plan.md` Approval Items.
 - **Session detail contract (API-SESSION-DETAIL, API-001)**: The existing
   `GET /api/third-party/{serviceId}/session` route is unchanged. It still accepts only a UUID and
   returns `404` when no session exists. The new route `GET /api/third-party/sessions/{service}` is
-  additive. Journey 2's example now uses the existing `dependent_agents` field name and adds the
+  additive. Journey 2's example uses the existing `dependent_agents` field name and its `AffectedAgent.agent_id` key, and adds the
   `scope_url` field to `service`. *Reason*: reuse the existing schema vocabulary and avoid a
   breaking behavior change. *Main alternative*: change the existing route to accept canonical IDs
   and return `200` with `session: null`.
@@ -64,6 +64,29 @@ approved yet. All of them are registered in `plan.md` Approval Items.
   `server_error`. Neither rotates a token nor persists unusability. FR-008 is updated.
 - **`client_credentials` (API-LOCAL-SCOPES)**: A virtual scope has no user session to check, so the
   `client_credentials` grant rejects it with `invalid_scope`. FR-002 is updated.
+
+### Session 2026-11-07 (remediation — latest analysis)
+
+- **Session detail example**: Journey 2 uses `dependent_agents[].agent_id`, retaining `service.id`.
+  *Reason*: match the existing `AffectedAgent` schema, not introduce a contract change.
+  *Main alternative*: add an `id` alias, which would create an unnecessary API addition.
+- **Authorize continuation failures (API-CONSENT; Proposed)**: FR-011 and Journey 1 now specify
+  `302` to the validated client callback with `access_denied` and `authorization session is invalid
+  or expired` for forged, malformed, expired or request/principal/agent-mismatched JWE. Echo the
+  request's `state`, not unverifiable sealed state. A valid JWE with reassigned scope binding instead
+  returns `invalid_scope` and `requested service scope is not permitted`. *Reason*: make the
+  existing fail-closed authorize behavior explicit and distinguish consent API errors.
+  *Main alternative*: a direct consent-style HTTP error, inconsistent with validated OAuth redirects.
+- **Historical browser-red evidence (DEC-006; Proposed)**: available history does not establish a
+  compiling semantic-red run for US1 S4/US2 S2 before their feature behavior. The narrow proposed
+  exception and retrospective sensitivity validation are in [validation-evidence.md](./validation-evidence.md).
+  *Reason*: current green cannot prove a historical run. *Main alternative*: recover contemporaneous
+  evidence. No waiver is granted; final compliance remains open. Each new behavior still requires
+  its own test-first semantic-red evidence; this historical audit does not gate unrelated approved work.
+- **Security-record completeness**: the observability contract now includes scope rejection,
+  resolution/evaluation failure and the continuation redirect-error diagnostic. *Reason*: cover all
+  feature-owned credential boundaries with bounded classifications rather than wrapped errors.
+  *Main alternative*: retain incomplete telemetry coverage, contrary to Principles I and XV.
 
 ### Remediation — analysis U1, U2, U3 and I1
 
@@ -407,7 +430,22 @@ the now-satisfied checks produce `302 Location: https://agent.example.com/callba
 The continuation token is not sent to the callback or upstream. If `github` is reassigned after
 Save but before this request, the result is `error=invalid_scope` at the validated client redirect,
 with the original `state`, no code and no upstream redirect; neither current grant coverage nor a
-usable replacement service can substitute for the original binding.
+usable replacement service can substitute for the original binding. Its description is
+`requested service scope is not permitted`. A forged, expired or request/principal/agent-mismatched
+continuation instead produces this failure branch of the same request (API-CONSENT; Proposed):
+
+```http
+GET /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&response_type=code&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcallback&scope=openid%20offline_access%20https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub&state=af0ifjsldkj&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&session_token=SYNTHETIC_FORGED_JWE HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://agent.example.com/callback?error=access_denied&error_description=authorization+session+is+invalid+or+expired&state=af0ifjsldkj
+```
+
+No code is issued, no upstream authorize request is made, and no continuation JWE reaches the
+callback. If `state` is absent, it is omitted from the error redirect. Invalid/unregistered redirects
+are rejected before this branch and never followed.
 
 **Step 8 — 09:30:47: code exchange and tool retry**
 
@@ -493,7 +531,7 @@ X-Remote-User: alice@example.com
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents","scope_url":"https://broker.example.com/sessions/github"},"session":null,"dependent_agents":[{"id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
+{"data":{"service":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"github","display_name":"GitHub Production","description":"Repository access for delegated agents","scope_url":"https://broker.example.com/sessions/github"},"session":null,"dependent_agents":[{"agent_id":"550e8400-e29b-41d4-a716-446655440000","display_name":"Data Analysis Assistant"}]}}
 ```
 
 ![State A: GitHub has no active session](wireframes/session-needs-login.svg)
@@ -649,7 +687,7 @@ The corporate identity provider receives no request, so `SYNTHETIC_UPSTREAM_REFR
 - **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require effective provider scopes (FR-003) and existing client-identity checks. Valid access with sufficient effective scopes and matching identity remains usable without a refresh token only when no rejection is recorded; absent refresh disqualifies a session once access expires. The broker MUST NOT predict refresh-token expiry. An observed terminal HTTP 4xx `invalid_grant` (excluding 429) MUST record `RefreshRejectedAt` under the existing lock and persist unusability for all session consumers immediately, even before access expiry (ADR 046). Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
 - **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the configured required scopes, verified baseline usability and each candidate set's supplied required scopes and effective-contribution usability against the same verified session snapshot; it MUST show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
 - **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable for the live selection's effective scope union. The UI combines baseline usability and every selected candidate's contribution usability; unselected unusable candidates do not block Save. The broker MUST freshly enforce the same rule on submitted grants before changing the grant or continuing authorization.
-- **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Successful Save MUST return a server-built original authorize URL carrying that same JWE as `session_token`; re-entry uses the sealed original request/bindings, rejects request/user/agent/expiry or binding mismatches, and never forwards the continuation token upstream or to the client callback. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
+- **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Successful Save MUST return a server-built original authorize URL carrying that same JWE as `session_token`; re-entry uses the sealed original request/bindings. After redirect validation, forged/malformed/expired or request/principal/agent-mismatched context returns `302` to that callback with `access_denied` and `authorization session is invalid or expired`; valid context with mismatched scope-to-UUID binding returns `302 invalid_scope` with `requested service scope is not permitted`. Echo the request's original `state` (omit if absent), issue no code, make no upstream authorize request, and never forward the continuation token upstream or to the client callback. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
 - **FR-012**: Local refresh MUST NOT widen its original scope set; adding a virtual scope requires interactive authorization and returns `invalid_scope` without consuming an otherwise valid refresh token. Successful narrowing MUST return and persist the narrowed scope set; later scope-less refresh MUST NOT restore removed scopes. Local refresh MUST retain all original service bindings as assurance-only obligations and recheck all those services even after narrowing, including when `scope` is omitted, and return a scope error if they are no longer covered or usable. A removed scope cannot be requested again without interactive authorization. Existing revoked-grant errors retain their existing handling.
 - **FR-013**: Strip virtual scopes from upstream authorization and refresh requests in proxy flows, retaining ordinary scopes and current protocol protections. Never add broker claims to an upstream signed token. Hybrid flows follow the local or proxy behavior chosen for the agent, not a third policy.
 - **FR-014**: Virtual scopes MUST NOT appear in the broker's published discovery scope catalog. Clients learn them from challenges or operator route configuration.

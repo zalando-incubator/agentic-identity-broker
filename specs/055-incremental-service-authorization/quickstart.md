@@ -5,14 +5,39 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Remediation update — 2026-11-07
+
+All five latest analysis findings have document remedies:
+
+- Journey 2 now uses existing `AffectedAgent.agent_id`, retaining `service.id`. T011 validates the
+  concrete spec example against that schema, not merely a separate contract example.
+- API-CONSENT specifies exact authorize continuation failures: validated callback `302 access_denied`
+  with `authorization session is invalid or expired`, or binding-mismatch `302 invalid_scope` with
+  `requested service scope is not permitted`; request state is echoed or omitted if absent. T011/T012
+  reconcile OpenAPI; T115 adds/reviews full domain/HTTP regressions without claiming already-correct
+  behavior is new test-first implementation.
+- The observability inventory covers all six feature-owned security-record labels and the
+  continuation redirect-build diagnostic. T024/T106 cover every classification, level, bounded
+  reason/error kind and credential-safe error/redirect path, without unrelated telemetry cleanup.
+- Each new behavior depends on its own semantic-red tests. The historical T022 review branches to
+  final T098/T109/T114 compliance; it no longer blocks independent approved foundations/story work.
+- [validation-evidence.md](./validation-evidence.md) audits available browser history and proposes
+  DEC-006's one-time missing-historical-execution exception, with retrospective sensitivity and
+  current green validation required. No historical browser-red output was found, no exception is
+  granted, and T022/T098/T109 remain unchecked until all applicable evidence conditions are met.
+
+There are **15 Proposed sign-off items** and **115 tasks (85 historically checked, 30 unchecked)**.
+The current API-CONSENT wording includes the explicit continuation errors; DEC-006 is the one new
+consequential proposal. The checkpoints below retain historical outcomes, not fresh validation.
+
 ## Task update — 2026-11-07
 
-The regenerated backlog has **114 tasks: 85 historically recorded complete and 29 unchecked**.
+The reconciled backlog has **115 tasks: 85 historically recorded complete and 30 unchecked**.
 Task references throughout this guide use the regenerated IDs; checkpoint counts and test outcomes
 below remain historical, not validation by this document phase. The original combined I2 task is
 now T068–T069 (red) and T075–T077 (implementation/documentation/green); U4 documentation is T093.
 
-- T001 first verifies all 14 current sign-off items and records only supplied approvals, including
+- T001 first verifies all 15 current sign-off items and records only supplied approvals, including
   moving and applying the approved ADR 049 Revision 1 draft. The previous approval does not cover
   reconciled wording automatically.
 - T011–T012 provide test-first current OpenAPI reconciliation to version 1.3.0 before behavior.
@@ -22,7 +47,8 @@ now T068–T069 (red) and T075–T077 (implementation/documentation/green); U4 d
 - T023–T024 and T106–T107 cover the observability contract, credential/principal safety tests,
   canonical event attributes and bounded classifications. No new metric/span namespace is added.
 - Historical browser-red evidence remains open (T022/T098/T109), even though browser journeys
-  are recorded green. Do not weaken tests, claim retroactive red or silently grant an exception.
+  are recorded green. DEC-006 proposes the conditional alternative in `validation-evidence.md`;
+  it is not approved. Do not weaken tests, claim retroactive red or silently grant an exception.
 - The current active-session Wireloom source/SVG follows ADR 046 and shows no predicted refresh
   expiry. T097/T112 still verify examples and runtime accessibility in both themes.
 - T113 runs every non-container recipe of the full gate and the prepared default-branch security
@@ -101,17 +127,18 @@ portion remains deferred to the container tests, alongside `just test-integratio
 
 | Tasks | Remaining work / evidence |
 |---|---|
-| T004, T068–T069, T075–T077, T093 | Current proxy-refresh pre-forward validation and dot-segment known-limitation documentation remain unapproved. The 2026-11-07 planning update supersedes the earlier UUID-fallback alternative: no fallback or canonical-ID validation change is implemented here. T001 verifies all 14 current approval items before further work. |
-| T022, T098, T109 | Backend semantic-red evidence is recorded historically. Historical compiling browser semantic-red evidence before feature logic is not established; green browser runs now cannot retroactively prove it. Unit/contract/Vitest red evidence and the complete traceability audit also need final review. No exception or waiver is recorded. |
+| T004, T068–T069, T075–T077, T093 | Current proxy-refresh pre-forward validation and dot-segment known-limitation documentation remain unapproved. The 2026-11-07 planning update supersedes the earlier UUID-fallback alternative: no fallback or canonical-ID validation change is implemented here. T001 verifies all 15 current approval items before dependent work. |
+| T022, T098, T109 | Backend semantic-red evidence is recorded historically. Historical compiling browser semantic-red evidence before feature logic is not established; green browser runs now cannot retroactively prove it. Unit/contract/Vitest red evidence and the complete traceability audit also need final review. No exception or waiver is approved; DEC-006 is now Proposed with the available-history audit and required alternative validation in `validation-evidence.md`. |
 | T040, T042, T103 | SQL, PostgreSQL mappings and compiled migration/repository tests are present; container tests must establish their real-database apply/down/reapply and successor-inheritance evidence. Test-writing tasks T039/T041 do not wait for that evidence. Deferred validation, not a missing-Docker blocker. |
 | T094, T096, T097 | Final approval/contract/spec-journey reconciliation is incomplete because I2/U4 remain unresolved. Immutable examples also predate merged ADR 046's observed-rejection API and removal of predicted refresh expiry. Supporting data model/accepted ADRs already follow that binding default-branch decision. |
 | T110, T113 | All 19 feature journeys are green; final full-gate evidence still includes the deferred PostgreSQL/Agentgateway/container suites. No container suite is reported as validated. |
 | T112 | Runtime keyboard/focus/screen-reader and measured text/UI contrast evidence in both themes remains incomplete; light-theme captures alone do not establish WCAG 2.1 AA. |
 | T114 | Final checklist/evidence sign-off remains incomplete while the tasks above are open. The reviewer-owned checklist markers are unchanged. |
 
-Current maintainer decisions are the 14 Proposed items in `plan.md` Approval Items, including the
-three added for I2/U4. Historical proposals below are not current approval text. Routine audits and
-missing historical evidence remain implementation work, not additional sign-off items.
+Current maintainer decisions are the 15 Proposed items in `plan.md` Approval Items, including the
+three added for I2/U4 and DEC-006's narrow historical browser-execution exception. Historical
+proposals below are not current approval text. Routine evidence audits remain implementation work;
+only the explicit DEC-006 exception requires new sign-off, not the fact that an audit is open.
 
 ## Implementation checkpoint — 2026-10-31
 

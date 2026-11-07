@@ -67,14 +67,20 @@ Outcomes once `redirect_uri` is validated. All are redirects to the client's `re
 | A requested service's usability cannot be verified (transient provider or storage failure) | `error=temporarily_unavailable` |
 | All requested services satisfied, local or CIMD agent | Existing code issuance. The code records the granted virtual scopes and their bindings. |
 | All requested services satisfied, proxy agent | Existing upstream `302`. The upstream `scope` has every virtual scope removed and is omitted when empty. |
-| Continuation `session_token` is valid but a virtual scope no longer resolves to its sealed UUID | `error=invalid_scope`; no code or upstream redirect. |
+| Continuation `session_token` is forged, malformed, expired, or request/principal/agent-mismatched | `302` to the validated client `redirect_uri` with `error=access_denied`, `error_description=authorization session is invalid or expired`, and the request's original `state`; no code or upstream redirect. |
+| Continuation `session_token` is valid but a virtual scope no longer resolves to its sealed UUID | `302` to the validated client `redirect_uri` with `error=invalid_scope`, `error_description=requested service scope is not permitted`, and the original `state`; no code or upstream redirect. |
 
 **Consent continuation parameter (Proposed, API-CONSENT)**: `session_token` is an optional opaque
 JWE query parameter on `/oauth2/authorize`, used only for the server-built post-Save continuation.
 The server authenticates expiry, principal and agent again, compares the request (excluding only
 `session_token`) against the sealed `original_url`, and uses the sealed request and bindings.
-Invalid, expired or request/user/agent-mismatched context is rejected by existing invalid-session
-handling; it never falls back to fresh unbound resolution. Re-resolve every scope and compare UUIDs
+Forged, malformed, expired or request/principal/agent-mismatched context returns the `access_denied`
+redirect specified above; it never falls back to fresh unbound resolution. Redirect validation
+precedes continuation validation: an unregistered/invalid `redirect_uri` is never followed and keeps
+existing direct invalid-redirect handling. For continuation errors, `state` is echoed unchanged from
+the validated request (omitted if absent); no state is taken from an unverifiable JWE. The client
+callback receives only OAuth error parameters, never `session_token`, PKCE material or a code.
+These authorize redirects are distinct from consent API invalid-session HTTP errors. Re-resolve every scope and compare UUIDs
 before code issuance or upstream redirect, even when grant submission just succeeded. Re-entering
 consent preserves the original bindings/expiry. Consume this parameter locally; never forward it
 upstream or to the client callback. Initial requests without it retain initial resolution behavior.

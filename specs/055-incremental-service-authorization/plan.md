@@ -109,25 +109,27 @@ Consequential choices are listed under [Approval Items](#approval-items).
 None of these items is approved by this plan. Each one is Proposed and awaits the maintainer's 👍
 on the pipeline's approval comment. Implementation records the approval. Details give the
 authoritative text. The earlier approval comment covered the first eleven items in their earlier
-wording; the reconciled wording and the three items added on 2026-11-07 need the new approval
-comment.
+wording; the reconciled wording and the three planning items added on 2026-11-07 need the new
+approval comment. Remediation adds DEC-006, a Proposed scoped exception for missing historical
+browser execution evidence; there are now 15 sign-off items. No exception is granted here.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
 | API-EXCHANGE-CHALLENGE | API | Add a `scope` member (the canonical Virtual Service Scope) to recoverable RFC 8693 errors after service resolution. ExtProc appends `scope` and an optional `resource_metadata` to its existing 403 `insufficient_scope` challenge. The elicitation body is unchanged. | specs/055-incremental-service-authorization/contracts/enduser-api.md:18-50; specs/055-incremental-service-authorization/contracts/extproc-challenge.md:40-77 |
 | API-METADATA-CONFIG | API | Add an optional `aib.tokenexchange.resource_metadata_url` metadata field, configured for each Agentgateway route. There is no ExtProc YAML, environment, or CLI key. An invalid value is omitted, not rejected. | specs/055-incremental-service-authorization/contracts/extproc-challenge.md:13-39 |
-| API-CONSENT | API | `GET /oauth2/authorize` accepts virtual scopes and optional JWE `session_token` for protected post-Save re-entry. It independently validates sealed request/bindings before issuance or proxy redirect and returns `invalid_scope` on identity reassignment. It returns `temporarily_unavailable` when usability cannot be verified. Consent gains requested-service arrays including baseline and per-candidate contribution usability for live selection; submitted effective provider scopes follow exchange's union/ceiling rule. Unsatisfied submission returns `400 requested service not satisfied`. Successful `redirect_url` carries the same JWE. | specs/055-incremental-service-authorization/contracts/enduser-api.md:51-81; specs/055-incremental-service-authorization/contracts/enduser-api.md:156-244 |
-| API-SESSION-DETAIL | API | Add `GET /api/third-party/sessions/{service}`, where `{service}` is a canonical ID or UUID. It returns `200` with `session: null` when the service has no session, `404` for an unknown service, and `401` without a principal. The existing UUID route does not change. | specs/055-incremental-service-authorization/contracts/enduser-api.md:245-306 |
-| API-LOCAL-SCOPES | API | Local responses/JWT scope and successor `Scope` equal the requested subset or predecessor current `Scope` when omitted; narrowing cannot be undone by scope-less refresh. All original bindings remain inherited as assurance-only obligations and are rechecked with grant-derived effective provider scopes even after narrowing. Widening/definitive failure returns non-consuming `invalid_scope`, transient failure non-consuming `server_error`. `client_credentials` with a virtual scope returns `invalid_scope`. | specs/055-incremental-service-authorization/contracts/enduser-api.md:82-121 |
-| DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:661; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:73-81 |
-| DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:663; specs/055-incremental-service-authorization/contracts/enduser-api.md:122-155 |
+| API-CONSENT | API | `GET /oauth2/authorize` accepts virtual scopes and optional JWE `session_token` for protected post-Save re-entry. It independently validates sealed request/bindings before issuance or proxy redirect. Forged/malformed/expired or request/principal/agent-mismatched JWE returns `302 access_denied` (`authorization session is invalid or expired`); a valid JWE with reassigned binding returns `302 invalid_scope` (`requested service scope is not permitted`). Both use only the validated client callback and echo request state (omit if absent), without code, JWE forwarding or fresh unbound fallback. It returns `temporarily_unavailable` when usability cannot be verified. Consent gains requested-service arrays including baseline and per-candidate contribution usability for live selection; submitted effective provider scopes follow exchange's union/ceiling rule. Unsatisfied submission returns `400 requested service not satisfied`. Successful `redirect_url` carries the same JWE. | specs/055-incremental-service-authorization/contracts/enduser-api.md:51-87; specs/055-incremental-service-authorization/contracts/enduser-api.md:162-250 |
+| API-SESSION-DETAIL | API | Add `GET /api/third-party/sessions/{service}`, where `{service}` is a canonical ID or UUID. It returns `200` with `session: null` when the service has no session, `404` for an unknown service, and `401` without a principal. The existing UUID route does not change. | specs/055-incremental-service-authorization/contracts/enduser-api.md:251-312 |
+| API-LOCAL-SCOPES | API | Local responses/JWT scope and successor `Scope` equal the requested subset or predecessor current `Scope` when omitted; narrowing cannot be undone by scope-less refresh. All original bindings remain inherited as assurance-only obligations and are rechecked with grant-derived effective provider scopes even after narrowing. Widening/definitive failure returns non-consuming `invalid_scope`, transient failure non-consuming `server_error`. `client_credentials` with a virtual scope returns `invalid_scope`. | specs/055-incremental-service-authorization/contracts/enduser-api.md:88-127 |
+| DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:699; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:73-81 |
+| DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:701; specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161 |
 | DEC-003 | Decision | Definitive provider refresh rejection stays persisted through merged ADR 046's observed rejection (`UserSession.RefreshRejectedAt`, `requires_reauthentication`) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:80-122 |
 | DEC-004 | Decision | Schema change: migration `048_add_service_scope_bindings` adds nullable `service_scope_bindings JSONB` to codes and refresh sessions. Code bindings lie within granted `Scope`; refresh bindings remain an immutable assurance set even after durable scope narrowing. Successors inherit the map exactly and cannot widen predecessor `Scope`. | specs/055-incremental-service-authorization/data-model.md:97-131; specs/055-incremental-service-authorization/data-model.md:147-173 |
-| ADR-RECOVERY | ADR | ADR 048. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records ADR 046's persisted rejection. It supersedes only those two ADR 044 clauses. | adrs/048-service-session-recovery-return.md:1-105; specs/055-incremental-service-authorization/contracts/enduser-api.md:312-319 |
+| ADR-RECOVERY | ADR | ADR 048. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records ADR 046's persisted rejection. It supersedes only those two ADR 044 clauses. | adrs/048-service-session-recovery-return.md:1-105; specs/055-incremental-service-authorization/contracts/enduser-api.md:318-325 |
 | ADR-SCOPES | ADR | ADR 049. Virtual Service Scope semantics, shared effective-scope usability, candidate consent checks, protected post-Save re-entry, durable local narrowing with immutable assurance bindings, proxy boundaries, identity pinning and non-advertisement. | adrs/049-virtual-service-scopes.md:1-104 |
-| API-PROXY-REFRESH-VALIDATION | API | Before forwarding a proxy-mode refresh whose `scope` carries a broker-prefixed token, validate syntax, resolve the agent through the existing client resolution, and check service existence and eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`); lookup failure returns `500 server_error`; neither calls upstream. Ordinary-scope-only requests keep their existing path. No provider-usability check and no veto of upstream responses or rotation. | specs/055-incremental-service-authorization/contracts/enduser-api.md:122-155; specs/055-incremental-service-authorization/spec.md:102-113 |
-| DEC-005 | Decision | Scope dropped: the canonical IDs `.` and `..` are accepted as a known defect. No UUID fallback for their scopes, service pages or recovery links, and no change to canonical-ID validation in this feature; issue #446 restricts them. | specs/055-incremental-service-authorization/spec.md:114-123; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:65-71; specs/055-incremental-service-authorization/research.md:421-439 |
+| API-PROXY-REFRESH-VALIDATION | API | Before forwarding a proxy-mode refresh whose `scope` carries a broker-prefixed token, validate syntax, resolve the agent through the existing client resolution, and check service existence and eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`); lookup failure returns `500 server_error`; neither calls upstream. Ordinary-scope-only requests keep their existing path. No provider-usability check and no veto of upstream responses or rotation. | specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161; specs/055-incremental-service-authorization/spec.md:125-136 |
+| DEC-005 | Decision | Scope dropped: the canonical IDs `.` and `..` are accepted as a known defect. No UUID fallback for their scopes, service pages or recovery links, and no change to canonical-ID validation in this feature; issue #446 restricts them. | specs/055-incremental-service-authorization/spec.md:137-146; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:65-71; specs/055-incremental-service-authorization/research.md:421-439 |
 | ADR-SCOPES-REV1 | ADR | ADR 049 Revision 1 draft. Decision 6 gains proxy-refresh pre-forward validation (API-PROXY-REFRESH-VALIDATION); Consequences and Alternatives record the dot-segment limitation (DEC-005). Implementation applies it to `adrs/049-virtual-service-scopes.md` after approval. | specs/055-incremental-service-authorization/adrs/049-virtual-service-scopes-revision-1.md:1-70 |
+| DEC-006 | Decision | Proposed one-time exception for missing contemporaneous compiling semantic-red execution evidence for the original US1 S4/US2 S2 browser journeys only. Require retrospective pre-behavior sensitivity evidence and current complete green/browser/screenshot/accessibility/full-gate evidence; do not claim historical test-first execution or waive new revision TDD. | specs/055-incremental-service-authorization/validation-evidence.md:29-64 |
 
 The approved API items also cover these mechanical consequences:
 
@@ -156,7 +158,7 @@ The approved API items also cover these mechanical consequences:
 | Database design | Pass with precondition | Migration 048 is designed in [data-model.md](./data-model.md). It needs DEC-004 approval. |
 | E2E acceptance tests | Designed; implementation evidence retained | 19 scenarios map one-to-one to `It()` blocks, as the [mapping](#scenario-mapping) shows. The revised US3 S3 variants require fresh test-first evidence. |
 | E2E mapping | Pass | One `It()` per scenario, with no shared state and a production bootstrap. |
-| E2E red phase | Evidence review pending | Concrete assertions are designed; `quickstart.md` retains backend-red evidence and the historical browser-red gap. Green runs cannot retroactively prove test-first development. |
+| E2E red phase | Historical evidence exception Proposed; final compliance pending | Concrete assertions are designed; `validation-evidence.md` audits the missing browser execution evidence and proposes DEC-006's conditional alternative. Green runs cannot retroactively prove test-first execution. New behavior needs its own compiling semantic-red tests; the independent historical audit does not gate it. |
 | Frontend Playwright E2E | Pass | `tests/e2e/frontend/incremental_authorization_test.go` covers both consent states and both service-page states. |
 | Frontend screenshots | Designed; evidence review pending | Four screenshots correspond to the spec's Wireloom states; the active state follows ADR 046 and contains no predicted refresh expiry. |
 | Concrete example journeys (Principle XIV) | Pass (design) | Journeys 1–4 cover configuration, HTTP, Wireloom and JWT claims. The task-generation reconciliation aligns Journey 2 with merged ADR 046; implementation still verifies the examples against approved contracts. |
@@ -180,7 +182,9 @@ The approved API items also cover these mechanical consequences:
 
 ### Post-design re-check
 
-The gate passes once the approval items are approved.
+The design gate passes once the approval items are approved. Final historical browser-evidence
+compliance additionally requires genuine contemporaneous evidence or every approved DEC-006
+alternative validation condition; approval alone does not complete that obligation.
 
 - `servicescope` is a genuine bounded context. It owns one invariant that four services share, so
   it is not an anemic proxy.
@@ -438,7 +442,7 @@ and `sessions_page.go` page objects, which gain the new locators.
 ### Validation Gate
 
 The generated [tasks.md](./tasks.md) requires compiling semantic-red acceptance tests before
-feature logic, test-first unit/integration pairs, `just check`, the matching unit/frontend/ExtProc
+each matching new behavior, test-first unit/integration pairs, `just check`, the matching unit/frontend/ExtProc
 and integration suites, and the complete feature journeys. Completion requires `just verify`,
 including real PostgreSQL migration/repository validation and all E2E suites. In the container-free
 agent sandbox, run every non-container recipe of `just verify` and the prepared default-branch
@@ -446,6 +450,10 @@ security scan (`bash "$SECURITY_SCAN_SCRIPT" .`). Defer container-backed suites 
 tests on the pushed commit; their absence is not a sandbox blocker or passing evidence. Local work
 must not wait for container evidence. Maintained screenshots use
 the existing capture-enabled serial harness, as [quickstart.md](./quickstart.md) describes.
+The historical browser-execution audit remains a final-compliance obligation separate from new
+revision test-first scheduling. Only an explicitly approved DEC-006 plus every condition in
+[validation-evidence.md](./validation-evidence.md) may substitute for the missing original browser
+execution proof; no other TDD or acceptance obligation is waived.
 
 ### Unit and Integration Tests
 
@@ -479,5 +487,8 @@ test, including the transient and definitive classifications. Both adapters are 
 
 ## Complexity Tracking
 
-No constitution violation requires justification. The only schema change, migration 048, is a
-standard atomic migration and is registered as DEC-004.
+The original US1 S4/US2 S2 browser tests lack contemporaneous compiling semantic-red execution
+proof. DEC-006 proposes a narrowly scoped historical-evidence exception under the constitution's
+constraint-escalation rules, with rationale, the archive-recovery alternative and required
+retrospective/current validation in `validation-evidence.md`. It remains Proposed, not satisfied or
+approved. The only schema change, migration 048, remains a standard atomic migration (DEC-004).
