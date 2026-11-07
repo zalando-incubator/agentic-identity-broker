@@ -27,6 +27,32 @@ The broker supports two RFC 8693 flows:
 
 The following sections describe the request and response contracts.
 
+## Breaking telemetry changelog
+
+### AuthZEN delegation evaluation (feature 054)
+
+The broker evaluation span and audit event identifiers change atomically:
+
+| Previous identifier | Replacement |
+|---|---|
+| `authzen.access_evaluation` | `tokenexchange.access_evaluation` |
+| `authzen.access_evaluation.permitted` | `tokenexchange.access_evaluation.permitted` |
+| `authzen.access_evaluation.denied` | `tokenexchange.access_evaluation.denied` |
+| `authzen.access_evaluation.failed` | `tokenexchange.access_evaluation.failed` |
+
+Update trace queries, event filters, alerts and dashboards to the replacement names when
+deploying this revision. During a rolling deployment, query both names with an OR filter
+(or a union) to cover older instances and retained historical records; sum each record once.
+New instances emit only the replacement names, not duplicate spans or audit events. Retire
+the old query branches after older instances and the required historical window expire.
+
+The broker scope remains `tokenexchange`; its evaluation span is explicitly Internal.
+The ExtProc scope and span names remain `extproc`, `extproc.delegation.resolve` (Internal)
+and `extproc.delegation.evaluate` (Client). Attribute names and values are unchanged:
+`access_evaluation.decision=permit|deny|error`, permit-only integer
+`access_evaluation.max_age` (0–60), and `delegation.cache=hit|miss`. Both namespaces are
+registered in the OpenTelemetry standard. No metric is renamed or dual-emitted.
+
 ## Overview
 
 - **Endpoint:** `POST /oauth2/token` (end-user server, port 8000).
@@ -153,7 +179,14 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
-| `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
+| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.2.0` in favor of the AuthZEN Delegation Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc delegation resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
+
+New enabled ExtProc policies should use canonical `input.context.permission_sets` and the
+effective ceiling in `input.context.resource.scopes`. The OPA compatibility fields
+`granted_permission_sets` and `granted_permission_sets_available` remain unchanged in this
+increment, including disabled-mode serialization. Their possible removal is separate from
+response-field deprecation and requires a separately approved, versioned policy-input contract
+and migration, tracked in [issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441).
 
 Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
 

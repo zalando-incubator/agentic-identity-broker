@@ -32,6 +32,14 @@ internal/extproc/
     syncer.go        ETag long-poll synchronization
     precedence.go    ExtProc candidate ranking and selection
 
+  delegation/
+    discovery.go     AuthZEN PDP metadata discovery and exact identifier verification
+    client.go        Access Evaluation client: typed permit decoding, max-age, deadline
+    context.go       Typed permit context validation (unknown members dropped)
+    resolver.go      Permit-only cache with singleflight, no stale fallback
+    telemetry.go     Bounded resolution outcomes; no credentials, context, URLs or causes
+    setup.go         NewResolverFromConfig: production composition shared by root.go and E2E
+
   httpclient/
     httpclient.go    Traced outbound HTTP client construction
 
@@ -106,6 +114,8 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once. `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
 | `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
 | `BuildOPAInputHeadersOnly(protocol, headers, targetServerName)` | Constructs the separate header-only policy input |
+| `BuildOPAInputHeadersOnlyWithContext(..., ContextInput)` | Header-only input with a supplied (enabled delegation) context |
+| `AgentContext`, `ResourceContext`, `GrantContext`, `PermissionSetContext`, `ServiceContext` | Enabled-mode `input.context` members `agent`, `resource`, `grant`, `permission_sets`; `principal` is a string. All `omitempty`; nested `canonical_id`/`valid_until` omitted when unset; scope and service arrays always arrays |
 
 ### `internal/extproc/server`
 
@@ -113,7 +123,8 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, `logger` |
+| `DelegationContextResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
+| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
 | `NewServerWithApprovalGate(cfg, exchanger, authorizer, gate, logger)` | Constructor with OPA and approval handling enabled |
@@ -144,8 +155,12 @@ It does not permit these imports inside `internal/extproc/`.
 
 `Exchanger` and `ApprovalGate` live in `internal/extproc/server/server.go`.
 `Authorizer` lives in `internal/extproc/authorization/authorizer.go`.
+`DelegationContextResolver` lives in `internal/extproc/server/delegation.go`.
 
 - Inject `TokenExchanger`, `OPAAuthorizer`, and `approval.Gate` through these interfaces.
+- Set `DelegationContextResolver` (ADR 048) with `Server.WithDelegationResolver` only when `delegation_context.enabled`.
+  Its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`.
+  With it disabled, the request paths and OPA input are unchanged byte for byte.
 - Keep the typed interface fields on `Server`. Do not add an adapter layer or map-based indirection.
 - Use mock or stub implementations for these interfaces in tests.
 - Use `tests/e2e/extproc/bootstrap/` for startup and readiness coverage.
@@ -203,6 +218,29 @@ RequestHeaders → validate subject metadata → validate resource metadata
 It produces `mcp_tool_call` for `tools/call`, or `mcp_method` for other methods.
 Other protocols produce `type="unknown"` with the raw body in `input.attributes.request.http.body`.
 Local policy paths use `rego.PreparedEvalQuery`. OPA configuration files use the bundle-aware SDK.
+
+### Delegation context
+
+With `delegation_context.enabled`, `adrs/048-authzen-delegation-pip.md` supersedes ADR 028's ordering and input.
+
+```text
+Body-bearing:  RequestHeaders → metadata/protocol/transport checks
+               → Exchanger.Exchange ∥ DelegationContextResolver.Resolve (wait for both)
+               → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body
+RequestBody    → now < Deadline? else 503 → OPA with permit-derived context (each batch element re-checks)
+Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
+               → now < Deadline? else 503 → OPA → allow: Exchange
+```
+
+- Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
+- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
+- Leave `agent_session_id` unchanged. The approval gate still uses the exchange identity.
+- Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
+- Retain the original permit in header-only request state. Check its deadline after exchange, before Authorization mutation.
+- Check that same deadline again before final body forwarding on body, batch, and approval-authorized body paths. Expiry returns the existing delegation-unavailable 503 without re-resolution.
+- Permit scope arrays may be empty, but each element must be a JSON string.
+  Preserve null detection in the wire decoder: Go's `encoding/json` otherwise turns a null `[]string` element into an empty string.
+  Reject malformed permits as `invalid_response` before policy or caching.
 
 ### Approval gate and cache
 
@@ -337,6 +375,10 @@ Read `internal/extproc/config/config.go` and `internal/extproc/config/loader.go`
 | `tool_approvals.request_timeout` | `5s` | Must be positive when approval handling is enabled |
 | `tool_approvals.max_staleness` | `60s` | Freshness bound for approval-cache matches |
 | `sessions.extraction.http_header` | `Mcp-Session-Id` | Must be a valid, non-empty HTTP field name |
+| `delegation_context.enabled` | `false` | Requires `authorization.enabled` when true |
+| `delegation_context.policy_decision_point` | `""` | Defaults to the origin of `oauth2.token_endpoint`; set explicitly for a path-prefixed broker |
+| `delegation_context.request_timeout` | `5s` | Discovery and evaluation timeout; must be positive |
+| `delegation_context.max_staleness` | `60s` | Upper bound on permit reuse; must be positive |
 | `telemetry.enabled` | `false` | |
 | `telemetry.service_name` | `extproc-token-exchange` | |
 | `telemetry.exporter.protocol` | `grpc` | |
@@ -346,6 +388,7 @@ Use `examples/config/extproc-token-exchange.yaml` for base token-exchange config
 Use `examples/config/extproc-opa-authorization.yaml` for OPA.
 Use `examples/config/extproc-telemetry.yaml` for OpenTelemetry.
 Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
+Use `examples/config/extproc-delegation-context.yaml` for broker delegation context.
 
 ## Docker Compose
 

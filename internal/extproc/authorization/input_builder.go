@@ -90,6 +90,13 @@ func buildCheckRequest(headers map[string]string) *ext_authz_v3.CheckRequest {
 // from non-MCP traffic rather than mapping both to type="unknown".
 // For any other protocol: type="unknown".
 func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, targetServerName string) (OPAInput, error) {
+	return BuildOPAInputHeadersOnlyWithContext(protocol, headers, targetServerName,
+		ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: extractSessionID(headers)})
+}
+
+// BuildOPAInputHeadersOnlyWithContext builds the header-only input with a supplied
+// context, used when a delegation permit was resolved before policy evaluation.
+func BuildOPAInputHeadersOnlyWithContext(protocol string, headers map[string]string, targetServerName string, contextInput ContextInput) (OPAInput, error) {
 	checkReq := buildCheckRequest(headers)
 	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
 	if err != nil {
@@ -97,7 +104,7 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, target
 	}
 	input["parsed_body"] = nil
 	input["truncated_body"] = false
-	input["context"] = ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: extractSessionID(headers)}
+	input["context"] = contextInput
 
 	if protocol == "mcp" {
 		input["type"] = "mcp_headers_only"
