@@ -148,6 +148,20 @@ export class SessionsApiService {
   }
 
   /**
+   * Get one service's session page data by current canonical ID or UUID. Not cached, so the
+   * page always shows the current session state; the read never refreshes provider tokens.
+   *
+   * @param identifier - Service canonical ID or UUID
+   * @throws {ApiError} 404 for an unknown service
+   */
+  async getServiceSessionDetail(identifier: string): Promise<ServiceSessionDetail> {
+    const response = await apiClient.get<{ data: ServiceSessionDetail }>(
+      `/third-party/sessions/${encodeURIComponent(identifier)}`,
+    );
+    return response.data.data;
+  }
+
+  /**
    * Terminate an OAuth2 session with a third-party service.
    * Invalidates relevant caches after successful termination.
    *
@@ -187,3 +201,24 @@ export class SessionsApiService {
  * Use this throughout the application for OAuth2 session API calls.
  */
 export const sessionsApi = new SessionsApiService();
+
+/** Session status within a single-service detail (OpenAPI `SessionStatus`). */
+export interface ServiceSessionStatus extends SessionSummary {
+  principal: string;
+  access_token_expires_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response data of GET /api/third-party/sessions/{service}. */
+export interface ServiceSessionDetail {
+  service: {
+    id: string;
+    canonical_id?: string | null;
+    display_name: string;
+    scope_url: string;
+  };
+  /** null when the service has no session for the caller */
+  session: ServiceSessionStatus | null;
+  dependent_agents: { agent_id: string; display_name: string }[];
+}

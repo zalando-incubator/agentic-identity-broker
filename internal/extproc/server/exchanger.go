@@ -104,6 +104,7 @@ type brokerErrorBody struct {
 	Code        string `json:"error"`
 	Description string `json:"error_description"`
 	ErrorURI    string `json:"error_uri,omitempty"`
+	Scope       string `json:"scope,omitempty"`
 }
 
 // BrokerExchangeError is returned by Exchange when the broker responds with a non-200 status
@@ -115,6 +116,8 @@ type BrokerExchangeError struct {
 	Code        string
 	Description string
 	ErrorURI    string
+	// Scope is the broker's Virtual Service Scope for the resolved service, if any.
+	Scope string
 }
 
 func (e *BrokerExchangeError) Error() string {
@@ -461,7 +464,7 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 	if resp.StatusCode != http.StatusOK {
 		var errBody brokerErrorBody
 		_ = json.Unmarshal(body, &errBody)
-		brokerErr := &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
+		brokerErr := &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI, Scope: errBody.Scope}
 		logOperationError(ctx, logger, slog.LevelWarn, "token exchange returned broker error", brokerErr.Metadata(), brokerErr.Diagnostic())
 		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(brokerErr.Metadata(), brokerErr)
 	}

@@ -69,6 +69,7 @@ domain/
   principal/       Principal context extraction
   security/        Request security context and audit identity
   server/          Server lifecycle configuration
+  servicescope/    Virtual Service Scopes, requested services and shared grant coverage
   storage/         Domain data models and endpoint discovery
   thirdparty/      Third-party OAuth2 provider management
   tokenexchange/   RFC 8693 token exchange and CEL evaluation

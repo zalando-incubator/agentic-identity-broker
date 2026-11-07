@@ -11,6 +11,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -60,6 +61,9 @@ type Service struct {
 	refreshRepo     ports.RefreshTokenSessionRepository
 	now             func() time.Time
 	logger          *slog.Logger
+
+	requestedServices *servicescope.Resolver
+	serviceEvaluator  *servicescope.Evaluator
 }
 
 // NewService creates a new ConsentService.
@@ -279,6 +283,10 @@ type GrantRequest struct {
 	AgentID               id.AgentID
 	ValidUntil            *time.Time
 	GrantedPermissionSets []storage.GrantedPermissionSetEntry
+	// RequestedServiceIDs and ServiceScopeBindings come only from the validated, server-sealed
+	// authorization session; browser-supplied values never populate them.
+	RequestedServiceIDs  []id.ServiceID
+	ServiceScopeBindings map[string]id.ServiceID
 }
 
 // GrantConsent creates or updates a user grant (upsert semantics per FR-013, FR-015).
@@ -328,6 +336,12 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 
 	// T047: Validate mandatory PS presence and service ID subset.
 	if err := s.validateGrantStructureWithResolved(ctx, agent, req.GrantedPermissionSets, resolvedPS); err != nil {
+		return nil, err
+	}
+
+	// Requested services (Feature 055) are checked before the generic session-presence rule so
+	// the submission reports which requested service is unsatisfied.
+	if err := s.validateRequestedServices(ctx, agent, req); err != nil {
 		return nil, err
 	}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 // testJWESigningKey is a valid test JWE key (32 bytes base64 encoded)
@@ -536,4 +537,60 @@ func TestConfigurationParsesProxyUpstreamTimeoutFromYAML(t *testing.T) {
 	if cfg.OAuth2AuthServer.Proxy.UpstreamTimeout != 500*time.Millisecond {
 		t.Fatalf("Expected proxy upstream timeout %v, got %v", 500*time.Millisecond, cfg.OAuth2AuthServer.Proxy.UpstreamTimeout)
 	}
+}
+
+// TestIncrementalAuthorizationExamplesMatchContract merges the broker overlay into the minimal
+// standalone example, loads it through the production loader and checks the Agentgateway route
+// example against the metadata contract (specs/055-incremental-service-authorization FR-017).
+func TestIncrementalAuthorizationExamplesMatchContract(t *testing.T) {
+	readYAML := func(relativePath string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(repoPath(t, relativePath))
+		require.NoError(t, err)
+		var document map[string]any
+		require.NoError(t, yaml.Unmarshal(raw, &document))
+		return document
+	}
+	var merge func(base, overlay map[string]any)
+	merge = func(base, overlay map[string]any) {
+		for key, value := range overlay {
+			nested, isMap := value.(map[string]any)
+			existing, baseIsMap := base[key].(map[string]any)
+			if isMap && baseIsMap {
+				merge(existing, nested)
+				continue
+			}
+			base[key] = value
+		}
+	}
+
+	merged := readYAML("examples/config/config.minimal.yaml")
+	merge(merged, readYAML("examples/config/incremental-authorization.yaml"))
+	encoded, err := yaml.Marshal(merged)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "incremental-authorization.yaml")
+	require.NoError(t, os.WriteFile(path, encoded, 0o600))
+	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+	t.Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", testJWESigningKey)
+	t.Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", testEncryptionKey)
+	t.Setenv("IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
+	t.Setenv("IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Admin-User")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cfg, err := config.NewLoader().GetConfig(ctx)
+	require.NoError(t, err, "the overlay must only use existing broker keys")
+	assert.Equal(t, "https://broker.example.com", cfg.Server.EndUser.PublicURL)
+	assert.Equal(t, "local", string(cfg.OAuth2AuthServer.Mode))
+
+	route := readYAML("examples/config/incremental-authorization-agentgateway.yaml")
+	policies := route["binds"].([]any)[0].(map[string]any)["listeners"].([]any)[0].(map[string]any)["routes"].([]any)[0].(map[string]any)["policies"].(map[string]any)
+	jwtAuth := policies["jwtAuth"].(map[string]any)
+	assert.Equal(t, "strict", jwtAuth["mode"])
+	assert.Equal(t, false, jwtAuth["preserveToken"])
+	extProc := policies["extProc"].(map[string]any)
+	assert.Equal(t, "failClosed", extProc["failureMode"])
+	fields := extProc["metadataContext"].(map[string]any)["aib.tokenexchange"].(map[string]any)
+	literal := fields["resource_metadata_url"].(string)
+	require.Regexp(t, `^'https://[^'#@"\\ ]+'$`, literal, "the route metadata must be a valid CEL HTTPS string literal")
+	require.LessOrEqual(t, len(literal)-2, 2048)
 }

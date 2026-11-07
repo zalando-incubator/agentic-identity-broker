@@ -47,6 +47,7 @@ const (
 	tokenExchangeMetadataNamespace  = "aib.tokenexchange"
 	subjectTokenFieldKey            = "subject_token"
 	resourceURIFieldKey             = "resource_uri"
+	resourceMetadataURLFieldKey     = "resource_metadata_url"
 )
 
 // ExchangeResult holds the result of a successful token exchange.
@@ -94,6 +95,7 @@ type Server struct {
 type requestState struct {
 	subjectToken          string
 	resourceURI           string
+	resourceMetadata      *structpb.Value
 	headers               map[string]string
 	protocol              string
 	targetServerName      string
@@ -108,6 +110,9 @@ type requestState struct {
 type tokenExchangeInput struct {
 	subjectToken string
 	resourceURI  string
+	// resourceMetadata is the raw optional route metadata, validated only when a challenge
+	// is produced. It never affects exchange, caching or authorization.
+	resourceMetadata *structpb.Value
 }
 
 type inputRejection struct {
@@ -451,7 +456,7 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 	result, err := s.exchanger.Exchange(ctx, input.subjectToken, input.resourceURI)
 	if err != nil {
 		var response *extprocv3.ProcessingResponse
-		response, diagnostic = s.exchangeErrorResponse(ctx, err)
+		response, diagnostic = s.exchangeErrorResponse(ctx, err, input.resourceMetadata)
 		return response
 	}
 	logDiagnostic(ctx, logger, slog.LevelDebug, "token exchanged successfully", diagnostic)
@@ -508,6 +513,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 
 	state := &requestState{
 		subjectToken:      input.subjectToken,
+		resourceMetadata:  input.resourceMetadata,
 		resourceURI:       resourceURI,
 		headers:           headerMap,
 		protocol:          protocol,
@@ -524,7 +530,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
 	if exchErr != nil {
-		response, failure := s.exchangeErrorResponse(ctx, exchErr)
+		response, failure := s.exchangeErrorResponse(ctx, exchErr, input.resourceMetadata)
 		diagnostic = failure
 		return response, nil
 	}
@@ -657,7 +663,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
 	if exchErr != nil {
-		response, failure := s.exchangeErrorResponse(ctx, exchErr)
+		response, failure := s.exchangeErrorResponse(ctx, exchErr, state.resourceMetadata)
 		diagnostic = failure
 		return response
 	}
@@ -884,7 +890,7 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 	return immediateResponse(httpv3.StatusCode_Forbidden, string(body403))
 }
 
-func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+func (s *Server) exchangeErrorResponse(ctx context.Context, err error, resourceMetadata *structpb.Value) (*extprocv3.ProcessingResponse, Diagnostic) {
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)
 	var brokerErr *BrokerExchangeError
@@ -905,8 +911,15 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extproc
 	}
 	logger := loggerFromContext(ctx, s.logger)
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
-		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic)
-		return reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description), diagnostic
+		metadataURL, metadataPresent := resourceMetadataURL(resourceMetadata)
+		if metadataPresent && metadataURL == "" {
+			logOperationError(ctx, logger, slog.LevelWarn, "challenge_metadata_invalid", metadata, diagnostic,
+				slog.String("field", resourceMetadataURLFieldKey))
+		}
+		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic,
+			slog.Bool("challenge.scope_present", validChallengeScope(brokerErr.Scope)),
+			slog.Bool("challenge.resource_metadata_present", metadataURL != ""))
+		return reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description, brokerErr.Scope, metadataURL), diagnostic
 	}
 
 	return s.tokenExchangeErrorResponse(ctx, err), diagnostic.asServerError(metadata.Kind())
@@ -948,7 +961,7 @@ func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeI
 		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource"}
 	}
 
-	return tokenExchangeInput{subjectToken: subjectToken, resourceURI: resourceURI}, nil
+	return tokenExchangeInput{subjectToken: subjectToken, resourceURI: resourceURI, resourceMetadata: metadata.Fields[resourceMetadataURLFieldKey]}, nil
 }
 
 func metadataStringField(fields map[string]*structpb.Value, key string) (string, bool) {

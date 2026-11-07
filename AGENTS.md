@@ -203,6 +203,8 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`); rejected sessions follow ADR 046 (Feature 055) |
+| 049 | `adrs/049-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
 
 ## Domain Glossary
 
@@ -232,6 +234,10 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
+| **Virtual Service Scope** | Broker-only `<public URL>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered third-party session; never a provider scope or an implicit permission selection. |
+| **Requested Service Set** | Deduplicated services named by requested scopes or original refresh assurance bindings, without changing permanent Agent requirements. |
+| **Service-Scope Binding** | Protected/persisted scope-string-to-service-UUID map, immutable through consent/code/refresh continuity and retained after scope narrowing without restoring removed privileges. |
+| **Session Usability** | Verified effective provider scopes and established client identity with valid or successfully refreshed access: usable, missing, definitively unusable, or transiently unverifiable. Stored refreshability alone is not verification. |
 
 ## Development Workflow
 

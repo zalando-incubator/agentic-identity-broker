@@ -52,9 +52,12 @@ func (s *Service) ValidateAuthorizationSessionToken(token string, agentID id.Age
 		return nil, ports.ErrSessionPrincipalMismatch
 	}
 	return &ports.AuthorizationSession{
-		AgentID:      claims.AgentID,
-		Principal:    claims.Principal,
-		OriginalURL:  claims.OriginalURL,
-		CIMDMetadata: claims.CIMDMetadata,
+		AgentID:              claims.AgentID,
+		Principal:            claims.Principal,
+		OriginalURL:          claims.OriginalURL,
+		CIMDMetadata:         claims.CIMDMetadata,
+		RequestedServiceIDs:  claims.RequestedServiceIDs,
+		ServiceScopeBindings: claims.ServiceScopeBindings,
+		ExpiresAt:            claims.ExpiresAt,
 	}, nil
 }
