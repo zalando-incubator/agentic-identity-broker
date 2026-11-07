@@ -6,7 +6,10 @@ Each entry records the decision, why it was chosen, and the main alternatives. I
 **Proposed (approval item …)** need the maintainer's sign-off before implementation. They are
 registered in [plan.md › Approval Items](./plan.md#approval-items).
 
-## Baseline findings from the current code
+## Historical baseline findings before implementation
+
+These observations describe the original planning baseline, not the current implemented tree.
+R3 and the 2026-11-07 spec reconciliation supersede the old refresh-expiry marker semantics.
 
 | Area | Current behavior | Source |
 |---|---|---|
@@ -85,10 +88,11 @@ outcome:
 
 - `usable`
 - `missing`
-- `unusable_definitive` (access expired and refresh rejected, unavailable or expired; or effective
-  scopes insufficient; or established client identity mismatch). A valid access token with sufficient
-  effective scopes and matching identity is `usable` even without a refresh token or with an expired
-  refresh token; no refresh is attempted in that case.
+- `unusable_definitive` (a recorded refresh rejection even before access expiry; expired access
+  without refresh; effective scopes insufficient; or established client identity mismatch). A valid
+  access token with sufficient effective scopes and matching identity is `usable` without a refresh
+  token only when no rejection is recorded; no refresh is attempted in that case. The broker never
+  predicts refresh-token expiry (ADR 046).
 - `unverifiable_transient` (provider 5xx, 429, network error, storage error, or cancellation)
 
 The authorization endpoint, consent detail, grant submission, and local refresh recheck all use

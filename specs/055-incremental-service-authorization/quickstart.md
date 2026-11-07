@@ -5,6 +5,34 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Task update — 2026-11-07
+
+The regenerated backlog has **114 tasks: 85 historically recorded complete and 29 unchecked**.
+Task references throughout this guide use the regenerated IDs; checkpoint counts and test outcomes
+below remain historical, not validation by this document phase. The original combined I2 task is
+now T068–T069 (red) and T075–T077 (implementation/documentation/green); U4 documentation is T093.
+
+- T001 first verifies all 14 current sign-off items and records only supplied approvals, including
+  moving and applying the approved ADR 049 Revision 1 draft. The previous approval does not cover
+  reconciled wording automatically.
+- T011–T012 provide test-first current OpenAPI reconciliation to version 1.3.0 before behavior.
+- T032–T033 validate merged ADR 046: no refresh-token expiry prediction; a recorded rejection
+  disqualifies even valid access, while valid access without refresh/no rejection remains usable.
+  Regression coverage of already implemented behavior is not fabricated semantic-red evidence.
+- T023–T024 and T106–T107 cover the observability contract, credential/principal safety tests,
+  canonical event attributes and bounded classifications. No new metric/span namespace is added.
+- Historical browser-red evidence remains open (T022/T098/T109), even though browser journeys
+  are recorded green. Do not weaken tests, claim retroactive red or silently grant an exception.
+- The current active-session Wireloom source/SVG follows ADR 046 and shows no predicted refresh
+  expiry. T097/T112 still verify examples and runtime accessibility in both themes.
+- T113 runs every non-container recipe of the full gate and the prepared default-branch security
+  scan. Real PostgreSQL and Agentgateway/container evidence remains deferred to the pushed-commit
+  container tests, never locally validated or a missing-Docker blocker.
+
+The earlier UUID-fallback proposals below are retained only as superseded historical discussion.
+The authoritative current decision is DEC-005: document the defect and existing issue #446, with
+no fallback, validator, migration or Admin API work in this feature.
+
 ## Planning update — 2026-11-07 (reanalysis I2 and U4)
 
 The maintainer directed how to resolve the two open contract boundaries. Both are now in the
@@ -13,10 +41,10 @@ implemented by this planning run.
 
 - **I2**: proxy refresh validates broker-prefixed scopes before forwarding
   ([End-User API §4](./contracts/enduser-api.md#4-post-oauth2token-proxy-refresh_token-dec-002-api-proxy-refresh-validation),
-  approval items API-PROXY-REFRESH-VALIDATION and ADR-SCOPES-REV1). T099 implements it.
+  approval items API-PROXY-REFRESH-VALIDATION and ADR-SCOPES-REV1). T068–T069 provide semantic-red tests; T075–T077 implement, document and validate it.
 - **U4**: the canonical IDs `.` and `..` are a known defect for this feature (DEC-005). No UUID
   fallback and no validation change; [issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446)
-  restricts them. T100 documents the limitation only.
+  restricts them. T093 documents the limitation only.
 
 The "Remaining reanalysis contract boundaries" section of the 2026-10-29 checkpoint below keeps
 its historical proposals; this update supersedes its open questions.
@@ -29,10 +57,10 @@ missing-tool reports below; those sections retain their historical evidence.
 
 ### Completed work
 
-- **T031/T033:** migration apply/down/reapply and PostgreSQL binding/succession tests are written;
+- **T039/T041:** migration apply/down/reapply and PostgreSQL binding/succession tests are written;
   both integration-tagged suites compile via `go test -c` without starting containers. Real-database
   execution is deferred to the container tests; compilation is not red/green persistence evidence.
-- **T059:** hybrid authorization regression coverage now exercises proxy, local and CIMD agents
+- **T067:** hybrid authorization regression coverage now exercises proxy, local and CIMD agents
   with a requested service: all enforce usability, only proxy forwards upstream, and forwarded
   scopes contain only ordinary values. Public (`none`) and confidential (`private_key_jwt`) CIMD
   code/refresh tests verify exact virtual scopes, authentication failure without consumption,
@@ -40,10 +68,10 @@ missing-tool reports below; those sections retain their historical evidence.
   PKCE, code replay, client-credentials rejection and refresh-chain regressions pass unchanged.
   These are additional regression tests of already implemented behavior, not new feature logic
   or evidence of a historical semantic-red run.
-- **T056/T073:** both complete browser journeys pass: focused consent preserves selections and end
+- **T064/T086:** both complete browser journeys pass: focused consent preserves selections and end
   date through login/Save and succeeds on tool retry; service management refreshes and terminates
   back to the no-session state. All 17 backend scenarios also pass.
-- **T095:** the capture-enabled serial browser run produced the four plan-named images under
+- **T111:** the capture-enabled serial browser run produced the four plan-named images under
   `tests/e2e/frontend/coverage/screenshots/`. They were reviewed against consent C/D and session
   A/B; the existing maintained images under `tests/e2e/screenshots/` remain intact. The active
   session state follows merged ADR 046 and no longer displays predicted refresh expiry.
@@ -73,16 +101,17 @@ portion remains deferred to the container tests, alongside `just test-integratio
 
 | Tasks | Remaining work / evidence |
 |---|---|
-| T003, T099, T100 | Unapproved proxy-refresh pre-forward errors and dot-segment UUID emission/recovery exception. Authoritative proposals and alternatives remain in [Remaining reanalysis contract boundaries](#remaining-reanalysis-contract-boundaries). Neither is implemented; spec/plan and accepted ADRs stay unchanged. |
-| T018, T084, T093 | Backend semantic-red evidence is recorded historically. Historical compiling browser semantic-red evidence before feature logic is not established; green browser runs now cannot retroactively prove it. Unit/contract/Vitest red evidence and the complete traceability audit also need final review. No exception or waiver is recorded. |
-| T032, T034, T089 | SQL, PostgreSQL mappings and compiled migration/repository tests are present; container tests must establish their real-database apply/down/reapply and successor-inheritance evidence. Test-writing tasks T031/T033 do not wait for that evidence. Deferred validation, not a missing-Docker blocker. |
-| T080, T082, T083 | Final approval/contract/spec-journey reconciliation is incomplete because I2/U4 remain unresolved. Immutable examples also predate merged ADR 046's observed-rejection API and removal of predicted refresh expiry. Supporting data model/accepted ADRs already follow that binding default-branch decision. |
-| T094, T097 | All 19 feature journeys are green; final full-gate evidence still includes the deferred PostgreSQL/Agentgateway/container suites. No container suite is reported as validated. |
-| T096 | Runtime keyboard/focus/screen-reader and measured text/UI contrast evidence in both themes remains incomplete; light-theme captures alone do not establish WCAG 2.1 AA. |
-| T098 | Final checklist/evidence sign-off remains incomplete while the tasks above are open. The reviewer-owned checklist markers are unchanged. |
+| T004, T068–T069, T075–T077, T093 | Current proxy-refresh pre-forward validation and dot-segment known-limitation documentation remain unapproved. The 2026-11-07 planning update supersedes the earlier UUID-fallback alternative: no fallback or canonical-ID validation change is implemented here. T001 verifies all 14 current approval items before further work. |
+| T022, T098, T109 | Backend semantic-red evidence is recorded historically. Historical compiling browser semantic-red evidence before feature logic is not established; green browser runs now cannot retroactively prove it. Unit/contract/Vitest red evidence and the complete traceability audit also need final review. No exception or waiver is recorded. |
+| T040, T042, T103 | SQL, PostgreSQL mappings and compiled migration/repository tests are present; container tests must establish their real-database apply/down/reapply and successor-inheritance evidence. Test-writing tasks T039/T041 do not wait for that evidence. Deferred validation, not a missing-Docker blocker. |
+| T094, T096, T097 | Final approval/contract/spec-journey reconciliation is incomplete because I2/U4 remain unresolved. Immutable examples also predate merged ADR 046's observed-rejection API and removal of predicted refresh expiry. Supporting data model/accepted ADRs already follow that binding default-branch decision. |
+| T110, T113 | All 19 feature journeys are green; final full-gate evidence still includes the deferred PostgreSQL/Agentgateway/container suites. No container suite is reported as validated. |
+| T112 | Runtime keyboard/focus/screen-reader and measured text/UI contrast evidence in both themes remains incomplete; light-theme captures alone do not establish WCAG 2.1 AA. |
+| T114 | Final checklist/evidence sign-off remains incomplete while the tasks above are open. The reviewer-owned checklist markers are unchanged. |
 
-The required maintainer decisions are still the two API/ADR proposals below. The pipeline owns
-routine remaining audits; their unfinished state is not an additional sign-off item.
+Current maintainer decisions are the 14 Proposed items in `plan.md` Approval Items, including the
+three added for I2/U4. Historical proposals below are not current approval text. Routine audits and
+missing historical evidence remain implementation work, not additional sign-off items.
 
 ## Implementation checkpoint — 2026-10-31
 
@@ -92,7 +121,7 @@ supersedes the earlier checkpoints below for status.
 
 ### Completed since the previous checkpoint
 
-- **US1 (T039–T046, T055):** authorization resolves virtual scopes after redirect validation,
+- **US1 (T047–T054, T063):** authorization resolves virtual scopes after redirect validation,
   exempts them from `allowed_scopes`, evaluates every requested service for grant coverage and
   verified usability (`temporarily_unavailable` when unverifiable), seals requested IDs and bindings
   in the consent JWE and revalidates the same JWE on protected re-entry before code issuance or an
@@ -100,18 +129,18 @@ supersedes the earlier checkpoints below for status.
   unsatisfied submissions with `400 requested service not satisfied` before persistence and returns
   the continuation with the same `session_token`. One resolver and evaluator are wired for
   authorization, consent and local issuance in `internal/app/builder.go`.
-- **US3 (T057, T058, T060–T064):** local refresh rechecks every immutable binding, including
+- **US3 (T065, T066, T070–T074):** local refresh rechecks every immutable binding, including
   bindings narrowed out of `Scope`, before rotation (`invalid_scope` definitive, `server_error`
   transient, never consuming the token); `client_credentials` rejects service scopes; proxy
   authorization and token requests drop virtual scopes and omit an empty `scope`.
-- **US2 (T065–T071):** `GET /api/third-party/sessions/{service}` and the `/sessions/:service` SPA
+- **US2 (T078–T084):** `GET /api/third-party/sessions/{service}` and the `/sessions/:service` SPA
   page with Login (returning to the same page), Refresh and confirmed termination.
-- **US4/docs (T074–T079, T087):** discovery never advertises virtual scopes; the operator guide
+- **US4/docs (T087–T092, T101):** discovery never advertises virtual scopes; the operator guide
   `docs/guides/incremental-authorization.md`; updated gateway guide, token-exchange reference,
   end-user API overview, configuration reference, examples, `ARCHITECTURE.md` and agent context.
-- **Consent UI (T043, T052–T054):** requested-service banner, candidate markers that never select or
+- **Consent UI (T051, T060–T062):** requested-service banner, candidate markers that never select or
   lock optional sets, and live Save gating with an `aria-describedby` reason.
-- **Compliance verified (T081, T085, T086, T088, T090–T092):** no new broker or ExtProc config key and
+- **Compliance verified (T095, T099, T100, T102, T104–T108):** no new broker or ExtProc config key and
   no chart change; `servicescope` imports only `canonical`, `id`, `model`, `storage` and `ports`;
   ExtProc imports no broker package; new adapters do not import each other; structured, credential-
   free events `incremental_authorization_required`, `requested_service_submission_rejected`,
@@ -141,11 +170,11 @@ Two decisions taken within the approved contracts:
 
 | Tasks | Status / required action |
 |---|---|
-| T003, T099–T100 | Maintainer approval for the U4/I2 contract revisions (unchanged). |
-| T018, T056, T073, T094–T095 | Browser journeys (US1 S4, US2 S2) and screenshots: install the playwright-go driver v1.62.1 and run `just test-e2e-frontend`. The Agentgateway ExtProc journey needs Docker. |
-| T031–T034, T089, T097 | Run `just test-integration-infra` and `just verify` on a Docker-capable runner; the SQL, PostgreSQL mapping and tests are written. |
-| T059 | Hybrid/CIMD continuity variants beyond the covered `client_credentials` rejection. |
-| T080, T082–T084, T093, T096, T098 | Final review gates: spec journey re-check, OpenAPI/migration sign-off, red-evidence audit, contrast measurement in both themes and checklist sign-off. |
+| T004, T068–T093 | Maintainer approval for the U4/I2 contract revisions (unchanged). |
+| T022, T064, T086, T110–T111 | Browser journeys (US1 S4, US2 S2) and screenshots: install the playwright-go driver v1.62.1 and run `just test-e2e-frontend`. The Agentgateway ExtProc journey needs Docker. |
+| T039–T042, T103, T113 | Run `just test-integration-infra` and `just verify` on a Docker-capable runner; the SQL, PostgreSQL mapping and tests are written. |
+| T067 | Hybrid/CIMD continuity variants beyond the covered `client_credentials` rejection. |
+| T094, T096–T098, T109, T112, T114 | Final review gates: spec journey re-check, OpenAPI/migration sign-off, red-evidence audit, contrast measurement in both themes and checklist sign-off. |
 
 ## Implementation checkpoint — 2026-10-30 (second run)
 
@@ -157,27 +186,27 @@ keeps its original validation evidence.
 
 ### Completed in this run
 
-- **T011–T014, T016–T017** acceptance tests: the shared cast fixtures, mock-provider refresh and
+- **T015–T018, T020–T021** acceptance tests: the shared cast fixtures, mock-provider refresh and
   scope controls, nine local journeys (`incremental_authorization_test.go`), two broker-plus-ExtProc
   gateway journeys, two proxy journeys, the operator-guide/discovery check and two browser journeys
   with page-object locators. All 17 backend scenarios compiled and failed on missing behavior before
   any feature code (red evidence: 17 failures, e.g. no `requested_service_ids`, 200 instead of
   `invalid_scope`, unstripped upstream scope, missing guide).
-- **T019–T023** `internal/domain/servicescope/`: configured-origin grammar/emission, requested-set
+- **T025–T029** `internal/domain/servicescope/`: configured-origin grammar/emission, requested-set
   resolution with eligibility and binding pinning, the shared coverage rule and requested-service
   evaluation. Token exchange now uses the shared rule; all existing exchange tests pass unchanged,
   including the final-entry-wins duplicate-grant case.
-- **T024–T026** `ServiceSessionSnapshot`/`CheckServiceUsability` on top of `GetValidAccessToken`.
-- **T027–T030** binding validation and both memory stores (deep copies, exact successor inheritance,
+- **T030–T034** `ServiceSessionSnapshot`/`CheckServiceUsability` on top of `GetValidAccessToken`.
+- **T035–T038** binding validation and both memory stores (deep copies, exact successor inheritance,
   no scope widening).
-- **T036** sealed `requested_service_ids`/`service_scope_bindings` and exposed original expiry.
-- **T037–T038, T047–T048** local issuance: allow-list exemption only with a binding, exact scope
+- **T044** sealed `requested_service_ids`/`service_scope_bindings` and exposed original expiry.
+- **T045–T046, T055–T056** local issuance: allow-list exemption only with a binding, exact scope
   forms in response and JWT, code-to-refresh bindings, code-exchange rename/reuse rejection,
   exact (case-sensitive) non-consuming widening refusal and durable narrowing.
-- **T042, T049–T051** exchange `scope` member on recoverable errors and service-page recovery
+- **T050, T057–T059** exchange `scope` member on recoverable errors and service-page recovery
   (ADR 048); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
   appends both attributes in fixed order with value-free diagnostics.
-- **T072** existing acceptance assertions updated for the approved recovery target and `scope`.
+- **T085** existing acceptance assertions updated for the approved recovery target and `scope`.
 
 ### Validation in this run
 
@@ -187,23 +216,23 @@ keeps its original validation evidence.
 | `golangci-lint run` | **Not run**: the installed binary is built with Go 1.25 and refuses the Go 1.27.3 module. |
 | `go test -p 2 ./internal/... ./cmd/...` | All packages pass except `internal/adapters/encryption/aws` (`TestBuildAWSConfig_DisableSSL`) and `internal/adapters/outboundhttp` (two SSRF/proxy tests). Both fail identically on the branch's starting commit `28baed0` in this sandbox and are not touched here. |
 | `go test -race ./internal/extproc/...` | Pass. |
-| `ginkgo --procs=2 --label-filter='!performance && !docker' ./tests/e2e/` | Before T072: 896 passed, 32 failed. After T072 the 17 affected existing scenarios pass (33/33 in their focused suites). Remaining failures are the 15 not-yet-implemented Feature 055 scenarios. US1 S1 and US4 S1 (gateway) now pass. |
+| `ginkgo --procs=2 --label-filter='!performance && !docker' ./tests/e2e/` | Before T085: 896 passed, 32 failed. After T085 the 17 affected existing scenarios pass (33/33 in their focused suites). Remaining failures are the 15 not-yet-implemented Feature 055 scenarios. US1 S1 and US4 S1 (gateway) now pass. |
 | `ginkgo ./tests/e2e/frontend/` | **Blocked**: the playwright-go driver v1.62.1 is not installed and downloading it was not permitted. Both browser scenarios compile; red was not observed. |
-| PostgreSQL migration/repository tests (T031–T034) | **Blocked**: no Docker in this sandbox. Migration SQL, PostgreSQL JSONB mapping and integration tests are written and vet-clean; a self-contained codec unit test passes. |
+| PostgreSQL migration/repository tests (T039–T042) | **Blocked**: no Docker in this sandbox. Migration SQL, PostgreSQL JSONB mapping and integration tests are written and vet-clean; a self-contained codec unit test passes. |
 | `just …` recipes | `just` is not on PATH in this container; the equivalent underlying commands above were run. |
 
 ### Remaining work
 
 | Tasks | Status / next step |
 |---|---|
-| T003, T035, T099–T100 | Unchanged blockers (U4/I2 approvals); T035's authorize-re-entry assertions belong with T039/T074. |
-| T018 | Backend red evidence recorded; browser red needs the playwright-go driver. |
-| T031–T034 | Code written; needs a Docker-capable runner to execute and check. |
-| T039–T041, T043–T046, T052–T056 | Authorization-endpoint requested-service evaluation, consent arrays/submission, protected re-entry, builder wiring (`WithServiceScopes`, bindings through the proceed strategy) and SPA. |
-| T057–T064 | Full binding recheck on local refresh with usability, proxy scope stripping, `client_credentials` rejection. |
-| T065–T071, T073 | Session detail domain read, route and SPA page. |
-| T074–T079 | Boundary regressions, operator guide and reference docs. |
-| T080–T098 | Compliance and the full `just verify` gate. |
+| T004, T043, T068–T093 | Unchanged blockers (U4/I2 approvals); T043's authorize-re-entry assertions belong with T047/T087. |
+| T022 | Backend red evidence recorded; browser red needs the playwright-go driver. |
+| T039–T042 | Code written; needs a Docker-capable runner to execute and check. |
+| T047–T049, T051–T054, T060–T064 | Authorization-endpoint requested-service evaluation, consent arrays/submission, protected re-entry, builder wiring (`WithServiceScopes`, bindings through the proceed strategy) and SPA. |
+| T065–T074 | Full binding recheck on local refresh with usability, proxy scope stripping, `client_credentials` rejection. |
+| T078–T084, T086 | Session detail domain read, route and SPA page. |
+| T087–T092 | Boundary regressions, operator guide and reference docs. |
+| T094–T114 | Compliance and the full `just verify` gate. |
 
 ## Implementation checkpoint — 2026-10-30
 
@@ -211,17 +240,17 @@ keeps its original validation evidence.
 
 ### Progress
 
-- T008: `api/enduser/openapi.yaml` is now version **1.2.0** and carries the approved authorization,
+- T009: `api/enduser/openapi.yaml` is now version **1.2.0** and carries the approved authorization,
   protected continuation, local/proxy scope, exchange-recovery, consent and session-detail deltas.
   The legacy UUID session route and its schemas remain unchanged. The new dependent-agent list
   references the approved existing `AffectedAgent` schema (`agent_id`, `display_name`).
-- T101: `tests/integration/incremental_authorization_contract_test.go` validates nullable session
+- T010: `tests/integration/incremental_authorization_contract_test.go` validates nullable session
   detail, required fields, all four public baseline/candidate usability values, required requested
   arrays and response examples. The first run compiled and failed because `allOf` with nullable
   did not admit `session: null`, and the token error enum omitted `invalid_scope`. An explicit
   null-only alternative and the approved error enum made these tests green without weakening the
   non-null `SessionStatus` requirements or changing legacy schemas.
-- T015: `tests/e2e/service_session_page_test.go` now owns exactly the three US2 backend scenarios
+- T019: `tests/e2e/service_session_page_test.go` now owns exactly the three US2 backend scenarios
   S1/S3/S4. It uses fresh production bootstrap/storage and existing fixtures per scenario, checks
   both identifier forms, principal-owned dependent agents and absence of read-triggered refresh,
   and includes provider sign-in/return and recovery/exchange retry without grant mutation.
@@ -253,11 +282,11 @@ is unsupported in this sandbox, so the real database gate needs a supported exec
 The supplied approval still covers only its original 11 items. The two contract revisions below
 remain unapproved; this run neither edits their accepted ADR text nor implements them.
 
-1. **T099 / I2**: approve the proposed pre-forward grammar/service/agent-eligibility validation and
+1. **T068 / I2**: approve the proposed pre-forward grammar/service/agent-eligibility validation and
    exact proxy-refresh errors, or an explicit constitution-compatible alternative. Authoritative
    proposal and alternative remain in the previous checkpoint's **Remaining reanalysis contract
    boundaries** section. Do not add a usability check or post-upstream-response veto.
-2. **T100 / U4**: approve UUID-only emission/recovery for complete canonical IDs `.` and `..`, or
+2. **T093 / U4**: approve UUID-only emission/recovery for complete canonical IDs `.` and `..`, or
    a compatible alternative. Reconcile the spec/plan in an authorized pre-implementation run;
    implementation cannot silently amend them or widen the existing approval.
 3. Provide a supported real-PostgreSQL execution environment for migration/repository validation
@@ -265,11 +294,11 @@ remain unapproved; this run neither edits their accepted ADR text nor implements
 
 | Deferred tasks | Remaining work / reason |
 |---|---|
-| T003, T099–T100 | The emission model and the two API/ADR boundary revisions need authorized reconciliation and sign-off. T008 contains only the original approved deltas. |
-| T011–T014, T016–T018 | Finish shared fixtures and the other 16 owning scenarios, including both browser journeys; run all 19 compiling semantic-red tests before foundations. The three T015 scenarios are written but not green. |
-| T019–T038 | Shared scope/coverage/usability, bindings in both adapters, real migration tests/SQL, JWE continuity and local issuance remain behind the incomplete T018 checkpoint. |
-| T039–T079 | All user-story behavior, domain/handler/frontend tests, integrated operator/API documentation and green acceptance journeys remain. The three new tests intentionally expose the absent session-detail and recovery behavior. |
-| T080–T098 | All final compliance gates, real persistence validation, all acceptance journeys, four screenshots and `just verify` remain. No checklist marker is changed or gate waived. |
+| T004, T068–T093 | The emission model and the two API/ADR boundary revisions need authorized reconciliation and sign-off. T009 contains only the original approved deltas. |
+| T015–T018, T020–T022 | Finish shared fixtures and the other 16 owning scenarios, including both browser journeys; run all 19 compiling semantic-red tests before foundations. The three T019 scenarios are written but not green. |
+| T025–T046 | Shared scope/coverage/usability, bindings in both adapters, real migration tests/SQL, JWE continuity and local issuance remain behind the incomplete T022 checkpoint. |
+| T047–T092 | All user-story behavior, domain/handler/frontend tests, integrated operator/API documentation and green acceptance journeys remain. The three new tests intentionally expose the absent session-detail and recovery behavior. |
+| T094–T114 | All final compliance gates, real persistence validation, all acceptance journeys, four screenshots and `just verify` remain. No checklist marker is changed or gate waived. |
 
 ## Implementation checkpoint — 2026-10-29
 
@@ -307,7 +336,7 @@ this feature; no tool installation or permission workaround was attempted.
 Ginkgo, lint and Wireloom executables to the agent, and provide a supported runner for the
 required real PostgreSQL/container suites. No failed/missing gate is waived. Once the harness
 is available, finish the acceptance fixtures/tests and observe all 19 semantic-red scenarios
-(T011–T018) before implementing foundations or user stories. Existing baseline tests passing
+(T015–T022) before implementing foundations or user stories. Existing baseline tests passing
 cannot substitute for that checkpoint.
 
 ### Remaining reanalysis contract boundaries
@@ -324,7 +353,7 @@ revision that resolves the remaining findings. No unapproved behavior is impleme
   Ordinary-scope-only requests retain their existing path. Do not check provider usability or
   veto any upstream response. Rationale: satisfy FR-002 without losing rotated credentials.
   Main alternative: explicitly approve a proxy-refresh exception to FR-002. The newly specified
-  pre-forward response contract requires explicit approval before code; T099 tracks it.
+  pre-forward response contract requires explicit approval before code; T068 tracks it.
 - **U4 (dot-segment IDs)**: existing canonical validation permits the complete identifiers `.`
   and `..`, while the approved emission/recovery contract always prefers an existing canonical
   ID. Browser path normalization prevents those URLs from reliably naming one service.
@@ -334,7 +363,7 @@ revision that resolves the remaining findings. No unapproved behavior is impleme
   global canonical-ID validator. Rationale: browser-safe recovery without invalidating existing
   records. Main alternative: explicitly approve a canonical-ID migration/restriction, which is
   broader and backward-incompatible. This fallback is not covered by the approved always-prefer-
-  canonical text. T100 requires approval and regression coverage before implementation.
+  canonical text. T093 requires approval and regression coverage before implementation.
 
 **Required maintainer action**: approve the proposed pre-forward API clarification and the
 UUID-only emission/recovery exception for `.` and `..` (or supply a compatible approved
@@ -346,11 +375,11 @@ changed to imply that either revision was approved.
 
 | Tasks | Why unfinished / required next work |
 |---|---|
-| T003, T008, T099–T100 | Reconcile the two contract boundaries above under explicit approval, then finish the model review and complete OpenAPI 1.2.0 before behavior changes. |
-| T011–T018 | Fixtures, 19 acceptance tests and semantic-red evidence remain unwritten/unexecuted. Expose Ginkgo, finish these tests and run the actual backend/browser suites. |
-| T019–T038 | Foundations depend on T018. Keep migration SQL behind failing real-PostgreSQL tests; complete scope, usability, identity binding, both adapters and issuance in test-first pairs. |
-| T039–T079 | All user-story tests, implementation and integrated documentation remain; they depend on the acceptance checkpoint and foundations. Continue the approved TDD sequence, including both reanalysis regression sets. |
-| T080–T098 | Final compliance, complete lint, real database suites, all E2E journeys, four screenshots and `just verify` remain. Supply the supported tooling/runtime and rerun every required gate after implementation; do not treat baseline passes as feature completion. |
+| T004, T009, T068–T093 | Reconcile the two contract boundaries above under explicit approval, then finish the model review and complete OpenAPI 1.2.0 before behavior changes. |
+| T015–T022 | Fixtures, 19 acceptance tests and semantic-red evidence remain unwritten/unexecuted. Expose Ginkgo, finish these tests and run the actual backend/browser suites. |
+| T025–T046 | Foundations depend on T022. Keep migration SQL behind failing real-PostgreSQL tests; complete scope, usability, identity binding, both adapters and issuance in test-first pairs. |
+| T047–T092 | All user-story tests, implementation and integrated documentation remain; they depend on the acceptance checkpoint and foundations. Continue the approved TDD sequence, including both reanalysis regression sets. |
+| T094–T114 | Final compliance, complete lint, real database suites, all E2E journeys, four screenshots and `just verify` remain. Supply the supported tooling/runtime and rerun every required gate after implementation; do not treat baseline passes as feature completion. |
 
 ## Prerequisites
 
@@ -395,7 +424,9 @@ failure and re-requested removed-scope refusal, both without token consumption.
 just test-e2e
 ```
 
-Run the suites below, or the whole E2E set:
+Run the suites below, or the whole E2E set on a container-capable runner. In the agent sandbox use
+only the non-container recipes listed in the task update; do not invoke the container-backed
+aggregate `just test-e2e`.
 
 | Suite | Proves |
 |---|---|
@@ -430,9 +461,10 @@ Keep these variants inside their existing owning scenarios, with semantic-red as
   forwarding path.
 - US3 S1: full → narrowed → scope-less refresh retains narrowed scopes and every assurance binding;
   test subsequent unusability and attempts to restore removed scopes without consuming the token.
-- Supporting T024 unit cases: valid scope-sufficient, identity-matching access with absent refresh
-  and with expired refresh is usable without provider calls; expired access with those same refresh
-  states is unusable.
+- Supporting T030/T032 unit cases: valid scope-sufficient, identity-matching access without refresh
+  and without recorded rejection is usable without provider calls. Recorded `RefreshRejectedAt`
+  disqualifies even valid access; expired access without refresh is unusable. No test predicts
+  refresh-token expiry. Existing passing behavior is regression evidence, not retroactive red.
 
 ### Maintained UI captures
 
@@ -446,10 +478,10 @@ E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
 The harness stages captures under `coverage/screenshots/` relative to the frontend suite working
 directory. Retain the four plan-named images under `tests/e2e/screenshots/` using existing screenshot
 handling; do not modify workflows. Verify consent C/D and session A/B against the spec's Wireloom
-states. The design composition review below records T010; captures and runtime accessibility validation
-remain unfinished.
+states. The design composition review below records T014; capture evidence is historical in the
+latest implementation checkpoint, while runtime accessibility validation remains unfinished.
 
-### Design-system composition review (T010)
+### Design-system composition review (T014)
 
 The review uses the design-system index, common-mistake guidance, decision trees and component
 pairing guide, together with the existing `PermissionSetCard`, `SessionCard` and
@@ -474,8 +506,10 @@ satisfaction/retry status without moving focus on each toggle.
 The existing light/dark tokens are the source of truth. Implementation must test both themes for
 4.5:1 text and 3:1 UI contrast, keyboard focus/order, switch names/state and confirmation focus
 restoration. Reusing an existing component does not prove accessibility or matching usability
-semantics; T067/T071/T096 must cover any minimum adaptation needed by this feature without
-unrelated restyling. Four maintained browser captures and those runtime checks are still required.
+semantics; T080/T084/T112 must cover any minimum adaptation needed by this feature without
+unrelated restyling. Verify the four maintained browser captures against the current spec and
+complete the outstanding runtime checks; previous captures alone do not establish both-theme
+accessibility.
 
 ## 4. Manual spot check (optional)
 

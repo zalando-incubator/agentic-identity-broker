@@ -63,15 +63,17 @@ A repository failure surfaces as `server_error`. It is never treated as unknown.
 
 This value is returned by `OAuth2SessionService.CheckServiceUsability` for an explicit
 `effectiveScopes` input. It is not persisted. Identity and scope checks apply whether access is
-currently valid or refreshed; the refresh-token state alone cannot disqualify valid access.
+currently valid or refreshed. Absent refresh alone cannot disqualify valid access, but a recorded
+`RefreshRejectedAt` always disqualifies it, even before access expiry (ADR 046). Refresh-token expiry
+is never predicted.
 Consent evaluates baseline and candidate contributions against one verified session snapshot,
 then combines the selected candidates (research R4); submission recomputes the full live union.
 
 | Value | Produced when |
 |---|---|
-| `usable` | Access is valid (even without a refresh token or with expired refresh), or an eligible expired-access refresh succeeded; stored scopes cover the effective scopes and established client identity matches. |
+| `usable` | No refresh rejection is recorded; access is valid (even without a refresh token), or an eligible expired-access refresh succeeded; stored scopes cover the effective scopes and established client identity matches. |
 | `missing` | No session row exists. |
-| `unusable_definitive` | Access is expired and refresh is absent, expired, or rejected with `invalid_grant` (only rejection persists the marker); or stored scopes do not cover the effective scopes; or established client identity does not match. |
+| `unusable_definitive` | A refresh rejection is recorded, even before access expiry; or access is expired and refresh is absent; or stored scopes do not cover the effective scopes; or established client identity does not match. Only observed HTTP 4xx `invalid_grant` (excluding 429) persists the rejection marker. |
 | `unverifiable_transient` | Provider 5xx or 429, network error, storage error, or cancellation. No marker is written. |
 
 ## Extended aggregates and records

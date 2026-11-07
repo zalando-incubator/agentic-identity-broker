@@ -129,6 +129,10 @@ the pipeline's approval comment.
   Database Requirements use these values. *Reason*: merged ADR 046 is binding. No behavior beyond
   the approved items changes.
 
+### Task-generation reconciliation — 2026-11-07
+
+- **FR-008 / merged ADR 046**: Valid, scope-sufficient, identity-matching access remains usable without a refresh token only when no rejection is recorded. A recorded `RefreshRejectedAt` makes the service unusable immediately, including before access expiry; the broker never predicts refresh-token expiry. Updated the edge case, FR-008 and Journey 2's active-session wireframe. *Reason*: the accepted observed-rejection contract takes precedence over historical expiry wording. *Main alternative*: continue issuing from valid access after a known rejection, which ADR 046 forbids. This is binding-ADR reconciliation, not a new approval or exception.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Recover an optional-service tool call through focused consent (Priority: P1)
@@ -198,7 +202,7 @@ Operators can explain and deploy the scope challenge without publishing a catalo
 
 - Duplicate canonical/UUID scopes for one service resolve to one requested service, not duplicate requirements or banners.
 - An optional service omitted from the requested scopes remains optional. Existing required-service checks still apply even if none is requested.
-- A valid, effective-scope-sufficient and identity-matching access token is usable without refresh, including when its refresh token is absent or expired. Expired access without usable refresh is unusable; missing effective provider scopes or client-identity mismatch is unusable even with valid access.
+- A valid, effective-scope-sufficient and identity-matching access token is usable without a refresh token when no refresh rejection is recorded. A recorded rejection makes the session unusable even before access expiry (ADR 046). Expired access without eligible refresh is unusable; missing effective provider scopes or client-identity mismatch is unusable even with valid access. Refresh-token expiry is never predicted.
 - A timeout, rate limit, or transient provider/server/storage failure must not be recorded as definitive provider revocation or permit authorization without a verified usable session.
 - A refresh rejection recorded earlier must be visible to consent, session detail/listing, tool exchange and background maintenance. Successful deliberate re-login clears the unusable condition.
 - Concurrent successful reconnect and an older failing refresh must not cause the new session to be marked unusable. Termination must not be undone by late refresh or callback work.
@@ -546,7 +550,7 @@ window "Third-Party Sessions":
     chip "Encrypted"
     text "Established: Oct 27, 2026 10:05 UTC"
     text "Access token expires: Oct 27, 2026 11:05 UTC"
-    text "Refresh token expires: Nov 26, 2026 10:05 UTC"
+    text "Refresh rejection: not observed"
     text "Dependent agent: Data Analysis Assistant"
     row:
       chip "repo"
@@ -642,7 +646,7 @@ The corporate identity provider receives no request, so `SYNTHETIC_UPSTREAM_REFR
 - **FR-005**: The gateway MUST propagate the broker-provided service scope into its existing 403 `insufficient_scope` challenge, preserve its recovery URL and URL-elicitation body, and include a configured protected-resource metadata URL when available.
 - **FR-006**: Recoverable service-session action links MUST return the signed-in user to that service's session page after provider login rather than the generic list. Grant-denial recovery MUST still take the user to consent rather than falsely imply login grants permission.
 - **FR-007**: Interactive authorization MUST enforce all requested services in addition to permanent required services, preserving the original request and authenticated scope-to-UUID bindings through consent submission and subsequent browser authorize re-entry, and not permanently changing the agent configuration. Re-entry MUST validate the sealed context independently before code issuance or proxy redirect.
-- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require effective provider scopes (FR-003) and existing client-identity checks. Valid access with sufficient effective scopes and matching identity remains usable when refresh is absent or expired; refresh absence/expiry disqualifies a session only when access has expired. Definitive provider rejection MUST persist unusability consistently for all session consumers. Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
+- **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require effective provider scopes (FR-003) and existing client-identity checks. Valid access with sufficient effective scopes and matching identity remains usable without a refresh token only when no rejection is recorded; absent refresh disqualifies a session once access expires. The broker MUST NOT predict refresh-token expiry. An observed terminal HTTP 4xx `invalid_grant` (excluding 429) MUST record `RefreshRejectedAt` under the existing lock and persist unusability for all session consumers immediately, even before access expiry (ADR 046). Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
 - **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the configured required scopes, verified baseline usability and each candidate set's supplied required scopes and effective-contribution usability against the same verified session snapshot; it MUST show an explanatory banner per requested service naming all covering permission sets, and mark every candidate set and service entry. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
 - **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable for the live selection's effective scope union. The UI combines baseline usability and every selected candidate's contribution usability; unselected unusable candidates do not block Save. The broker MUST freshly enforce the same rule on submitted grants before changing the grant or continuing authorization.
 - **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Successful Save MUST return a server-built original authorize URL carrying that same JWE as `session_token`; re-entry uses the sealed original request/bindings, rejects request/user/agent/expiry or binding mismatches, and never forwards the continuation token upstream or to the client callback. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
