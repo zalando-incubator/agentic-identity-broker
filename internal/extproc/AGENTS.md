@@ -233,6 +233,7 @@ Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
 ```
 
 - Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
+- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
 - Leave `agent_session_id` unchanged. The approval gate still uses the exchange identity.
 - Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
 - Retain the original permit in header-only request state. Check its deadline after exchange, before Authorization mutation.
