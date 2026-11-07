@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 206
+    "investigation_after": 245
   },
   "issues": [
     {
@@ -52,6 +52,18 @@
       "state": "deferred",
       "updated_at": "2026-11-06",
       "note": "Form-only client-ID gate, credential DTO/CIMD guard and form-only proxy port still apply. Race package tests pass, not Basic coverage. Needs method provenance, duplicate-method rejection, 401 challenge and mode metadata matrix; coordinate #431 and overlapping #381 token seams."
+    },
+    {
+      "number": 222,
+      "state": "resolution_recommended",
+      "updated_at": "2026-11-07",
+      "note": "Verified merged #293 and current source: explicit agent category, no agent delegation, reserved claims/act, and early third-party rejection. Fresh race package tests passed. Recommended closing; no duplicate fix."
+    },
+    {
+      "number": 245,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-07",
+      "note": "Current shared DiscoveryAttemptTimeout and Feature 050 contract are 10s, proposal says 15s. Asked deadline choice; preserve bounded complete error-body checks, pre-send dial discrimination and single-attempt DCR."
     }
   ],
   "fixes": [
@@ -96,12 +108,6 @@
       "follow_up": null
     },
     {
-      "area": "performance",
-      "checked_at": "2026-11-05",
-      "result": "Verified live draft #420 (published branch repo-assist/perf-approval-snapshot-2026-11-04-c5bbb4761a47f282). Replaces prior unresolved temporary reference; benchmark measurements remain in its body.",
-      "follow_up": "Await maintainer review; do not duplicate snapshot-index work."
-    },
-    {
       "area": "tooling",
       "checked_at": "2026-11-06",
       "result": "just check passed on docs and maintenance branches, including 0 linter issues. Ginkgo CLI absent; ran compiled Ginkgo suite with go test flags.",
@@ -126,22 +132,10 @@
       "follow_up": "Maintainers must supply appropriate required classification labels for #403/#420; do not apply misleading documentation labels."
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-06",
-      "result": "Investigated #314 form-only token seam, local credential extraction, CIMD guard and form-only proxy port. Blind Basic-to-form normalization loses method provenance and cannot satisfy proxy forwarding/challenge contracts. No security fix attempted.",
-      "follow_up": "Coordinate provider #431 and overlapping ledger #381; add explicit authentication-method and all-mode regression matrix."
-    },
-    {
       "area": "docs",
       "checked_at": "2026-11-06",
       "result": "Verified #381 branch docs/spec exclude user activity API/UI and external producer ingestion. #188 remains broader; posted remaining acceptance slices. Confirmed #244 docs fix is live draft #433 with passing pipeline.",
       "follow_up": "Keep #188 open after ledger merge; later API needs authenticated subject scope, safe reasons and bounded cursor pagination."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-06",
-      "result": "Maintained just test with GO_FAST_TEST_PACKAGES override passed all four affected packages under race: ExtProc authorization, approval domain, end-user HTTP and OAuth2 provider. No production edits or new behavior coverage claimed.",
-      "follow_up": "New assessor and Basic-auth implementation still need dedicated tests; no full verification gate run this session."
     },
     {
       "area": "repo_assist_prs",
@@ -150,9 +144,27 @@
       "follow_up": "Await human reviews; no further #432 CI update or duplicate #244 PR needed."
     },
     {
+      "area": "code",
+      "checked_at": "2026-11-07",
+      "result": "Resumed after #206: #212/#244 have active fixes; merged #293 implements #222. Inspected #243 update/status seam and #245 retry contract. #246 needs domain authentication-mode consolidation before any API redesign.",
+      "follow_up": "Await #245 shared-deadline decision before retry contract amendment. #243 remains spec/ADR-first re-validation proposal."
+    },
+    {
+      "area": "performance",
+      "checked_at": "2026-11-07",
+      "result": "Inspected CIMD cache: returned slices/key sets are copied; miss-time eviction scans bounded default 1000 entries. No measured bottleneck justifies changing its policy or data structures. Existing #420 covers approval snapshot indexing.",
+      "follow_up": "No speculative optimization or duplicate #420 PR."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-07",
+      "result": "Race-enabled just test overrides passed impersonation, tokenexchange, oauth2server, thirdparty, outboundhttp and oauth2/cimd. Reviewed category, cross-agent, reserved-claim and cache copy/eviction/concurrency assertions. No new code/tests or full gate run.",
+      "follow_up": null
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-06",
-      "result": "Latest release v0.1.141 published 2026-11-06. Investigation-only work and unmerged existing fixes do not justify a separate release PR.",
+      "checked_at": "2026-11-07",
+      "result": "Latest release v0.1.143 published Nov 6. Investigation-only work does not justify a release PR.",
       "follow_up": null
     }
   ],
@@ -168,14 +180,14 @@
   ],
   "priorities": [
     {
-      "task": 2,
-      "item": "Resume oldest-first after #206",
-      "note": "Next #212 has active #424; inspect #222 implementation status, then #243. #188 ledger acceptance gaps recorded; #206 awaits placement/egress answers. Respect #105 hold and #27/#37/#59 unanswered clarification."
-    },
-    {
       "task": 3,
       "item": "Plan #314 Basic client authentication",
       "note": "Resolve method provenance, proxy forwarding contract and challenge handling with all-mode regression tests. Coordinate #431 provider migration and overlapping #381 token seams rather than implementing blind form normalization."
+    },
+    {
+      "task": 2,
+      "item": "Resume oldest-first after #245",
+      "note": "Next #246 client-auth mode consolidation, then #285. #222 closure evidence posted; #243 re-validation needs a spec/ADR, #245 awaits 10s vs 15s decision. Respect previous holds and active fixes."
     }
   ]
 }
