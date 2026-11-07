@@ -133,7 +133,7 @@ func TestNewJWKSAdapter(t *testing.T) {
 		{
 			name:               "valid parameters",
 			jwksURI:            "https://auth.example.com/.well-known/jwks.json",
-			httpClient:         http.DefaultClient,
+			httpClient:         &http.Client{Transport: &countingRoundTripper{}},
 			minRefreshInterval: 15 * time.Minute,
 			maxRefreshInterval: time.Hour,
 			expectError:        false,
@@ -141,7 +141,7 @@ func TestNewJWKSAdapter(t *testing.T) {
 		{
 			name:               "zero intervals",
 			jwksURI:            "https://auth.example.com/.well-known/jwks.json",
-			httpClient:         http.DefaultClient,
+			httpClient:         &http.Client{Transport: &countingRoundTripper{}},
 			minRefreshInterval: 0,
 			maxRefreshInterval: 0,
 			expectError:        false,
@@ -206,6 +206,9 @@ func TestNewJWKSAdapter(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, adapter)
+				t.Cleanup(func() {
+					assert.NoError(t, adapter.Shutdown(context.Background()))
+				})
 				assert.Equal(t, tt.jwksURI, adapter.jwksURI)
 			}
 		})
