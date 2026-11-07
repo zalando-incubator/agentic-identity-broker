@@ -161,7 +161,7 @@ func (e *CELEvaluator) ExtractClaims(claims map[string]interface{}) (*AuthResult
 	if e.displayNameProgram != nil {
 		displayName, err := e.evaluateStringExpression(e.displayNameProgram, claims)
 		if err != nil {
-			e.logger.Warn("display_name CEL expression evaluation failed, treating as absent",
+			e.logger.Warn("display_name cel expression evaluation failed, treating as absent",
 				"error", err)
 		} else if displayName != "" {
 			result.DisplayName = &displayName
@@ -172,7 +172,7 @@ func (e *CELEvaluator) ExtractClaims(claims map[string]interface{}) (*AuthResult
 	if e.emailProgram != nil {
 		email, err := e.evaluateStringExpression(e.emailProgram, claims)
 		if err != nil {
-			e.logger.Warn("email CEL expression evaluation failed, treating as absent",
+			e.logger.Warn("email cel expression evaluation failed, treating as absent",
 				"error", err)
 		} else if email != "" {
 			result.Email = &email
@@ -183,7 +183,7 @@ func (e *CELEvaluator) ExtractClaims(claims map[string]interface{}) (*AuthResult
 	if e.pictureURLProgram != nil {
 		pictureURL, err := e.evaluateStringExpression(e.pictureURLProgram, claims)
 		if err != nil {
-			e.logger.Warn("picture_url CEL expression evaluation failed, treating as absent",
+			e.logger.Warn("picture_url cel expression evaluation failed, treating as absent",
 				"error", err)
 		} else if pictureURL != "" {
 			result.PictureURL = &pictureURL

@@ -32,7 +32,7 @@ var _ = Describe("CIMD public third-party service registration", func() {
 
 	publicRequest := func() map[string]any {
 		return map[string]any{
-			"display_name":               "CIMD public service",
+			"display_name":               "cimd public service",
 			"oauth2_flavor":              "standard",
 			"client_registration":        "cimd",
 			"token_endpoint_auth_method": "none",

@@ -209,12 +209,12 @@ func (s *Service) GetApproval(ctx context.Context, approvalID id.ApprovalID, act
 	defer span.End()
 
 	if approval.IsExpired(time.Now()) && approval.Status == storage.ApprovalStatusPending {
-		s.logger.InfoContext(ctx, "approval expired (lazy detection)",
+		s.logger.InfoContext(ctx, "approval expired",
 			"approval_id", approvalID,
 			"principal", actingPrincipal,
 			"agent_id", approval.AgentID,
 			"tool_name", approval.ToolName,
-			"action", "expired",
+			"event", "approval.tool_approval.expired",
 			"expired_at", approval.ExpiresAt,
 			"timestamp", time.Now(),
 		)
@@ -266,7 +266,7 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	}
 	decision, err := resolveApprovalDecision(approval, req)
 	if err != nil {
-		s.logger.WarnContext(ctx, "approval pattern rejected", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", approval.AgentID, "tool_name", approval.ToolName, "action", "pattern_rejected", "error", err)
+		s.logger.WarnContext(ctx, "approval pattern rejected", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", approval.AgentID, "tool_name", approval.ToolName, "event", "approval.tool_approval.pattern_rejected", "error", err)
 		return nil, err
 	}
 	span.SetAttributes(attribute.String("approval.tool_pattern", decision.ToolPattern))
@@ -281,7 +281,7 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
-	s.logger.InfoContext(ctx, "approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
+	s.logger.InfoContext(ctx, "approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "event", "approval.tool_approval.approved", "timestamp", now)
 	return result, nil
 }
 
@@ -402,7 +402,7 @@ func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 		"agent_id", result.AgentID,
 		"tool_name", result.ToolName,
 		"persistence", persistence,
-		"action", "denied",
+		"event", "approval.tool_approval.denied",
 		"timestamp", now,
 	)
 
@@ -523,7 +523,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 			"principal", req.Principal,
 			"agent_id", req.AgentID,
 			"tool_name", req.ToolName,
-			"action", "created",
+			"event", "approval.tool_approval.created",
 			"expires_at", expiresAt,
 			"timestamp", now,
 		)
@@ -702,6 +702,7 @@ func (s *Service) ConsumeApproval(ctx context.Context, approvalID id.ApprovalID,
 	}
 
 	s.logger.InfoContext(ctx, "approval consumed",
+		"event", "approval.tool_approval.consumed",
 		"approval_id", approvalID,
 		"principal", actingPrincipal,
 		"agent_id", result.AgentID,

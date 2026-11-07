@@ -537,7 +537,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			accessToken := decodeBody(resp)["access_token"].(string)
 
 			logs := logBuf.String()
-			Expect(logs).To(ContainSubstring("impersonation_decision"))
+			Expect(logs).To(ContainSubstring("impersonation.decision.recorded"))
 			Expect(logs).To(ContainSubstring("internal-gateway"))
 			Expect(logs).To(ContainSubstring("gateway-prod"))
 			Expect(logs).To(ContainSubstring(targetAgent.ID.String()))
@@ -553,7 +553,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			resp := postImpersonation(req)
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusForbidden))
 			logs := logBuf.String()
-			Expect(logs).To(ContainSubstring("impersonation_decision"))
+			Expect(logs).To(ContainSubstring("impersonation.decision.recorded"))
 			Expect(logs).To(ContainSubstring("access_denied"))
 			Expect(logs).ToNot(ContainSubstring(req.Get("client_assertion")))
 		})
@@ -581,7 +581,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			accessToken := decodeBody(resp)["access_token"].(string)
 			logs := logBuf.String()
-			Expect(logs).To(ContainSubstring("impersonation_decision"))
+			Expect(logs).To(ContainSubstring("impersonation.decision.recorded"))
 			for _, credential := range []string{
 				req.Get("client_assertion"), req.Get("actor_token"), req.Get("subject_token"), accessToken,
 			} {
@@ -665,7 +665,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			Expect(decodeJWTClaims(decodeBody(resp)["access_token"].(string))["sub"]).To(Equal("user-1"))
 			logs := logBuf.String()
-			Expect(strings.Count(logs, `"event":"impersonation_decision"`)).To(Equal(1))
+			Expect(strings.Count(logs, `"event":"impersonation.decision.recorded"`)).To(Equal(1))
 			Expect(logs).To(ContainSubstring(`"rule":"rule-first"`))
 			Expect(logs).ToNot(ContainSubstring(`"rule":"rule-second"`))
 		})

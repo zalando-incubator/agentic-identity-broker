@@ -127,8 +127,8 @@ func (s *Service) Create(ctx context.Context, ps *storage.PermissionSet) error {
 	}
 
 	definition := (&storage.PermissionSet{ServiceScopes: ps.ServiceScopes}).Copy()
-	s.logger.InfoContext(ctx, "PermissionSetCreated",
-		"action", "permission_set_created",
+	s.logger.InfoContext(ctx, "permission set created",
+		"event", "permissionset.permission_set.created",
 		"permission_set_id", ps.ID,
 		"service_scopes", definition.ServiceScopes)
 
@@ -230,8 +230,8 @@ func (s *Service) Update(ctx context.Context, ps *storage.PermissionSet) error {
 	}
 
 	definition := (&storage.PermissionSet{ServiceScopes: ps.ServiceScopes}).Copy()
-	s.logger.InfoContext(ctx, "PermissionSetUpdated",
-		"action", "permission_set_updated",
+	s.logger.InfoContext(ctx, "permission set updated",
+		"event", "permissionset.permission_set.updated",
 		"permission_set_id", ps.ID,
 		"service_scopes", definition.ServiceScopes,
 		"previous_observed_service_scopes", previous.ServiceScopes,
@@ -290,8 +290,8 @@ func (s *Service) Delete(ctx context.Context, psID id.PermissionSetID) error {
 	}
 
 	if deleted {
-		s.logger.InfoContext(ctx, "PermissionSetDeleted",
-			"action", "permission_set_deleted",
+		s.logger.InfoContext(ctx, "permission set deleted",
+			"event", "permissionset.permission_set.deleted",
 			"permission_set_id", psID)
 	}
 

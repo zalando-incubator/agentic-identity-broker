@@ -221,7 +221,11 @@ func TestTokenExchangeTelemetryUsesSessionMetadataOnly(t *testing.T) {
 			for _, attr := range spans.Ended()[0].Attributes() {
 				spanAttrs[string(attr.Key)] = attr.Value.AsInterface()
 			}
+			assert.Equal(t, "token_exchange.token.exchange_failed", attrs["event"])
 			for key, value := range attrs {
+				if key == "event" {
+					continue
+				}
 				assert.Equal(t, value, spanAttrs[key], key)
 			}
 			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "RAW_SESSION_CAUSE_SENTINEL", "RAW_SESSION_DESCRIPTION_SENTINEL", "PROVIDER_CODE_SENTINEL")
@@ -284,7 +288,7 @@ func TestOAuth2TokenHandler_RepeatedImpersonationParametersAreAudited(t *testing
 			assert.Zero(t, service.impersonateCalls, "ambiguous credentials must not reach authentication")
 			require.Len(t, *logs.records, 2)
 			audit := (*logs.records)[0]
-			assert.Equal(t, "impersonation_decision", audit.message)
+			assert.Equal(t, "impersonation.decision.recorded", audit.attrs["event"])
 			assert.Equal(t, "invalid_request", audit.attrs["outcome"])
 			assert.Equal(t, "invalid_request", audit.attrs["oauth_error_code"])
 			assert.Equal(t, service.target.Agent.ID.String(), audit.attrs["target_agent_id"])
@@ -360,7 +364,7 @@ func TestOAuth2TokenHandler_ImpersonationTelemetryAndResponseWrites(t *testing.T
 			var record tokenEndpointLogRecord
 			var found bool
 			for _, candidate := range *logs.records {
-				if candidate.message == "Token exchange failed" || candidate.message == "token_exchange_succeeded" {
+				if isTokenExchangeOutcomeRecord(candidate) {
 					record, found = candidate, true
 				}
 			}

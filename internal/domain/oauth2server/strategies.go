@@ -117,7 +117,7 @@ func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester 
 		}
 		for k, v := range customClaims {
 			if baseClaims[k] {
-				s.logger.WarnContext(ctx, "CEL expression returned reserved claim, skipping", "claim", k)
+				s.logger.WarnContext(ctx, "cel expression returned reserved claim, skipping", "claim", k)
 				continue
 			}
 			if actor != nil && k == "act" {
@@ -133,7 +133,7 @@ func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester 
 	jwtToken, err := builder.Build()
 	if err != nil {
 		buildErr := fmt.Errorf("failed to build JWT: %w", err)
-		s.logger.ErrorContext(ctx, "failed to build JWT",
+		s.logger.ErrorContext(ctx, "failed to build jwt",
 			"client_id", requester.GetClient().GetID(),
 			"subject", subject,
 			"granted_scopes", requester.GetGrantedScopes(),

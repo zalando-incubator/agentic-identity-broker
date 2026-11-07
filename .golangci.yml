@@ -22,6 +22,8 @@ linters:
           msg: Log through the injected *slog.Logger (coding-standards/LOGGING.md section 1).
     sloglint:
       context: scope
+      static-msg: true
+      key-naming-case: snake
   exclusions:
     paths:
       - web/node_modules
@@ -29,3 +31,8 @@ linters:
       - path: ^(cmd|tools)/
         linters:
           - forbidigo
+      # LOGGING.md section 2.3: a namespaced family joins snake_case segments with dots.
+      - linters:
+          - sloglint
+        text: keys should be written in snake_case
+        source: '"token_exchange(\.[a-z0-9_]+)+"'

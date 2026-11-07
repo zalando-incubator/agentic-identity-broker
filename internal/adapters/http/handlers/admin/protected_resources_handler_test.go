@@ -76,6 +76,7 @@ func TestProtectedResourcesHandler_Add_EncodedMemberAddressingAndAudit(t *testin
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 	assert.Equal(t, resource, response.Resource)
 	assert.Equal(t, []string{resource}, response.ProtectedResources)
+	assert.Contains(t, audit.String(), `"event":"service.protected_resource.added"`)
 	assert.Contains(t, audit.String(), `"resource_uri":"`+resource+`"`)
 	assert.NotContains(t, audit.String(), escaped)
 	repo.AssertExpectations(t)
@@ -90,6 +91,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 		configure  func(*MockProviderRepository)
 		wantStatus int
 		wantETag   string
+		wantEvent  string
 		wantAudit  string
 	}{
 		{
@@ -101,6 +103,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			wantStatus: http.StatusCreated,
 			wantETag:   `"8"`,
 			wantAudit:  `"resource_uri":"` + resource + `"`,
+			wantEvent:  "service.protected_resource.added",
 		},
 		{
 			name: "replay is OK with existing ETag",
@@ -110,7 +113,6 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			},
 			wantStatus: http.StatusOK,
 			wantETag:   `"8"`,
-			wantAudit:  `"resource_uri":"` + resource + `"`,
 		},
 		{
 			name:       "rejects malformed JSON body",
@@ -118,6 +120,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			configure:  func(*MockProviderRepository) {},
 			wantStatus: http.StatusBadRequest,
 			wantAudit:  `"resource_uri":null`,
+			wantEvent:  "service.protected_resource.add_rejected",
 		},
 		{
 			name: "maps cross-service resource ownership conflict",
@@ -127,6 +130,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			},
 			wantStatus: http.StatusConflict,
 			wantAudit:  `"resource_uri":"` + resource + `"`,
+			wantEvent:  "service.protected_resource.add_rejected",
 		},
 		{
 			name:       "rejects missing body",
@@ -134,6 +138,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			configure:  func(*MockProviderRepository) {},
 			wantStatus: http.StatusBadRequest,
 			wantAudit:  `"resource_uri":null`,
+			wantEvent:  "service.protected_resource.add_rejected",
 		},
 		{
 			name:       "rejects malformed URI without leaking input",
@@ -141,6 +146,7 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 			configure:  func(*MockProviderRepository) {},
 			wantStatus: http.StatusBadRequest,
 			wantAudit:  `"resource_uri":null`,
+			wantEvent:  "service.protected_resource.add_rejected",
 		},
 	}
 	for _, tt := range tests {
@@ -154,7 +160,14 @@ func TestProtectedResourcesHandler_Create_StatusValidationAndAudit(t *testing.T)
 
 			require.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantETag, w.Header().Get("ETag"))
-			assert.Contains(t, audit.String(), tt.wantAudit)
+			if tt.wantAudit == "" {
+				assert.Empty(t, audit.String(), "an add that changed nothing must not emit a success audit")
+			} else {
+				assert.Contains(t, audit.String(), tt.wantAudit)
+			}
+			if tt.wantEvent != "" {
+				assert.Contains(t, audit.String(), `"event":"`+tt.wantEvent+`"`)
+			}
 			if tt.wantStatus == http.StatusBadRequest {
 				assert.NotContains(t, audit.String(), "raw-secret-input")
 				repo.AssertNotCalled(t, "AddProtectedResource", mock.Anything, mock.Anything, mock.Anything)
@@ -176,6 +189,7 @@ func TestProtectedResourcesHandler_Remove_EncodedRoutesErrorsAndAudit(t *testing
 		configure  func(*MockProviderRepository)
 		wantStatus int
 		wantETag   string
+		wantEvent  string
 		wantAudit  string
 	}{
 		{
@@ -189,6 +203,7 @@ func TestProtectedResourcesHandler_Remove_EncodedRoutesErrorsAndAudit(t *testing
 			wantStatus: http.StatusOK,
 			wantETag:   `"11"`,
 			wantAudit:  `"resource_uri":"` + resource + `"`,
+			wantEvent:  "service.protected_resource.removed",
 		},
 		{
 			name:    "maps absent resource to not found",
@@ -198,6 +213,7 @@ func TestProtectedResourcesHandler_Remove_EncodedRoutesErrorsAndAudit(t *testing
 			},
 			wantStatus: http.StatusNotFound,
 			wantAudit:  `"resource_uri":"` + resource + `"`,
+			wantEvent:  "service.protected_resource.remove_rejected",
 		},
 		{
 			name:       "rejects malformed escaped resource without raw audit input",
@@ -205,6 +221,7 @@ func TestProtectedResourcesHandler_Remove_EncodedRoutesErrorsAndAudit(t *testing
 			configure:  func(*MockProviderRepository) {},
 			wantStatus: http.StatusBadRequest,
 			wantAudit:  `"resource_uri":null`,
+			wantEvent:  "service.protected_resource.remove_rejected",
 		},
 	}
 	for _, tt := range tests {
@@ -219,6 +236,7 @@ func TestProtectedResourcesHandler_Remove_EncodedRoutesErrorsAndAudit(t *testing
 			require.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantETag, w.Header().Get("ETag"))
 			assert.Contains(t, audit.String(), tt.wantAudit)
+			assert.Contains(t, audit.String(), `"event":"`+tt.wantEvent+`"`)
 			if tt.wantStatus == http.StatusOK {
 				var response protectedResourceMutationResponse
 				require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
@@ -248,6 +266,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 		configure  func(*MockProviderRepository)
 		wantStatus int
 		wantETag   string
+		wantEvent  string
 		wantSource string
 		wantTarget string
 	}{
@@ -262,6 +281,17 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantETag:   `"12"`,
 			wantSource: `"source_resource_uri":"` + from + `"`,
 			wantTarget: `"target_resource_uri":"` + to + `"`,
+			wantEvent:  "service.protected_resource.renamed",
+		},
+		{
+			name:    "unchanged rename emits no success audit",
+			escaped: url.PathEscape(to),
+			body:    `{"to":"https://api.example.com/renamed"}`,
+			configure: func(repo *MockProviderRepository) {
+				repo.On("RenameProtectedResource", mock.Anything, mock.Anything, to, to).Return(ports.ProtectedResourceMutationResult{Resource: to, ProtectedResources: []string{to}, Version: 12, Changed: false}, nil)
+			},
+			wantStatus: http.StatusOK,
+			wantETag:   `"12"`,
 		},
 		{
 			name:    "maps target conflict",
@@ -273,6 +303,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantStatus: http.StatusConflict,
 			wantSource: `"source_resource_uri":"` + from + `"`,
 			wantTarget: `"target_resource_uri":"` + to + `"`,
+			wantEvent:  "service.protected_resource.rename_rejected",
 		},
 		{
 			name:    "maps missing source to not found",
@@ -284,6 +315,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantStatus: http.StatusNotFound,
 			wantSource: `"source_resource_uri":"` + from + `"`,
 			wantTarget: `"target_resource_uri":"` + to + `"`,
+			wantEvent:  "service.protected_resource.rename_rejected",
 		},
 		{
 			name:       "rejects malformed JSON with independently normalized source",
@@ -293,6 +325,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantStatus: http.StatusBadRequest,
 			wantSource: `"source_resource_uri":"` + from + `"`,
 			wantTarget: `"target_resource_uri":null`,
+			wantEvent:  "service.protected_resource.rename_rejected",
 		},
 		{
 			name:       "rejects malformed escaped source without raw audit input",
@@ -302,6 +335,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantStatus: http.StatusBadRequest,
 			wantSource: `"source_resource_uri":null`,
 			wantTarget: `"target_resource_uri":"` + to + `"`,
+			wantEvent:  "service.protected_resource.rename_rejected",
 		},
 		{
 			name:       "rejects malformed target without raw audit input",
@@ -311,6 +345,7 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 			wantStatus: http.StatusBadRequest,
 			wantSource: `"source_resource_uri":"` + from + `"`,
 			wantTarget: `"target_resource_uri":null`,
+			wantEvent:  "service.protected_resource.rename_rejected",
 		},
 	}
 	for _, tt := range tests {
@@ -324,8 +359,15 @@ func TestProtectedResourcesHandler_Rename_EncodedRoutesMappingsAndAudit(t *testi
 
 			require.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, tt.wantETag, w.Header().Get("ETag"))
-			assert.Contains(t, audit.String(), tt.wantSource)
-			assert.Contains(t, audit.String(), tt.wantTarget)
+			if tt.wantSource == "" && tt.wantTarget == "" {
+				assert.Empty(t, audit.String(), "a rename that changed nothing must not emit a success audit")
+			} else {
+				assert.Contains(t, audit.String(), tt.wantSource)
+				assert.Contains(t, audit.String(), tt.wantTarget)
+			}
+			if tt.wantEvent != "" {
+				assert.Contains(t, audit.String(), `"event":"`+tt.wantEvent+`"`)
+			}
 			if tt.wantStatus == http.StatusBadRequest {
 				assert.NotContains(t, audit.String(), "raw-target-input")
 				assert.NotContains(t, audit.String(), "%ZZ")
@@ -357,7 +399,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			request:    protectedResourceCollectionRequest(http.MethodPost, unresolvedServiceID, `{"resource_uri":`),
 			wantStatus: http.StatusBadRequest,
 			wantAudit: []string{
-				`"action":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"outcome":"rejected"`, `"resource_uri":null`,
+				`"event":"service.protected_resource.add_rejected"`, `"operation":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"outcome":"rejected"`, `"resource_uri":null`,
 			},
 		},
 		{
@@ -367,7 +409,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
+				`"event":"service.protected_resource.add_rejected"`, `"operation":"add"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
 			},
 		},
 		{
@@ -377,7 +419,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"remove"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
+				`"event":"service.protected_resource.remove_rejected"`, `"operation":"remove"`, `"service_id":"` + unresolvedServiceID + `"`, `"resource_uri":"` + resource + `"`,
 			},
 		},
 		{
@@ -387,7 +429,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			resolveServiceID: true,
 			wantStatus:       http.StatusNotFound,
 			wantAudit: []string{
-				`"action":"rename"`, `"service_id":"` + unresolvedServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":"https://api.example.com/renamed"`,
+				`"event":"service.protected_resource.rename_rejected"`, `"operation":"rename"`, `"service_id":"` + unresolvedServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":"https://api.example.com/renamed"`,
 			},
 		},
 		{
@@ -396,7 +438,7 @@ func TestProtectedResourcesHandler_RejectedMutationsAuditRawRoutedServiceID(t *t
 			request:    protectedResourceRequest(http.MethodPatch, validServiceID, escaped, `{"to":"://raw-secret-target"}`),
 			wantStatus: http.StatusBadRequest,
 			wantAudit: []string{
-				`"action":"rename"`, `"service_id":"` + validServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":null`,
+				`"event":"service.protected_resource.rename_rejected"`, `"operation":"rename"`, `"service_id":"` + validServiceID + `"`, `"source_resource_uri":"` + resource + `"`, `"target_resource_uri":null`,
 			},
 			mustNotLog: []string{"raw-secret-target"},
 		},
