@@ -5,7 +5,9 @@
 `api/enduser/openapi.yaml` before it writes code (Principles IV and X). It also renders them in
 `docs/api/enduser-api.md` and `docs/reference/token-exchange.md`.
 
-**Version**: `info.version` changes from `1.1.0` to `1.2.0`. All changes are additive, or they
+**Version**: `info.version` changes from `1.2.0` to `1.3.0`. The default branch already took
+`1.2.0` for ADR 046's observed refresh rejection (#378), so this feature's additions need the next
+minor version. All changes are additive, or they
 change the target of the existing optional `error_uri` action link within its documented recovery
 purpose (ARCHITECTURE.md › API versioning; research R13).
 
@@ -117,12 +119,39 @@ Existing revoked-grant handling (`invalid_grant`) and replay and rotation semant
 `client_credentials` with any virtual scope returns `400 invalid_scope`, with the description
 "service scopes require a user authorization".
 
-## 4. `POST /oauth2/token`: proxy `refresh_token` (DEC-002)
+## 4. `POST /oauth2/token`: proxy `refresh_token` (DEC-002, API-PROXY-REFRESH-VALIDATION)
 
-The documentation states that the broker removes virtual scopes from the forwarded `scope` and
-omits `scope` when it becomes empty. The upstream response is returned unchanged, including a
-rotated `refresh_token`. A successful proxy refresh does not attest that any broker-managed service
-is usable.
+**Pre-forward validation (Proposed, API-PROXY-REFRESH-VALIDATION)**: When the request's `scope`
+contains at least one token with the exact `<public-url>/sessions/` prefix, the broker validates
+before it calls the upstream token endpoint:
+
+1. Classify every broker-prefixed token with the [scope grammar](./virtual-service-scope.md#grammar).
+2. Resolve the request's agent through the existing token-endpoint client resolution
+   (`TokenGrantResolution`); no new client-authentication rule is added.
+3. Resolve each virtual scope to a current service and check the agent's eligibility, as in
+   [Resolution](./virtual-service-scope.md#resolution) steps 1–3.
+
+| Condition | Response | Upstream call |
+|---|---|---|
+| Malformed broker-prefixed token | `400 invalid_scope`, `requested service scope is not permitted` | None |
+| Unknown service | `400 invalid_scope`, `requested service scope is not permitted` | None |
+| Service not eligible for the agent | `400 invalid_scope`, `requested service scope is not permitted` | None |
+| Agent or service lookup fails | `500 server_error` | None |
+| All virtual scopes valid | Strip them and forward (below) | One |
+| No broker-prefixed token | Existing proxy path, unchanged | One |
+
+```json
+{"error":"invalid_scope","error_description":"requested service scope is not permitted"}
+```
+
+Pre-forward validation never checks provider-session usability or grant coverage, and it never
+consumes or rotates the upstream refresh token. Lookalike tokens with another origin stay ordinary
+scopes and are forwarded unchanged.
+
+**Forwarding (DEC-002)**: The broker removes virtual scopes from the forwarded `scope` and omits
+`scope` when it becomes empty. The upstream response is returned unchanged, including a rotated
+`refresh_token`. The broker does not veto any upstream response. A successful proxy refresh does
+not attest that any broker-managed service is usable.
 
 ## 5. `GET /api/consent/agents/{agent-id}`: requested services (API-CONSENT)
 

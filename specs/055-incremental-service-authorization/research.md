@@ -100,9 +100,10 @@ this check. Transient results fail closed:
 
 Transient results never write an unusability marker.
 
-**Proposed (DEC-003)**: Definitive provider refresh rejection stays persisted through the existing
-#271 marker, `refresh_token_expires_at = rejection time`, with no schema change. ADR 048 (draft)
-records this behavior and retires ADR 044's stale "leaves the stored session unchanged" clause.
+**Proposed (DEC-003)**: Definitive provider refresh rejection stays persisted through merged
+[ADR 046](../../adrs/046-observed-refresh-token-rejection.md)'s observed rejection,
+`UserSession.RefreshRejectedAt` with `requires_reauthentication`, with no schema change. (Before
+ADR 046 merged, the #271 marker reused `refresh_token_expires_at`.) ADR 048 records this behavior and retires ADR 044's stale "leaves the stored session unchanged" clause.
 Every consumer reads the same row: consent, the session list and detail, tool exchange, and the
 background refresh and sweep. Reconnect precedence and update-only termination stay as ADR 038 and
 the `WithLockedSession` contract define them (FR-018).
@@ -243,16 +244,40 @@ no user whose sessions could be checked.
 (FR-012). fosite's scope strategy is extended so that virtual scopes pass the per-client
 allow-list. The broker checks above remain authoritative.
 
-## R7 — Proxy refresh (DEC-002, FR-021)
+## R7 — Proxy refresh (DEC-002, API-PROXY-REFRESH-VALIDATION, FR-002, FR-021)
 
 **Decision**: The proxy `/oauth2/token` path removes virtual scopes from the `scope` form value of
 `refresh_token` requests and omits `scope` when nothing remains. It forwards everything else and the
 upstream response unchanged. It runs no post-response usability check.
 
-**Rationale**: This was clarified. It keeps upstream rotation intact.
+**Proposed (API-PROXY-REFRESH-VALIDATION, maintainer direction on reanalysis I2)**: Before that
+forward, a request whose `scope` contains a broker-prefixed token is validated in the domain layer,
+not the handler:
 
-**Alternative**: A post-response veto. This was rejected because it would discard the only successor
-credential after an upstream success.
+- every broker-prefixed token is classified with `servicescope.Parse`;
+- the agent comes from the existing token-endpoint client resolution (`TokenGrantResolution`);
+- each scope is resolved and checked for eligibility with the same `servicescope` resolver that
+  authorization uses, with no session or usability lookup.
+
+Malformed, unknown and ineligible scopes return `400 invalid_scope` with
+`requested service scope is not permitted`, the authorization endpoint's existing description.
+Agent or service lookup failure returns `500 server_error`. Both happen before
+`TokenOutcomeService.Proxy` calls the upstream endpoint, so the upstream refresh token is neither
+consumed nor rotated. Requests with only ordinary scopes skip validation and keep their existing
+path and cost. Upstream responses, including failures and rotation, are never vetoed.
+
+**Rationale**: FR-002 forbids silently accepting invalid broker service scopes on any path, and
+pre-forward validation cannot lose a rotated credential. The checks reuse the authorization
+resolver, so all flows share one definition of "valid service scope".
+
+**Alternatives**:
+
+- A post-response veto. This was rejected because it would discard the only successor credential
+  after an upstream success.
+- An explicit proxy-refresh exception to FR-002 that silently strips invalid scopes. This was
+  rejected because a client could not tell that its requested service was never valid.
+- Also checking provider-session usability before forwarding. This was rejected because DEC-002
+  makes no usability promise for proxy refresh, and the check adds provider I/O to every refresh.
 
 ## R8 — Gateway challenge (FR-005, API-EXCHANGE-CHALLENGE, API-METADATA-CONFIG)
 
@@ -382,10 +407,31 @@ These are application components built from existing design-system primitives (`
 
 ## R13 — API versioning
 
-**Decision**: End-User API `info.version` changes from `1.1.0` to `1.2.0` for the additive fields,
+**Decision**: End-User API `info.version` changes from `1.2.0` to `1.3.0` for the additive fields,
 route, and error. The `error_uri` target change stays within the documented recovery purpose, as
 the ARCHITECTURE versioning note and ADR 044 rationale describe. The ExtProc metadata contract
-changes additively; the ExtProc has no versioned OpenAPI.
+changes additively; the ExtProc has no versioned OpenAPI. The default branch took `1.2.0` for
+ADR 046's observed refresh rejection (#378) after this feature's first plan, so Feature 055 uses the
+next minor version.
+
+## R14 — Dot-segment canonical IDs (DEC-005, maintainer direction on reanalysis U4)
+
+**Decision (Proposed, DEC-005)**: Accept a known defect. `canonical.Validate` accepts the complete
+identifiers `.` and `..`, and browsers and URL libraries normalize those path segments, so such a
+service's emitted scope, service page and recovery link are not reliably addressable. This feature
+emits them unchanged, adds no UUID fallback and does not change canonical-ID validation. The
+limitation is documented in the spec, the scope contract and the operator guide.
+[Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446) restricts
+`.` and `..` as canonical IDs for services and agents, with a migration check and an Admin API
+change.
+
+**Rationale**: The root cause is canonical-ID validation, which is shared with agents and needs its
+own migration and Admin API version decision. A per-identifier fallback in this feature would add
+an exception to the "emit the current canonical ID" rule that #446 makes unnecessary.
+
+**Alternatives**: Emit the UUID scope and recovery/page URLs for those two identifiers only. This
+was rejected for this feature as a special case that #446 removes. Tightening the validator here
+was rejected because it is a backward-incompatible Admin API change outside this feature's scope.
 
 ## Deferred findings (outside this feature; not tasks)
 

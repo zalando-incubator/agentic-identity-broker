@@ -5,6 +5,22 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Planning update — 2026-11-07 (reanalysis I2 and U4)
+
+The maintainer directed how to resolve the two open contract boundaries. Both are now in the
+specification and plan as Proposed items that the next approval comment covers; nothing below is
+implemented by this planning run.
+
+- **I2**: proxy refresh validates broker-prefixed scopes before forwarding
+  ([End-User API §4](./contracts/enduser-api.md#4-post-oauth2token-proxy-refresh_token-dec-002-api-proxy-refresh-validation),
+  approval items API-PROXY-REFRESH-VALIDATION and ADR-SCOPES-REV1). T099 implements it.
+- **U4**: the canonical IDs `.` and `..` are a known defect for this feature (DEC-005). No UUID
+  fallback and no validation change; [issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446)
+  restricts them. T100 documents the limitation only.
+
+The "Remaining reanalysis contract boundaries" section of the 2026-10-29 checkpoint below keeps
+its historical proposals; this update supersedes its open questions.
+
 ## Implementation checkpoint — 2026-11-07
 
 **85 of 101 tasks complete; all 19 feature acceptance scenarios pass locally.** The supplied
@@ -406,6 +422,12 @@ Keep these variants inside their existing owning scenarios, with semantic-red as
 - US4 S2: Save successfully, deterministically reassign the canonical ID, then follow the returned
   authorize URL with its original JWE. Assert `invalid_scope`, no authorization code and no proxy
   redirect, even when the replacement service has a usable session and grant coverage.
+- US3 S3: proxy refresh with a malformed (`/sessions/github/`), unknown (`/sessions/unknown`) or
+  agent-ineligible broker scope returns `400 invalid_scope` with
+  `requested service scope is not permitted`; the mock upstream IdP records zero calls and the
+  upstream refresh token still works afterwards. Supporting unit cases cover a lookup failure,
+  which returns `500 server_error` with zero upstream calls. An ordinary-only refresh and a lookalike-origin scope keep the existing
+  forwarding path.
 - US3 S1: full → narrowed → scope-less refresh retains narrowed scopes and every assurance binding;
   test subsequent unusability and attempts to restore removed scopes without consuming the token.
 - Supporting T024 unit cases: valid scope-sufficient, identity-matching access with absent refresh

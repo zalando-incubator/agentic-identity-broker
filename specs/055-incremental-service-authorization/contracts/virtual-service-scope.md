@@ -1,6 +1,7 @@
 # Contract: Virtual Service Scope
 
-**Status**: Proposed. Approval items API-CONSENT, API-LOCAL-SCOPES, DEC-001, and ADR-SCOPES (see
+**Status**: Proposed. Approval items API-CONSENT, API-LOCAL-SCOPES, API-PROXY-REFRESH-VALIDATION,
+DEC-001, DEC-005, ADR-SCOPES, and ADR-SCOPES-REV1 (see
 [plan.md](../plan.md#approval-items)).
 
 ## Grammar
@@ -42,7 +43,8 @@ Examples with `public_url: https://broker.example.com`:
    - when the agent declares `service_requirements`, the service must appear in them;
    - otherwise, one of the agent's declared permission sets must cover the service.
 3. An unknown or ineligible service returns `invalid_scope`. A repository failure returns
-   `server_error`.
+   `server_error`. Proxy refresh applies the grammar and steps 1–3 before forwarding, with no
+   upstream call on failure ([End-User API §4](./enduser-api.md#4-post-oauth2token-proxy-refresh_token-dec-002-api-proxy-refresh-validation)).
 4. Duplicate tokens for the same service form one Requested Service Set entry.
 5. When the request carries an existing Service-Scope Binding, the resolved UUID must equal the
    bound UUID. This applies independently at grant submission, protected authorize re-entry after
@@ -59,6 +61,14 @@ examples. It uses `<public-url>/sessions/<canonical_id>` when the service has a 
 - in `/.well-known/oauth-authorization-server` `scopes_supported` (FR-014);
 - in an upstream authorization or refresh request (FR-013);
 - as a provider scope at the third-party authorization endpoint.
+
+**Known limitation (DEC-005)**: Canonical-ID validation accepts the complete identifiers `.` and
+`..`. The broker emits them unchanged, as for every canonical ID, but browsers and URL libraries
+normalize `/sessions/.` and `/sessions/..`, so the scope, service page and recovery link of such a
+service do not reliably name it. This feature adds no UUID fallback and does not change canonical-ID
+validation. [Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446)
+restricts these identifiers. Until then, an operator gives such a service another canonical ID or
+none; the UUID form always works.
 
 ## Granted scope and identity durability
 

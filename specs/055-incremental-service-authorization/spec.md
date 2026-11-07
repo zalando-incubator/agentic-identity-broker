@@ -93,6 +93,42 @@ approved yet. All of them are registered in `plan.md` Approval Items.
   only once access expires. *Reason*: match the existing valid-access edge case and actual calls.
   *Main alternative*: require refreshability even for valid access, causing unnecessary login.
 
+### Session 2026-11-07 (planning — maintainer direction on reanalysis I2 and U4)
+
+The maintainer's planning direction on PR #323 resolves the two open reanalysis findings. Both
+changes are registered in `plan.md` Approval Items and remain Proposed until the maintainer's 👍 on
+the pipeline's approval comment.
+
+- **I2 — Proxy-refresh pre-forward validation (new approval item API-PROXY-REFRESH-VALIDATION;
+  ADR-SCOPES-REV1; Proposed)**: FR-002 rejects malformed, unknown and ineligible broker service
+  scopes, but FR-021 only specified stripping for proxy refresh. Before a proxy-mode refresh that
+  carries any broker-prefixed scope is forwarded, the broker validates scope syntax, resolves the
+  request's agent through the existing client-resolution path, and checks service existence and
+  agent eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` with
+  `requested service scope is not permitted`; agent or service lookup failure returns
+  `500 server_error`. Neither makes an upstream call. Ordinary-scope-only requests keep their
+  existing path. There is no provider-usability check and no veto of upstream responses or rotation.
+  FR-002, FR-021, Story 3 Scenario 3, Journey 3 and the edge cases are updated. *Reason*: satisfy
+  FR-002 on every path without losing rotated upstream credentials. *Main alternative*: an explicit
+  proxy-refresh exception to FR-002 that silently strips invalid broker scopes.
+- **U4 — Dot-segment canonical IDs (new approval item DEC-005; ADR-SCOPES-REV1; Proposed)**:
+  Existing canonical-ID validation accepts the complete identifiers `.` and `..`. Browsers and URL
+  libraries normalize those path segments, so the service page, recovery link and emitted scope of
+  such a service do not reliably name it. This feature accepts that as a known defect: it adds no
+  UUID fallback for those two identifiers and does not change canonical-ID validation.
+  [Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446) restricts
+  `.` and `..` as canonical IDs. The limitation is recorded in the Edge Cases, FR-001 and
+  Assumptions. *Reason*: the root cause is canonical-ID validation, which also affects agents and
+  needs its own migration and Admin API change. *Main alternative*: emit UUID scopes and
+  recovery/page URLs for those two identifiers only, a per-identifier exception in this feature.
+- **Reconciliation with merged ADR 046 and final numbering**: The definitive unusability state is
+  ADR 046's observed rejection, `UserSession.RefreshRejectedAt` with `requires_reauthentication`,
+  not the former `refresh_token_expires_at` marker. The ADR drafts became ADR 048 (recovery return)
+  and ADR 049 (virtual scopes), and the bindings migration became `048_add_service_scope_bindings`,
+  because ADR and migration numbers 045–047 were taken on the default branch. DEC-003, DEC-004 and
+  Database Requirements use these values. *Reason*: merged ADR 046 is binding. No behavior beyond
+  the approved items changes.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Recover an optional-service tool call through focused consent (Priority: P1)
@@ -140,7 +176,7 @@ A user and client should not mistake a broker refresh for proof that an unusable
 
 1. **Given** a locally issued refresh token already carries GitHub's virtual scope and its grant remains active, **When** a subsequent refresh finds GitHub still covered and usable for the effective permission-set scopes, **Then** refresh succeeds; if a later refresh finds GitHub unusable, including a valid token missing a permission-set scope under all-scopes/no-requirements configuration, it returns non-consuming `invalid_scope`. A successful narrowed refresh persists only the narrowed `Scope` while retaining all service bindings; the next scope-less refresh cannot restore removed scopes and must still recheck GitHub.
 2. **Given** a proxy-mode authorization request with ordinary scopes plus GitHub's virtual scope, **When** the broker verifies coverage and usability, **Then** it sends only the ordinary scopes upstream, retains the original request for consent continuation, and never modifies the upstream token's signed claims to add a virtual scope.
-3. **Given** a proxy-mode refresh carrying GitHub's virtual scope and an unusable GitHub session, **When** it is forwarded, **Then** no broker-only scope reaches the upstream provider, the broker forwards the upstream outcome including any rotated refresh token without a post-response service-usability veto, and the next attempted GitHub exchange still fails with its service-specific challenge and recovery action until repaired.
+3. **Given** a proxy-mode refresh carrying GitHub's virtual scope and an unusable GitHub session, **When** it is forwarded, **Then** no broker-only scope reaches the upstream provider, the broker forwards the upstream outcome including any rotated refresh token without a post-response service-usability veto, and the next attempted GitHub exchange still fails with its service-specific challenge and recovery action until repaired. If the proxy refresh instead carries a malformed, unknown or agent-ineligible broker service scope, the broker returns `400 invalid_scope` before forwarding, makes no upstream call and leaves the upstream refresh token unconsumed.
 4. **Given** a local authorization code obtained after GitHub step-up, **When** the code is exchanged, **Then** both the granted token-response `scope` and signed access-token `scope` claim include the granted GitHub virtual scope, subsequent local refresh retains and rechecks that service even without a request `scope`, and existing PKCE, client authentication, code replay protection and grant revocation rules remain enforced.
 
 ### User Story 4 - Integrate without leaking or over-granting scopes (Priority: P2)
@@ -172,7 +208,8 @@ Operators can explain and deploy the scope challenge without publishing a catalo
 - A grant denial with an existing session needs consent, not simply another provider login. Opening a service page alone does not grant an agent permission.
 - Ordinary external URL-valued scopes are not interpreted as broker service requests merely because their paths contain `/sessions/`; ordinary-scope validation still applies.
 - Renaming or reusing a canonical ID cannot silently rebind an in-flight authorization context or an existing local refresh grant to a different service. Revalidate the originally resolved service identity and fail closed on a mismatch. UUID scopes remain durable; historical canonical aliases are not retained. Already-issued signed access tokens are not rewritten by a rename.
-- Proxy refresh may succeed while a broker-managed service is unusable. It must preserve the upstream outcome, including a rotated refresh token; only a subsequent service exchange or interactive authorization establishes the broker service's current usability.
+- Proxy refresh may succeed while a broker-managed service is unusable. It must preserve the upstream outcome, including a rotated refresh token; only a subsequent service exchange or interactive authorization establishes the broker service's current usability. A proxy refresh with a malformed, unknown or ineligible broker service scope is rejected before forwarding; a lookup failure is a `server_error` with no upstream call.
+- Known limitation (DEC-005): a service whose canonical ID is exactly `.` or `..` has a scope, service page and recovery link that browsers normalize to another path. This feature adds no fallback; [issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446) restricts those identifiers. Operators should give such a service another canonical ID or none, so the broker emits its UUID form.
 
 ## Concrete Example Journeys *(mandatory)*
 
@@ -567,6 +604,19 @@ Pragma: no-cache
 
 The same successful upstream response reaches the client, including `SYNTHETIC_UPSTREAM_REFRESH_2`. The broker does not run a post-response service-usability veto, fabricate a virtual-scope grant in the response or alter upstream signed claims. An upstream failure likewise retains its existing proxy handling; no new broker service-usability error is introduced for proxy refresh.
 
+**Step 3a — Invalid broker scope on proxy refresh (Proposed, API-PROXY-REFRESH-VALIDATION)**: The client instead requests `scope=openid%20https%3A%2F%2Fbroker.example.com%2Fsessions%2Funknown`. Before forwarding, the broker validates the syntax, resolves the agent through its existing client-resolution path, and finds no such service:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+
+{"error":"invalid_scope","error_description":"requested service scope is not permitted"}
+```
+
+The corporate identity provider receives no request, so `SYNTHETIC_UPSTREAM_REFRESH_1` stays valid. A malformed scope such as `https://broker.example.com/sessions/github/` or a service the agent is not configured to use gets the same response. If the agent or service lookup fails, the broker returns `500 server_error`, also without an upstream call. A request with only ordinary scopes keeps the existing proxy path.
+
 **Step 4 — Tool retry and recovery**: The client retries the GitHub tool using its renewed upstream credential. The broker still refuses GitHub exchange with Journey 1 Step 2's service-specific error and the gateway preserves the challenge and URL elicitation. Alice follows Journey 2's login and return flow (or Journey 1's interactive step-up if coverage is missing); only then does the next GitHub tool call succeed. Client-owned bounded retries prevent a silent refresh loop.
 
 **Observable result**: Zero broker virtual scopes reach the corporate identity provider on either authorization or refresh. Proxy refresh preserves upstream rotation but does not attest to service usability; local issuance's stronger refresh check is not claimed for proxy mode.
@@ -585,8 +635,8 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 
 ### Functional Requirements
 
-- **FR-001**: Define a broker-only virtual scope per configured third-party service: the configured public origin plus `/sessions/{identifier}`. Emit the canonical ID when present, otherwise the UUID; accept both current identifier forms.
-- **FR-002**: Recognize virtual scopes only under the configured broker public origin and the service-session path. Reject malformed, unknown or agent-unconfigured broker service scopes without creating a grant or forwarding them upstream. Do not derive trusted origins from request Host or user input. The `client_credentials` grant rejects every virtual scope with `invalid_scope`.
+- **FR-001**: Define a broker-only virtual scope per configured third-party service: the configured public origin plus `/sessions/{identifier}`. Emit the canonical ID when present, otherwise the UUID; accept both current identifier forms. Known limitation (DEC-005): the canonical IDs `.` and `..` are emitted unchanged and are not reliably addressable after browser path normalization; [issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446) restricts them.
+- **FR-002**: Recognize virtual scopes only under the configured broker public origin and the service-session path. Reject malformed, unknown or agent-unconfigured broker service scopes without creating a grant or forwarding them upstream. This includes proxy refresh: before forwarding a refresh that carries a broker-prefixed scope, validate syntax, resolve the agent through the existing client-resolution path and check service existence and eligibility; reject with `400 invalid_scope` (`requested service scope is not permitted`), or `500 server_error` on lookup failure, with no upstream call (Proposed, API-PROXY-REFRESH-VALIDATION). Do not derive trusted origins from request Host or user input. The `client_credentials` grant rejects every virtual scope with `invalid_scope`.
 - **FR-003**: A virtual scope means the authenticated user needs a usable session for that service, covered by their selected grant and the agent's configured required provider scopes. Usability requires the same effective provider scopes as exchange: selected permission-set union intersected with the required-scope ceiling for an explicit fixed-scope requirement, or the full union for `require_all_scopes` and agents without explicit requirements. Preserve exchange's structural/inclusion/definition and empty-intersection denials. It does not independently grant provider scopes or choose permission sets.
 - **FR-004**: A missing/unusable service session or insufficient service grant during token exchange MUST include the resolved service's canonical virtual scope alongside the existing appropriate recovery action. Nonrecoverable errors MUST NOT acquire misleading service recovery information.
 - **FR-005**: The gateway MUST propagate the broker-provided service scope into its existing 403 `insufficient_scope` challenge, preserve its recovery URL and URL-elicitation body, and include a configured protected-resource metadata URL when available.
@@ -606,7 +656,7 @@ The same successful upstream response reaches the client, including `SYNTHETIC_U
 
 - **FR-019 (Proposed; DEC-001)**: Only service UUID scopes are durable across canonical-ID renames. Resolve only current canonical IDs and UUIDs; do not retain historical aliases. Emit the current canonical scope after rename. A local refresh bound to a former canonical scope MUST return `invalid_scope` without consuming an otherwise valid refresh token; clients must obtain a fresh challenge and interactively authorize the new scope. Preserve the originally resolved service identity in authorization/refresh continuity so canonical-ID reuse cannot redirect an existing grant to another service. Already-issued signed access tokens retain their normal expiry and are not rewritten.
 - **FR-020 (Proposed; API-LOCAL-SCOPES)**: Broker-issued local access-token `scope` claims and granted token-response `scope` values MUST include the granted virtual scopes consistently, in the exact form the client requested. Retain the originally bound service set for local refresh revalidation, including when request `scope` is omitted or narrowed, subject to FR-012 and FR-019. Refresh response/JWT and successor `Scope` equal the requested subset or predecessor current `Scope` when omitted; retained bindings do not restore dropped scopes. Proxy responses MUST NOT manufacture virtual scopes or change upstream signed claims.
-- **FR-021 (Proposed; DEC-002)**: This release's proxy refresh strips virtual scopes and forwards the upstream refresh outcome through the existing proxy handling, preserving any returned rotated refresh token. It MUST NOT add a post-upstream-response service-usability veto. A successful proxy refresh is not proof of broker service coverage/usability; subsequent service exchange and interactive authorization retain their checks, challenges and recovery. No parity with local refresh assurance is promised.
+- **FR-021 (Proposed; DEC-002, API-PROXY-REFRESH-VALIDATION)**: This release's proxy refresh first rejects invalid broker service scopes before forwarding (FR-002), then strips the valid virtual scopes and forwards the upstream refresh outcome through the existing proxy handling, preserving any returned rotated refresh token. Pre-forward validation checks syntax, service existence and agent eligibility only, never provider-session usability. Ordinary-scope-only requests keep their existing path. It MUST NOT add a post-upstream-response service-usability veto. A successful proxy refresh is not proof of broker service coverage/usability; subsequent service exchange and interactive authorization retain their checks, challenges and recovery. No parity with local refresh assurance is promised.
 
 ### Domain Model *(if applicable - document before API or database design)*
 
@@ -674,14 +724,14 @@ New domain terms require glossary additions during approved design; this specify
 ### Database Requirements *(if applicable)*
 
 - Persist definitive rejected-session usability so all broker replicas and background/session consumers agree, while preserving existing session identities, encrypted token storage and concurrency guarantees.
-- The existing `user_sessions.refresh_token_expires_at` rejection marker represents this state (DEC-003). No `user_sessions` schema change is made.
-- Proposed (DEC-004): migration `046_add_service_scope_bindings` adds a nullable `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`. The column pins each granted virtual scope to its service UUID (FR-019). The migration has paired up/down files with apply/rollback/repeat tests, and both storage adapters support the column. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
+- Merged ADR 046's observed rejection, `UserSession.RefreshRejectedAt` with `requires_reauthentication`, represents this state (DEC-003). No `user_sessions` schema change is made.
+- Proposed (DEC-004): migration `048_add_service_scope_bindings` adds a nullable `service_scope_bindings` JSONB column to `authorization_codes` and `refresh_token_sessions`. The column pins each granted virtual scope to its service UUID (FR-019). The migration has paired up/down files with apply/rollback/repeat tests, and both storage adapters support the column. Historical canonical-ID aliases and an alias table are outside this release's scope (FR-019).
 
 ### Security Requirements *(mandatory for security-critical features)*
 
 - **SR-001**: A requested service never bypasses configured agent eligibility, grant validity, permission-set/service scope coverage, principal binding, service identity or token validation.
 - **SR-002**: Use existing protected authorization context and vetted cryptographic mechanisms. Reject forged, expired, wrong-user and wrong-agent context; do not trust browser-supplied requested-service lists.
-- **SR-003**: Interactive authorization, local service-scoped refresh and actual service exchange MUST fail closed if eligibility, service resolution, coverage or usability cannot be verified. Preserve unrelated user grants/sessions on failed input and distinguish transient inability to verify from definitive invalidation. Proxy refresh strips broker-only scopes but makes no broker service-usability assertion (FR-021); a successful upstream refresh never bypasses the later service checks.
+- **SR-003**: Interactive authorization, local service-scoped refresh and actual service exchange MUST fail closed if eligibility, service resolution, coverage or usability cannot be verified. Preserve unrelated user grants/sessions on failed input and distinguish transient inability to verify from definitive invalidation. Proxy refresh fails closed on service resolution and eligibility before forwarding, then strips broker-only scopes, but makes no broker service-usability assertion (FR-021); a successful upstream refresh never bypasses the later service checks.
 - **SR-004**: Construct scope and recovery URLs from configured public origin and resolved service identity; preserve same-origin return-target validation and safe challenge serialization. Neither provider credentials nor arbitrary request values may become challenge headers.
 - **SR-005**: Record authorization denials and definitive usability transitions with structured, credential-free audit information. Do not expose tokens, provider secrets, or another user's service/agent relationships in pages, errors or logs.
 
@@ -713,6 +763,7 @@ The domain model above defines Agent, ThirdpartyOAuth2Service, UserGrant, UserSe
 - The scope and step-up behavior described in the issue's MCP 2026-07-28 references is the intended interoperability target. This phase does not implement a client or infer additional requirements from external branch artifacts.
 - Gateway metadata publishing is optional, as proposed in the issue's Operators section; when configured its URL is included in challenges. No mandatory publication requirement is added. A new consent Deny/Decline action is out of scope, as the issue explicitly proposes; users can leave the page and client-owned bounded retries terminate further attempts.
 - Q1–Q3 are resolved in Clarifications and FR-019–FR-021: UUID-only rename durability, visible local virtual scopes, and proxy refresh stripping plus subsequent recovery without a post-response veto. These are Proposed choices awaiting maintainer sign-off, not approvals. Alias compatibility and stronger proxy refresh assurance are outside this release.
-- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature proposes changing both; the Proposed feature-local draft `adrs/045-service-session-recovery-return.md` supersedes only those clauses. The merged accepted ADR is not edited in place. No such decision is accepted here.
+- Restricting the canonical IDs `.` and `..` is outside this release (DEC-005). [Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446) owns that validation change, its migration check and its Admin API change.
+- Scope changes, new APIs, persistent unusability and recovery return-page changes are consequential proposals. In particular, [Accepted ADR 044](../../adrs/044-service-specific-session-recovery-url.md) currently fixes the return to `/sessions` and says provider refresh rejection leaves the stored session unchanged. This feature changes both; [ADR 048](../../adrs/048-service-session-recovery-return.md) supersedes only those clauses. The merged accepted ADR 044 is not edited in place.
 - Existing [ADR 016 authorization-context integrity](../../adrs/016-authorization-session-anti-spoofing.md), [ADR 014 local issuance](../../adrs/014-oauth2-server-mode.md), [ADR 035 root-mounted SPA](../../adrs/035-root-mounted-spa.md), [ADR 038 refresh concurrency](../../adrs/038-proactive-token-refresh.md) and current consent return behavior remain constraints. ADR 037's consent-selection decision is currently Proposed; this draft does not promote it to Accepted.
 - Every numbered acceptance scenario must receive its own complete-journey acceptance test during implementation preparation, including resolved Story 3 Scenarios 3–4 and the Story 4 Scenario 2 rename/recovery variants. No implementation or tests are added in this phase.
