@@ -1,6 +1,6 @@
 # ADR 048: Service-Specific Session Recovery Return
 
-**Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-08: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503)
 **Date**: 2026-10-29
 **Scope**: End-User API RFC 8693 recoverable session errors, third-party session recovery, stored session usability
 **Feature**: [055-incremental-service-authorization](../specs/055-incremental-service-authorization/spec.md)

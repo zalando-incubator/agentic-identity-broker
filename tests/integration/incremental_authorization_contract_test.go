@@ -1,7 +1,9 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -28,6 +30,40 @@ func incrementalAuthorizationSchema(t *testing.T, compiler *jsonschema.Compiler,
 	schema, err := compiler.Compile("https://broker.test/enduser-contract.json#/components/schemas/" + name)
 	require.NoError(t, err)
 	return schema
+}
+
+func TestIncrementalAuthorizationRevisionContract(t *testing.T) {
+	document, compiler := incrementalAuthorizationContract(t)
+	assert.Equal(t, "1.3.0", document["info"].(map[string]any)["version"])
+	paths := document["paths"].(map[string]any)
+	authorize := paths["/oauth2/authorize"].(map[string]any)["get"].(map[string]any)
+	description := authorize["description"].(string)
+	for _, text := range []string{"302 access_denied", "authorization session is invalid or expired", "302 invalid_scope", "state is omitted if absent", "Redirect validation precedes continuation validation"} {
+		assert.Contains(t, description, text)
+	}
+	token := paths["/oauth2/token"].(map[string]any)["post"].(map[string]any)
+	for _, text := range []string{"Before forwarding", "400 invalid_scope", "requested service scope is not permitted", "500 server_error", "no upstream call", "No provider-session usability or grant-coverage check"} {
+		assert.Contains(t, token["description"], text)
+	}
+	schema := incrementalAuthorizationSchema(t, compiler, "OAuth2Error")
+	for _, status := range []string{"400", "500"} {
+		examples := token["responses"].(map[string]any)[status].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["examples"].(map[string]any)
+		name := "proxy_service_scope_rejected"
+		if status == "500" {
+			name = "proxy_service_scope_lookup_failed"
+		}
+		example, ok := examples[name]
+		if assert.True(t, ok, "missing %s", name) {
+			assert.NoError(t, schema.Validate(credentialSchemaValue(t, example.(map[string]any)["value"])))
+		}
+	}
+	encoded, err := os.ReadFile("../../specs/055-incremental-service-authorization/spec.md")
+	require.NoError(t, err)
+	example := regexp.MustCompile(`(?m)^\{"data":\{"service":.*$`).Find(encoded)
+	require.NotEmpty(t, example)
+	var body any
+	require.NoError(t, json.Unmarshal(example, &body))
+	assert.NoError(t, incrementalAuthorizationSchema(t, compiler, "ServiceSessionDetailResponse").Validate(body))
 }
 
 func TestIncrementalAuthorizationSessionDetailContract(t *testing.T) {

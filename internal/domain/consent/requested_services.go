@@ -61,7 +61,7 @@ func (s *Service) validateRequestedServices(ctx context.Context, agent *storage.
 	if len(req.ServiceScopeBindings) > 0 {
 		if _, err := s.requestedServices.ResolveBindings(ctx, req.ServiceScopeBindings, agent); err != nil {
 			if servicescope.IsPermissionFailure(err) {
-				return s.rejectRequestedServices(ctx, req, req.RequestedServiceIDs, "binding_mismatch")
+				return s.rejectRequestedServices(ctx, req, req.RequestedServiceIDs, submissionBindingMismatch)
 			}
 			return fmt.Errorf("failed to resolve requested services: %w", err)
 		}
@@ -79,15 +79,22 @@ func (s *Service) validateRequestedServices(ctx context.Context, agent *storage.
 	if len(unsatisfied) == 0 {
 		return nil
 	}
-	return s.rejectRequestedServices(ctx, req, unsatisfied, "unsatisfied")
+	return s.rejectRequestedServices(ctx, req, unsatisfied, submissionUnsatisfied)
 }
 
-func (s *Service) rejectRequestedServices(ctx context.Context, req *GrantRequest, serviceIDs []id.ServiceID, reason string) error {
+type submissionReason string
+
+const (
+	submissionBindingMismatch submissionReason = "binding_mismatch"
+	submissionUnsatisfied     submissionReason = "unsatisfied"
+)
+
+func (s *Service) rejectRequestedServices(ctx context.Context, req *GrantRequest, serviceIDs []id.ServiceID, reason submissionReason) error {
 	ids := make([]string, len(serviceIDs))
 	for i, serviceID := range serviceIDs {
 		ids[i] = serviceID.String()
 	}
-	s.logger.WarnContext(ctx, "requested_service_submission_rejected",
+	s.logger.WarnContext(ctx, "requested service submission rejected", "event", "consent.requested_service.submission_rejected",
 		"principal", req.Principal, "agent_id", req.AgentID, "service_ids", ids, "reason", reason)
 	return fmt.Errorf("%w: requested services must be selected, cover required scopes and have a usable session: %s",
 		ErrRequestedServiceNotSatisfied, strings.Join(ids, ", "))

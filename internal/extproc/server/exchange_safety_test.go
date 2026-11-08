@@ -247,6 +247,25 @@ func TestNetworkExchangeAndAssertionTelemetryContainsNoSecrets(t *testing.T) {
 		"exchange-path-secret-sentinel", "assertion-path-secret-sentinel", "endpoint-query-secret-sentinel", "response-header-secret-sentinel", "header-secret-sentinel", "wrapper-secret-sentinel", broker.URL)
 }
 
+func TestInvalidChallengeMetadataNeverReachesTelemetry(t *testing.T) {
+	for _, value := range []string{"https://metadata.invalid/\"synthetic-metadata-secret", "https://metadata.invalid/\\synthetic-metadata-secret", "https://metadata.invalid/\r\nsynthetic-metadata-secret", "https://metadata.invalid/" + strings.Repeat("synthetic-metadata-secret", 100)} {
+		t.Run(fmt.Sprint(len(value)), func(t *testing.T) {
+			recorder, reader := installSafetyTelemetry(t)
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			server := NewServer(&extprocconfig.Config{}, &safetyExchanger{}, logger)
+			err := &BrokerExchangeError{StatusCode: 400, Code: "invalid_grant", Description: "Login required", ErrorURI: "https://broker.invalid/login", Scope: "https://broker.invalid/sessions/github"}
+			response, _ := server.exchangeErrorResponse(context.Background(), err, structpb.NewStringValue(value))
+			require.NotNil(t, response.GetImmediateResponse())
+			assertSafetyTelemetry(t, recorder, reader, logs.String(), value, "synthetic-metadata-secret")
+			assert.Contains(t, logs.String(), `"level":"WARN"`)
+			assert.Contains(t, logs.String(), `"field":"resource_metadata_url"`)
+			assert.Contains(t, logs.String(), `"challenge.scope_present":true`)
+			assert.Contains(t, logs.String(), `"challenge.resource_metadata_present":false`)
+		})
+	}
+}
+
 type safetyExchanger struct{ err error }
 
 func (e *safetyExchanger) Exchange(context.Context, string, string) (ExchangeResult, error) {

@@ -5,6 +5,28 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+## Implementation checkpoint — 2026-11-08
+
+**101/115 tasks complete; local gates pass, but final evidence and test-expansion obligations remain.**
+The supplied approval covers all 15 current items. It is recorded in ADRs 048/049, approved
+ADR 049 Revision 1 and DEC-006. OpenAPI is `1.3.0`; proxy refresh rejects malformed/unknown/ineligible
+broker scopes and lookup failures before upstream calls, then preserves ordinary fields and upstream
+rotation. Explicit continuation/state/callback regressions pass. Feature-owned security records now
+use canonical events and safe bounded metadata instead of dependency causes or raw redirect URLs.
+
+[Implementation validation](./implementation-validation.md) records current semantic-red/green
+commands, all passing local gate outcomes, the original browser revision, its one-line compile-only
+fixture patch and both retrospective semantic failures. These are **retrospective sensitivity**, not
+historical test-first execution. Both current full browser journeys and the four capture states pass;
+light/dark accessibility measurement and final traceability evidence remain required.
+
+Remaining local obligations are T024/T107 (complete safety/policy evidence), T069/T077 (lookup-failure
+and upstream-error acceptance variants), T097 (journey audit), T112 (runtime accessibility),
+T022/T098/T109 (final evidence audit) and T110/T114 (final acceptance/checklist handoff). They stay
+unchecked. T040/T042/T103's real PostgreSQL evidence and all container-backed suites are deferred to
+container tests on the pushed commit, not passed locally or treated as a missing-container blocker.
+The older checkpoints below are historical; their approval/tool/status statements are not current.
+
 ## Remediation update — 2026-11-07
 
 All five latest analysis findings have document remedies:

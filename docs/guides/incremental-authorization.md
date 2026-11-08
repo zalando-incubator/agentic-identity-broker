@@ -106,12 +106,22 @@ leaves the refresh token valid, and only interactive authorization can add it.
   authorization is required, and `server_error` means usability could not be verified now.
   `client_credentials` rejects virtual scopes.
 - **Proxy clients.** The broker checks requested services before redirecting upstream and removes
-  virtual scopes from upstream authorization and refresh requests, omitting an empty `scope`. A
+  virtual scopes from upstream authorization and refresh requests, omitting an empty `scope`.
+  Before forwarding refresh, malformed, unknown or agent-ineligible broker scopes return
+  `400 invalid_scope` (`requested service scope is not permitted`); agent/service/permission-set
+  lookup failure returns `500 server_error`. Neither calls upstream or consumes its refresh token.
+  Ordinary-only requests keep their existing path. This checks syntax/existence/eligibility, not
+  session usability or grant coverage. A
   successful proxy refresh, including a rotated refresh token, does not attest that any
   broker-managed service is usable; the next exchange still challenges.
 - **Hybrid.** Each agent follows its own local or proxy path.
 - **Renames.** UUID scopes survive canonical-ID renames. A canonical scope bound to an old canonical
   ID fails closed: refresh returns `invalid_scope` without consuming the token, and the client must
   authorize again with the scope from a fresh challenge.
+- **Known identifier limitation.** Complete canonical IDs `.` and `..` are accepted but browsers
+  normalize their scope, page and recovery paths. This feature adds no UUID emission/page/recovery
+  fallback. [Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446)
+  owns the validation fix. Give the service another canonical ID or none (which emits its UUID);
+  explicitly requesting the UUID form remains valid.
 - **Rollback.** Rolling back migration `048` discards stored service bindings and requires rolling
   back the broker version; affected clients authorize again.

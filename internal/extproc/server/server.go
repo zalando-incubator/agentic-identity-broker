@@ -913,7 +913,7 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error, resourceM
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
 		metadataURL, metadataPresent := resourceMetadataURL(resourceMetadata)
 		if metadataPresent && metadataURL == "" {
-			logOperationError(ctx, logger, slog.LevelWarn, "challenge_metadata_invalid", metadata, diagnostic,
+			logOperationError(ctx, logger, slog.LevelWarn, "challenge metadata invalid", metadata, diagnostic,
 				slog.String("field", resourceMetadataURLFieldKey))
 		}
 		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic,

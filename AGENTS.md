@@ -205,6 +205,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`); rejected sessions follow ADR 046 (Feature 055) |
 | 049 | `adrs/049-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
+| 049 Revision 1 | `adrs/049-virtual-service-scopes-revision-1.md` | Proxy refresh pre-forward syntax/existence/eligibility checks; dot-segment canonical-ID limitation deferred to #446 |
 
 ## Domain Glossary
 

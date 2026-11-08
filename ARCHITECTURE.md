@@ -385,6 +385,14 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 | Local | `local` | Acts as a standalone OAuth2 authorization server, minting its own JWT access tokens signed with managed asymmetric keys. Metadata and JWKS expose only broker-managed local keys. |
 | Hybrid | `hybrid` | Combines proxy and local issuance. The builder wires both strategy sets at startup and dispatches per request based on the resolved agent `ClientType`. Metadata and JWKS expose the broker-hosted verification surface for both local and upstream tokens. |
 
+**Proxy service-scope validation (Feature 055)**: Before upstream refresh, `oauth2.TokenOutcomeService`
+uses the existing `TokenGrantResolution.AgentID` and shared `servicescope.Resolver` to check
+broker-prefixed syntax, current service existence and eligibility. Invalid scopes return
+`400 invalid_scope`; lookup failure returns `500 server_error`, without an upstream call.
+Ordinary-only requests add no I/O. Valid scopes are stripped; session usability/grant coverage are
+not checked and upstream response/rotation are unchanged. [ADR 049 Revision 1](adrs/049-virtual-service-scopes-revision-1.md)
+records this boundary and the known `.`/`..` canonical-ID limitation deferred to issue #446.
+
 **Strategy Pattern**: Handler behavior is fixed at startup by injected strategies rather than runtime mode checks:
 
 - `OAuth2AuthorizeHandler` always exists; the builder injects `proxyProceedStrategy`, `localProceedStrategy`, or `hybridProceedStrategy` based on the selected mode.
@@ -1211,7 +1219,7 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
-**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI; changing its target within the documented recovery purpose does not itself require a version increase ([ADR 044](adrs/044-service-specific-session-recovery-url.md)). End-User OpenAPI `1.2.0` documents the approved Feature 055 additions: virtual scopes, protected consent continuation, requested-service coverage and the additive service-session detail read. [ADRs 048](adrs/048-service-session-recovery-return.md) and [049](adrs/049-virtual-service-scopes.md) record those decisions. Admin API versioning is separate.
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI; changing its target within the documented recovery purpose does not itself require a version increase ([ADR 044](adrs/044-service-specific-session-recovery-url.md)). End-User OpenAPI `1.3.0` documents the approved Feature 055 additions (ADR 046 already uses `1.2.0`): virtual scopes, protected consent continuation, requested-service coverage and the additive service-session detail read. [ADRs 048](adrs/048-service-session-recovery-return.md) and [049](adrs/049-virtual-service-scopes.md) record those decisions. Admin API versioning is separate.
 
 The broker's external integrations have distinct owners:
 

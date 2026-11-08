@@ -80,9 +80,9 @@ type serviceScopeFixture struct {
 	refreshes ports.RefreshTokenSessionRepository
 }
 
-func newServiceScopeFixture(t *testing.T) *serviceScopeFixture {
+func newServiceScopeFixture(t *testing.T, loggers ...*slog.Logger) *serviceScopeFixture {
 	t.Helper()
-	provider, agentRepo, _ := newTestProvider(t)
+	provider, agentRepo, _ := newTestProvider(t, loggers...)
 	agent, _, secret := setupTestCredentials(t, provider, agentRepo)
 	agent.RedirectURIs = []string{scopeCallback}
 	agent.AllowedScopes = []string{"read"}
@@ -326,9 +326,8 @@ func TestProviderRefreshRecheckAuditAndFastPath(t *testing.T) {
 	})
 
 	t.Run("refusals are logged with their kind and without token values", func(t *testing.T) {
-		f := newServiceScopeFixture(t)
 		var logs bytes.Buffer
-		f.provider.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+		f := newServiceScopeFixture(t, slog.New(slog.NewJSONHandler(&logs, nil)))
 		code, err := f.authorize(t, "read offline_access "+githubScope, map[string]id.ServiceID{githubScope: scopeGitHubID})
 		require.NoError(t, err)
 		issued, err := f.exchange(code)
@@ -342,9 +341,12 @@ func TestProviderRefreshRecheckAuditAndFastPath(t *testing.T) {
 		require.Error(t, err)
 
 		output := logs.String()
-		assert.Contains(t, output, `"msg":"refresh_service_recheck_failed"`)
-		assert.Contains(t, output, `"kind":"definitive"`)
-		assert.Contains(t, output, `"kind":"transient"`)
+		assert.Contains(t, output, `"event":"oauth2_server.service.recheck_failed"`)
+		assert.Contains(t, output, `"error_kind":"definitive"`)
+		assert.Contains(t, output, `"error_kind":"transient"`)
+		assert.Contains(t, output, `"reason":"unusable_definitive"`)
+		assert.Contains(t, output, `"reason":"usability_unverifiable"`)
+		assert.Contains(t, output, `"level":"ERROR"`)
 		assert.NotContains(t, output, issued.RefreshToken)
 		assert.NotContains(t, output, issued.AccessToken)
 	})

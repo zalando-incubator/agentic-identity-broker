@@ -1137,7 +1137,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
 		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
 		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier).
-			WithServiceScopeStripping(b.config.Server.EndUser.PublicURL)
+			WithServiceScopeStripping(b.config.Server.EndUser.PublicURL).
+			WithServiceScopeValidation(b.storage.Agents(), serviceScopes)
 		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed

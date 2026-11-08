@@ -147,37 +147,35 @@ func (p *Provider) recheckBoundServices(ctx context.Context, req *fosite.AccessR
 	}
 	firstScope := slices.Sorted(maps.Keys(bindings))[0]
 
-	refuse := func(scope, reason string) error {
-		p.logger.WarnContext(ctx, "refresh_service_recheck_failed", "agent_id", agent.ID, "principal", principal,
-			"service_id", bindings[scope], "reason", reason, "kind", "definitive")
+	refuse := func(scope string, reason refreshScopeReason) error {
+		p.logger.WarnContext(ctx, "refresh service recheck failed", "event", "oauth2_server.service.recheck_failed",
+			"agent_id", agent.ID, "principal", principal,
+			"service_id", bindings[scope], "reason", reason, "error_kind", refreshScopeDefinitive)
 		return NewRFC6749Error("invalid_scope", "scope "+scope+" is no longer satisfied; interactive authorization required", http.StatusBadRequest, ErrInvalidScope)
 	}
-	transient := func(reason string, err error) error {
-		attrs := []any{"agent_id", agent.ID, "principal", principal, "reason", reason, "kind", "transient"}
-		if err != nil {
-			attrs = append(attrs, "error", err)
-		}
-		p.logger.WarnContext(ctx, "refresh_service_recheck_failed", attrs...)
+	transient := func(reason refreshScopeReason) error {
+		p.logger.ErrorContext(ctx, "refresh service recheck failed", "event", "oauth2_server.service.recheck_failed",
+			"agent_id", agent.ID, "principal", principal, "reason", reason, "error_kind", refreshScopeTransient)
 		return NewRFC6749Error("server_error", "requested service usability cannot be verified", http.StatusInternalServerError, ErrServerError)
 	}
 
 	requested, err := p.serviceScopes.ResolveBindings(ctx, bindings, agent)
 	if err != nil {
 		if servicescope.IsPermissionFailure(err) {
-			return refuse(firstScope, "binding_unresolved")
+			return refuse(firstScope, refreshScopeBindingUnresolved)
 		}
-		return transient("service_lookup_failed", err)
+		return transient(refreshScopeServiceLookupFailed)
 	}
 	grant, err := p.fositeStorage.verifier.VerifyAgentAccess(ctx, principal, agent.ID)
 	if err != nil {
-		return transient("grant_lookup_failed", err)
+		return transient(refreshScopeGrantLookupFailed)
 	}
 	outcomes, err := p.serviceEvaluator.Evaluate(ctx, principal, agent, grant.GrantedPermissionSets, requested.ServiceIDs())
 	if err != nil {
-		return transient("permission_set_lookup_failed", err)
+		return transient(refreshScopePermissionSetLookupFailed)
 	}
 	if servicescope.AnyTransient(outcomes) {
-		return transient("usability_unverifiable", nil)
+		return transient(refreshScopeUsabilityUnverifiable)
 	}
 	for _, outcome := range outcomes {
 		if !outcome.Satisfied {
@@ -187,14 +185,29 @@ func (p *Provider) recheckBoundServices(ctx context.Context, req *fosite.AccessR
 	return nil
 }
 
-func unsatisfiedRefreshReason(outcome servicescope.Outcome) string {
+type refreshScopeReason string
+type refreshScopeErrorKind string
+
+const (
+	refreshScopeBindingUnresolved         refreshScopeReason    = "binding_unresolved"
+	refreshScopeServiceLookupFailed       refreshScopeReason    = "service_lookup_failed"
+	refreshScopeGrantLookupFailed         refreshScopeReason    = "grant_lookup_failed"
+	refreshScopePermissionSetLookupFailed refreshScopeReason    = "permission_set_lookup_failed"
+	refreshScopeUsabilityUnverifiable     refreshScopeReason    = "usability_unverifiable"
+	refreshScopeNotSelected               refreshScopeReason    = "not_selected"
+	refreshScopeRequiredScopesUncovered   refreshScopeReason    = "required_scopes_uncovered"
+	refreshScopeDefinitive                refreshScopeErrorKind = "definitive"
+	refreshScopeTransient                 refreshScopeErrorKind = "transient"
+)
+
+func unsatisfiedRefreshReason(outcome servicescope.Outcome) refreshScopeReason {
 	switch {
 	case !outcome.Selected:
-		return "not_selected"
+		return refreshScopeNotSelected
 	case !outcome.RequiredScopesCovered:
-		return "required_scopes_uncovered"
+		return refreshScopeRequiredScopesUncovered
 	default:
-		return string(outcome.Usability)
+		return refreshScopeReason(outcome.Usability)
 	}
 }
 

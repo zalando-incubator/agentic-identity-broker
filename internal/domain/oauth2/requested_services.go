@@ -2,6 +2,7 @@ package oauth2
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 
@@ -21,7 +22,7 @@ const (
 func (s *AuthorizationService) redirectError(ctx context.Context, req *ports.AuthorizationRequest, code, description string) *ports.AuthorizationDecision {
 	redirect, err := BuildErrorRedirectURL(req.RedirectURI, req.State, code, description)
 	if err != nil && s.logger != nil {
-		s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", err)
+		s.logger.ErrorContext(ctx, "error redirect build failed", "reason", reasonRedirectBuildFailed, "error_kind", errorKindInternal)
 	}
 	return &ports.AuthorizationDecision{Action: "error", ErrorCode: code, ErrorDesc: description, RedirectURL: redirect}
 }
@@ -83,12 +84,14 @@ func (s *AuthorizationService) resolveRequestedServices(ctx context.Context, req
 	if err != nil {
 		if servicescope.IsPermissionFailure(err) {
 			if s.logger != nil {
-				s.logger.WarnContext(ctx, "requested_service_scope_rejected", "agent_id", agent.ID, "reason", err.Error())
+				s.logger.WarnContext(ctx, "requested service scope rejected", "event", "oauth2.requested_service.scope_rejected",
+					"agent_id", agent.ID, "reason", scopeRejectionReason(err), "error_kind", errorKindDefinitive)
 			}
 			return nil, s.redirectError(ctx, req, "invalid_scope", descriptionServiceScopeNotPermitted)
 		}
 		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "requested_service_resolution_failed", "agent_id", agent.ID, "error", err)
+			s.logger.ErrorContext(ctx, "requested service resolution failed", "event", "oauth2.requested_service.resolution_failed",
+				"agent_id", agent.ID, "reason", reasonDependencyFailed, "error_kind", errorKindTransient)
 		}
 		return nil, s.redirectError(ctx, req, "server_error", "server error")
 	}
@@ -104,7 +107,8 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 	outcomes, err := s.serviceEvaluator.Evaluate(ctx, principal, agent, grant.GrantedPermissionSets, requested.ServiceIDs())
 	if err != nil {
 		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "requested_service_evaluation_failed", "agent_id", agent.ID, "error", err)
+			s.logger.ErrorContext(ctx, "requested service evaluation failed", "event", "oauth2.requested_service.evaluation_failed",
+				"agent_id", agent.ID, "principal", principal, "reason", reasonDependencyFailed, "error_kind", errorKindTransient)
 		}
 		return s.redirectError(ctx, req, "server_error", "server error")
 	}
@@ -117,7 +121,7 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 	if s.logger != nil {
 		for _, outcome := range outcomes {
 			if !outcome.Satisfied {
-				s.logger.InfoContext(ctx, "incremental_authorization_required",
+				s.logger.InfoContext(ctx, "incremental authorization required", "event", "oauth2.authorization.incremental_required",
 					"agent_id", agent.ID, "principal", principal, "service_id", outcome.ServiceID,
 					"reason", unsatisfiedReason(outcome))
 			}
@@ -126,13 +130,43 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 	return consent()
 }
 
-func unsatisfiedReason(outcome servicescope.Outcome) string {
+type serviceLogReason string
+type serviceLogErrorKind string
+
+const (
+	reasonMalformedScope          serviceLogReason    = "malformed_scope"
+	reasonUnknownService          serviceLogReason    = "unknown_service"
+	reasonServiceNotEligible      serviceLogReason    = "service_not_eligible"
+	reasonBindingMismatch         serviceLogReason    = "binding_mismatch"
+	reasonDependencyFailed        serviceLogReason    = "dependency_failed"
+	reasonRedirectBuildFailed     serviceLogReason    = "redirect_build_failed"
+	reasonNotSelected             serviceLogReason    = "not_selected"
+	reasonRequiredScopesUncovered serviceLogReason    = "required_scopes_uncovered"
+	errorKindDefinitive           serviceLogErrorKind = "definitive"
+	errorKindTransient            serviceLogErrorKind = "transient"
+	errorKindInternal             serviceLogErrorKind = "internal"
+)
+
+func scopeRejectionReason(err error) serviceLogReason {
+	switch {
+	case errors.Is(err, servicescope.ErrMalformedScope):
+		return reasonMalformedScope
+	case errors.Is(err, servicescope.ErrUnknownService):
+		return reasonUnknownService
+	case errors.Is(err, servicescope.ErrServiceNotEligible):
+		return reasonServiceNotEligible
+	default:
+		return reasonBindingMismatch
+	}
+}
+
+func unsatisfiedReason(outcome servicescope.Outcome) serviceLogReason {
 	switch {
 	case !outcome.Selected:
-		return "not_selected"
+		return reasonNotSelected
 	case !outcome.RequiredScopesCovered:
-		return "required_scopes_uncovered"
+		return reasonRequiredScopesUncovered
 	default:
-		return string(outcome.Usability)
+		return serviceLogReason(outcome.Usability)
 	}
 }

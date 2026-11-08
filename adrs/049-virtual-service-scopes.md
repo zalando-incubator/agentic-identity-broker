@@ -1,6 +1,6 @@
 # ADR 049: Virtual Service Scopes for Incremental Authorization
 
-**Status**: Accepted (approved by mjungsbluth on 2026-10-29: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-08: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503)
 **Date**: 2026-10-29
 **Scope**: Broker OAuth2 authorization server (local, proxy, hybrid), consent, RFC 8693 errors, ExtProc challenge
 **Feature**: [055-incremental-service-authorization](../specs/055-incremental-service-authorization/spec.md)
@@ -54,8 +54,13 @@ services.
 6. **Proxy**:
    - Proxy authorization checks requested services exactly as local authorization does, then
      removes virtual scopes from the upstream request.
-   - Proxy refresh removes virtual scopes and forwards the upstream outcome unchanged. It does not
-     veto the response afterwards.
+   - Before proxy refresh forwards a request whose `scope` contains a broker-prefixed token, it
+     validates scope syntax, resolves the agent through the existing token-endpoint client
+     resolution, and checks service existence and agent eligibility. Malformed, unknown and
+     ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`);
+     lookup failure returns `500 server_error`, with no upstream call. Ordinary-only requests keep
+     their existing path. Valid virtual scopes are then removed and the upstream outcome is
+     forwarded unchanged, without provider-session usability checks or a veto of response/rotation.
    - The broker never modifies upstream tokens.
    - Hybrid mode follows the agent's client type.
 7. **Discovery**: Virtual scopes are never listed in `scopes_supported`. Clients learn them from the
@@ -73,6 +78,9 @@ services.
 - Agents with a non-empty `allowed_scopes` can request virtual scopes without listing them. The
   broker checks eligibility separately.
 - Proxy refresh gives weaker assurance than local refresh. This is documented.
+- Known limitation: a service whose canonical ID is exactly `.` or `..` has a scope, service
+  page and recovery link that browsers normalize to another path. No UUID fallback or canonical-ID
+  validation change is added here. Issue #446 restricts them; operators can choose another ID or none.
 - Scope narrowing durably removes privileges without dropping original continuing-service checks.
 - Consent adds per-candidate contribution usability and a protected authorize continuation parameter;
   both are covered by the supplied API-CONSENT approval, alongside the local narrowing contract under API-LOCAL-SCOPES.
@@ -94,8 +102,14 @@ services.
   former restores dropped privileges on scope-less refresh and the latter evades continuing checks.
 - **Canonical-ID alias history**: This adds retention and ownership policy. It was rejected for
   this release (DEC-001).
+- **Silently strip invalid broker scopes on proxy refresh**: Rejected because it contradicts
+  FR-002 and hides an invalid service request from the client.
+- **UUID-only emission for `.` and `..`**: Rejected for this feature. Issue #446 owns the shared
+  canonical-ID validation defect and its migration/Admin API consequences.
 
 ## References
+
+- [Approved Revision 1](049-virtual-service-scopes-revision-1.md) (proxy pre-forward validation and dot-segment limitation).
 
 - Feature 055 [spec](../specs/055-incremental-service-authorization/spec.md), [research](../specs/055-incremental-service-authorization/research.md) R1–R8, [data model](../specs/055-incremental-service-authorization/data-model.md),
   and [contracts](../specs/055-incremental-service-authorization/contracts/).

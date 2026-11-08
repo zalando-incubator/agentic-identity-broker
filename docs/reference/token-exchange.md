@@ -50,6 +50,18 @@ The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2
 service token, distinct `resource` values return `400 invalid_target` per RFC 8693 Section
 2.2.2.
 
+## Incremental authorization and proxy refresh
+
+End-User API 1.3.0 adds [virtual service scopes](../guides/incremental-authorization.md).
+Local refresh rechecks every immutable service binding before rotation, including after scope
+narrowing. Proxy refresh instead validates broker-prefixed scope syntax, current service existence
+and agent eligibility before forwarding. Malformed, unknown or ineligible scopes return
+`400 invalid_scope` with `requested service scope is not permitted`; agent/service/permission-set
+lookup failure returns `500 server_error`. Both make no upstream call, leaving its refresh token
+unconsumed. Valid virtual scopes are stripped and an empty scope omitted. Ordinary-only requests
+add no lookup. No provider-usability or grant-coverage check runs, and upstream success/error bodies
+and refresh rotation remain unchanged. A later service exchange still enforces usability.
+
 ## Key concepts
 
 ### Tokens
