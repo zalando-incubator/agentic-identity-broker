@@ -202,7 +202,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ErrorDecision("invalid_redirect_uri", "redirect_uri must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", ""), nil
 	}
 
-	continuation, rejected := s.authorizationContinuation(req, principal, agent)
+	continuation, rejected := s.authorizationContinuation(ctx, req, principal, agent)
 	if rejected != nil {
 		return rejected, nil
 	}
@@ -386,7 +386,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
 			}
-			return s.redirectError(req, "server_error", "server error")
+			return s.redirectError(ctx, req, "server_error", "server error")
 		}
 		return ports.ConsentDecision(consentURL)
 	}); rejected != nil {

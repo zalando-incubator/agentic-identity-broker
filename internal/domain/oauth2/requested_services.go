@@ -18,10 +18,10 @@ const (
 )
 
 // redirectError builds an error decision redirected to the already-validated redirect_uri.
-func (s *AuthorizationService) redirectError(req *ports.AuthorizationRequest, code, description string) *ports.AuthorizationDecision {
+func (s *AuthorizationService) redirectError(ctx context.Context, req *ports.AuthorizationRequest, code, description string) *ports.AuthorizationDecision {
 	redirect, err := BuildErrorRedirectURL(req.RedirectURI, req.State, code, description)
 	if err != nil && s.logger != nil {
-		s.logger.Error("failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", err)
+		s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", err)
 	}
 	return &ports.AuthorizationDecision{Action: "error", ErrorCode: code, ErrorDesc: description, RedirectURL: redirect}
 }
@@ -34,13 +34,13 @@ func (s *AuthorizationService) isBrokerScope(scope string) bool {
 // authorizationContinuation authenticates the protected post-consent continuation. The sealed
 // expiry, principal, agent and original request must all match; it never falls back to an
 // unbound fresh resolution.
-func (s *AuthorizationService) authorizationContinuation(req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent) (*ports.AuthorizationSession, *ports.AuthorizationDecision) {
+func (s *AuthorizationService) authorizationContinuation(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent) (*ports.AuthorizationSession, *ports.AuthorizationDecision) {
 	if req.SessionToken == "" {
 		return nil, nil
 	}
 	session, err := s.sessionTokenService.ValidateAuthorizationSessionToken(req.SessionToken, agent.ID, principal)
 	if err != nil || session.OriginalURL != withoutSessionToken(req.OriginalURL) {
-		return nil, s.redirectError(req, "access_denied", descriptionSessionInvalid)
+		return nil, s.redirectError(ctx, req, "access_denied", descriptionSessionInvalid)
 	}
 	return session, nil
 }
@@ -85,12 +85,12 @@ func (s *AuthorizationService) resolveRequestedServices(ctx context.Context, req
 			if s.logger != nil {
 				s.logger.WarnContext(ctx, "requested_service_scope_rejected", "agent_id", agent.ID, "reason", err.Error())
 			}
-			return nil, s.redirectError(req, "invalid_scope", descriptionServiceScopeNotPermitted)
+			return nil, s.redirectError(ctx, req, "invalid_scope", descriptionServiceScopeNotPermitted)
 		}
 		if s.logger != nil {
 			s.logger.ErrorContext(ctx, "requested_service_resolution_failed", "agent_id", agent.ID, "error", err)
 		}
-		return nil, s.redirectError(req, "server_error", "server error")
+		return nil, s.redirectError(ctx, req, "server_error", "server error")
 	}
 	return requested, nil
 }
@@ -106,13 +106,13 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 		if s.logger != nil {
 			s.logger.ErrorContext(ctx, "requested_service_evaluation_failed", "agent_id", agent.ID, "error", err)
 		}
-		return s.redirectError(req, "server_error", "server error")
+		return s.redirectError(ctx, req, "server_error", "server error")
 	}
 	if servicescope.AllSatisfied(outcomes) {
 		return nil
 	}
 	if servicescope.AnyTransient(outcomes) {
-		return s.redirectError(req, "temporarily_unavailable", descriptionUsabilityUnverifiable)
+		return s.redirectError(ctx, req, "temporarily_unavailable", descriptionUsabilityUnverifiable)
 	}
 	if s.logger != nil {
 		for _, outcome := range outcomes {
