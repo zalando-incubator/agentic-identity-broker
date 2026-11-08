@@ -274,11 +274,13 @@ func TestSyncerPublishesApprovalSyncAgeGauge(t *testing.T) {
 				continue
 			}
 			found = true
+			assert.Equal(t, "extproc", scopeMetrics.Scope.Name)
 			assert.Equal(t, "s", metric.Unit)
 			assert.Equal(t, "Seconds since the last successful approval sync", metric.Description)
 			gauge, ok := metric.Data.(metricdata.Gauge[int64])
 			require.True(t, ok, "approval sync age must be an Int64 observable gauge")
 			require.Len(t, gauge.DataPoints, 1)
+			assert.Zero(t, gauge.DataPoints[0].Attributes.Len(), "sync age must not export identity or session attributes")
 			assert.Equal(t, expectedAge, gauge.DataPoints[0].Value)
 		}
 	}
