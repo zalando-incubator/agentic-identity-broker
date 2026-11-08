@@ -5,7 +5,35 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
-## Implementation checkpoint — 2026-11-08
+## Implementation resumption — 2026-11-08
+
+**102/115 tasks complete; progress validated, final compliance still open.**
+[Resumption evidence](./implementation-resumption.md) records the complete local-refresh
+security-reason matrix, individual credential sentinels, preserved upstream refresh errors and
+same-token retry/rotation, and the completed T097 journey/composition audit. No API, scope,
+configuration or approved ADR decision changed.
+
+New browser assertions compiled and failed for insufficient Login/Active/scope/candidate/no-session
+text contrast before the corresponding feature-owned semantic-token corrections. The active detail
+summary's missing encryption/establishment/rejection information also failed in Vitest before its
+correction. Current full suites pass: `just check`, `just test`, `just extproc-test`, `just web-test`,
+`just test-integration`, CDK/mock tests, `just test-e2e-backend`, the serial capture-enabled frontend
+suite and the prepared security scan. Container-free ExtProc cases pass separately; container cases
+remain deferred, never claimed as validated.
+
+Four measured states meet 4.5:1 text and measured button boundaries meet 3:1 under both browser
+color-scheme preferences. Requested Login and Refresh work through Tab/Enter with visible focus;
+disabled Save references its readable reason. **Dark preference still renders the existing light
+palette**, so this does not establish a distinct dark theme or complete T112. Refreshed maintained
+captures match the four Wireloom states, including State B's encryption/rejection summary.
+
+Remaining local obligations: T024/T107 central policy/span evidence and standards audit;
+T069/T077 lookup-failure HTTP acceptance; T112 actual dark-theme and complete accessibility evidence;
+T022/T098/T109 historical traceability and remaining DEC-006 conditions; T110/T114 final handoff.
+T040/T042/T103 real PostgreSQL evidence is deferred to pushed-commit container tests. Every unfinished
+task remains unchecked. The previous checkpoints below are historical.
+
+## Earlier implementation checkpoint — 2026-11-08
 
 **101/115 tasks complete; local gates pass, but final evidence and test-expansion obligations remain.**
 The supplied approval covers all 15 current items. It is recorded in ADRs 048/049, approved

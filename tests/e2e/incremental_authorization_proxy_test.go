@@ -97,7 +97,23 @@ var _ = Describe("Incremental Service Authorization Proxy Mode", func() {
 		Expect(received.Get("extension")).To(Equal("kept as sent"))
 		Expect(received.Get("refresh_token")).To(Equal("synthetic-upstream-refresh"))
 
-		_, _, received = forward(journey.githubScope())
+		By("preserving the upstream error without a service-usability veto")
+		journey.upstream.WithErrorResponseAndDescription("invalid_grant", "The upstream refresh credential was rejected.")
+		status, body, received = forward("openid " + journey.githubScope())
+		Expect(status).To(Equal(http.StatusBadRequest))
+		Expect(body).To(Equal(map[string]any{
+			"error": "invalid_grant", "error_description": "The upstream refresh credential was rejected.",
+		}))
+		Expect(received.Get("scope")).To(Equal("openid"))
+		Expect(received.Get("refresh_token")).To(Equal("synthetic-upstream-refresh"))
+		Expect(journey.provider.GetTokenRequests()).To(BeEmpty())
+
+		By("retrying the same credential and preserving successful rotation")
+		journey.upstream.WithSuccessfulTokenResponse()
+		status, body, received = forward(journey.githubScope())
+		Expect(status).To(Equal(http.StatusOK))
+		Expect(body["refresh_token"]).To(Equal("synthetic-upstream-rotated-refresh"))
+		Expect(received.Get("refresh_token")).To(Equal("synthetic-upstream-refresh"))
 		Expect(received.Has("scope")).To(BeFalse())
 		for _, request := range journey.upstream.GetTokenRequests() {
 			Expect(request.Body).NotTo(ContainSubstring(url.QueryEscape(journey.config.Server.EndUser.PublicURL + "/sessions/")))

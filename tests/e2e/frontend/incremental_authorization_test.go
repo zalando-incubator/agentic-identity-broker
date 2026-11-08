@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,6 +85,17 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 		return response.StatusCode
 	}
 
+	auditContrast := func(page *pages.Page, audit func(context.Context) (string, error)) {
+		for _, dark := range []bool{false, true} {
+			Expect(page.SetColorScheme(ctx, dark)).To(Succeed())
+			measurement, err := audit(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = fmt.Fprintf(GinkgoWriter, "Feature 055 contrast (dark preference=%t): %s\n", dark, measurement)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		Expect(page.SetColorScheme(ctx, false)).To(Succeed())
+	}
+
 	saveEnabled := func(consentPage *pages.ConsentPage) func() bool {
 		return func() bool {
 			enabled, err := consentPage.IsSaveButtonEnabled(ctx)
@@ -117,9 +129,11 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(consentPage.SaveDisabledReason(ctx)).To(ContainSubstring("user:email"))
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "a missing session keeps Save disabled")
+			Expect(consentPage.VerifySaveDescription(ctx)).To(Succeed())
+			auditContrast(consentPage.Page, consentPage.AuditRequestedServiceContrast)
 			Expect(consentPage.TakeRequestedServiceScreenshot(ctx, "consent_requested_service_needs_login")).To(Succeed())
 
-			Expect(consentPage.LoginRequestedService(ctx, "GitHub Production")).To(Succeed())
+			Expect(consentPage.KeyboardLoginRequestedService(ctx, "GitHub Production")).To(Succeed())
 			Eventually(func() string {
 				success, _ := consentPage.GetURLQueryParam("success")
 				return success
@@ -131,6 +145,7 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Issue Triage")).To(Succeed())
 			Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 			Expect(consentPage.RequestedServiceStatus(ctx, "GitHub Production")).To(Equal("Connected"))
+			auditContrast(consentPage.Page, consentPage.AuditRequestedServiceContrast)
 			Expect(consentPage.TakeRequestedServiceScreenshot(ctx, "consent_requested_service_ready")).To(Succeed())
 
 			previousAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
@@ -187,9 +202,10 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(status).To(ContainSubstring("Active"))
 			Expect(status).To(ContainSubstring("user:email"))
 			Expect(sessionsPage.DependentAgentNames(ctx)).To(ConsistOf("Data Analysis Assistant"))
+			auditContrast(sessionsPage.Page, sessionsPage.AuditServiceDetailContrast)
 			Expect(sessionsPage.TakeScreenshot(ctx, "service_session_active")).To(Succeed())
 
-			Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
+			Expect(sessionsPage.KeyboardRefreshService(ctx)).To(Succeed())
 			Expect(sessionsPage.WaitForSuccessMessage(ctx, "Session token refreshed successfully.")).To(Succeed())
 			Expect(GetMockUpstream().GetTokenRequests()).NotTo(BeEmpty())
 
@@ -199,6 +215,7 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 				return status
 			}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("No active session"))
 			Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
+			auditContrast(sessionsPage.Page, sessionsPage.AuditServiceDetailContrast)
 			Expect(sessionsPage.TakeScreenshot(ctx, "service_session_needs_login")).To(Succeed())
 			session, err := GetTestStorage().UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), cast.GitHub.ID)
 			Expect(err).NotTo(HaveOccurred())

@@ -137,7 +137,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
           <Alert variant="error" title="Unable to load session">
             <p>{state.message}</p>
             <div className="mt-3">
-              <Button variant="secondary" size="sm" onClick={() => void load()}>
+              <Button variant="outline" size="sm" onClick={() => void load()}>
                 Retry
               </Button>
             </div>
@@ -150,15 +150,15 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
           <Stack gap="lg">
             <div>
               <h2 className="font-display text-2xl font-semibold text-trust-deep">{service.display_name}</h2>
-              <p className="mt-1 font-mono text-sm text-neutral-600 break-all">{service.scope_url}</p>
+              <p className="mt-1 font-mono text-sm text-text-secondary break-all">{service.scope_url}</p>
             </div>
 
             <Card>
               <div data-testid="service-session-status" className="space-y-3">
                 {!session && (
                   <>
-                    <Badge variant="neutral">No active session</Badge>
-                    <p className="text-neutral-700">
+                    <Badge variant="neutral" className="text-text-primary">No active session</Badge>
+                    <p className="text-text-primary">
                       Sign in to {service.display_name} so your agents can use it. Signing in does not
                       grant any agent new permissions.
                     </p>
@@ -167,20 +167,27 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                 {session && session.requires_reauthentication && (
                   <>
                     <Badge variant="error">Expired</Badge>
-                    <p className="text-neutral-700">This session can no longer be renewed. Log in to reconnect.</p>
+                    <p className="text-text-primary">This session can no longer be renewed. Log in to reconnect.</p>
                   </>
                 )}
                 {session && !session.requires_reauthentication && (
                   <>
-                    <Badge variant="success">Active</Badge>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="success" className="bg-success-dark border-success-dark">Active</Badge>
+                      {session.is_encrypted && <Badge variant="primary">Encrypted</Badge>}
+                    </div>
                     <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
                       <div>
-                        <dt className="text-neutral-600">Connected</dt>
-                        <dd className="text-neutral-900">{formatTime(session.initiated_at)}</dd>
+                        <dt className="text-text-secondary">Established</dt>
+                        <dd className="text-text-primary">{formatTime(session.initiated_at)}</dd>
                       </div>
                       <div>
-                        <dt className="text-neutral-600">Access token expires</dt>
-                        <dd className="text-neutral-900">{formatTime(session.access_token_expires_at)}</dd>
+                        <dt className="text-text-secondary">Access token expires</dt>
+                        <dd className="text-text-primary">{formatTime(session.access_token_expires_at)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-text-secondary">Refresh rejection</dt>
+                        <dd className="text-text-primary">Not observed</dd>
                       </div>
                     </dl>
                   </>
@@ -189,7 +196,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                   <ul aria-label="Granted scopes" className="flex flex-wrap gap-2">
                     {session.scope.map((scope) => (
                       <li key={scope}>
-                        <Badge variant="info" className="font-mono">{scope}</Badge>
+                        <Badge variant="info" className="font-mono bg-info-dark border-info-dark">{scope}</Badge>
                       </li>
                     ))}
                   </ul>
@@ -203,7 +210,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                   </Button>
                 ) : (
                   <>
-                    <Button variant="secondary" isLoading={refreshing} onClick={() => void handleRefresh(service.id)}>
+                    <Button variant="secondary" className="bg-success-hover hover:bg-success-dark" isLoading={refreshing} onClick={() => void handleRefresh(service.id)}>
                       Refresh
                     </Button>
                     <Button variant="danger" onClick={() => setConfirmingTermination(true)}>
@@ -215,13 +222,13 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
             </Card>
 
             <section aria-labelledby="dependent-agents-heading">
-              <h3 id="dependent-agents-heading" className="text-lg font-medium text-neutral-900">
+              <h3 id="dependent-agents-heading" className="text-lg font-medium text-trust">
                 Agents using this service
               </h3>
               {agents.length === 0 ? (
-                <p className="mt-2 text-neutral-600">None of your agents use this service.</p>
+                <p className="mt-2 text-text-secondary">None of your agents use this service.</p>
               ) : (
-                <ul data-testid="service-dependent-agents" className="mt-2 space-y-1 text-neutral-800">
+                <ul data-testid="service-dependent-agents" className="mt-2 space-y-1 text-text-primary">
                   {agents.map((agent) => (
                     <li key={agent.agent_id}>{agent.display_name}</li>
                   ))}

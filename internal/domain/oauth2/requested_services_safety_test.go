@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,13 @@ func (s unsafeScopePermissions) GetByIDs(context.Context, []id.PermissionSetID) 
 
 // SR-005: dependency causes and authorization context are never operational diagnostics.
 func TestRequestedServiceSecurityRecords(t *testing.T) {
-	const secret = "synthetic-access-refresh-assertion-secret-code-verifier-state-JWE"
+	secrets := []string{
+		"synthetic-access-token-sentinel", "synthetic-refresh-token-sentinel", "synthetic-subject-token-sentinel",
+		"synthetic-client-assertion-sentinel", "synthetic-client-secret-sentinel", "synthetic-code-sentinel",
+		"synthetic-PKCE-verifier-sentinel", "synthetic-state-sentinel", "synthetic-sealed-JWE-sentinel",
+		"https://redirect.invalid/?credential=synthetic-query-sentinel#synthetic-fragment-sentinel",
+	}
+	secret := strings.Join(secrets, " ")
 	for _, tc := range []struct {
 		name, event, level, reason, kind string
 	}{
@@ -81,7 +88,11 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 			decision, err := svc.HandleAuthorization(context.Background(), req, requestedPrincipal)
 			require.NoError(t, err)
 			assert.NotEqual(t, "proceed", decision.Action)
-			assert.NotContains(t, buf.String(), secret)
+			for _, sentinel := range secrets {
+				assert.NotContains(t, buf.String(), sentinel)
+			}
+			require.NotEmpty(t, req.State)
+			assert.NotContains(t, buf.String(), req.State)
 			if req.SessionToken != "" {
 				assert.NotContains(t, buf.String(), req.SessionToken)
 			}

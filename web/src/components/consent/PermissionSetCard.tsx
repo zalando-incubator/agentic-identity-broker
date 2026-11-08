@@ -135,7 +135,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
               {badgeLabel}
             </Badge>
             {requestedServiceNames.length > 0 && (
-              <Badge variant="info" size="sm" shape="rounded" data-testid="requested-candidate-badge">
+              <Badge variant="info" size="sm" shape="rounded" className="bg-info-dark border-info-dark" data-testid="requested-candidate-badge">
                 Covers requested {requestedServiceNames.join(', ')}
               </Badge>
             )}

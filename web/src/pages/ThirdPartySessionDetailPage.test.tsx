@@ -98,6 +98,10 @@ describe('ThirdPartySessionDetailPage', () => {
 
     const status = await screen.findByTestId('service-session-status');
     expect(status).toHaveTextContent('Active');
+    expect(status).toHaveTextContent('Encrypted');
+    expect(status).toHaveTextContent('Established');
+    expect(status).toHaveTextContent('Refresh rejection');
+    expect(status).toHaveTextContent('Not observed');
     expect(status).toHaveTextContent('user:email');
 
     await user.click(screen.getByRole('button', { name: 'Refresh' }));

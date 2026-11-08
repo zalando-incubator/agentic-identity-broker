@@ -51,7 +51,12 @@ export const RequestedServiceBanner: React.FC<RequestedServiceBannerProps> = ({
             <div className="space-y-2">
               <p className="flex flex-wrap items-center gap-2">
                 <span>Session:</span>
-                <Badge variant={status.variant} size="sm" data-testid="requested-service-status">
+                <Badge
+                  variant={status.variant}
+                  size="sm"
+                  className={status.variant === 'success' ? 'bg-success-dark border-success-dark' : undefined}
+                  data-testid="requested-service-status"
+                >
                   {status.label}
                 </Badge>
               </p>
@@ -67,12 +72,12 @@ export const RequestedServiceBanner: React.FC<RequestedServiceBannerProps> = ({
               </p>
               {result && !result.satisfied && <p>{result.reason}</p>}
               {(service.usability === 'missing' || service.usability === 'unusable') && (
-                <Button variant="secondary" size="sm" onClick={() => onLogin(service.service_id)}>
+                <Button variant="primary" size="sm" onClick={() => onLogin(service.service_id)}>
                   Log in to {name}
                 </Button>
               )}
               {service.usability === 'unavailable' && (
-                <Button variant="secondary" size="sm" onClick={onRetry}>
+                <Button variant="outline" size="sm" onClick={onRetry}>
                   Retry
                 </Button>
               )}
