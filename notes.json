@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 334
+    "investigation_after": 353
   },
   "issues": [
     {
@@ -94,6 +94,18 @@
       "state": "resolution_recommended",
       "updated_at": "2026-11-08",
       "note": "Merged #336 implements API 3.0.0 reconciliation and guarded migration 047/runbook. Fresh domain/handler/memory race tests and uncached production-bootstrap concurrent/replay journey pass; recommended closing. PostgreSQL/E2E not rerun."
+    },
+    {
+      "number": 349,
+      "state": "deferred",
+      "updated_at": "2026-11-08",
+      "note": "Current standard explicitly blocks new principal attributes until #356. No SpanAttribute/export policy yet; do not implement a call-site-only workaround."
+    },
+    {
+      "number": 353,
+      "state": "commented",
+      "updated_at": "2026-11-08",
+      "note": "Prepared focused approval metric metadata/contract PR with exact ManualReader attribute assertions. Broader constructor warnings, broker agent_id contract and token-exchange request unit remain open."
     }
   ],
   "fixes": [
@@ -128,21 +140,17 @@
       "status": "open",
       "updated_at": "2026-11-06",
       "note": "Verified live draft #433 and actual published branch; pipeline and unit/integration/all E2E statuses passed. Replaces unresolved publication record; do not duplicate."
+    },
+    {
+      "issue": 353,
+      "pr": null,
+      "branch": "repo-assist/tests-approval-metric-contract-2026-11-08",
+      "status": "open",
+      "updated_at": "2026-11-08",
+      "note": "Committed c485feed; draft submission pending final safe output. Partial #353 only. Red/green and 10-repeat assertions, full ExtProc race tests, check and both builds pass. Verify blocked by OSV TLS validation; do not bypass."
     }
   ],
   "checks": [
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-06",
-      "result": "just check passed on docs and maintenance branches, including 0 linter issues. Ginkgo CLI absent; ran compiled Ginkgo suite with go test flags.",
-      "follow_up": null
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-06",
-      "result": "just build passed on both branches; just extproc-build passed for #432 maintenance. docs-build passed for #244.",
-      "follow_up": null
-    },
     {
       "area": "dependencies",
       "checked_at": "2026-11-06",
@@ -174,12 +182,6 @@
       "follow_up": "No speculative optimization or duplicate #420 PR."
     },
     {
-      "area": "hygiene",
-      "checked_at": "2026-11-07",
-      "result": "Read both unlabelled issues: #427 requests Agent tagging (enhancement); #446 reports dot-segment canonical-ID defect (bug/breaking change). Applied labels without redundant comments; labelling cursor reset.",
-      "follow_up": null
-    },
-    {
       "area": "code",
       "checked_at": "2026-11-08",
       "result": "Inspected #313 literal session coverage, provider scope extraction, exact delegation ceilings and Step 12 original-token return; #314 form gate, credential presence, CIMD guard and form-only proxy contracts. Posted focused policy/implementation guidance; no source edits.",
@@ -188,13 +190,31 @@
     {
       "area": "tests",
       "checked_at": "2026-11-08",
-      "result": "Race-enabled just test override passed agents, tokenexchange, oauth2, oauth2server, enduser/admin HTTP and memory storage. Uncached TestAgentReconcileConcurrentAndReplayJourney passed with race detection. No new tests, PostgreSQL migration, full E2E/build/static gate run.",
+      "result": "Approval metadata regression failed for empty description/unit, then passed. Ten uncached repeats passed. just extproc-test passed all ExtProc and command packages with race detection. No E2E or full verification pass claimed.",
+      "follow_up": null
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-08",
+      "result": "just check passed with 0 linter issues. just verify passed static checks and reached security scanning, then OSV querybatch TLS certificate validation failed. No security-control bypass attempted.",
+      "follow_up": "Full gate needs trusted OSV connectivity; later suites were not reached."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-08",
+      "result": "just build and just extproc-build passed on committed approval metric branch.",
+      "follow_up": null
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-08",
+      "result": "Read unlabelled issue #446 and PR files #310/#312; added bug/breaking change, documentation and enhancement respectively. No redundant triage comments. Labelling cursor reset.",
       "follow_up": null
     },
     {
       "area": "release",
       "checked_at": "2026-11-08",
-      "result": "Latest release remains v0.1.143. Investigation-only work and already merged #336 do not warrant a release PR.",
+      "result": "Latest release v0.1.143; focused unmerged metric metadata/test changes do not warrant a release PR.",
       "follow_up": null
     }
   ],
@@ -216,8 +236,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #334",
-      "note": "Next #346/#347/#350 have active PRs #415/#399/#438; inspect #349/#352/#353 next. #289/#299 have active Spec Kit; workflow reports need runtime evidence, not guessed code fixes. #313 awaits scope policy."
+      "item": "Resume oldest-first after #353",
+      "note": "#349 blocked by #356; #352 requires dual-emission rollout. Partial #353 branch leaves broader broker/error-handling and ExtProc request-unit work. Avoid active #415/#399/#438."
     }
   ]
 }
