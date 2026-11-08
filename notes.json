@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 285
+    "investigation_after": 334
   },
   "issues": [
     {
@@ -48,12 +48,6 @@
       "note": "Maintainer Oct 12 comment prefers assessment before broker as OPA input; no new human reply to Nov 6 questions. Do not re-ask placement without new activity; remaining argument egress/retention and assessor contract need agreement."
     },
     {
-      "number": 314,
-      "state": "deferred",
-      "updated_at": "2026-11-06",
-      "note": "Form-only client-ID gate, credential DTO/CIMD guard and form-only proxy port still apply. Race package tests pass, not Basic coverage. Needs method provenance, duplicate-method rejection, 401 challenge and mode metadata matrix; coordinate #431 and overlapping #381 token seams."
-    },
-    {
       "number": 222,
       "state": "resolution_recommended",
       "updated_at": "2026-11-07",
@@ -82,6 +76,24 @@
       "state": "awaiting_approval",
       "updated_at": "2026-11-07",
       "note": "Labelled bug/breaking change. Do not apply isolated canonical validator edit: existing-record guard/remediation, API version and accepted canonical contract decision must accompany restriction. No exploit/reproduction performed."
+    },
+    {
+      "number": 313,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-08",
+      "note": "Confirmed literal provider scope checks and unchanged token return. Asked whether broad-token delivery is permitted; separate explicit Google OIDC aliases from enumerated Workspace coverage. Keep delegation ceilings distinct from provider coverage; do not infer readonly pairs."
+    },
+    {
+      "number": 314,
+      "state": "commented",
+      "updated_at": "2026-11-08",
+      "note": "Posted method-provenance/local challenge/proxy port plan, including client-ID association and all-mode tests. Existing package race tests pass, not Basic support. Coordinate #431/#381; no blind form normalization."
+    },
+    {
+      "number": 334,
+      "state": "resolution_recommended",
+      "updated_at": "2026-11-08",
+      "note": "Merged #336 implements API 3.0.0 reconciliation and guarded migration 047/runbook. Fresh domain/handler/memory race tests and uncached production-bootstrap concurrent/replay journey pass; recommended closing. PostgreSQL/E2E not rerun."
     }
   ],
   "fixes": [
@@ -162,27 +174,27 @@
       "follow_up": "No speculative optimization or duplicate #420 PR."
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-07",
-      "result": "Inspected #246 mode validations, discovery update and outbound auth style. Current six-mode proposal omits accepted CIMD public/source dimensions. #285 has partial-grant migration and Full intent contradictions; posted focused guidance/questions.",
-      "follow_up": "#246 classifier must retain staged invariants; #285 awaits migration and future-capability consent decisions. No surgical behavior change justified."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-07",
-      "result": "Race-enabled just test package override passed model, thirdparty, oauth2session, consent and tokenexchange. Read source/stage, registration, ciphertext-retention and per-service inclusion assertions. No new tests or full-gate run.",
-      "follow_up": null
-    },
-    {
       "area": "hygiene",
       "checked_at": "2026-11-07",
       "result": "Read both unlabelled issues: #427 requests Agent tagging (enhancement); #446 reports dot-segment canonical-ID defect (bug/breaking change). Applied labels without redundant comments; labelling cursor reset.",
       "follow_up": null
     },
     {
+      "area": "code",
+      "checked_at": "2026-11-08",
+      "result": "Inspected #313 literal session coverage, provider scope extraction, exact delegation ceilings and Step 12 original-token return; #314 form gate, credential presence, CIMD guard and form-only proxy contracts. Posted focused policy/implementation guidance; no source edits.",
+      "follow_up": "#313 broad-token vs downscope decision and explicit alias policy needed. #314 preserve method provenance/challenges and either forward Basic correctly or remove proxy advertisement."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-08",
+      "result": "Race-enabled just test override passed agents, tokenexchange, oauth2, oauth2server, enduser/admin HTTP and memory storage. Uncached TestAgentReconcileConcurrentAndReplayJourney passed with race detection. No new tests, PostgreSQL migration, full E2E/build/static gate run.",
+      "follow_up": null
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-07",
-      "result": "Latest release remains v0.1.143, published Nov 6. Investigation/triage-only work does not justify a release PR.",
+      "checked_at": "2026-11-08",
+      "result": "Latest release remains v0.1.143. Investigation-only work and already merged #336 do not warrant a release PR.",
       "follow_up": null
     }
   ],
@@ -199,13 +211,13 @@
   "priorities": [
     {
       "task": 3,
-      "item": "Plan #314 Basic client authentication",
-      "note": "Resolve method provenance, proxy forwarding contract and challenge handling with all-mode regression tests. Coordinate #431 provider migration and overlapping #381 token seams rather than implementing blind form normalization."
+      "item": "Implement #314 with authentication provenance",
+      "note": "Posted transport/local challenge plan. Coordinate #431/#381 and retain public/CIMD/RFC8693 behavior. No incomplete normalization patch."
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #285",
-      "note": "Next #289 (active Spec Kit #292), then workflow reports and #299 (active #323). Respect existing fixes/holds. #246 consolidation mapped; #285 awaits migration/Full decisions; #446 needs rollout/API/ADR agreement."
+      "item": "Resume oldest-first after #334",
+      "note": "Next #346/#347/#350 have active PRs #415/#399/#438; inspect #349/#352/#353 next. #289/#299 have active Spec Kit; workflow reports need runtime evidence, not guessed code fixes. #313 awaits scope policy."
     }
   ]
 }
