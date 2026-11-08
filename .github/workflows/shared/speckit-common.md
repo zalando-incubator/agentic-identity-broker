@@ -129,11 +129,11 @@ pipeline phase or reuse a previous conversation.
 Report a run's evidence only in this session's result: test and validation
 output, red and green results, per-run status, and remaining work. Never
 append it to `quickstart.md`, `tasks.md`, or any other file in the feature
-directory. Change feature files only for their content: tick a completed task,
-add a new task, or record a decision. `quickstart.md` describes how to
-validate the feature, not what a run observed. A feature's
-`implementation-log.md` holds evidence from earlier runs; do not read or extend
-it.
+directory. This limits only run evidence: phases still write the requirements,
+plans, tasks, checklists, and decisions that their skills produce.
+`quickstart.md` describes how to validate the feature, not what a run
+observed. A feature's `implementation-log.md` holds evidence from earlier
+runs; do not read or extend it.
 
 For PR phases, switch to `context.head` **inside the agent sandbox**, before
 reading or executing feature code. Fetch only that exact SHA from `origin`,
