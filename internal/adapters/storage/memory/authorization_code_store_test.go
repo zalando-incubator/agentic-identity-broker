@@ -28,7 +28,7 @@ func TestAuthorizationCodeStore_FindByCodeHash_Expiry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := NewAuthorizationCodeStore()
+			store := NewAuthorizationCodeStore(NewTransactionManager())
 			ctx := context.Background()
 			code := &storage.AuthorizationCode{
 				ID:            id.NewAuthorizationCodeID(),

@@ -5,6 +5,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"github.com/golang-migrate/migrate/v4"
 	"os"
 	"testing"
 
@@ -33,7 +34,8 @@ func TestPostgresMigrationTemplates(t *testing.T) {
 		defer cleanupSecond()
 
 		for _, dbName := range []string{firstDB, secondDB} {
-			runner := pg.newMigrationRunner(t, dbName)
+			runner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
+			require.NoError(t, err)
 			defer func() { _, _ = runner.Close() }()
 			version, dirty, err := runner.Version()
 			require.NoError(t, err)
@@ -50,14 +52,15 @@ func TestPostgresMigrationTemplates(t *testing.T) {
 
 	t.Run("historical schema can upgrade through remaining migrations", func(t *testing.T) {
 		const historicalVersion = 26
-		dbName, _, cleanup := pg.SetupDatabaseFromTemplate(t, "historical_026", func(t *testing.T, dbName string) {
-			pg.ApplyMigrationsUpTo(t, dbName, historicalVersion)
+		dbName, _, cleanup := pg.SetupDatabaseFromTemplate(t, "historical_026", func(dbName string) {
+			pg.ApplyProjectMigrationsUpTo(t, dbName, historicalVersion)
 		})
 		defer cleanup()
 
 		require.Equal(t, fmt.Sprint(historicalVersion)+"|f", pg.QuerySQL(t, dbName,
 			`SELECT version, dirty FROM schema_migrations;`))
-		runner := pg.newMigrationRunner(t, dbName)
+		runner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
+		require.NoError(t, err)
 		defer func() { _, _ = runner.Close() }()
 		require.NoError(t, runner.Up())
 		version, dirty, err := runner.Version()

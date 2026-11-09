@@ -56,6 +56,40 @@ func TestSigningKeyRepo_Create(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSigningKeyRepo_CreateReturnsPersistedTimestamps(t *testing.T) {
+	adapter, cleanup := setupSigningKeyTestDB(t)
+	defer cleanup()
+	repo := NewSigningKeyRepo(adapter)
+	for _, makeCurrent := range []bool{false, true} {
+		for _, transactional := range []bool{false, true} {
+			t.Run(fmt.Sprintf("current=%t/transaction=%t", makeCurrent, transactional), func(t *testing.T) {
+				ctx := context.Background()
+				if transactional {
+					var err error
+					ctx, err = adapter.BeginTX(ctx)
+					require.NoError(t, err)
+					defer func() { _ = adapter.Rollback(ctx) }()
+				}
+				key := testSigningKeyInDomain(t.Name(), storage.KeyDomainTokenSigning, makeCurrent)
+				key.ActivatesAt = time.Date(2026, time.October, 7, 12, 0, 0, 123456789, time.UTC)
+				key.CreatedAt = key.ActivatesAt.Add(-time.Hour)
+				create := repo.Create
+				if makeCurrent {
+					create = repo.CreateAndSetCurrent
+				}
+				require.NoError(t, create(ctx, key))
+				if transactional {
+					require.NoError(t, adapter.Commit(ctx))
+				}
+				stored, err := repo.GetByKIDInDomain(context.Background(), key.KeyDomain, key.KID)
+				require.NoError(t, err)
+				assert.Equal(t, stored.ActivatesAt.UTC().Format(time.RFC3339Nano), key.ActivatesAt.UTC().Format(time.RFC3339Nano))
+				assert.True(t, stored.CreatedAt.Equal(key.CreatedAt))
+			})
+		}
+	}
+}
+
 func TestSigningKeyRepo_KeySetVersionTracksCommittedChanges(t *testing.T) {
 	adapter, cleanup := setupSigningKeyTestDB(t)
 	defer cleanup()
@@ -86,6 +120,100 @@ func TestSigningKeyRepo_KeySetVersionTracksCommittedChanges(t *testing.T) {
 	version, err = repo.KeySetVersion(ctx)
 	require.NoError(t, err)
 	assert.Greater(t, version, next)
+}
+
+func TestSigningKeyRepo_TransactionalSelectionRemainsStableUntilCommit(t *testing.T) {
+	adapter, cleanup := setupSigningKeyTestDB(t)
+	defer cleanup()
+	repo := NewSigningKeyRepo(adapter)
+	ctx := context.Background()
+	current := testSigningKeyInDomain("selection-current", storage.KeyDomainTokenSigning, true)
+	current.ActivatesAt = time.Now().Add(-time.Minute)
+	standby := testSigningKeyInDomain("selection-standby", storage.KeyDomainTokenSigning, false)
+	require.NoError(t, repo.Create(ctx, current))
+	require.NoError(t, repo.Create(ctx, standby))
+	txCtx, err := adapter.BeginTX(ctx)
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(txCtx) }()
+	selected, err := repo.GetCurrentInDomain(txCtx, storage.KeyDomainTokenSigning)
+	require.NoError(t, err)
+	require.Equal(t, current.KID, selected.KID)
+
+	// Parallel issuances share the selection barrier rather than serialize.
+	secondCtx, err := adapter.BeginTX(ctx)
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(secondCtx) }()
+	_, err = repo.GetCurrentInDomain(secondCtx, storage.KeyDomainTokenSigning)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Commit(secondCtx))
+
+	changeCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	_, err = repo.SetCurrentInDomain(changeCtx, storage.KeyDomainTokenSigning, standby.KID, time.Now())
+	require.Error(t, err, "selection must not change before issuance commits")
+	require.NoError(t, adapter.Commit(txCtx))
+	_, err = repo.SetCurrentInDomain(ctx, storage.KeyDomainTokenSigning, standby.KID, time.Now())
+	require.NoError(t, err)
+}
+
+func TestSigningKeyRepo_MutationsLockActiveKeysBeforeTheirTarget(t *testing.T) {
+	for _, operation := range []string{"promote", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			adapter, cleanup := setupSigningKeyTestDB(t)
+			defer cleanup()
+			repo := NewSigningKeyRepo(adapter)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			target := testSigningKeyInDomain("b-target", storage.KeyDomainTokenSigning, false)
+			current := testSigningKeyInDomain("a-current", storage.KeyDomainTokenSigning, true)
+			require.NoError(t, repo.Create(ctx, target))
+			require.NoError(t, repo.Create(ctx, current))
+			blocker, err := adapter.db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer func() { _ = blocker.Rollback() }()
+			var blockerPID, mutationPID int
+			require.NoError(t, blocker.GetContext(ctx, &blockerPID, `SELECT pg_backend_pid()`))
+			var locked id.KeyID
+			require.NoError(t, blocker.GetContext(ctx, &locked, `SELECT kid FROM signing_keys WHERE kid = $1 FOR UPDATE`, current.KID))
+			mutationCtx, err := adapter.BeginTX(ctx)
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(mutationCtx) }()
+			require.NoError(t, adapter.storageExecutor(mutationCtx).GetContext(mutationCtx, &mutationPID, `SELECT pg_backend_pid()`))
+			finished := make(chan error, 1)
+			go func() {
+				if operation == "promote" {
+					_, err := repo.SetCurrentInDomain(mutationCtx, target.KeyDomain, target.KID, time.Now().UTC())
+					finished <- err
+				} else {
+					finished <- repo.DeleteInDomain(mutationCtx, target.KeyDomain, target.KID)
+				}
+			}()
+			require.Eventually(t, func() bool {
+				var blocked bool
+				err := adapter.db.GetContext(ctx, &blocked, `SELECT $1::int = ANY(pg_blocking_pids($2))`, blockerPID, mutationPID)
+				return err == nil && blocked
+			}, time.Second, time.Millisecond, "mutation must wait for the first active key")
+			probe, err := adapter.db.BeginTxx(ctx, nil)
+			require.NoError(t, err)
+			defer func() { _ = probe.Rollback() }()
+			require.NoError(t, probe.GetContext(ctx, &locked, `SELECT kid FROM signing_keys WHERE kid = $1 FOR UPDATE NOWAIT`, target.KID), "mutation must not lock its target before earlier keys")
+			require.NoError(t, probe.Rollback())
+			require.NoError(t, blocker.Rollback())
+			require.NoError(t, <-finished)
+			require.NoError(t, adapter.Commit(mutationCtx))
+			if operation == "promote" {
+				selected, err := repo.GetCurrentInDomain(ctx, target.KeyDomain)
+				require.NoError(t, err)
+				require.Equal(t, target.KID, selected.KID)
+			} else {
+				_, err := repo.GetByKIDInDomain(ctx, target.KeyDomain, target.KID)
+				require.True(t, ports.IsNotFoundErr(err))
+				selected, err := repo.GetCurrentInDomain(ctx, current.KeyDomain)
+				require.NoError(t, err)
+				require.Equal(t, current.KID, selected.KID)
+			}
+		})
+	}
 }
 
 func TestSigningKeyRepo_CreateRejectsSecondActiveCurrentKey(t *testing.T) {

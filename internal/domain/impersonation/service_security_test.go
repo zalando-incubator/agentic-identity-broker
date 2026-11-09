@@ -11,6 +11,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type countingImpersonationJWKS struct {
@@ -54,7 +55,7 @@ func TestImpersonate_VerificationCacheRequiresSameJWKSProvider(t *testing.T) {
 					return second, nil
 				}
 				return first, nil
-			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 			require.NoError(t, err)
 
 			for attempt := 1; attempt <= tc.attempts; attempt++ {

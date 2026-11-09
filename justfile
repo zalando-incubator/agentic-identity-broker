@@ -94,9 +94,9 @@ test-coverage-summary:
     go tool cover -func=coverage/coverage.out
 
 # Run the backend E2E acceptance suite with Ginkgo
-test-e2e-backend: web-build
+test-e2e-backend label_filter="!performance && !docker" build_tags="integration": web-build
     @echo "Running backend E2E suite..."
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --tags="{{build_tags}}" --procs={{GINKGO_BACKEND_PROCS}} --fail-on-empty --label-filter="{{label_filter}}" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Run E2E scenarios that require Docker or Podman
 test-e2e-docker:
@@ -111,12 +111,12 @@ test-e2e-performance:
 test-e2e-backend-coverage: web-build
     @echo "Running backend E2E suite with coverage..."
     @mkdir -p coverage
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --tags=integration --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Watch the backend E2E acceptance suite during development
 test-e2e-backend-watch: web-build
     @echo "Watching backend E2E suite..."
-    @if command -v ginkgo > /dev/null; then ginkgo watch -v --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo watch -v --tags=integration --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Run the ExtProc E2E acceptance suite with Ginkgo
 test-e2e-extproc:
@@ -441,12 +441,12 @@ _integration-tier-junit tier args:
 # Run the backend E2E acceptance suite and publish its reports
 verify-e2e-backend-junit: verify-e2e-backend-default-junit verify-e2e-docker-junit
 
-# Run the backend E2E suite without container-backed scenarios and publish its reports
+# Run backend acceptance, including PostgreSQL ledger scenarios, without docker-labelled suites
 verify-e2e-backend-default-junit: _e2e-backend-web-build
     #!/usr/bin/env bash
     set -euo pipefail
     rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log}
-    ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" \
+    ginkgo run --tags=integration --procs={{GINKGO_BACKEND_PROCS}} --fail-on-empty --label-filter="!performance && !docker" \
         --timeout=20m --poll-progress-after=30s --show-node-events \
         --junit-report=test-results/e2e-backend-junit.xml --json-report=test-results/e2e-backend.json \
         ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log
@@ -584,7 +584,7 @@ verify-junit:
     exit "$MERGE_EXIT"
 
 # Run the full local verification gate with security scanning and E2E as the final guard layer
-verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
+verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all helm-lint helm-template test-e2e
     @echo "Verification suite completed"
 
 # Run non-mutating format, vet, and lint checks (no tests)
@@ -602,9 +602,9 @@ fmt-check:
 check: fmt-check vet lint
     @echo "Static quality checks passed!"
 
-# Run focused security scans across all dependency manifests
-security:
-    bash scripts/security-scan.sh .
+# Run the repository-wide security audit across modules and dependency manifests
+security scope="repository":
+    bash scripts/security-scan.sh . "{{scope}}"
 
 # =============================================================================
 # Web Development Targets

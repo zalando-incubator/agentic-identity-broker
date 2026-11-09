@@ -51,6 +51,7 @@ func TestReconcileCanonicalNestedReferencesOnBothBranchesAndReplay(t *testing.T)
 				repo.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) { written = args.Get(1).(*storage.Agent).Copy() }).Return(nil).Once()
 			} else {
 				repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(a.Copy(), nil).Once()
+				repo.On("Get", mock.Anything, a.ID).Return(a.Copy(), nil).Once()
 				if operation == "update" {
 					body = strings.Replace(body, "Canonical Agent", "Changed Agent", 1)
 					repo.On("Update", mock.Anything, mock.Anything).Run(func(args mock.Arguments) { written = args.Get(1).(*storage.Agent).Copy() }).Return(nil).Once()

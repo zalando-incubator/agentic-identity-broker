@@ -72,7 +72,7 @@ func TestCredentialExclusions_CIMDUsesRealFreshVerifiedAssertionsAndNeverReadsBi
 	binding := ports.CredentialFileBinding{ClientIDFile: filepath.Join(t.TempDir(), "absent-id"), ClientSecretFile: filepath.Join(t.TempDir(), "absent-secret")}
 	h := newCredentialSessionHarness(t, map[string]ports.CredentialFileBinding{"cimd-service": binding})
 	ctx := context.Background()
-	keys := memory.NewSigningKeyStore()
+	keys := memory.NewSigningKeyStore(memory.NewTransactionManager())
 	keyService := cimdclient.NewKeyService(keys, keys, newTestEncryption(t), newNoopBranchKeyManager(), slog.New(slog.DiscardHandler))
 	_, err := keyService.GenerateKey(ctx, "ES256")
 	require.NoError(t, err)

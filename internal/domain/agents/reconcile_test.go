@@ -35,7 +35,8 @@ func TestReconcileLifecycle(t *testing.T) {
 		return result, nil
 	}
 	var logs bytes.Buffer
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
+	svc := newTestService(repo, false)
+	svc.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	desired := desiredAgent()
 	desired.ClientURIs = []string{"https://agent.example/z.json", "https://agent.example/a.json"}
 	original := desired.Copy()
@@ -168,6 +169,7 @@ func TestReconcileReplayPreservesFractionalStoredTimes(t *testing.T) {
 			existing.UpdatedAt = existing.CreatedAt.Add(time.Hour)
 			original := existing.Copy()
 			repo := newMockAgentRepo()
+			repo.agents[existing.ID] = existing.Copy()
 			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
 				return []*storage.Agent{existing.Copy()}, nil
 			}
@@ -176,7 +178,8 @@ func TestReconcileReplayPreservesFractionalStoredTimes(t *testing.T) {
 				return nil
 			}
 			var logs bytes.Buffer
-			svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
+			svc := newTestService(repo, false)
+			svc.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 			for range 10 {
 				got, result, err := svc.ReconcileByExternalID(context.Background(), "registry", existing.Copy(), ReconcileInput{})
 				require.NoError(t, err)

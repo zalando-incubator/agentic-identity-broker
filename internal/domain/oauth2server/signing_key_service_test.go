@@ -27,6 +27,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // testEncryptor is a minimal encryption implementation for testing.
@@ -77,14 +78,17 @@ func (e *contextCheckingEncryptor) Decrypt(_ context.Context, ciphertext []byte,
 
 // mockBranchKeyManager is a hand-rolled mock for ports.BranchKeyManager.
 type mockBranchKeyManager struct {
+	mu          sync.Mutex
 	createFn    func(ctx context.Context, subject domainencryption.BranchKeySubject) (string, error)
 	createCalls int
 	lastSubject domainencryption.BranchKeySubject
 }
 
 func (m *mockBranchKeyManager) Create(ctx context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+	m.mu.Lock()
 	m.createCalls++
 	m.lastSubject = subject
+	m.mu.Unlock()
 	if m.createFn != nil {
 		return m.createFn(ctx, subject)
 	}
@@ -131,33 +135,19 @@ func (c *postCallbackErrorBootstrapCoordinator) WithBootstrapLock(ctx context.Co
 	return c.err
 }
 
-type recoveryCountContextRepo struct {
-	*testSigningKeyStore
-	rejectCanceledCountContext bool
-	sawRecoveryCount           bool
-}
-
-func (r *recoveryCountContextRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
-	if r.rejectCanceledCountContext {
-		r.sawRecoveryCount = true
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-	}
-	return r.testSigningKeyStore.CountActiveInDomain(ctx, domain)
-}
-
 type recoveryCountProbeRepo struct {
 	*testSigningKeyStore
-	countCalls               int
+	recovering               bool
 	sawRecoveryCount         bool
 	recoveryCountHasDeadline bool
 	recoveryCountErr         error
 }
 
 func (r *recoveryCountProbeRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
-	r.countCalls++
-	if r.countCalls > 1 {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if r.recovering {
 		r.sawRecoveryCount = true
 		_, r.recoveryCountHasDeadline = ctx.Deadline()
 		if r.recoveryCountErr != nil {
@@ -213,14 +203,14 @@ func newTestSigningKeyService() (*SigningKeyService, *testSigningKeyStore) {
 	repo := newTestSigningKeyStore()
 	enc := &testEncryptor{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), logger), repo
+	return NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder()), repo
 }
 
 func newTestSigningKeyServiceWithBranchKeyManager(bkm ports.BranchKeyManager) (*SigningKeyService, *testSigningKeyStore) {
 	repo := newTestSigningKeyStore()
 	enc := &testEncryptor{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewSigningKeyService(repo, repo, enc, bkm, logger), repo
+	return NewSigningKeyService(repo, repo, enc, bkm, logger, ledgerfixture.NewRecorder()), repo
 }
 
 func newTestSigningKeyServiceWithBranchKeyManagerAndEncryptor(bkm ports.BranchKeyManager, enc ports.EncryptionPort, logBuf *bytes.Buffer) (*SigningKeyService, *testSigningKeyStore) {
@@ -231,7 +221,7 @@ func newTestSigningKeyServiceWithBranchKeyManagerAndEncryptor(bkm ports.BranchKe
 	} else {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
-	return NewSigningKeyService(repo, repo, enc, bkm, logger), repo
+	return NewSigningKeyService(repo, repo, enc, bkm, logger, ledgerfixture.NewRecorder()), repo
 }
 
 func TestNewSigningKeySubject(t *testing.T) {
@@ -327,7 +317,7 @@ func TestSigningKeyService_GenerateAndStoreKey(t *testing.T) {
 			time.Sleep(2 * time.Millisecond)
 			return "", nil
 		}
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, manager, testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, manager, testSlogger(), ledgerfixture.NewRecorder())
 		key, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
 		require.NoError(t, err)
 		assert.False(t, key.ActivatesAt.Before(preparedAt.Add(jwksGracePeriod)), "activation %s, preparation %s", key.ActivatesAt, preparedAt)
@@ -408,7 +398,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		_, err = svc.BuildJWKS(ctx)
 		require.Error(t, err, "all active keys failed processing — should return error")
 		assert.Contains(t, err.Error(), "failed to build JWKS")
@@ -431,7 +421,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		require.NoError(t, err)
 
 		// failingDecryptor simulates KMS unavailability.
-		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		_, buildErr := svc.BuildJWKS(ctx)
 		require.Error(t, buildErr, "KMS down — all decrypts fail — should return error")
 		assert.Contains(t, buildErr.Error(), "failed to build JWKS")
@@ -468,7 +458,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		_, buildErr := svc.BuildJWKS(ctx)
 		require.Error(t, buildErr)
 		assert.ErrorContains(t, buildErr, "current signing key")
@@ -506,7 +496,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		jwks, buildErr := svc.BuildJWKS(ctx)
 		require.NoError(t, buildErr, "the currently used signing key still succeeded — should return partial JWKS")
 		assert.Equal(t, 1, jwks.Len(), "only the good current signer should be in the set")
@@ -531,7 +521,7 @@ func (r *countingJWKSRepo) ListActiveInDomain(ctx context.Context, domain storag
 func TestSigningKeyService_BuildJWKS_CachesActiveKeys(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.GenerateAndStoreKey(ctx, "ES256", true)
 	require.NoError(t, err)
 
@@ -606,7 +596,7 @@ func TestSigningKeyService_FailedSignerLoadSharesFlightAndAllowsCancellation(t *
 				close(encryptor.release)
 			}
 		}()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 		require.NoError(t, err)
 
@@ -669,7 +659,7 @@ func TestSigningKeyService_InvalidateDuringSignerLoad(t *testing.T) {
 			close(encryptor.release)
 		}
 	}()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	next, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
@@ -750,7 +740,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		ctx := context.Background()
 		repo := newTestSigningKeyStore()
 		encryptor := newCountingDecryptor()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		generated, err := svc.GenerateAndStoreKey(ctx, "ES256", true)
 		require.NoError(t, err)
@@ -774,7 +764,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		ctx := context.Background()
 		repo := newTestSigningKeyStore()
 		encryptor := newCountingDecryptor()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		privatePEM, err := generateES256KeyPEM()
 		require.NoError(t, err)
 		legacy := &storage.SigningKey{
@@ -810,7 +800,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		ctx := context.Background()
 		repo := newTestSigningKeyStore()
 		encryptor := newCountingDecryptor()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		key := &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 id.NewKeyID(uuid.NewString()),
@@ -853,7 +843,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 			CreatedAt:           time.Now().UTC(),
 		}
 		require.NoError(t, repo.Create(ctx, key))
-		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		set, err := svc.BuildJWKS(ctx)
 		require.NoError(t, err)
@@ -888,7 +878,7 @@ func TestSigningKeyService_BuildJWKS_AuditsTrustAnchorBackfill(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, legacy))
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 	before := time.Now().UTC()
 	_, err = svc.BuildJWKS(ctx)
 	require.NoError(t, err)
@@ -934,7 +924,7 @@ func TestSigningKeyService_BuildJWKS_AuditsConcurrentBackfillWinner(t *testing.T
 	}))
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 	before := time.Now().UTC()
 	_, err = svc.BuildJWKS(ctx)
 	require.NoError(t, err)
@@ -982,7 +972,7 @@ func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
 				ActivatesAt:         time.Now().UTC().Add(-time.Minute),
 			}
 			require.NoError(t, store.Create(ctx, legacy))
-			svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+			svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 			set, err := svc.BuildJWKS(ctx)
 			if tt.publish {
@@ -1002,7 +992,7 @@ func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
 func TestSigningKeyService_BuildJWKS_CacheLifecycle(t *testing.T) {
 	t.Run("caches an empty key set", func(t *testing.T) {
 		repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		for range 2 {
 			set, err := svc.BuildJWKS(context.Background())
@@ -1015,8 +1005,8 @@ func TestSigningKeyService_BuildJWKS_CacheLifecycle(t *testing.T) {
 	t.Run("refreshes another replica after key creation", func(t *testing.T) {
 		ctx := context.Background()
 		repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-		svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+		svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		first, err := svcA.GenerateAndStoreKey(ctx, "ES256", true)
 		require.NoError(t, err)
 
@@ -1046,8 +1036,8 @@ func TestSigningKeyService_BuildJWKS_CacheLifecycle(t *testing.T) {
 func TestSigningKeyService_BuildJWKS_RemoteRemoval(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestSigningKeyStore()
-	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
 	require.NoError(t, err)
 	newKey, err := svcA.generateAndStore(ctx, "ES256", false, time.Now().Add(-time.Minute))
@@ -1083,7 +1073,7 @@ func (r *failingRevisionSigningKeyStore) KeySetVersion(ctx context.Context) (int
 func TestSigningKeyService_BuildJWKS_FailsClosedWhenRevisionUnavailable(t *testing.T) {
 	ctx := context.Background()
 	repo := &failingRevisionSigningKeyStore{testSigningKeyStore: newTestSigningKeyStore()}
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
 	require.NoError(t, err)
 	_, err = svc.BuildJWKS(ctx)
@@ -1097,7 +1087,7 @@ func TestSigningKeyService_BuildJWKS_FailsClosedWhenRevisionUnavailable(t *testi
 func TestSigningKeyService_BuildJWKS_DoesNotServeStaleOnRebuildFailure(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestSigningKeyStore()
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
 	require.NoError(t, err)
 	_, err = svc.BuildJWKS(ctx)
@@ -1115,7 +1105,7 @@ func TestSigningKeyService_BuildJWKS_DoesNotServeStaleOnRebuildFailure(t *testin
 func TestSigningKeyService_BuildJWKS_InvalidatesAfterMutation(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
 	require.NoError(t, err)
 
@@ -1201,7 +1191,7 @@ func TestSigningKeyService_BuildJWKS_SingleflightAndMutationRace(t *testing.T) {
 	t.Run("concurrent rebuilds list once", func(t *testing.T) {
 		ctx := context.Background()
 		repo := newBlockingJWKSRepo()
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
 		require.NoError(t, err)
 
@@ -1236,7 +1226,7 @@ func TestSigningKeyService_BuildJWKS_SingleflightAndMutationRace(t *testing.T) {
 	t.Run("mutation rejects an in-flight stale rebuild", func(t *testing.T) {
 		ctx := context.Background()
 		repo := newBlockingJWKSRepo()
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
 		require.NoError(t, err)
 
@@ -1272,8 +1262,8 @@ func TestSigningKeyService_BuildJWKS_SingleflightAndMutationRace(t *testing.T) {
 func TestSigningKeyService_BuildJWKS_RemoteRemovalDuringRebuild(t *testing.T) {
 	ctx := context.Background()
 	repo := newBlockingJWKSRepo()
-	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
 	require.NoError(t, err)
 	newKey, err := svcA.generateAndStore(ctx, "ES256", false, time.Now().Add(-time.Minute))
@@ -1304,7 +1294,7 @@ func TestSigningKeyService_BuildJWKS_RemoteRemovalDuringRebuild(t *testing.T) {
 
 func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t *testing.T) {
 	repo := newBlockingJWKSRepo()
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(context.Background(), "ES256", true, time.Now().UTC().Add(-time.Minute))
 	require.NoError(t, err)
 
@@ -1355,7 +1345,7 @@ func TestJWXAccessTokenStrategy_WarmSignerVerifiesAcrossReplicasWithoutDecryptio
 	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
 	require.NoError(t, err)
 
-	otherReplica := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+	otherReplica := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	set, err := otherReplica.BuildJWKS(ctx)
 	require.NoError(t, err, "persisted public JWK must be served without private-key decryption")
 	_, err = jwt.Parse([]byte(token), jwt.WithKeySet(set))
@@ -1384,7 +1374,7 @@ func TestJWXAccessTokenStrategy_LegacyCachedSignerFailsWhenJWKSUnavailable(t *te
 		ActivatesAt:         time.Now().Add(-time.Second),
 	}
 	require.NoError(t, repo.Create(ctx, legacy))
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
 	require.NoError(t, err)
 	_, _, err = strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
@@ -1571,7 +1561,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 			testSigningKeyStore: newTestSigningKeyStore(),
 			countErr:            errors.New("count failed"),
 		}
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.Error(t, err)
@@ -1588,16 +1578,16 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 	t.Run("recovers when bootstrap lock times out after the key is persisted", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		var logBuf bytes.Buffer
-		repo := &recoveryCountContextRepo{testSigningKeyStore: newTestSigningKeyStore()}
+		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
 		coordinator := &postCallbackErrorBootstrapCoordinator{
 			err: context.DeadlineExceeded,
 			afterSuccess: func() {
-				repo.rejectCanceledCountContext = true
+				repo.recovering = true
 				cancel()
 			},
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(ctx, "ES256")
 		require.NoError(t, err)
@@ -1613,13 +1603,10 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 
 	t.Run("uses a bounded timeout for the recovery count probe", func(t *testing.T) {
 		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		svc := NewSigningKeyService(
-			repo,
-			&postCallbackErrorBootstrapCoordinator{err: context.DeadlineExceeded},
-			&testEncryptor{},
-			newNoopBranchKeyManager(),
-			testSlogger(),
-		)
+		coordinator := &postCallbackErrorBootstrapCoordinator{
+			err: context.DeadlineExceeded, afterSuccess: func() { repo.recovering = true },
+		}
+		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.NoError(t, err)
@@ -1633,20 +1620,15 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		var logBuf bytes.Buffer
 		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		svc := NewSigningKeyService(
-			repo,
-			&postCallbackErrorBootstrapCoordinator{
-				err: storage.NewStorageError(
-					"SigningKeyRepo.WithBootstrapLock",
-					storage.ErrorKindTimeout,
-					errors.New("lock timed out after callback"),
-					"operation exceeded timeout",
-				),
-			},
-			&testEncryptor{},
-			newNoopBranchKeyManager(),
-			logger,
-		)
+		svc := NewSigningKeyService(repo, &postCallbackErrorBootstrapCoordinator{
+			err: storage.NewStorageError(
+				"SigningKeyRepo.WithBootstrapLock",
+				storage.ErrorKindTimeout,
+				errors.New("lock timed out after callback"),
+				"operation exceeded timeout",
+			),
+			afterSuccess: func() { repo.recovering = true },
+		}, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.NoError(t, err)
@@ -1663,13 +1645,10 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 			recoveryCountErr:    errors.New("count failed"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		svc := NewSigningKeyService(
-			repo,
-			&postCallbackErrorBootstrapCoordinator{err: context.DeadlineExceeded},
-			&testEncryptor{},
-			newNoopBranchKeyManager(),
-			logger,
-		)
+		coordinator := &postCallbackErrorBootstrapCoordinator{
+			err: context.DeadlineExceeded, afterSuccess: func() { repo.recovering = true },
+		}
+		svc := NewSigningKeyService(repo, coordinator, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -1684,20 +1663,15 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		var logBuf bytes.Buffer
 		repo := &recoveryCountProbeRepo{testSigningKeyStore: newTestSigningKeyStore()}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		svc := NewSigningKeyService(
-			repo,
-			&postCallbackErrorBootstrapCoordinator{
-				err: storage.NewStorageError(
-					"SigningKeyRepo.WithBootstrapLock",
-					storage.ErrorKindConnection,
-					errors.New("commit failed"),
-					"failed to commit transaction",
-				),
-			},
-			&testEncryptor{},
-			newNoopBranchKeyManager(),
-			logger,
-		)
+		svc := NewSigningKeyService(repo, &postCallbackErrorBootstrapCoordinator{
+			err: storage.NewStorageError(
+				"SigningKeyRepo.WithBootstrapLock",
+				storage.ErrorKindConnection,
+				errors.New("commit failed"),
+				"failed to commit transaction",
+			),
+			afterSuccess: func() { repo.recovering = true },
+		}, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.NoError(t, err)
@@ -1707,7 +1681,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		assert.Contains(t, logBuf.String(), "bootstrap lock")
 	})
 
-	t.Run("uses bootstrap context for all initial-key work", func(t *testing.T) {
+	t.Run("uses bootstrap context only for revalidation and persistence", func(t *testing.T) {
 		const marker = "bootstrap-lock"
 
 		repo := &bootstrapContextCheckingRepo{
@@ -1726,7 +1700,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 			},
 		}
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		svc := NewSigningKeyService(repo, coordinator, enc, bkm, logger)
+		svc := NewSigningKeyService(repo, coordinator, enc, bkm, logger, ledgerfixture.NewRecorder())
 
 		key, created, err := svc.EnsureInitialKey(context.Background(), "ES256")
 		require.NoError(t, err)
@@ -1734,8 +1708,9 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		require.NotNil(t, key)
 		assert.True(t, repo.sawCountActive)
 		assert.True(t, repo.sawCreateAndSetCurrent)
-		assert.True(t, sawBranchKeyCreate)
-		assert.True(t, enc.sawEncrypt)
+		assert.Equal(t, 1, bkm.createCalls)
+		assert.False(t, sawBranchKeyCreate, "branch provisioning must precede bootstrap transaction ownership")
+		assert.False(t, enc.sawEncrypt, "encryption must precede bootstrap transaction ownership")
 	})
 
 	t.Run("concurrent callers create only one initial key", func(t *testing.T) {
@@ -1971,7 +1946,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 	t.Run("returns wrapped not found before last-key validation when the target kid is missing", func(t *testing.T) {
 		kid := id.NewKeyID("missing-key")
 		repo := &deleteValidationSpyRepo{count: 1}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.Error(t, err)
@@ -1989,7 +1964,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 				IsCurrent: false,
 			},
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.ErrorIs(t, err, ports.ErrLastActiveKey)
@@ -2005,7 +1980,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 				IsCurrent: true,
 			},
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.ErrorIs(t, err, ports.ErrCurrentKey)
@@ -2035,7 +2010,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 				},
 			},
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.ErrorIs(t, err, ports.ErrEffectiveCurrentKey)
@@ -2054,7 +2029,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 			},
 			listActiveErr: errors.New("list failed"),
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.Error(t, err)
@@ -2088,7 +2063,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 			},
 			deleteErr: deleteErr,
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.ErrorIs(t, err, deleteErr)
@@ -2105,7 +2080,7 @@ func TestSigningKeyService_DeleteKey_PreflightValidation(t *testing.T) {
 				IsCurrent: false,
 			},
 		}
-		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, &bootstrapContextCheckingCoordinator{}, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 
 		err := svc.DeleteKey(context.Background(), kid)
 		require.NoError(t, err)
@@ -2174,7 +2149,7 @@ func TestSigningKeyService_BranchKeyProvisioning(t *testing.T) {
 		repo := newTestSigningKeyStore()
 		enc := &failingEncryptor{}
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		svc := NewSigningKeyService(repo, repo, enc, bkm, logger)
+		svc := NewSigningKeyService(repo, repo, enc, bkm, logger, ledgerfixture.NewRecorder())
 
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", false)
 		require.Error(t, err)
@@ -2196,28 +2171,6 @@ func (r *mockFailingSigningKeyRepo) Create(_ context.Context, _ *storage.Signing
 
 func (r *mockFailingSigningKeyRepo) CreateAndSetCurrent(_ context.Context, _ *storage.SigningKey) error {
 	return r.createErr
-}
-
-type promoteKeyReadbackFailingRepo struct {
-	*testSigningKeyStore
-}
-
-func (r *promoteKeyReadbackFailingRepo) GetByKIDInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID) (*storage.SigningKey, error) {
-	return nil, errors.New("readback failed")
-}
-
-func (r *promoteKeyReadbackFailingRepo) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
-	return r.testSigningKeyStore.SetCurrentInDomain(ctx, domain, kid, activatesAt)
-}
-
-type promoteKeyActivationSpyRepo struct {
-	*testSigningKeyStore
-	lastActivatesAt time.Time
-}
-
-func (r *promoteKeyActivationSpyRepo) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
-	r.lastActivatesAt = activatesAt
-	return r.testSigningKeyStore.SetCurrentInDomain(ctx, domain, kid, activatesAt)
 }
 
 type countActiveFailingRepo struct {
@@ -2333,7 +2286,7 @@ func TestSigningKeyService_OrphanedBranchKeyWarning(t *testing.T) {
 			createErr:           errors.New("storage unavailable"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, bkm, logger)
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, bkm, logger, ledgerfixture.NewRecorder())
 
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", false)
 		require.Error(t, err)
@@ -2356,7 +2309,7 @@ func TestSigningKeyService_OrphanedBranchKeyWarning(t *testing.T) {
 			createErr:           errors.New("storage unavailable"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, bkm, logger)
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, bkm, logger, ledgerfixture.NewRecorder())
 
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
 		require.Error(t, err)
@@ -2400,7 +2353,7 @@ func TestSigningKeyService_OrphanedBranchKeyWarning(t *testing.T) {
 			createErr:           errors.New("storage unavailable"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", false)
 		require.Error(t, err)
@@ -2417,7 +2370,7 @@ func TestSigningKeyService_OrphanedBranchKeyWarning(t *testing.T) {
 			createErr:           errors.New("storage unavailable"),
 		}
 		logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger, ledgerfixture.NewRecorder())
 
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
 		require.Error(t, err)
@@ -2468,7 +2421,7 @@ func TestSigningKeyService_KeyDomainIsolation(t *testing.T) {
 	t.Run("selects and lists token signing keys independently", func(t *testing.T) {
 		ctx := context.Background()
 		repo := newTestSigningKeyStore()
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		now := time.Now().UTC()
 
 		newKey := func(kidValue string, domain storage.KeyDomain, isCurrent bool, activatesAt time.Time) *storage.SigningKey {
@@ -2563,10 +2516,17 @@ func TestSigningKeyService_PromoteKey(t *testing.T) {
 		candidate, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
 		require.NoError(t, err)
 
+		before := time.Now().UTC()
 		promoted, err := svc.PromoteKey(ctx, candidate.KID)
+		after := time.Now().UTC()
 		require.NoError(t, err)
 		assert.Equal(t, candidate.KID, promoted.KID)
 		assert.True(t, promoted.IsCurrent)
+		assert.False(t, promoted.ActivatesAt.Before(before))
+		assert.False(t, promoted.ActivatesAt.After(after))
+		storedPromoted, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, candidate.KID)
+		require.NoError(t, err)
+		assert.Equal(t, storedPromoted, promoted, "promotion must return the persisted metadata")
 
 		storedCurrent, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, current.KID)
 		require.NoError(t, err)
@@ -2582,45 +2542,32 @@ func TestSigningKeyService_PromoteKey(t *testing.T) {
 		assert.ErrorContains(t, err, "signing key not found")
 	})
 
-	t.Run("passes immediate activation time from domain to repository", func(t *testing.T) {
-		repo := &promoteKeyActivationSpyRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
-		ctx := context.Background()
+}
 
-		_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC())
-		require.NoError(t, err)
-		candidate, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
-		require.NoError(t, err)
+func TestSigningKeyService_PromotionInvalidatesCachesOnlyOnOwnerCommit(t *testing.T) {
+	svc, _ := newTestSigningKeyService()
+	store := &ledgerfixture.Store{}
+	svc.ledger = store.Recorder(t)
+	ctx := context.Background()
+	current, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	standby, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	_, err = svc.signingMaterial(ctx)
+	require.NoError(t, err)
 
-		before := time.Now().UTC()
-		promoted, err := svc.PromoteKey(ctx, candidate.KID)
-		after := time.Now().UTC()
-		require.NoError(t, err)
-		assert.Equal(t, candidate.KID, promoted.KID)
-		assert.True(t, promoted.IsCurrent)
-		assert.False(t, repo.lastActivatesAt.IsZero())
-		assert.False(t, repo.lastActivatesAt.Before(before))
-		assert.False(t, repo.lastActivatesAt.After(after))
-		assert.WithinDuration(t, repo.lastActivatesAt, promoted.ActivatesAt, time.Millisecond)
-	})
-
-	t.Run("returns promoted key without a separate read-back call", func(t *testing.T) {
-		repo := &promoteKeyReadbackFailingRepo{testSigningKeyStore: newTestSigningKeyStore()}
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
-		ctx := context.Background()
-
-		_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC())
-		require.NoError(t, err)
-		candidate, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
-		require.NoError(t, err)
-
-		promoted, err := svc.PromoteKey(ctx, candidate.KID)
-		require.NoError(t, err)
-		assert.Equal(t, candidate.KID, promoted.KID)
-		assert.True(t, promoted.IsCurrent)
-	})
+	txCtx, err := store.BeginTX(ctx)
+	require.NoError(t, err)
+	_, err = svc.PromoteKey(txCtx, standby.KID)
+	require.NoError(t, err)
+	require.NotNil(t, svc.jwksSet, "JWKS stays cached before the owning transaction commits")
+	require.NotNil(t, svc.cachedSigner, "signer stays cached before the owning transaction commits")
+	assert.Equal(t, current.KID, svc.cachedSigner.kid)
+	require.NoError(t, store.Commit(txCtx))
+	assert.Nil(t, svc.jwksSet)
+	assert.Nil(t, svc.cachedSigner)
 }
 
 func TestSigningKeyService_CountActive(t *testing.T) {

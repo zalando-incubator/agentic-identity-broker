@@ -865,3 +865,7 @@ func TestPermissionSetsHandler_CanonicalPresentationFallsBackToUUID(t *testing.T
 	assert.Contains(t, writer.Header().Get("Vary"), "Prefer")
 	repo.AssertExpectations(t)
 }
+
+func (n *nopGrantRepo) FindByPrincipalAndAgentForUpdate(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	return n.FindByPrincipalAndAgent(ctx, principal, agentID)
+}

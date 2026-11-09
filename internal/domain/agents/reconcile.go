@@ -83,23 +83,44 @@ func (s *Service) reconcileNew(ctx context.Context, desired *storage.Agent, sele
 }
 
 func (s *Service) reconcileExisting(ctx context.Context, existing, desired *storage.Agent, selector id.ExternalID, input ReconcileInput) (*storage.Agent, ReconcileOutcome, error) {
-	candidate := desired.Copy()
-	candidate.ExternalID = &selector
-	candidate, err := s.updateCandidate(ctx, existing, candidate, UpdateInput{CanonicalIDPresent: input.CanonicalIDPresent})
+	var candidate, previous *storage.Agent
+	outcome := ReconcileUnchanged
+	err := s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
+		locked, err := s.repo.GetForUpdate(txCtx, existing.ID)
+		if err != nil {
+			return err
+		}
+		if locked.ExternalID == nil || *locked.ExternalID != selector {
+			return errAgentRemoved
+		}
+		previous = locked.Copy()
+		candidate = desired.Copy()
+		candidate.ExternalID = &selector
+		candidate, err = s.updateCandidate(txCtx, locked, candidate, UpdateInput{CanonicalIDPresent: input.CanonicalIDPresent})
+		if err != nil {
+			return err
+		}
+		if sameDefinition(locked, candidate) {
+			candidate = locked.Copy()
+			return nil
+		}
+		candidate.UpdatedAt = time.Now().UTC()
+		if err := s.persistUpdate(txCtx, locked, candidate); err != nil {
+			return err
+		}
+		outcome = ReconcileUpdated
+		return nil
+	})
 	if err != nil {
-		return nil, 0, err
-	}
-	if sameDefinition(existing, candidate) {
-		return existing.Copy(), ReconcileUnchanged, nil
-	}
-	candidate.UpdatedAt = time.Now().UTC()
-	if err := s.persistUpdate(ctx, existing, candidate); err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			return nil, 0, fmt.Errorf("%w: %w", errAgentRemoved, err)
 		}
 		return nil, 0, err
 	}
-	return candidate, ReconcileUpdated, nil
+	if outcome == ReconcileUpdated {
+		s.auditUpdate(ctx, previous, candidate)
+	}
+	return candidate, outcome, nil
 }
 
 func samePointer[T comparable](a, b *T) bool {

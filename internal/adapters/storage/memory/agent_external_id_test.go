@@ -18,7 +18,7 @@ func externalAgent(value *id.ExternalID) *storage.Agent {
 
 func TestExternalIDAtomicLifecycle(t *testing.T) {
 	ctx := context.Background()
-	r := NewAgentRepository()
+	r := NewAgentRepository(NewTransactionManager())
 	key, moved := id.ExternalID("Registry"), id.ExternalID("Moved")
 	a := externalAgent(&key)
 	require.NoError(t, r.Create(ctx, a))
@@ -59,7 +59,7 @@ func TestExternalIDAtomicLifecycle(t *testing.T) {
 }
 
 func TestExternalIDConcurrentCreate(t *testing.T) {
-	r := NewAgentRepository()
+	r := NewAgentRepository(NewTransactionManager())
 	ctx := context.Background()
 	key := id.ExternalID("shared")
 	var wg sync.WaitGroup

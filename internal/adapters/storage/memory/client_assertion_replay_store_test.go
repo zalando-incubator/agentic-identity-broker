@@ -14,7 +14,7 @@ import (
 )
 
 func TestClientAssertionReplayStoreConsume(t *testing.T) {
-	store := NewClientAssertionReplayStore()
+	store := NewClientAssertionReplayStore(NewTransactionManager())
 	expiresAt := time.Now().Add(time.Minute)
 	require.NoError(t, store.Consume(context.Background(), "client-a", "jti-1", expiresAt))
 	err := store.Consume(context.Background(), "client-a", "jti-1", expiresAt)
@@ -25,7 +25,7 @@ func TestClientAssertionReplayStoreConsume(t *testing.T) {
 }
 
 func TestClientAssertionReplayStoreConsumeConcurrent(t *testing.T) {
-	store := NewClientAssertionReplayStore()
+	store := NewClientAssertionReplayStore(NewTransactionManager())
 	const workers = 50
 	var successes atomic.Int32
 	var conflicts atomic.Int32
@@ -53,14 +53,14 @@ func TestClientAssertionReplayStoreConsumeConcurrent(t *testing.T) {
 }
 
 func TestClientAssertionReplayStoreScopesJTIByClient(t *testing.T) {
-	store := NewClientAssertionReplayStore()
+	store := NewClientAssertionReplayStore(NewTransactionManager())
 	expiresAt := time.Now().Add(time.Minute)
 	require.NoError(t, store.Consume(context.Background(), "client-a", "shared-jti", expiresAt))
 	require.NoError(t, store.Consume(context.Background(), "client-b", "shared-jti", expiresAt))
 }
 
 func TestClientAssertionReplayStoreDeleteExpired(t *testing.T) {
-	store := NewClientAssertionReplayStore()
+	store := NewClientAssertionReplayStore(NewTransactionManager())
 	require.NoError(t, store.Consume(context.Background(), "client-a", "expired", time.Now().Add(-time.Second)))
 	require.NoError(t, store.Consume(context.Background(), "client-a", "active", time.Now().Add(time.Minute)))
 

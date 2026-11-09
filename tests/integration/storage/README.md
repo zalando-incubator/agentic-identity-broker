@@ -49,6 +49,7 @@ This map describes source coverage, not a test total or pass report:
 | [infra/thirdparty_service_test.go](infra/thirdparty_service_test.go) | Authorization parameters and protected-resource lookup behavior |
 | [PostgreSQL repository package](../../../internal/adapters/storage/postgres/) | Repository-level integration tests |
 | [infra/main_test.go](infra/main_test.go) | Shared PostgreSQL teardown after the package finishes |
+| [infra/consent_business_event_test.go](infra/consent_business_event_test.go) | Concurrent first-grant winners and transactional revocation/renewal with ledger facts |
 
 The repository tests cover approval, permission-set, and grant transactions, expiry, conflicts, and failed writes.
 [TestUserSessionReadsAfterSchemaExpansion](../../../internal/adapters/storage/postgres/user_session_reliability_test.go)
@@ -58,6 +59,19 @@ Keep this test column separate from production columns when you add migrations.
 [TestProtectedResourceUpdatePreservesUnchangedCreatedAt](infra/thirdparty_service_test.go)
 covers omitted resources, normalized-equivalent membership, replacement, empty membership, and stale CAS through the domain service.
 For unchanged membership, it checks protected-resource ownership, creation timestamps, and the parent version increment.
+
+`TestToolApprovalRepository_TransitionsRejectExpiryAfterOwnerBegan` covers approvals that expire while their owning transaction is open.
+Approval and denial use PostgreSQL's current clock, not the transaction start time.
+
+`TestConsentLedgerConcurrentIdenticalFirstGrantRecordsOnlyWinner` checks that competing first-time consent requests return the same grant ID.
+They retain one creation fact and no update fact.
+`TestConsentLedgerRevocationTransactions` checks absent revocation, revocation, and expired renewal.
+Absent revocation preserves refresh cleanup without a ledger fact.
+Revocation and renewal leave grants unlocked while they wait for the agent, then commit refresh invalidation with the grant transition.
+
+Grant `Create` and `Update` copy persisted metadata, including a defensive `ValidUntil`, back to the input grant.
+When you renew a fixture, assign its new expiry to `grant.ValidUntil` before each write.
+Changing the original time variable alone does not change the grant.
 
 Names alone do not prove coverage.
 `TestPostgresAdapter_FullLifecycle_Integration` does not apply a schema or assert a successful full lifecycle ([test body](infra/postgres_test.go#L288-L342)).
@@ -72,6 +86,8 @@ It prepares one fully migrated template per package and clones an isolated datab
 New migrations require no test fixture version or filename updates.
 Application-level journeys must use the current adapter schema, including credential-source migration 041.
 The PostgreSQL adapter package and PostgreSQL E2E fixture also apply all discovered migrations.
+The bootstrap helper registers its own `golang-migrate` file-source and PostgreSQL drivers.
+Callers do not need to import those drivers for migration setup.
 
 Only migration-specific upgrade and rollback tests can request a historical schema.
 For those tests, use `SetupDatabaseFromTemplate` with `ApplyMigrationsUpTo(t, dbName, version)`.

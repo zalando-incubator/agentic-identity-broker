@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:approval-expired",
+  "title": "approval-expired",
+  "description": "An approval reaches expiry and the broker recognizes it.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.approval-expired"
+        },
+        "outcome": {
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "approval_id",
+        "agent_id"
+      ]
+    }
+  ]
+}

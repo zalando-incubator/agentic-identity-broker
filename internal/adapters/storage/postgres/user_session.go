@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"time"
 
@@ -11,6 +13,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/lib/pq"
 )
+
+// sessionCoordinationLockClass namespaces the per-session advisory lock that serializes refreshes.
+const sessionCoordinationLockClass int32 = 1095320150
 
 const userSessionColumns = `id, principal, service_id, callback_id, upstream_client_id,
 encrypted_access_token, encrypted_refresh_token, token_type, access_token_expires_at,
@@ -167,7 +172,8 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		FOR SHARE OF service
 		ON CONFLICT (principal, service_id)
 	`
-	query := insertQuery + `DO NOTHING`
+	const returning = ` RETURNING id, initiated_at, created_at, updated_at`
+	query := insertQuery + `DO NOTHING` + returning
 	if replace {
 		query = insertQuery + `DO UPDATE SET
 			upstream_client_id = EXCLUDED.upstream_client_id,
@@ -180,27 +186,24 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 			encryption_context = EXCLUDED.encryption_context,
 			callback_id = EXCLUDED.callback_id,
 			updated_at = NOW()
-	`
+	` + returning
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	result, err := r.adapter.db.ExecContext(execCtx, query,
+	// The upsert reports the retained identity and timestamps back to the caller.
+	err := r.adapter.storageExecutor(execCtx).QueryRowContext(execCtx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshRejectedAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
 		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource,
-	)
-	if err != nil {
+	).Scan(&session.ID, &session.InitiatedAt, &session.CreatedAt, &session.UpdatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, r.wrapError(err, "Create")
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return nil, r.wrapError(err, "Create")
-	}
-	if rows == 0 {
+	if errors.Is(err, sql.ErrNoRows) {
 		operation := "CreateIfAbsent"
 		if replace {
 			operation = "Create"
@@ -212,7 +215,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 			ProviderMatches bool `db:"provider_matches"`
 		}
 		readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-		err = r.adapter.db.GetContext(readCtx, &probe, `SELECT
+		err = r.adapter.storageExecutor(readCtx).GetContext(readCtx, &probe, `SELECT
 			EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE id = $1) AS service_exists,
 			EXISTS (
 				SELECT 1 FROM thirdparty_oauth2_services
@@ -253,7 +256,7 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	err := r.adapter.db.GetContext(queryCtx, &rec, query, sessionID)
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &rec, query, sessionID)
 	if err == sql.ErrNoRows {
 		return nil, storage.NewStorageError("Get", storage.ErrorKindNotFound, err, "session not found")
 	}
@@ -265,16 +268,27 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 
 // FindByPrincipalAndService retrieves the session for a principal and service.
 func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.findByPrincipalAndService(ctx, principal, serviceID, false)
+}
+
+func (r *PostgresUserSessionRepository) FindByPrincipalAndServiceForUpdate(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+	return r.findByPrincipalAndService(ctx, principal, serviceID, true)
+}
+
+func (r *PostgresUserSessionRepository) findByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID, forUpdate bool) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
 
 	var rec userSessionRecord
 	query := `SELECT ` + userSessionColumns + ` FROM user_sessions WHERE principal = $1 AND service_id = $2`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	err := r.adapter.db.GetContext(queryCtx, &rec, query, principal, serviceID)
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &rec, query, principal, serviceID)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is not an error
 	}
@@ -284,14 +298,20 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return recordToSession(&rec), nil
 }
 
-// WithLockedSession re-reads one session under a row lock and commits token changes atomically.
-// A new callback generation may also replace the established upstream client identity.
-func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+// WithLockedSession coordinates refreshes across processes on a connection-scoped
+// advisory lock without holding ledger lifecycle/subject gates or a business row
+// lock while the provider responds. Only the short conditional write in
+// UpdateRefreshedSession starts a transaction, on the same connection.
+func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (session *storage.UserSession, resultErr error) {
+	const operation = "WithLockedSession"
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
-	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, nil, "database not initialized")
+	if _, ambient := storageTransaction(ctx); ambient {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh coordination must precede the business transaction")
+	}
+	if r.adapter == nil || r.adapter.db == nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	acquireCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -301,66 +321,118 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	case r.adapter.lockedSessionSlots <- struct{}{}:
 		defer func() { <-r.adapter.lockedSessionSlots }()
 	case <-acquireCtx.Done():
-		return nil, r.wrapError(acquireCtx.Err(), "WithLockedSession")
+		return nil, r.wrapError(acquireCtx.Err(), operation)
 	}
 	conn, err := r.adapter.db.Connx(acquireCtx)
 	cancel()
 	if err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+		return nil, r.wrapError(err, operation)
 	}
-	defer conn.Close() //nolint:errcheck
-
-	tx, err := conn.BeginTxx(ctx, nil)
-	if err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+	locked, discard := false, false
+	defer func() {
+		if locked {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), r.adapter.timeouts.Write)
+			var unlocked bool
+			unlockErr := conn.GetContext(cleanupCtx, &unlocked,
+				`SELECT pg_advisory_unlock($1, hashtext($2 || '/' || $3))`, sessionCoordinationLockClass, principal.String(), serviceID.String())
+			cancel()
+			if unlockErr != nil || !unlocked {
+				discard = true
+				resultErr = errors.Join(resultErr, storage.NewStorageError(operation, storage.ErrorKindConnection,
+					unlockErr, "failed to release session coordination lock"))
+			}
+		}
+		if discard {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		if err := conn.Close(); err != nil {
+			resultErr = errors.Join(resultErr, r.wrapError(err, operation))
+		}
+	}()
+	if _, err := conn.ExecContext(ctx,
+		`SELECT pg_advisory_lock($1, hashtext($2 || '/' || $3))`, sessionCoordinationLockClass, principal.String(), serviceID.String()); err != nil {
+		discard = true // The server may have taken the lock just before cancellation.
+		return nil, r.wrapError(err, operation)
 	}
-	defer tx.Rollback() //nolint:errcheck
-
-	var rec userSessionRecord
+	locked = true
 	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	err = tx.GetContext(readCtx, &rec, `SELECT `+userSessionColumns+` FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	var rec userSessionRecord
+	err = conn.GetContext(readCtx, &rec, `SELECT `+userSessionColumns+` FROM user_sessions WHERE principal = $1 AND service_id = $2`, principal, serviceID)
 	cancel()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+		return nil, r.wrapError(err, operation)
 	}
-	session := recordToSession(&rec)
-	upstreamClientID := session.UpstreamClientID
-	updated, err := refresh(ctx, session)
-	if err != nil {
+	previous := recordToSession(&rec)
+	prepared := *previous
+	prepared.EncryptedAccessToken = bytes.Clone(previous.EncryptedAccessToken)
+	prepared.EncryptedRefreshToken = bytes.Clone(previous.EncryptedRefreshToken)
+	if previous.UpstreamClientID != nil {
+		clientID := *previous.UpstreamClientID
+		prepared.UpstreamClientID = &clientID
+	}
+	session = &prepared
+	coordinationCtx := context.WithValue(ctx, refreshConnectionKey{}, conn)
+	if err := refresh(coordinationCtx, session); err != nil {
 		return nil, err
-	}
-	if session.CallbackID == rec.CallbackID {
-		session.UpstreamClientID = upstreamClientID
-		if upstreamClientID != nil {
-			*upstreamClientID = id.ClientID(*rec.UpstreamClientID)
-		}
-	}
-	if updated {
-		if err := session.Validate(); err != nil {
-			return nil, err
-		}
-		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
-			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
-			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10 WHERE id = $11`,
-			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
-			session.RefreshRejectedAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
-			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID)
-		cancel()
-		if err != nil {
-			return nil, r.wrapError(err, "WithLockedSession")
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
 	}
 	return session, nil
 }
 
-// ListByPrincipal retrieves all sessions for a principal, including those that require reauthentication.
+// UpdateRefreshedSession accepts only the exact pre-exchange session snapshot and
+// joins the ledger owner, so the refreshed fact and the tokens commit together.
+// Only a new callback generation may replace the established upstream client identity.
+func (r *PostgresUserSessionRepository) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	const operation = "UpdateRefreshedSession"
+	if previous == nil || current == nil || previous.ID != current.ID ||
+		previous.Principal != current.Principal || previous.ServiceID != current.ServiceID {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid refreshed session")
+	}
+	if err := current.Validate(); err != nil {
+		return err
+	}
+	if _, ambient := storageTransaction(ctx); !ambient {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh requires an owning transaction")
+	}
+	var upstreamClientID *string
+	if current.UpstreamClientID != nil {
+		clientID := current.UpstreamClientID.String()
+		upstreamClientID = &clientID
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	// The stored upstream client identity survives unless this write starts a new callback generation.
+	var established *string
+	err := r.adapter.storageExecutor(writeCtx).QueryRowContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
+		access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
+		encryption_context = $7, updated_at = $8, callback_id = $9,
+		upstream_client_id = CASE WHEN callback_id = $9 THEN upstream_client_id ELSE $10 END
+		WHERE id = $11 AND principal = $12 AND service_id = $13
+		AND encrypted_access_token IS NOT DISTINCT FROM $14 AND encrypted_refresh_token IS NOT DISTINCT FROM $15
+		AND updated_at = $16 AND callback_id = $17
+		RETURNING upstream_client_id`,
+		current.EncryptedAccessToken, current.EncryptedRefreshToken, current.AccessTokenExpiresAt,
+		current.RefreshRejectedAt, current.TokenType, pq.Array(current.Scope), current.EncryptionContext,
+		current.UpdatedAt, current.CallbackID, upstreamClientID,
+		previous.ID, previous.Principal, previous.ServiceID, previous.EncryptedAccessToken, previous.EncryptedRefreshToken,
+		previous.UpdatedAt, previous.CallbackID).Scan(&established)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	if err != nil {
+		return r.wrapError(err, operation)
+	}
+	current.UpstreamClientID = nil
+	if established != nil {
+		clientID := id.ClientID(*established)
+		current.UpstreamClientID = &clientID
+	}
+	return nil
+}
+
+// ListByPrincipal retrieves all sessions for a principal, including expired ones.
 // Used for user-visible session lists.
 func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
@@ -372,7 +444,7 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	err := r.adapter.db.SelectContext(queryCtx, &records, query, principal)
+	err := r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListByPrincipal")
 	}
@@ -390,7 +462,7 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var records []userSessionSummaryRecord
-	err := r.adapter.db.SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at,
+	err := r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at,
 		access_token_expires_at, refresh_token_expires_at,
 		COALESCE(octet_length(encrypted_refresh_token), 0) > 0 AS has_refresh_token
 		FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`, principal)
@@ -422,7 +494,7 @@ func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx cont
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	ids := make([]id.ServiceID, 0)
-	err := r.adapter.db.SelectContext(queryCtx, &ids, `SELECT service_id FROM user_sessions WHERE principal = $1
+	err := r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &ids, `SELECT service_id FROM user_sessions WHERE principal = $1
 		AND `+usableSessionPredicate+` ORDER BY created_at DESC`, principal)
 	if err != nil {
 		return nil, r.wrapError(err, "ListActiveServiceIDsByPrincipal")
@@ -430,7 +502,7 @@ func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx cont
 	return ids, nil
 }
 
-// ListActiveByPrincipal retrieves only sessions that do not require reauthentication.
+// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 // Used for FR-020 consent submission validation.
 func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
@@ -442,7 +514,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	err := r.adapter.db.SelectContext(queryCtx, &records, query, principal)
+	err := r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListActiveByPrincipal")
 	}
@@ -468,9 +540,9 @@ func (r *PostgresUserSessionRepository) ListExpiringSessions(ctx context.Context
 	var records []userSessionRecord
 	var err error
 	if cursor.ID.IsZero() {
-		err = r.adapter.db.SelectContext(queryCtx, &records, listExpiringSessionsFirstPageQuery, threshold, limit)
+		err = r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &records, listExpiringSessionsFirstPageQuery, threshold, limit)
 	} else {
-		err = r.adapter.db.SelectContext(queryCtx, &records, listExpiringSessionsAfterCursorQuery, threshold, cursor.AccessTokenExpiresAt, cursor.ID, limit)
+		err = r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &records, listExpiringSessionsAfterCursorQuery, threshold, cursor.AccessTokenExpiresAt, cursor.ID, limit)
 	}
 	if err != nil {
 		return nil, r.wrapError(err, "ListExpiringSessions")
@@ -492,7 +564,7 @@ func (r *PostgresUserSessionRepository) Delete(ctx context.Context, sessionID id
 	query := `DELETE FROM user_sessions WHERE id = $1`
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	_, err := r.adapter.db.ExecContext(execCtx, query, sessionID)
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, query, sessionID)
 	if err != nil {
 		return r.wrapError(err, "Delete")
 	}
@@ -508,7 +580,7 @@ func (r *PostgresUserSessionRepository) DeleteByPrincipalAndService(ctx context.
 	query := `DELETE FROM user_sessions WHERE principal = $1 AND service_id = $2`
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	_, err := r.adapter.db.ExecContext(execCtx, query, principal, serviceID)
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, query, principal, serviceID)
 	if err != nil {
 		return r.wrapError(err, "DeleteByPrincipalAndService")
 	}
@@ -526,7 +598,7 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	err := r.adapter.db.GetContext(queryCtx, &count, query, serviceID)
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &count, query, serviceID)
 	if err != nil {
 		return 0, r.wrapError(err, "CountByService")
 	}
@@ -546,7 +618,7 @@ type sessionExpiryGroupRecord struct {
 func (r *PostgresUserSessionRepository) CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error) {
 	const operation = "CountSessionsByExpiry"
 	var records []sessionExpiryGroupRecord
-	if err := r.adapter.db.SelectContext(ctx, &records, countSessionsByExpiryQuery, threshold, now); err != nil {
+	if err := r.adapter.storageExecutor(ctx).SelectContext(ctx, &records, countSessionsByExpiryQuery, threshold, now); err != nil {
 		return nil, r.wrapError(err, operation)
 	}
 

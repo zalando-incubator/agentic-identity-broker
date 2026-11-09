@@ -35,7 +35,8 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 
 	newAccessExpiry := time.Now().UTC().Add(time.Hour).Round(time.Millisecond)
 	rejectedAt := time.Now().UTC().Round(time.Millisecond)
-	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
+	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) error {
+		previous := *session
 		session.EncryptedAccessToken = []byte("new-access")
 		session.EncryptedRefreshToken = []byte("new-refresh")
 		session.TokenType = "DPoP"
@@ -43,7 +44,7 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 		session.RefreshRejectedAt = &rejectedAt
 		session.Scope = []string{"repo"}
 		session.UpdatedAt = time.Now().UTC()
-		return true, nil
+		return commitRefreshedSession(ctx, adapter, repo, &previous, session)
 	})
 	require.NoError(t, err)
 
@@ -138,12 +139,13 @@ func TestUserSessionReadsAfterSchemaExpansion(t *testing.T) {
 		expected := *sessions[0]
 		expected.EncryptedAccessToken = []byte("renewed-access")
 		expected.EncryptedRefreshToken = []byte("renewed-refresh")
-		_, err := repo.WithLockedSession(ctx, principal, expected.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		_, err := repo.WithLockedSession(ctx, principal, expected.ServiceID, func(ctx context.Context, current *storage.UserSession) error {
 			assert.Equal(t, sessions[0].ID, current.ID)
 			assert.Equal(t, sessions[0].EncryptedRefreshToken, current.EncryptedRefreshToken)
+			previous := *current
 			current.EncryptedAccessToken = expected.EncryptedAccessToken
 			current.EncryptedRefreshToken = expected.EncryptedRefreshToken
-			return true, nil
+			return commitRefreshedSession(ctx, adapter, repo, &previous, current)
 		})
 		require.NoError(t, err)
 		got, err := repo.Get(ctx, expected.ID)

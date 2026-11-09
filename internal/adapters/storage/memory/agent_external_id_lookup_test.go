@@ -11,7 +11,7 @@ import (
 
 func TestGetByExternalIDContract(t *testing.T) {
 	ctx := context.Background()
-	r := NewAgentRepository()
+	r := NewAgentRepository(NewTransactionManager())
 	missing, err := r.GetByExternalID(ctx, "registry")
 	require.Nil(t, missing)
 	require.ErrorIs(t, err, ports.ErrNotFound)
@@ -31,7 +31,7 @@ func TestExternalIDFormatAcrossMemoryWrites(t *testing.T) {
 	for _, value := range []id.ExternalID{"bad\x00id", "\xff", id.ExternalID(strings.Repeat("界", 256))} {
 		t.Run(string(value), func(t *testing.T) {
 			ctx := context.Background()
-			r := NewAgentRepository()
+			r := NewAgentRepository(NewTransactionManager())
 			invalid := externalAgent(&value)
 			require.Error(t, r.Create(ctx, invalid))
 			valid := externalAgent(nil)

@@ -29,6 +29,7 @@ func TestBuilder_SessionCleanupLifecycle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				cfg := &ports.Config{
+					BusinessEvents: ports.DefaultBusinessEventsConfig(),
 					Server: ports.ServerConfig{
 						EndUser: ports.ServerInstanceConfig{PublicURL: "http://localhost:8000"},
 					},
@@ -113,10 +114,18 @@ func TestBuilder_SessionCleanupLifecycle(t *testing.T) {
 	}
 }
 
-type shutdownRefreshRepository func(context.Context, id.Principal, id.ServiceID, func(context.Context, *domstorage.UserSession) (bool, error)) (*domstorage.UserSession, error)
+type shutdownRefreshRepository struct {
+	ports.UserSessionRefreshRepository
+	lock   func(context.Context, id.Principal, id.ServiceID, func(context.Context, *domstorage.UserSession) error) (*domstorage.UserSession, error)
+	update func(context.Context, *domstorage.UserSession, *domstorage.UserSession) error
+}
 
-func (r shutdownRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *domstorage.UserSession) (bool, error)) (*domstorage.UserSession, error) {
-	return r(ctx, principal, serviceID, refresh)
+func (r shutdownRefreshRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *domstorage.UserSession) error) (*domstorage.UserSession, error) {
+	return r.lock(ctx, principal, serviceID, refresh)
+}
+
+func (r shutdownRefreshRepository) UpdateRefreshedSession(ctx context.Context, previous, current *domstorage.UserSession) error {
+	return r.update(ctx, previous, current)
 }
 
 type shutdownTokenTransport func(*http.Request) (*http.Response, error)
@@ -153,21 +162,23 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		encryption := testutil.NewTestEncryptionAdapter(t)
 		committing := make(chan context.Context, 1)
 		var locks, requests atomic.Int32
-		refreshRepo := shutdownRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *domstorage.UserSession) (bool, error)) (*domstorage.UserSession, error) {
-			locks.Add(1)
-			return adapter.SessionRefresh().WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *domstorage.UserSession) (bool, error) {
-				changed, err := refresh(ctx, current)
-				if changed && err == nil {
-					committing <- ctx
-					select {
-					case <-releaseCommit:
-					case <-ctx.Done():
-						return false, ctx.Err()
-					}
+		refreshRepo := shutdownRefreshRepository{
+			UserSessionRefreshRepository: adapter.SessionRefresh(),
+			lock: func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *domstorage.UserSession) error) (*domstorage.UserSession, error) {
+				locks.Add(1)
+				return adapter.SessionRefresh().WithLockedSession(ctx, principal, serviceID, refresh)
+			},
+			// Gate the rotated-token write so shutdown must drain the admitted commit.
+			update: func(ctx context.Context, previous, current *domstorage.UserSession) error {
+				committing <- ctx
+				select {
+				case <-releaseCommit:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				return changed, err
-			})
-		})
+				return adapter.SessionRefresh().UpdateRefreshedSession(ctx, previous, current)
+			},
+		}
 		// Replace only the session service to gate its commit; retain the builder's shutdown chain.
 		require.NoError(t, application.OAuth2SessionService.Close(context.Background()))
 		application.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
@@ -178,7 +189,7 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 					StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
 					Body: io.NopCloser(strings.NewReader(`{"access_token":"new-access","refresh_token":"rotated-refresh","token_type":"Bearer","expires_in":3600}`)),
 				}, nil
-			})}, nil, oauth2session.DefaultConfig(), logger,
+			})}, nil, oauth2session.DefaultConfig(), logger, application.LedgerService, adapter,
 		)
 		serviceID := id.NewServiceID()
 		require.NoError(t, adapter.Services().Create(context.Background(), &model.ThirdpartyOAuth2ProviderEntity{
@@ -207,7 +218,8 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 		require.NoError(t, err)
 		assert.Equal(t, "old-access", token)
 		refreshCtx := <-committing
-		persisted, err := adapter.UserSessions().Get(context.Background(), first.ID)
+		// Read inside the open write transaction: the memory backend gates other readers until it commits.
+		persisted, err := adapter.UserSessions().Get(refreshCtx, first.ID)
 		require.NoError(t, err)
 		assert.Equal(t, first.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
 		shutdown := make(chan error, 1)

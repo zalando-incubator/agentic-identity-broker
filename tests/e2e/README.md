@@ -56,7 +56,7 @@ Then select scenarios in the package, rather than passing an individual test fil
 
 ```bash
 just web-build
-ginkgo -v --label-filter="!performance && !docker" --focus="Authorization" ./tests/e2e/
+ginkgo -v --tags=integration --label-filter="!performance && !docker" --focus="Authorization" ./tests/e2e/
 ```
 
 The separate `just test-e2e-performance` recipe selects the `performance` label with one worker ([recipe](../../justfile)).
@@ -84,6 +84,12 @@ Use these source locations instead of copied helper signatures:
 
 Use separate end-user and admin servers for scenarios that need both route types ([server guidance](AGENTS.md#dual-server-pattern)).
 Use `NewTestServerBuilder` when assertions depend on the listener URL ([implementation](bootstrap/test_server.go)).
+
+### Ledger envelope comparisons
+
+Ledger envelope comparisons preserve JSON numbers with `UseNumber` on both storage paths and during normalization.
+Adjacent integer payloads above `2^53` must remain distinct.
+Read [the raw-envelope helpers](helpers/business_event_raw.go) and [the ledger quickstart](../../specs/048-business-event-ledger/quickstart.md) before changes.
 
 ### Credential-file bootstrap and recovery journeys
 

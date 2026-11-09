@@ -64,6 +64,7 @@ func TestAgentPresentationEveryHTTPPath(t *testing.T) {
 						repo.On("Update", mock.Anything, mock.Anything).Return(nil).Once()
 					}
 					repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(a.Copy(), nil).Once()
+					repo.On("Get", mock.Anything, a.ID).Return(a.Copy(), nil).Once()
 				case "GET ID":
 					path += "/" + a.ID.String()
 					call = h.GetAgent

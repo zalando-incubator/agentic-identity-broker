@@ -166,14 +166,14 @@ It sets the listener URL before production services initialize.
 ## Running E2E Tests
 
 ```bash
-just test-e2e-backend          # Backend functional suite
+just test-e2e-backend          # Backend functional suite, integration tag by default
 just test-e2e-docker           # Container-backed backend scenarios
 just test-e2e-backend-coverage # Backend coverage report
 just test-e2e-backend-watch    # Backend watch mode
 just test-e2e-extproc          # ExtProc suite
 just test-e2e-performance      # Dedicated SC-001 measurement
 just test-e2e                  # Backend, Docker-tagged backend, ExtProc, and frontend
-ginkgo -v --label-filter="!performance && !docker" --focus="pattern" ./tests/e2e/
+ginkgo -v --tags=integration --label-filter="!performance && !docker" --focus="pattern" ./tests/e2e/
 ```
 
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
@@ -187,9 +187,14 @@ It uses one Ginkgo worker and reports successes plus p95, maximum, and minimum d
 Record its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` result in PR #464.
 Functional recipes exclude this machine-sensitive measurement.
 
+Select ledger scenarios with the `business-event-ledger` label.
+`just test-e2e-backend 'business-event-ledger && !performance'` exercises memory and PostgreSQL with the default `integration` tag.
+For memory only, run `just test-e2e-backend 'business-event-ledger && !performance' ''`.
+Read `specs/048-business-event-ledger/quickstart.md` for ledger commands and required infrastructure.
+
 ### Parallelism expectations
 
-- Keep backend specs isolated for parallel execution.
+- Keep backend specs isolated for parallel execution. Use `Serial` for process-global cases.
 - Keep shared ExtProc containers within their existing lifecycle groups.
 - Keep frontend browser state isolated per test.
 

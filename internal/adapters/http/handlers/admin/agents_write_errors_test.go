@@ -69,6 +69,7 @@ func TestAgentWriteErrorEnvelopes(t *testing.T) {
 						repo.On("Create", mock.Anything, mock.Anything).Return(failureErr).Once()
 					} else {
 						repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(existing.Copy(), nil).Once()
+						repo.On("Get", mock.Anything, existing.ID).Return(existing.Copy(), nil).Once()
 						repo.On("Update", mock.Anything, mock.Anything).Return(failureErr).Once()
 					}
 				}

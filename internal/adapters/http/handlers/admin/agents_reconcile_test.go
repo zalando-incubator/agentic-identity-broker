@@ -18,6 +18,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -106,7 +108,7 @@ func TestReconcileHandlerLogsValidationFailures(t *testing.T) {
 				ps.On("ValidateIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return(nil).Once()
 				ps.On("GetByIDs", mock.Anything, []id.PermissionSetID{permissionSetID}).Return([]*storage.PermissionSet{{ID: permissionSetID}}, nil).Once()
 				handler.psService = ps
-				handler.agentService = agents.NewService(repo, handler.providerService, logger, true, ps)
+				handler.agentService = agents.NewService(repo, handler.providerService, logger, true, ps, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository(), cascadefixture.NewApprovalSyncState(), nil)
 				repo.On("GetByExternalID", mock.Anything, id.ExternalID("registry")).Return(nil, storage.NewStorageError("lookup", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")).Once()
 				t.Cleanup(func() { ps.AssertExpectations(t) })
 			}

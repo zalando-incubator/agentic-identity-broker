@@ -48,10 +48,10 @@ func holdAdmissionTestBatch(t *testing.T, repo *PostgresUserSessionRepository) f
 	t.Cleanup(release)
 	for i := range 20 {
 		go func() {
-			_, err := repo.WithLockedSession(context.Background(), id.Principal(fmt.Sprintf("admission-%d", i)), id.NewServiceID(), func(context.Context, *storage.UserSession) (bool, error) {
+			_, err := repo.WithLockedSession(context.Background(), id.Principal(fmt.Sprintf("admission-%d", i)), id.NewServiceID(), func(context.Context, *storage.UserSession) error {
 				entered <- struct{}{}
 				<-proceed
-				return false, nil
+				return nil
 			})
 			done <- err
 		}()
@@ -72,8 +72,8 @@ func TestUserSessionAdmissionWaitDoesNotBorrowConnection(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			otherRepo := NewUserSessionRepository(repo.adapter)
-			_, err := otherRepo.WithLockedSession(ctx, "waiting-user", id.NewServiceID(), func(context.Context, *storage.UserSession) (bool, error) {
-				return false, errors.New("excess callback ran before admission")
+			_, err := otherRepo.WithLockedSession(ctx, "waiting-user", id.NewServiceID(), func(context.Context, *storage.UserSession) error {
+				return errors.New("excess callback ran before admission")
 			})
 			done <- err
 		}()
@@ -115,8 +115,8 @@ func TestUserSessionAdmissionAndConnectionShareTimeout(t *testing.T) {
 		start := time.Now()
 		done := make(chan error, 1)
 		go func() {
-			_, err := repo.WithLockedSession(context.Background(), "waiting-user", id.NewServiceID(), func(context.Context, *storage.UserSession) (bool, error) {
-				return false, errors.New("callback ran while connection pool was full")
+			_, err := repo.WithLockedSession(context.Background(), "waiting-user", id.NewServiceID(), func(context.Context, *storage.UserSession) error {
+				return errors.New("callback ran while connection pool was full")
 			})
 			done <- err
 		}()
@@ -147,11 +147,9 @@ func TestUserSessionAdmissionRecoversFullCapacityAfterFailures(t *testing.T) {
 		wantCallback bool
 	}{
 		{name: "connection acquisition"},
-		{name: "transaction start", cfg: signingKeyRepoTestConfig{beginErr: failure}},
-		{name: "locked read", cfg: signingKeyRepoTestConfig{queryErr: failure}},
+		{name: "lock acquisition", cfg: signingKeyRepoTestConfig{execErr: failure}},
+		{name: "coordinated read", cfg: signingKeyRepoTestConfig{queryErr: failure}},
 		{name: "callback", callbackErr: failure, wantCallback: true},
-		{name: "persistence", cfg: signingKeyRepoTestConfig{execErr: failure}, wantCallback: true},
-		{name: "commit", cfg: signingKeyRepoTestConfig{commitErr: failure}, wantCallback: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -165,10 +163,10 @@ func TestUserSessionAdmissionRecoversFullCapacityAfterFailures(t *testing.T) {
 					wantErr = context.DeadlineExceeded
 				}
 				called := false
-				_, err := repo.WithLockedSession(context.Background(), "failed-user", id.NewServiceID(), func(_ context.Context, current *storage.UserSession) (bool, error) {
+				_, err := repo.WithLockedSession(context.Background(), "failed-user", id.NewServiceID(), func(_ context.Context, current *storage.UserSession) error {
 					called = true
 					current.EncryptedAccessToken = []byte("renewed-access")
-					return true, tc.callbackErr
+					return tc.callbackErr
 				})
 				require.ErrorIs(t, err, wantErr)
 				assert.Equal(t, tc.wantCallback, called)

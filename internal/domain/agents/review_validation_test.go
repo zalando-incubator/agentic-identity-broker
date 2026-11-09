@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -121,6 +120,7 @@ func TestReconcileCreatesAgentRemovedBeforeUpdate(t *testing.T) {
 				return []*storage.Agent{existing.Copy()}, nil
 			}
 			gone := storage.NewStorageError("UpdateAgent", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+			repo.getFn = func(context.Context, id.AgentID) (*storage.Agent, error) { return nil, gone }
 			repo.updateFn = func(context.Context, *storage.Agent) error { updates++; return gone }
 			conflict := storage.NewStorageError("CreateAgent", storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id conflict")
 			repo.createFn = func(_ context.Context, a *storage.Agent) error {
@@ -138,12 +138,12 @@ func TestReconcileCreatesAgentRemovedBeforeUpdate(t *testing.T) {
 				assert.Equal(t, ReconcileCreated, result)
 				assert.NotEqual(t, existing.ID, got.ID)
 				assert.Equal(t, 1, reads)
-				assert.Equal(t, 1, updates)
+				assert.Zero(t, updates)
 				return
 			}
 			require.ErrorIs(t, err, conflict)
 			assert.Equal(t, 2, reads)
-			assert.Equal(t, 2, updates)
+			assert.Zero(t, updates)
 		})
 	}
 }
@@ -181,7 +181,9 @@ func TestUpdateCandidateValidationRunsOnce(t *testing.T) {
 			uniquenessChecks := 0
 			repo.existsOtherFn = func(context.Context, id.ClientID, *id.AgentID) (bool, error) { uniquenessChecks++; return false, nil }
 			validation := &countingRequirementValidator{}
-			svc := NewService(repo, validation, slog.Default(), false, reviewPermissionSets{})
+			svc := newTestService(repo, false)
+			svc.providerService = validation
+			svc.permissionSets = reviewPermissionSets{}
 			candidate := existing.Copy()
 			candidate.ClientID = nil
 			candidate.CanonicalID = nil

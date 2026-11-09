@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestExchangeAgentSubjectRejection(t *testing.T) {
@@ -28,6 +30,8 @@ func TestExchangeAgentSubjectRejection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, req, grants, sessions := observationFixture(t)
+			store := &ledgerfixture.Store{}
+			svc.ledger = store.Recorder(t)
 			key, keyset := generateTestRSAKeySet(t)
 			var err error
 			svc.jwtValidator, err = NewJWTValidator(&MockJWKSProvider{keySet: keyset}, tc.issuer, "broker", 0)
@@ -48,6 +52,20 @@ func TestExchangeAgentSubjectRejection(t *testing.T) {
 			require.Equal(t, tc.wantCode, exchangeErr.Code())
 			require.Equal(t, tc.wantDetail, exchangeErr.Diagnostic().Detail())
 			require.Empty(t, exchangeErr.ErrorURI())
+			require.Len(t, store.Events, 1)
+			event := store.Events[0]
+			require.Nil(t, event.Subject)
+			require.Nil(t, event.Actor.OnBehalfOf)
+			require.True(t, event.AgentID.IsZero(), "agent detection precedes agent extraction")
+			require.Equal(t, "gateway", *event.Actor.ID)
+			if tc.wantCode == "access_denied" {
+				require.Equal(t, "agentic-identity-broker.token-exchange-denied", event.Type)
+				require.Equal(t, model.BusinessEventDenied, event.Outcome)
+				require.Equal(t, "authorization_failed", event.Data["reason_code"])
+			} else {
+				require.Equal(t, "agentic-identity-broker.token-request-failed", event.Type)
+				require.Equal(t, "internal_failure", event.Data["reason_code"])
+			}
 			require.Zero(t, grants.findByPrincipalAndAgentCalls)
 			require.Zero(t, sessions.findByPrincipalAndServiceCalls)
 			capture, ok := holder.Finalized()

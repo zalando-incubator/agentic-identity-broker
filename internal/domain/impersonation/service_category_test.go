@@ -2,6 +2,7 @@ package impersonation
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -10,9 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestImpersonationCategoryRuleOrder(t *testing.T) {
@@ -26,12 +29,12 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 		wantRule                                    string
 		wantDelegation                              int
 	}{
-		{name: "ineligible first then independently eligible", categories: [][]string{{"human"}, {"agent"}}, wantRule: "second"},
-		{name: "false policy then later agent", categories: [][]string{{"agent"}, {"agent"}}, firstDenied: true, wantRule: "second"},
+		{name: "ineligible first then independently eligible", categories: [][]string{{"human"}, {"agent"}}, wantRule: "second", wantCategory: SubjectCategoryAgent},
+		{name: "false policy then later agent", categories: [][]string{{"agent"}, {"agent"}}, firstDenied: true, wantRule: "second", wantCategory: SubjectCategoryAgent},
 		{name: "agent-only mismatch cannot fall back", categories: [][]string{{"agent"}}, human: true},
 		{name: "explicit collision with active human delegation", categories: [][]string{{"human"}}, status: ports.UserDelegationActive},
 		{name: "omitted collision with active human delegation", categories: [][]string{nil}, status: ports.UserDelegationActive},
-		{name: "dual human active", categories: [][]string{{"human", "agent"}}, human: true, status: ports.UserDelegationActive, wantRule: "first", wantDelegation: 1},
+		{name: "dual human active", categories: [][]string{{"human", "agent"}}, human: true, status: ports.UserDelegationActive, wantRule: "first", wantCategory: SubjectCategoryHuman, wantDelegation: 1},
 		{name: "missing human is terminal", categories: [][]string{{"human", "agent"}, {"agent"}}, human: true, status: ports.UserDelegationMissing, wantDelegation: 1},
 		{name: "expired human is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, status: ports.UserDelegationExpired, wantDelegation: 1},
 		{name: "verifier failure is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, verifierError: true, wantDelegation: 1},
@@ -65,9 +68,10 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 			if tc.verifierError {
 				verifier.err = context.DeadlineExceeded
 			}
+			store := &ledgerfixture.Store{}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, slog.New(slog.DiscardHandler), verifier, "https://broker.example.com", store.Recorder(t))
 			require.NoError(t, err)
 			target := testTarget()
 			subject := target.Agent.ID.String()
@@ -89,6 +93,21 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 				require.Equal(t, tc.wantRule, outcome.Audit.SelectedRule)
 				if tc.wantCategory != "" {
 					require.Equal(t, tc.wantCategory, outcome.Audit.SubjectCategory)
+					require.Len(t, store.Events, 2)
+					require.Equal(t, model.BusinessEventTypePrefix+"impersonation-granted", store.Events[0].Type)
+					require.Equal(t, model.BusinessEventTypePrefix+"token-exchanged", store.Events[1].Type)
+					for _, event := range store.Events {
+						require.Equal(t, model.BusinessEventSuccess, event.Outcome)
+						require.Equal(t, target.Agent.ID, event.AgentID)
+						if tc.wantCategory == SubjectCategoryAgent {
+							require.Nil(t, event.Subject)
+							require.Nil(t, event.Actor.OnBehalfOf)
+						} else {
+							require.NotNil(t, event.Subject)
+							require.Equal(t, id.Principal(subject), *event.Subject)
+							require.Equal(t, event.Subject, event.Actor.OnBehalfOf)
+						}
+					}
 				}
 			} else {
 				require.Error(t, err)
@@ -104,6 +123,17 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 						require.Contains(t, exchangeErr.ErrorURI(), "/agents/")
 					} else {
 						require.Empty(t, exchangeErr.ErrorURI())
+					}
+				}
+				require.NotEmpty(t, store.Events)
+				for _, event := range store.Events {
+					require.Equal(t, target.Agent.ID, event.AgentID)
+					require.Nil(t, event.Actor.OnBehalfOf, "a refused rule establishes no delegation")
+					if outcome.Audit.SubjectCategory == SubjectCategoryHuman && !tc.unsigned {
+						require.NotNil(t, event.Subject)
+						require.Equal(t, id.Principal(subject), *event.Subject)
+					} else {
+						require.Nil(t, event.Subject, "attempted unsigned or agent identity is not a human ledger subject")
 					}
 				}
 			}
@@ -171,9 +201,10 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 				status = ports.UserDelegationMissing
 			}
 			verifier := &recordingDelegationVerifier{status: status}
+			store := &ledgerfixture.Store{}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, agents, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, agents, issuer, 0, slog.New(slog.DiscardHandler), verifier, "https://broker.example.com", store.Recorder(t))
 			require.NoError(t, err)
 			target := testTarget()
 			sign := func(sub string) string {
@@ -194,6 +225,15 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 			}
 			if tc.wantCategory != "" {
 				require.Equal(t, tc.wantCategory, outcome.Audit.SubjectCategory)
+				require.Len(t, store.Events, 2)
+				require.Equal(t, "agentic-identity-broker.impersonation-denied", store.Events[0].Type)
+				require.Equal(t, "agentic-identity-broker.token-exchange-denied", store.Events[1].Type)
+				for _, event := range store.Events {
+					require.Equal(t, model.BusinessEventDenied, event.Outcome)
+					require.Equal(t, target.Agent.ID, event.AgentID)
+					require.Nil(t, event.Subject)
+					require.Nil(t, event.Actor.OnBehalfOf)
+				}
 			}
 		})
 	}

@@ -41,7 +41,7 @@ func TestCredentialSourceMemoryRoundTrips(t *testing.T) {
 		{name: "stored Google", source: model.CredentialSourceStored, flavor: model.OAuth2FlavorGoogle},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 			provider := credentialSourceProvider(tc.source, "https://api.example.test/credential-source")
 			provider.TokenEndpointAuthMethod = tc.method
 			provider.Flavor = tc.flavor
@@ -138,7 +138,7 @@ func TestCredentialSourceMemoryRejectsInvalidRecordsWithoutIndexClaims(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 			provider := credentialSourceProvider(model.CredentialSourceFilesystem, "https://api.example.test/rejected")
 			canonicalID := *provider.CanonicalID
 			tc.mutate(provider)
@@ -158,7 +158,7 @@ func TestCredentialSourceMemoryRejectsInvalidRecordsWithoutIndexClaims(t *testin
 
 func TestCredentialSourceMemoryCanonicalOwnershipIsExact(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	upper := credentialSourceProvider(model.CredentialSourceFilesystem)
 	lower := credentialSourceProvider(model.CredentialSourceFilesystem)
 	upperCanonical, lowerCanonical := "Platform.v1", "platform.v1"

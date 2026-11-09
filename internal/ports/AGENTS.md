@@ -38,6 +38,12 @@ For feature changes, read the relevant specification, plan, and tasks before cha
 | `internal/ports/storage.go` | Repository and transaction interfaces, including `ClientAssertionReplayRepository` | Entity persistence, approval sync, and session refresh. The replay repository atomically consumes `(client_id, jti)` and removes expired records. Sentinel: `ErrNotFound` |
 | `internal/ports/thirdparty_provider.go` | Provider and canonical-ID repositories | Provider storage and protected-resource mutation results |
 
+Ledger values live in `internal/domain/model/business_event.go`.
+
+Before you change ownership, deletion barriers, or dispatch callbacks, read `specs/048-business-event-ledger/contracts/storage.md`.
+
+Delivery returns reference keys only and exports synchronously inside its barrier.
+
 ## Rules
 
 - **Interface scope**: Expose only operations that consumers need. Justify each new operation.

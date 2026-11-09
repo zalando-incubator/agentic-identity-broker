@@ -120,6 +120,9 @@ Additive schema changes must not break record scans.
 Implement the same required contracts in both storage backends.
 Put schema changes in `migrations/` with go-migrate names.
 Use `docs/STORAGE_TROUBLESHOOTING.md` for operational faults.
+Ledger storage uses `business_event*.go` in both backends.
+`internal/adapters/telemetry/business_event*.go` owns the separate ledger provider.
+Read `docs/operations/business-event-ledger.md` for the storage, telemetry, and operations contracts.
 
 ## Tests
 

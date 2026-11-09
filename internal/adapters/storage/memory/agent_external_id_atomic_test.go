@@ -21,7 +21,7 @@ func TestExternalIDOtherConflictsPreserveAllIndexes(t *testing.T) {
 		for _, conflict := range []string{"canonical", "client URI"} {
 			t.Run(operation+"/"+conflict, func(t *testing.T) {
 				ctx := context.Background()
-				r := NewAgentRepository()
+				r := NewAgentRepository(NewTransactionManager())
 				owner := externalAgent(ptr.To(id.ExternalID("owner")))
 				owner.CanonicalID = ptr.To("owner")
 				owner.ClientURIs = []string{"https://owner.example/client.json"}
@@ -82,7 +82,7 @@ func TestExternalIDOtherConflictsPreserveAllIndexes(t *testing.T) {
 
 func TestExternalIDConcurrentMixedWrites(t *testing.T) {
 	ctx := context.Background()
-	r := NewAgentRepository()
+	r := NewAgentRepository(NewTransactionManager())
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() {

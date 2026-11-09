@@ -70,6 +70,13 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create storage adapter: %w", err)
 	}
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), cfg.Server.Shutdown.Timeout)
+		defer closeCancel()
+		if err := storage.Close(closeCtx); err != nil {
+			logger.Error("Storage shutdown error", "error", err)
+		}
+	}()
 
 	// Build application with all dependencies using builder pattern
 	// Constitution Principle VI: Domain depends on ports, not adapters
@@ -461,6 +468,9 @@ func init() {
 	// Third-party OAuth2 client registration configuration
 	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
 	rootCmd.PersistentFlags().String("token_exchange.claim_extraction.agent_subject_expression", "", "replacing CEL agent-subject detector; must reference subject_token.sub (empty uses guarded sub == agent_id)")
+	// Ledger retention and optional telemetry copies (recording itself is mandatory).
+	rootCmd.PersistentFlags().Duration("business_events.retention", 0, "business-event retention (default: 2160h)")
+	rootCmd.PersistentFlags().Bool("business_events.telemetry_copy_enabled", true, "copy business events to telemetry logs when telemetry and logs are enabled (default: true)")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

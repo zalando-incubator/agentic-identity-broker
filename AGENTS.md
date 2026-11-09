@@ -203,6 +203,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 047 | `adrs/047-business-event-ledger.md` | Accepted ledger design: atomic facts, recoverable telemetry, and deletion barriers |
 
 ## Domain Glossary
 
@@ -244,6 +245,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full gate: static checks, security scans, tests, integration, then E2E |
+| `just security broker` | First-party broker runtime code and reachable dependency vulnerabilities |
 | `just build-all` | Backend + frontend build |
 | `just test-e2e` | All backend, ExtProc, and frontend E2E suites |
 | `just test-integration` | Default self-contained integration suites |

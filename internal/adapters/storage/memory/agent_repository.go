@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -18,16 +19,21 @@ import (
 // The byClientURI index enforces global uniqueness of Client ID Metadata Document URLs.
 type AgentRepository struct {
 	mu            sync.RWMutex
+	transactions  *TransactionManager
 	agents        map[id.AgentID]*storage.Agent // ID -> Agent
 	byExternalID  map[id.ExternalID]id.AgentID
 	byCanonicalID map[string]id.AgentID        // canonical ID -> AgentID
 	byClientID    map[id.ClientID][]id.AgentID // ClientID -> []ID (1:many for multi-agent support)
 	byClientURI   map[string]id.AgentID        // clientURI -> AgentID (global uniqueness)
+	grants        *UserGrantRepository
+	approvals     *ToolApprovalRepository
+	credentials   *ClientCredentialStore
 }
 
 // NewAgentRepository creates a new in-memory agent repository.
-func NewAgentRepository() *AgentRepository {
+func NewAgentRepository(transactions *TransactionManager) *AgentRepository {
 	return &AgentRepository{
+		transactions:  transactions,
 		agents:        make(map[id.AgentID]*storage.Agent),
 		byExternalID:  make(map[id.ExternalID]id.AgentID),
 		byCanonicalID: make(map[string]id.AgentID),
@@ -36,11 +42,21 @@ func NewAgentRepository() *AgentRepository {
 	}
 }
 
+func (r *AgentRepository) WithDependentRepositories(grants *UserGrantRepository, approvals *ToolApprovalRepository, credentials *ClientCredentialStore) *AgentRepository {
+	r.grants, r.approvals, r.credentials = grants, approvals, credentials
+	return r
+}
+
 // Create creates a new agent entity in storage.
 // Generates a UUID for the agent if ID is empty.
 // Returns StorageError with Kind=Conflict if agent ID already exists.
 // Multiple agents may share the same client_id (multi-agent mode support).
 func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -92,17 +108,22 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 	}
 
 	// Store deep copy to prevent external mutation
+	journalEntry(ctx, r.agents, agent.ID)
 	r.agents[agent.ID] = agent.Copy()
 	if agent.ExternalID != nil {
+		journalEntry(ctx, r.byExternalID, *agent.ExternalID)
 		r.byExternalID[*agent.ExternalID] = agent.ID
 	}
 	if agent.CanonicalID != nil {
+		journalEntry(ctx, r.byCanonicalID, *agent.CanonicalID)
 		r.byCanonicalID[*agent.CanonicalID] = agent.ID
 	}
 	if agent.ClientID != nil {
+		journalEntry(ctx, r.byClientID, *agent.ClientID)
 		r.byClientID[*agent.ClientID] = append(r.byClientID[*agent.ClientID], agent.ID)
 	}
 	for _, uri := range agent.ClientURIs {
+		journalEntry(ctx, r.byClientURI, uri)
 		r.byClientURI[uri] = agent.ID
 	}
 
@@ -112,6 +133,11 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 // Get retrieves an agent entity by ID.
 // Returns StorageError with Kind=NotFound if agent not found.
 func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -129,7 +155,12 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	return agent.Copy(), nil
 }
 
-func (r *AgentRepository) GetByIDs(_ context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+func (r *AgentRepository) GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	agents := make([]*storage.Agent, 0, len(ids))
@@ -143,7 +174,12 @@ func (r *AgentRepository) GetByIDs(_ context.Context, ids []id.AgentID) ([]*stor
 	return agents, nil
 }
 
-func (r *AgentRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*storage.Agent, error) {
+func (r *AgentRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	agentID, exists := r.byCanonicalID[canonicalID]
@@ -156,6 +192,11 @@ func (r *AgentRepository) GetByCanonicalID(_ context.Context, canonicalID string
 // Update updates an existing agent entity.
 // Returns StorageError with Kind=NotFound if agent ID not found.
 func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -204,37 +245,45 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 
 	// All checks passed — update indexes and stored entity atomically
 	if existing.ExternalID != nil {
+		journalEntry(ctx, r.byExternalID, *existing.ExternalID)
 		delete(r.byExternalID, *existing.ExternalID)
 	}
 	if agent.ExternalID != nil {
+		journalEntry(ctx, r.byExternalID, *agent.ExternalID)
 		r.byExternalID[*agent.ExternalID] = agent.ID
 	}
 	oldClientID := existing.ClientID
 	newClientID := agent.ClientID
 	if !clientIDPtrEqual(oldClientID, newClientID) {
 		if oldClientID != nil {
-			r.removeFromClientIDIndex(*oldClientID, agent.ID)
+			r.removeFromClientIDIndex(ctx, *oldClientID, agent.ID)
 		}
 		if newClientID != nil {
+			journalEntry(ctx, r.byClientID, *newClientID)
 			r.byClientID[*newClientID] = append(r.byClientID[*newClientID], agent.ID)
 		}
 	}
 
 	if existing.CanonicalID != nil {
+		journalEntry(ctx, r.byCanonicalID, *existing.CanonicalID)
 		delete(r.byCanonicalID, *existing.CanonicalID)
 	}
 	if agent.CanonicalID != nil {
+		journalEntry(ctx, r.byCanonicalID, *agent.CanonicalID)
 		r.byCanonicalID[*agent.CanonicalID] = agent.ID
 	}
 	// Rebuild client URI index: remove old URIs, add new ones
 	for _, uri := range existing.ClientURIs {
+		journalEntry(ctx, r.byClientURI, uri)
 		delete(r.byClientURI, uri)
 	}
 	for _, uri := range agent.ClientURIs {
+		journalEntry(ctx, r.byClientURI, uri)
 		r.byClientURI[uri] = agent.ID
 	}
 
 	// Store deep copy
+	journalEntry(ctx, r.agents, agent.ID)
 	r.agents[agent.ID] = agent.Copy()
 
 	return nil
@@ -243,22 +292,50 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 // Delete deletes an agent entity by ID.
 // Idempotent: returns false if the agent doesn't exist.
 func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	ctx, err := r.transactions.BeginTX(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = r.transactions.Rollback(ctx) }()
+	deleted, err := r.deleteInTransaction(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	if err := r.transactions.Commit(ctx); err != nil {
+		return false, err
+	}
+	return deleted, nil
+}
+
+func (r *AgentRepository) deleteInTransaction(ctx context.Context, agentID id.AgentID) (bool, error) {
+	guard, err := r.transactions.lock(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Get agent to clean up indexes
 	if agent, exists := r.agents[agentID]; exists {
+		if err := r.deleteDependents(ctx, agentID); err != nil {
+			return false, err
+		}
 		if agent.ExternalID != nil {
+			journalEntry(ctx, r.byExternalID, *agent.ExternalID)
 			delete(r.byExternalID, *agent.ExternalID)
 		}
 		if agent.ClientID != nil {
-			r.removeFromClientIDIndex(*agent.ClientID, agentID)
+			r.removeFromClientIDIndex(ctx, *agent.ClientID, agentID)
 		}
 		for _, uri := range agent.ClientURIs {
+			journalEntry(ctx, r.byClientURI, uri)
 			delete(r.byClientURI, uri)
 		}
+		journalEntry(ctx, r.agents, agentID)
 		delete(r.agents, agentID)
 		if agent.CanonicalID != nil {
+			journalEntry(ctx, r.byCanonicalID, *agent.CanonicalID)
 			delete(r.byCanonicalID, *agent.CanonicalID)
 		}
 		return true, nil
@@ -270,6 +347,11 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool,
 // List retrieves all agent entities.
 // Returns empty slice if no agents exist (not an error).
 func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -281,7 +363,12 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	return result, nil
 }
 
-func (r *AgentRepository) GetByExternalID(_ context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+func (r *AgentRepository) GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+	guard, err := r.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -295,6 +382,11 @@ func (r *AgentRepository) GetByExternalID(_ context.Context, externalID id.Exter
 // When multiple agents share the same client_id (multi-agent mode), returns the first registered one.
 // Returns StorageError with Kind=NotFound if no agent with that client_id exists.
 func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -316,6 +408,11 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 // ExistsOtherWithClientID reports whether any agent other than excludeAgentID shares the given client_id.
 // When excludeAgentID is nil, all agents with that client_id are considered (create path).
 func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return false, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -334,6 +431,11 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 // GetByClientURI retrieves an agent by a pre-registered CIMD URL or URI pattern.
 // Exact registrations take precedence. Matching patterns on multiple agents are conflicts.
 func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*storage.Agent, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -371,8 +473,8 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 
 // removeFromClientIDIndex removes a specific agentID from the byClientID slice for clientID.
 // Deletes the map entry if the slice becomes empty. Must be called with r.mu held (write lock).
-func (r *AgentRepository) removeFromClientIDIndex(clientID id.ClientID, agentID id.AgentID) {
-	ids := r.byClientID[clientID]
+func (r *AgentRepository) removeFromClientIDIndex(ctx context.Context, clientID id.ClientID, agentID id.AgentID) {
+	ids := slices.Clone(r.byClientID[clientID])
 	for i, v := range ids {
 		if v == agentID {
 			ids = append(ids[:i], ids[i+1:]...)
@@ -380,8 +482,10 @@ func (r *AgentRepository) removeFromClientIDIndex(clientID id.ClientID, agentID 
 		}
 	}
 	if len(ids) == 0 {
+		journalEntry(ctx, r.byClientID, clientID)
 		delete(r.byClientID, clientID)
 	} else {
+		journalEntry(ctx, r.byClientID, clientID)
 		r.byClientID[clientID] = ids
 	}
 }
@@ -403,4 +507,8 @@ func clientIDPtrEqual(a, b *id.ClientID) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func (r *AgentRepository) GetForUpdate(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	return r.Get(ctx, agentID)
 }

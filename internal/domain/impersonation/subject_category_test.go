@@ -3,6 +3,7 @@ package impersonation
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestClassifySubject(t *testing.T) {
@@ -106,7 +108,7 @@ func TestImpersonateAgentSubject(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, slog.New(slog.DiscardHandler), verifier, "https://broker.example.com", ledgerfixture.NewRecorder())
 			require.NoError(t, err)
 			subject := target.Agent.ID.String()
 			if tc.human {
