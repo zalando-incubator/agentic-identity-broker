@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 353
+    "investigation_after": 357
   },
   "issues": [
     {
@@ -106,6 +106,12 @@
       "state": "commented",
       "updated_at": "2026-11-08",
       "note": "Prepared focused approval metric metadata/contract PR with exact ManualReader attribute assertions. Broader constructor warnings, broker agent_id contract and token-exchange request unit remain open."
+    },
+    {
+      "number": 357,
+      "state": "commented",
+      "updated_at": "2026-11-09",
+      "note": "Posted current lint/typed-principal-guard delta and staged enforcement plan. Existing sloglint context and forbidigo output rules already land; remaining import/span/metric checks need fixtures. Coordinate #415/#438/#450/#448; #356 still gates span principal API."
     }
   ],
   "fixes": [
@@ -143,61 +149,19 @@
     },
     {
       "issue": 353,
-      "pr": null,
-      "branch": "repo-assist/tests-approval-metric-contract-2026-11-08",
+      "pr": 448,
+      "branch": "repo-assist/tests-approval-metric-contract-2026-11-08-2b7f82b08ef390de",
       "status": "open",
-      "updated_at": "2026-11-08",
-      "note": "Committed c485feed; draft submission pending final safe output. Partial #353 only. Red/green and 10-repeat assertions, full ExtProc race tests, check and both builds pass. Verify blocked by OSV TLS validation; do not bypass."
+      "updated_at": "2026-11-09",
+      "note": "Verified live draft #448 and published branch. Both checks/statuses read: DCO and pipeline/unit/integration/all E2E passed; classification label missing. No duplicate fix or push needed; partial #353 only."
     }
   ],
   "checks": [
-    {
-      "area": "dependencies",
-      "checked_at": "2026-11-06",
-      "result": "Only Dependabot #233 is open: unit/frontend E2E logs fail npm ci because typescript-eslint 8.70.0 requires TS <6.1.0, but bump is TS 7.0.2. Posted installation-root-cause comment. Compress security update already has passing #440; no duplicate.",
-      "follow_up": "Hold TS major until ESLint chain supports it; no peer-check bypass. No compatible multi-PR bundle exists."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-06",
-      "result": "Read checks and statuses for all five Repo Assist PRs plus #233/#440. #432 follow-up and #433 pipelines passed. #403/#420 only retain classification-label failures. #233 installation failure is dependency incompatibility, not a test regression.",
-      "follow_up": "Maintainers must supply appropriate required classification labels for #403/#420; do not apply misleading documentation labels."
-    },
     {
       "area": "docs",
       "checked_at": "2026-11-06",
       "result": "Verified #381 branch docs/spec exclude user activity API/UI and external producer ingestion. #188 remains broader; posted remaining acceptance slices. Confirmed #244 docs fix is live draft #433 with passing pipeline.",
       "follow_up": "Keep #188 open after ledger merge; later API needs authenticated subject scope, safe reasons and bounded cursor pagination."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-06",
-      "result": "All five live Repo Assist PRs have passing pipeline statuses. #432 correction passed; #433 publication resolved. #424 remains non-draft, others drafts. #403/#420 require classification labels. Monthly checklist repaired without redundant PR comments.",
-      "follow_up": "Await human reviews; no further #432 CI update or duplicate #244 PR needed."
-    },
-    {
-      "area": "performance",
-      "checked_at": "2026-11-07",
-      "result": "Inspected CIMD cache: returned slices/key sets are copied; miss-time eviction scans bounded default 1000 entries. No measured bottleneck justifies changing its policy or data structures. Existing #420 covers approval snapshot indexing.",
-      "follow_up": "No speculative optimization or duplicate #420 PR."
-    },
-    {
-      "area": "code",
-      "checked_at": "2026-11-08",
-      "result": "Inspected #313 literal session coverage, provider scope extraction, exact delegation ceilings and Step 12 original-token return; #314 form gate, credential presence, CIMD guard and form-only proxy contracts. Posted focused policy/implementation guidance; no source edits.",
-      "follow_up": "#313 broad-token vs downscope decision and explicit alias policy needed. #314 preserve method provenance/challenges and either forward Basic correctly or remove proxy advertisement."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-08",
-      "result": "Approval metadata regression failed for empty description/unit, then passed. Ten uncached repeats passed. just extproc-test passed all ExtProc and command packages with race detection. No E2E or full verification pass claimed.",
-      "follow_up": null
-    },
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-08",
-      "result": "just check passed with 0 linter issues. just verify passed static checks and reached security scanning, then OSV querybatch TLS certificate validation failed. No security-control bypass attempted.",
-      "follow_up": "Full gate needs trusted OSV connectivity; later suites were not reached."
     },
     {
       "area": "build",
@@ -212,9 +176,51 @@
       "follow_up": null
     },
     {
+      "area": "dependencies",
+      "checked_at": "2026-11-09",
+      "result": "#233 merged with TypeScript 6.0.3; current manifest and ESLint recommended configuration agree. No open Dependabot PRs in live inventory. #452 tracks side-by-side TS7 compilation; #453 waits for released native tooling support.",
+      "follow_up": "Do not repeat the resolved TS7 installation warning or bypass peers; preserve Storybook/compiler-API and lint compatibility for #452."
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-09",
+      "result": "just lint passed with 0 issues after initial cold dependency-load timeout. Inspected .golangci.yml and typed principal guard; #357 opening baseline is stale. No new rule enabled or full-gate run performed.",
+      "follow_up": "Stage remaining #357 checks with negative fixtures and active alignment PRs. Earlier OSV full-gate limitation was not rechecked."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-09",
+      "result": "Maintained just test package override passed telemetry and ExtProc server with race detection. Both repository-wide typed-principal guard and its negative-fixture test passed; cache isolation, singleflight, expiry and failure tests also pass.",
+      "follow_up": "No new tests or full verification/E2E run this session."
+    },
+    {
+      "area": "performance",
+      "checked_at": "2026-11-09",
+      "result": "Inspected ExtProc exchanger map hit, singleflight, grant snapshot copying and periodic eviction. Existing tests protect caller isolation and outage bounds. No benchmark/profile establishes a worthwhile change; #420 already covers approval snapshot indexing.",
+      "follow_up": "Measure representative cache cardinality/eviction lock time before changing cache policy or required copies; no speculative optimization."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-09",
+      "result": "Inspected central principal log handler, shared HTTP/gRPC buildTracerProvider batching seam, guard tests and lint configuration. #356 span policy remains absent; #354 has active #450. Posted #357 source-grounded delta instead of duplicating active work.",
+      "follow_up": "Keep ExtProc free of domain/ports imports and share principal policy before permitting new principal span attributes."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-09",
+      "result": "Six open Repo Assist PRs; #448 is now verified live draft and memory publication state repaired. #424 non-draft; others drafts. No new PR. #448 checks and statuses both read; pipeline/unit/integration/all E2E pass, classification label fails.",
+      "follow_up": "Human review and appropriate required classification label for #448; no misleading documentation label. Other PR CI not refreshed this run."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-09",
+      "result": "Read #448 checks AND commit statuses: DCO success, CodeRabbit skipped, pipeline and unit/integration/backend/ExtProc/frontend E2E success. Required classification label fails and approval pending. No source-induced failure or push needed.",
+      "follow_up": "Maintainer classification label and review; no fresh CI claim for other PRs."
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-08",
-      "result": "Latest release v0.1.143; focused unmerged metric metadata/test changes do not warrant a release PR.",
+      "checked_at": "2026-11-09",
+      "result": "Latest release v0.1.145 includes merged TypeScript compatibility fix #233. Investigation-only run has no release artifact change warranting a release PR.",
       "follow_up": null
     }
   ],
@@ -236,8 +242,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #353",
-      "note": "#349 blocked by #356; #352 requires dual-emission rollout. Partial #353 branch leaves broader broker/error-handling and ExtProc request-unit work. Avoid active #415/#399/#438."
+      "item": "Resume oldest-first after #357",
+      "note": "#354 has active #450. #356 needs shared log/span policy and batch-export tests before #349. #357 guidance posted; coordinate active telemetry/logging PRs. Partial #353 lives in #448."
     }
   ]
 }
