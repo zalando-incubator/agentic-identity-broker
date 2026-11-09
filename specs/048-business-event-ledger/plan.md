@@ -28,7 +28,7 @@ Scope covers only ledger behavior and its acceptance. It excludes unrelated depe
 
 **Language/Version**: Go 1.27.1 from go.mod. No frontend changes.
 **Primary Dependencies**: Existing sqlx 1.4.0, pgx/v5 5.11.0, google/uuid 1.6.0, Fosite 0.49.0, chi/v5 5.3.2, Cobra 1.10.2, Viper 1.21.0, OTel 1.46.0 and log/sdk-log 0.22.0. Promote existing google/jsonschema-go 0.4.2 from indirect to direct. Do not introduce a second schema validator.
-**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions. Broker-owned business state remains in existing tables. Migration 047 follows main's observed refresh-token rejection migration 046.
+**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions. Broker-owned business state remains in existing tables. Migration 048 follows main's external-ID reconciliation migration 047.
 **Testing**: Standard Go tests/testify, Ginkgo 2.32.2/Gomega, shared testcontainers PostgreSQL, production app.Builder bootstrap, local OTLP receiver. No frontend Playwright work for this backend-only feature.
 **Target Platform**: The existing Linux broker deployment on amd64/arm64 and local development on supported Go hosts. The Kubernetes chart plus an equivalent external PostgreSQL scheduler.
 **Project Type**: The existing Go hexagonal backend within the monorepo, not a new service or event bus.
@@ -146,7 +146,7 @@ internal/app/business_event_delivery.go   ledger telemetry copy delivery worker
 internal/app/business_event_retention.go  in-memory logical retention worker
 internal/config/                     defaults, bindings and validation
 cmd/agentic-identity-broker/          dotted flags and lifecycle integration
-migrations/047_business_event_ledger.{up,down}.sql
+migrations/048_business_event_ledger.{up,down}.sql
 charts/agentic-identity-broker/       values, config, grants, maintenance Job, README
 tests/e2e/                          20 mapped active acceptance journeys
 tests/e2e/bootstrap/                builder wrappers, backend selection, child-process and fault-wrapped ports

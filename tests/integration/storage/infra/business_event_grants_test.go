@@ -66,8 +66,8 @@ func TestBusinessEventRenderedHelmGrantsEnforceRuntimePrivileges(t *testing.T) {
 	}
 	pg := bootstrap.RequireSharedPostgres(t)
 	migrations := ledgerFoundationMigrations(t)
-	dbName, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_foundation_047", func(name string) {
-		pg.ApplyMigrationsUpTo(t, name, migrations, 47)
+	dbName, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_foundation_048", func(name string) {
+		pg.ApplyMigrationsUpTo(t, name, migrations, 48)
 	})
 	runtimeRole := "grants_" + dbName
 	t.Cleanup(func() {

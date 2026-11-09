@@ -22,7 +22,7 @@ import (
 func externalIDMigrationFixture(t *testing.T) *MigrationTestFramework {
 	t.Helper()
 	pg := bootstrap.RequireSharedPostgres(t)
-	name, url, cleanup := pg.SetupDatabaseFromTemplate(t, "external_id_46", func(t *testing.T, name string) { pg.ApplyMigrationsUpTo(t, name, 46) })
+	name, url, cleanup := pg.SetupDatabaseFromTemplate(t, "external_id_46", func(name string) { pg.ApplyProjectMigrationsUpTo(t, name, 46) })
 	db, err := sql.Open("pgx", url)
 	require.NoError(t, err)
 	dir, err := filepath.Abs(filepath.Join("..", "..", "..", "migrations"))

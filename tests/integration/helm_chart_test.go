@@ -677,6 +677,8 @@ func TestHelmTemplate_BusinessEventMaintenance(t *testing.T) {
 			"--set", "migration.backoffLimit=2",
 			"--set", "migration.grants.enabled=false",
 			"--set", "broker.businessEvents.telemetryCopyEnabled=false",
+			"--set", "podDisruptionBudget.enabled=true",
+			"--set-string", `commonLabels.app\.kubernetes\.io/name=agentic-identity-broker`,
 		)
 		cron := helmOnlyObject(t, objects, "CronJob")
 		cronSpec := helmMapping(t, cron, "spec")
@@ -690,6 +692,13 @@ func TestHelmTemplate_BusinessEventMaintenance(t *testing.T) {
 		require.True(t, ok, "maintenance retries must be explicitly bounded")
 		require.GreaterOrEqual(t, backoff, 0)
 		require.LessOrEqual(t, backoff, 2)
+		labels := helmMapping(t, jobSpec, "template", "metadata", "labels")
+		selector := helmMapping(t, helmOnlyObject(t, objects, "PodDisruptionBudget"), "spec", "selector", "matchLabels")
+		matchesBroker := true
+		for key, value := range selector {
+			matchesBroker = matchesBroker && labels[key] == value
+		}
+		require.False(t, matchesBroker, "maintenance Pods must not count toward broker availability")
 		podSpec := helmMapping(t, jobSpec, "template", "spec")
 		require.Equal(t, "Never", podSpec["restartPolicy"])
 		require.Equal(t, true, helmMapping(t, podSpec, "securityContext")["runAsNonRoot"])

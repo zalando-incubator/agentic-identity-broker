@@ -170,7 +170,7 @@ An erasure epoch verified before an asynchronous send still has a race. Updates 
 
 At the initial design review, the latest local migration was 032. Main later added migrations 033–035. PostgreSQL partitioned unique constraints must include the partition key.
 
-**Decision**: After rebase onto main, use migration 047 for ledger tables/functions and occurrence markers (originally 037; main took 037 through 046 before this feature merged).
+**Decision**: After rebase onto main, use migration 048 for ledger tables/functions and occurrence markers (originally 037; main took 037 through 047 before this feature merged).
 
 Main's CIMD migrations occupy 033–035, and refresh-consent grant identity occupies 036.
 

@@ -19,8 +19,8 @@ Additional public contract changes require separate confirmation.
 It is binding, but its acceptance alone does not approve public API changes.
 
 **Database design review**: T013, 2026-09-27, confirms the paired-partition, expiry-marker, lock-order, and privilege design against ADRs 004, 009, and 047.
-Migration 047 contains this feature (originally 037).
-Rebase moved it after main's CIMD authentication migration 035 and refresh-consent migration 036.
+Migration 048 contains this feature (originally 037).
+It follows main's external-ID reconciliation migration 047.
 
 Provisioning never drops partitions.
 Production rollback requires separate operator acknowledgement of ledger-history loss and the matching old binary.

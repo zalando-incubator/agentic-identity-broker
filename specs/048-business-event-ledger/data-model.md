@@ -161,7 +161,7 @@ Existing approval status constraints and consumed/persistence semantics remain a
 
 ## Migration and rollback
 
-After rebase onto main, use `047_business_event_ledger.{up,down}.sql`.
+After rebase onto main, use `048_business_event_ledger.{up,down}.sql`.
 
 Main uses 033–035 for signing-key and CIMD changes and 036 for refresh-consent grant identity. Up creates policy/event/delivery parents, indexes, and immutable-row protection. It also creates the partition-pair, provisioning and maintenance functions, and the erasure function. Up creates current/future partitions and object recognition markers.
 

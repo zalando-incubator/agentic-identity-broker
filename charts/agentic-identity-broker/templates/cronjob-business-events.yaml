@@ -19,8 +19,10 @@ spec:
       template:
         metadata:
           labels:
-            {{- include "agentic-identity-broker.podLabels" . | nindent 12 }}
-            app.kubernetes.io/component: business-event-maintenance
+            {{- $labels := include "agentic-identity-broker.podLabels" . | fromYaml }}
+            {{- $_ := unset $labels "app.kubernetes.io/name" }}
+            {{- $_ = set $labels "app.kubernetes.io/component" "business-event-maintenance" }}
+            {{- toYaml $labels | nindent 12 }}
         spec:
           restartPolicy: Never
           {{- with .Values.imagePullSecrets }}

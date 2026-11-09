@@ -31,18 +31,18 @@ func ledgerFoundationMigrations(t *testing.T) []bootstrap.SQLMigration {
 	files, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
 	require.NoError(t, err)
 	migrations := make([]bootstrap.SQLMigration, 0, len(files))
-	found047 := false
+	found048 := false
 	for _, file := range files {
 		name := filepath.Base(file)
 		version, err := strconv.ParseInt(strings.SplitN(name, "_", 2)[0], 10, 64)
 		require.NoError(t, err)
-		if version > 47 {
+		if version > 48 {
 			continue
 		}
-		found047 = found047 || name == "047_business_event_ledger.up.sql"
+		found048 = found048 || name == "048_business_event_ledger.up.sql"
 		migrations = append(migrations, bootstrap.SQLMigration{File: name, Version: version})
 	}
-	require.True(t, found047, "the ledger must have a runnable migration 047")
+	require.True(t, found048, "the ledger must have a runnable migration 048")
 	return migrations
 }
 
@@ -50,8 +50,8 @@ func openLedgerFoundation(t *testing.T) (*storageadapter.Adapter, *sqlx.DB) {
 	t.Helper()
 	pg := bootstrap.RequireSharedPostgres(t)
 	migrations := ledgerFoundationMigrations(t)
-	_, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_foundation_047", func(name string) {
-		pg.ApplyMigrationsUpTo(t, name, migrations, 47)
+	_, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_foundation_048", func(name string) {
+		pg.ApplyMigrationsUpTo(t, name, migrations, 48)
 	})
 	t.Cleanup(drop)
 
@@ -103,8 +103,8 @@ func TestBusinessEventMigration_UpDownUpPreservesBusinessData(t *testing.T) {
 	pg := bootstrap.RequireSharedPostgres(t)
 	migrations := ledgerFoundationMigrations(t)
 	agentID := id.NewAgentID()
-	dbName, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_before_047", func(name string) {
-		pg.ApplyMigrationsUpTo(t, name, migrations, 46)
+	dbName, connectionURL, drop := pg.SetupDatabaseFromTemplate(t, "business_event_before_048", func(name string) {
+		pg.ApplyMigrationsUpTo(t, name, migrations, 47)
 	})
 	t.Cleanup(drop)
 	db, err := sqlx.Connect("pgx", connectionURL)
@@ -119,7 +119,7 @@ func TestBusinessEventMigration_UpDownUpPreservesBusinessData(t *testing.T) {
 	require.NoError(t, err)
 
 	for cycle := range 2 {
-		pg.ApplyMigration(t, dbName, "047_business_event_ledger.up.sql")
+		pg.ApplyMigration(t, dbName, "048_business_event_ledger.up.sql")
 		var displayName string
 		require.NoError(t, db.Get(&displayName, `SELECT display_name FROM public.agents WHERE id=$1`, agentID))
 		require.Equal(t, "Existing agent", displayName)
@@ -132,7 +132,7 @@ func TestBusinessEventMigration_UpDownUpPreservesBusinessData(t *testing.T) {
 			AND to_regclass('public.business_event_policy') IS NOT NULL`))
 		require.True(t, hasLedger, "migration must create the event, reference and policy tables")
 		if cycle == 0 {
-			pg.ApplyMigration(t, dbName, "047_business_event_ledger.down.sql")
+			pg.ApplyMigration(t, dbName, "048_business_event_ledger.down.sql")
 			require.NoError(t, db.Get(&hasLedger, `SELECT to_regclass('public.business_events') IS NOT NULL
 				OR to_regclass('public.business_event_delivery_pending') IS NOT NULL
 				OR to_regclass('public.business_event_policy') IS NOT NULL`))

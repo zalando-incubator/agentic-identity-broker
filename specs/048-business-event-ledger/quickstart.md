@@ -12,7 +12,7 @@ The validation environment requires:
 
 - Go 1.27.1, just, the repository-pinned Ginkgo CLI, and frontend build prerequisites
 - Docker or Podman for PostgreSQL acceptance and infrastructure integration
-- Migration 047 (originally 037), the canonical [schemas and examples](../../api/events/v1/), and a matching broker build
+- Migration 048 (originally 037), the canonical [schemas and examples](../../api/events/v1/), and a matching broker build
 - Broker DML credentials separate from migration-owner credentials
 - Authorized operational SQL access and a local OTLP receiver
 - A five-minute PostgreSQL maintenance scheduler.

@@ -8,6 +8,8 @@
 
 On 2026-11-04, main allocated migration `046` to the observed refresh-token rejection contract. The ledger migration now uses `047`; its SQL is unchanged. The ledger ADR also moves from `045` to `047` because main owns ADRs `045` and `046`.
 
+On 2026-11-09, the external-ID reconciliation migration occupies `047`. The ledger migration uses `048`; its SQL is unchanged.
+
 ## Context
 
 The broker needs records of 28 catalogued security facts alongside broker-owned state transitions. These records require exact subject investigation, credential exclusion, retention, and subject erasure. Existing slog records remain unchanged.

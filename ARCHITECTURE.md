@@ -411,7 +411,7 @@ PostgreSQL rotation locks the agent `FOR KEY SHARE` before refresh rows. Targete
 
 Consent grant creation, renewal, and revocation lock the agent before accessing the grant inside the owning transaction, matching agent deletion's parent-before-child order. An absent grant deletion completes its empty joined scope without marking the owner rollback-only; user-facing revocation returns 404, while idempotent revocation still cleans up refresh sessions.
 
-Cleanup errors propagate without logging a deletion that rolled back. Successful lifecycle audit logs follow the owning commit and retain the request context. Migrations that set `lock_timeout` reset it before they end, so ledger migration `047` does not inherit a five-second limit.
+Cleanup errors propagate without logging a deletion that rolled back. Successful lifecycle audit logs follow the owning commit and retain the request context. Migrations that set `lock_timeout` reset it before they end, so ledger migration `048` does not inherit a five-second limit.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 

@@ -595,7 +595,7 @@ CAUTION: Before migration rollback, back up ledger and business data.
 Obtain explicit acknowledgement of history loss.
 Deploy the matching old binary.
 
-Migration 047 rollback removes ledger history, pending references, policy, and expiry markers. It does not restore erased or expired history.
+Migration 048 rollback removes ledger history, pending references, policy, and expiry markers. It does not restore erased or expired history.
 
 ## Scheduled Session Sweep
 

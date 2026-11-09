@@ -6,7 +6,7 @@ The user removed the performance gate, deployment-profile requirement, and featu
 
 ## Ownership and prerequisites
 
-PostgreSQL requires migration 047 and a five-minute maintenance scheduler. The migration owner owns ledger tables, partitions, and functions. Broker credentials provide runtime DML only. The broker must not own the database, public schema, or ledger objects. It must not own a role that inherits those ownership rights.
+PostgreSQL requires migration 048 and a five-minute maintenance scheduler. The migration owner owns ledger tables, partitions, and functions. Broker credentials provide runtime DML only. The broker must not own the database, public schema, or ledger objects. It must not own a role that inherits those ownership rights.
 
 The broker role cannot update, delete, truncate, or directly write child partitions. It cannot run provisioning, maintenance, or erasure. The immutable-event trigger also rejects updates. Creation of future partitions removes inherited direct child privileges. Existing business-table permissions remain unchanged.
 
@@ -31,6 +31,8 @@ The lifecycle and subject gates are transaction-scoped. They do not impose this 
 ### Helm
 
 For PostgreSQL with `migration.enabled: true`, the chart renders a maintenance CronJob. It uses `migration.grants.image`, migration credentials, and the migration ServiceAccount. Its schedule is `*/5 * * * *`, with a 300-second starting deadline and `Forbid` concurrency. The starting deadline bounds missed-schedule lookback after suspension or a controller outage. Each Job has a 120-second deadline and at most two retries. Resources and SSL connectivity use the migration configuration.
+
+Maintenance Pods omit the broker's `app.kubernetes.io/name` selector label, including when supplied through `commonLabels`. They cannot count toward the broker PodDisruptionBudget or receive broker Service traffic.
 
 The pre-install/pre-upgrade Job runs schema migrations, then provisioning without partition deletion. Optional grants run only with `migration.grants.enabled` set to true. Disabled optional grants do not disable provisioning or maintenance. If `migration.enabled` is disabled, the chart removes both Jobs. An external scheduler and migration procedure then become mandatory.
 
@@ -276,7 +278,7 @@ Ledger erasure cannot retract telemetry already dispatched to an external receiv
 
 Do not claim system-wide identity deletion from a ledger operation.
 
-CAUTION: Do not roll migration 047 down without a backup and explicit operator acknowledgement. The down migration removes ledger history, delivery references, policy, and expiry markers. It does not restore erased events or events removed by retention.
+CAUTION: Do not roll migration 048 down without a backup and explicit operator acknowledgement. The down migration removes ledger history, delivery references, policy, and expiry markers. It does not restore erased events or events removed by retention.
 
 For rollback, stop new broker writes and maintenance first. Back up retained ledger data and business records. Record the data-loss acknowledgement. With migration ownership, apply the down migration. Then deploy the matching old binary.
 
