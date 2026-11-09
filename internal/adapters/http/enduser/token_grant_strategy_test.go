@@ -34,15 +34,22 @@ func (*stagedProxyResponse) ReadBody() ([]byte, error) { panic("completion owns 
 func (*stagedProxyResponse) CloseBody() error          { return nil }
 
 type stagedProxyOutcomes struct {
-	response *stagedProxyResponse
-	body     []byte
-	err      error
+	response   *stagedProxyResponse
+	body       []byte
+	err        error
+	initiation bool
 }
 
 func (s stagedProxyOutcomes) Proxy(context.Context, url.Values, string, *ports.TokenGrantResolution) (ports.TokenProxyResponse, ports.TokenProxyFailure, error) {
+	if s.initiation && s.err != nil {
+		return nil, ports.TokenProxyRecordingFailed, s.err
+	}
 	return s.response, ports.TokenProxyNoFailure, nil
 }
 func (s stagedProxyOutcomes) CompleteProxy(context.Context, ports.TokenProxyResponse, id.AgentID) (ports.TokenProxyCompletion, ports.TokenProxyFailure, error) {
+	if s.err != nil {
+		return ports.TokenProxyCompletion{Body: s.body}, ports.TokenProxyRecordingFailed, s.err
+	}
 	return ports.TokenProxyCompletion{Body: s.body}, ports.TokenProxyNoFailure, s.err
 }
 
@@ -73,10 +80,18 @@ func TestTokenGrantProxyAndHybridUseOnlyCommittedStagedResponse(t *testing.T) {
 }
 
 func TestTokenGrantProxyRecordingFailureCannotLeakBody(t *testing.T) {
-	response := &stagedProxyResponse{status: http.StatusOK}
-	strategy := NewProxyTokenGrantStrategy("https://upstream.example/token", stagedProxyOutcomes{response: response, body: []byte(`{"access_token":"credential-canary"}`), err: errors.New("ledger unavailable")}, nil)
-	writer := httptest.NewRecorder()
-	strategy.HandleTokenGrant(writer, httptest.NewRequest(http.MethodPost, "/oauth2/token", nil), "client_credentials", url.Values{}, &ports.TokenGrantResolution{AgentID: id.NewAgentID()})
-	require.Equal(t, http.StatusInternalServerError, writer.Code)
-	require.NotContains(t, writer.Body.String(), "credential-canary")
+	for _, phase := range []string{"initiation", "completion"} {
+		t.Run(phase, func(t *testing.T) {
+			response := &stagedProxyResponse{status: http.StatusOK}
+			strategy := NewProxyTokenGrantStrategy("https://upstream.example/token", stagedProxyOutcomes{
+				response: response, body: []byte(`{"access_token":"credential-canary"}`),
+				err: errors.New("ledger unavailable"), initiation: phase == "initiation",
+			}, nil)
+			writer := httptest.NewRecorder()
+			strategy.HandleTokenGrant(writer, httptest.NewRequest(http.MethodPost, "/oauth2/token", nil), "client_credentials", url.Values{}, &ports.TokenGrantResolution{AgentID: id.NewAgentID()})
+			require.Equal(t, http.StatusInternalServerError, writer.Code)
+			require.JSONEq(t, `{"error":"server_error","error_description":"failed to record token outcome"}`, writer.Body.String())
+			require.NotContains(t, writer.Body.String(), "credential-canary")
+		})
+	}
 }

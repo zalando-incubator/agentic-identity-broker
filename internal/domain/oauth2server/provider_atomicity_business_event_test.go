@@ -17,35 +17,40 @@ import (
 
 type failingIssuanceEvents struct {
 	ports.BusinessEventRepository
-	fail bool
+	fail string
 }
 
 func (r *failingIssuanceEvents) Append(ctx context.Context, event *model.BusinessEvent, copyEnabled bool) error {
-	if r.fail && event.Type == model.BusinessEventTypePrefix+"token-issued" {
-		return errors.New("issuance recording unavailable")
+	if event.Type == model.BusinessEventTypePrefix+r.fail {
+		return errors.New("recording unavailable")
 	}
 	return r.BusinessEventRepository.Append(ctx, event, copyEnabled)
+}
+
+func newAtomicLedgerProvider(t *testing.T) (*Provider, *memory.AgentRepository, *failingIssuanceEvents, *ledger.Service) {
+	t.Helper()
+	ctx := context.Background()
+	manager := memory.NewTransactionManager()
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	require.NoError(t, err)
+	events := &failingIssuanceEvents{BusinessEventRepository: memory.NewBusinessEventRepository(manager, registry)}
+	recorder := ledger.NewService(registry, events, nil, manager, false)
+	keys := memory.NewSigningKeyStore(manager)
+	keyService := NewSigningKeyService(keys, keys, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), recorder)
+	_, err = keyService.generateAndStore(ctx, "ES256", true, time.Now())
+	require.NoError(t, err)
+	agents := memory.NewAgentRepository(manager)
+	provider, err := NewProvider(memory.NewAuthorizationCodeStore(manager), memory.NewRefreshTokenSessionStore(manager), memory.NewPKCESessionStore(manager), memory.NewClientCredentialStore(manager), &testClientResolver{agentRepo: agents}, NewArgon2Hasher(1), keyService, "https://broker.example.com", time.Hour, time.Hour, "", newTestGrantVerifier(agents, manager, recorder), nil, testSlogger(), recorder, manager)
+	require.NoError(t, err)
+	return provider, agents, events, recorder
 }
 
 func TestProviderLedgerResponsePopulationRollsBack(t *testing.T) {
 	for _, action := range []string{"authorization-code", "refresh-token"} {
 		t.Run(action, func(t *testing.T) {
 			ctx := context.Background()
-			manager := memory.NewTransactionManager()
-			registry, err := ledger.NewRegistry(eventschemas.Schemas)
-			require.NoError(t, err)
-			events := &failingIssuanceEvents{BusinessEventRepository: memory.NewBusinessEventRepository(manager, registry)}
-			recorder := ledger.NewService(registry, events, nil, manager, false)
-			keys := memory.NewSigningKeyStore(manager)
-			keyService := NewSigningKeyService(keys, keys, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), recorder)
-			_, err = keyService.generateAndStore(ctx, "ES256", true, time.Now())
-			require.NoError(t, err)
-			agents := memory.NewAgentRepository(manager)
-			codes := memory.NewAuthorizationCodeStore(manager)
-			refresh := memory.NewRefreshTokenSessionStore(manager)
-			pkce := memory.NewPKCESessionStore(manager)
-			provider, err := NewProvider(codes, refresh, pkce, memory.NewClientCredentialStore(manager), &testClientResolver{agentRepo: agents}, NewArgon2Hasher(1), keyService, "https://broker.example.com", time.Hour, time.Hour, "", newTestGrantVerifier(agents, manager, recorder), nil, testSlogger(), recorder, manager)
-			require.NoError(t, err)
+			provider, agents, events, recorder := newAtomicLedgerProvider(t)
+			codes, refresh, pkce := provider.fositeStorage.codeRepo, provider.fositeStorage.refreshRepo, provider.fositeStorage.pkceRepo
 			agent, _, secret := setupTestCredentials(t, provider, agents)
 			redirect, verifier := "http://localhost:8080/callback", "atomic-verifier-123456789012345678901234567890"
 			agent.RedirectURIs = []string{redirect}
@@ -61,7 +66,7 @@ func TestProviderLedgerResponsePopulationRollsBack(t *testing.T) {
 				require.NoError(t, err)
 				refreshToken = response.RefreshToken
 			}
-			events.fail = true
+			events.fail = "token-issued"
 			if action == "authorization-code" {
 				response, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, redirect, verifier)
 				require.Error(t, err)
@@ -79,7 +84,7 @@ func TestProviderLedgerResponsePopulationRollsBack(t *testing.T) {
 				require.NoError(t, err)
 				require.Nil(t, retained.UsedAt)
 			}
-			events.fail = false
+			events.fail = ""
 			if action == "authorization-code" {
 				_, err = provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, redirect, verifier)
 			} else {

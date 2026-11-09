@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -148,7 +149,7 @@ func TestProviderLedgerReplayDenialPreservesRevocation(t *testing.T) {
 		t.Run(replay, func(t *testing.T) {
 			for _, recording := range []string{"available", "unavailable"} {
 				t.Run(recording, func(t *testing.T) {
-					provider, agents, _ := newTestProvider(t)
+					provider, agents, events, recorder := newAtomicLedgerProvider(t)
 					agent, _, secret := setupTestCredentials(t, provider, agents)
 					ctx := context.Background()
 					redirect := "http://localhost:8080/callback"
@@ -166,11 +167,9 @@ func TestProviderLedgerReplayDenialPreservesRevocation(t *testing.T) {
 						require.NoError(t, err)
 						live = rotated.RefreshToken
 					}
-					store := &ledgerfixture.Store{}
 					if recording == "unavailable" {
-						store.AppendError = errors.New("ledger unavailable")
+						events.fail = "token-request-failed"
 					}
-					provider.ledger, provider.fositeStorage.transactions = store.Recorder(t), store
 					if replay == "authorization-code" {
 						response, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, code, redirect, verifier)
 						require.Error(t, err)
@@ -184,13 +183,22 @@ func TestProviderLedgerReplayDenialPreservesRevocation(t *testing.T) {
 					retained, err := provider.fositeStorage.refreshRepo.FindBySignature(ctx, signature)
 					require.NoError(t, err)
 					require.NotNil(t, retained.UsedAt, "failure-event rollback must not restore the compromised token chain")
+					rows, err := recorder.Query(ctx, model.BusinessEventQuery{
+						Subject: model.BusinessEventSubject{NoSubject: true},
+						Start:   time.Now().UTC().Add(-time.Hour), End: time.Now().UTC().Add(time.Hour),
+						Type: model.BusinessEventTypePrefix + "token-request-failed",
+					})
+					require.NoError(t, err)
 					if recording == "unavailable" {
-						require.Empty(t, store.Events)
+						require.Empty(t, rows)
 					} else {
-						require.Len(t, store.Events, 1)
-						require.Equal(t, model.BusinessEventTypePrefix+"token-request-failed", store.Events[0].Type)
-						require.Equal(t, map[string]any{"reason_code": "authorization_failed"}, store.Events[0].Data)
+						require.Len(t, rows, 1)
+						require.Equal(t, map[string]any{"reason_code": "authorization_failed"}, rows[0].Data)
 					}
+					events.fail = ""
+					response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), ports.ClientCredentials{Secret: secret}, live, "")
+					require.ErrorIs(t, err, ErrInvalidGrant, "replay must revoke the previously live successor even when failure recording rolls back")
+					require.Nil(t, response)
 				})
 			}
 		})
