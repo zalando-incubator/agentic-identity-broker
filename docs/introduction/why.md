@@ -16,11 +16,9 @@ We start with an ordinary work day.
 
 ## A Monday with an AI assistant
 
-Lena is a product manager. Her company gives every employee an AI assistant in Slack. IT
-reviewed the vendor and approved the assistant. The company also runs MCP servers for
-Linear, GitHub, and Gmail, so the assistant can use those tools.
+Lena is a product manager. Her company gives every employee an AI assistant in Google Chat. Procurements reviewed the vendor and approved the assistant. The company also runs MCP servers for Linear, GitHub, and Gmail, so the assistant can use those tools.
 
-At 9:00, Lena writes in Slack:
+At 9:00, Lena writes in chat:
 
 > Summarize the open Linear tickets for my team, check which GitHub pull requests are
 > still blocked, and send a status email to the launch stakeholders.
@@ -33,7 +31,7 @@ access decisions:
 | The assistant reads Lena's Linear tickets | Is this the Linear access of *Lena*, and not of the last user or of a shared bot account? |
 | The assistant reads GitHub pull requests | Does it get only the access it needs, or the broad `repo` scope that another agent on the same OAuth app asked for? |
 | The assistant sends an email to people outside the company | Did Lena see and approve *this* email, or only "Gmail access" three months ago? |
-| The request starts in Slack | Nobody is at a browser to click through an OAuth consent screen. Who proves that the request is from Lena? |
+| The request starts in Chat | Nobody is at a browser to click through an OAuth consent screen. Who proves that the request is from Lena? |
 | Next month Lena changes teams | Can she remove the assistant's GitHub access, and keep the coding agent's GitHub access? |
 | A security engineer investigates an email | Which agent sent it, for which person, and with which grant? |
 
@@ -84,16 +82,6 @@ for every agent that goes through the gateway. You must
 [enable approval gating](/docs/guides/token-exchange-gateway#enable-approval-gating)
 together with OPA. Without that policy, the gateway does not ask for approval.
 
-**OAuth expects a person at a browser.** Many agent requests start in Slack, in Google
-Chat, in a scheduled job, or in another agent. There is no redirect and no consent screen.
-When the broker runs in `local`
-[server mode](/docs/concepts/oauth2-server-modes), it lets a trusted bridge request a
-token for the user with
-[impersonation](/docs/reference/token-exchange#user-impersonation). Proxy and hybrid
-modes do not support this flow. The broker issues the
-token only when that user has already delegated access to the target agent. If the user
-has not, the bridge receives a link to the consent page.
-
 **Every MCP server must do the OAuth work.** An MCP server that calls a third-party
 service must get, store, encrypt, and refresh that service's tokens for each user. With
 many internal MCP servers, you operate many authorization flows, token stores, and
@@ -103,7 +91,7 @@ provider token and gives it to the MCP server. The provider token never reaches 
 
 ## If IT already approved the agent, what is left to solve?
 
-IT approval is a one-time decision about software: *this vendor and this product are
+IT/ procurement approval is a one-time decision about software: *this vendor and this product are
 allowed in our company.* It is important, and the broker does not replace it.
 
 After that decision, the agent acts for thousands of people, thousands of times each day.
@@ -120,21 +108,15 @@ Each action has its own questions, and a vendor review cannot answer them:
 - **What happened afterward?** Audit needs the agent, the person, the grant, and the
   resource for each token exchange.
 
-In short, IT approval tells you *which agents may exist here*. The broker controls *what
-each of those agents can do for each person, right now*. The broker also helps you know
-the agent: an agent can present a validated
-[Client ID Metadata Document](/docs/concepts/oauth2-server-modes#inbound-cimd-client-resolution),
-so the consent screen shows the user which agent is asking.
+In short, procurement approval tells you *which agents may exist here*. The broker controls *what
+each of those agents can do for each person, right now*.
 
 ## Is this only for enterprises?
 
 The broker is for any organization that runs agents for many people. We use it in
-production for our own internal MCP servers, and it fits companies with internal agents.
+production to connect hundreds of agents with dozens of internal and external MCP servers.
 It also fits these cases:
 
-- **SaaS companies that offer an MCP server.** Your customers use many different agents.
-  The broker gives you your own consent record and approval trail, independent of the
-  agent that a customer uses.
 - **Agent platforms and marketplaces.** Many agents from different teams act for many
   users. Users get one consent interface. Administrators get one place to revoke access.
 - **Hosted agents.** The agent forwards one broker token through a gateway and does not
