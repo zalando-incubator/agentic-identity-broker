@@ -20,7 +20,10 @@ func NewClientAssertionReplayRepo(adapter *Adapter) *ClientAssertionReplayRepo {
 	return &ClientAssertionReplayRepo{adapter: adapter}
 }
 
-func (r *ClientAssertionReplayRepo) Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error {
+func (r *ClientAssertionReplayRepo) Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.consume.client_assertion_replay", "ClientAssertionReplayRepo.Consume")
+	defer func() { endSpan(err) }()
+
 	if r == nil || r.adapter == nil || r.adapter.db == nil {
 		return storage.NewStorageError("ClientAssertionReplayRepo.Consume", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -47,7 +50,10 @@ func (r *ClientAssertionReplayRepo) Consume(ctx context.Context, clientID, jti s
 	return nil
 }
 
-func (r *ClientAssertionReplayRepo) DeleteExpired(ctx context.Context) (int, error) {
+func (r *ClientAssertionReplayRepo) DeleteExpired(ctx context.Context) (_ int, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.delete_expired.client_assertion_replay", "ClientAssertionReplayRepo.DeleteExpired")
+	defer func() { endSpan(err) }()
+
 	if r == nil || r.adapter == nil || r.adapter.db == nil {
 		return 0, storage.NewStorageError("ClientAssertionReplayRepo.DeleteExpired", storage.ErrorKindConnection, nil, "database not initialized")
 	}

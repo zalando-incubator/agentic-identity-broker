@@ -1905,6 +1905,8 @@ When tracing is enabled, the following operations emit child spans:
 | `storage.list.user_grants_by_principal` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql`, `db.operation=ListByPrincipal` |
 | `storage.create.user_grant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql`, `db.operation=CreateUserGrant` |
 | `storage.*.tool_approval`, `storage.*.approval_sync` | PostgreSQL tool approval and approval sync repositories | `db.system=postgresql`, `db.operation` |
+| `storage.*.authorization_code`, `storage.*.pkce_session`, `storage.*.refresh_token_session` | PostgreSQL authorization code, PKCE session and refresh token session repositories | `db.system=postgresql`, `db.operation` |
+| `storage.*.client_assertion_replay`, `storage.*.client_credential` | PostgreSQL client assertion replay and client credential repositories | `db.system=postgresql`, `db.operation` |
 | `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
 | `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
