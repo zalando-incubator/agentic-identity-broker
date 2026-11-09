@@ -69,10 +69,6 @@ func TestBusinessEventRepository_NilDatabaseMapsStorageErrors(t *testing.T) {
 				_, err := repo.Query(context.Background(), query)
 				assertSafeBusinessEventStorageError(t, err, storage.ErrorKindConnection)
 			})
-			t.Run("get", func(t *testing.T) {
-				_, err := repo.Get(context.Background(), model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID})
-				assertSafeBusinessEventStorageError(t, err, storage.ErrorKindConnection)
-			})
 		})
 	}
 }
@@ -94,10 +90,6 @@ func TestBusinessEventRepository_DatabaseDeadlineMapsTimeoutWithoutEventValues(t
 	})
 	t.Run("query", func(t *testing.T) {
 		_, err := repo.Query(context.Background(), query)
-		assertSafeBusinessEventStorageError(t, err, storage.ErrorKindTimeout)
-	})
-	t.Run("get", func(t *testing.T) {
-		_, err := repo.Get(context.Background(), model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID})
 		assertSafeBusinessEventStorageError(t, err, storage.ErrorKindTimeout)
 	})
 }

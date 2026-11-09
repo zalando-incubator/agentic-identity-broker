@@ -106,7 +106,3 @@ func (s *Service) Query(ctx context.Context, query model.BusinessEventQuery) ([]
 	}
 	return s.events.Query(ctx, query)
 }
-
-func (s *Service) Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error) {
-	return s.events.Get(ctx, key)
-}

@@ -120,13 +120,6 @@ func TestBusinessEventQuery_TiedOccurrenceOrderingAndStrictCursor(t *testing.T) 
 	require.Len(t, last, 1)
 	require.Equal(t, originals[4].ID, last[0].ID)
 
-	key := ledgerKey(originals[4])
-	loaded, err := repo.Get(ctx, key)
-	require.NoError(t, err)
-	require.Equal(t, originals[4].ID, loaded.ID)
-	require.Equal(t, originals[4].RecordedAt, loaded.RecordedAt)
-	_, err = repo.Get(ctx, model.BusinessEventKey{ID: key.ID, RecordedAt: key.RecordedAt.Add(time.Microsecond)})
-	require.Error(t, err, "Get requires the complete recorded-at and ID key")
 }
 
 func TestBusinessEventQuery_DefaultAndMaximumPageSizes(t *testing.T) {
@@ -243,7 +236,7 @@ func TestBusinessEventQuery_SubMicrosecondBoundariesRemainExact(t *testing.T) {
 	}
 }
 
-func TestBusinessEventQuery_GetPreservesExactRegisteredIntegers(t *testing.T) {
+func TestBusinessEventQuery_PreservesExactRegisteredIntegers(t *testing.T) {
 	const schema = `{
 		"$schema":"https://json-schema.org/draft/2020-12/schema",
 		"$id":"urn:agentic-identity-broker:events:v1:numeric-retention",
@@ -290,16 +283,6 @@ func TestBusinessEventQuery_GetPreservesExactRegisteredIntegers(t *testing.T) {
 	require.Equal(t, event.ID.String(), storedID)
 	requirePostgresExactNumericJSON(t, stored["data"])
 
-	get, err := adapter.BusinessEvents().Get(ctx, key)
-	require.NoError(t, err)
-	require.Equal(t, key.ID, get.ID)
-	require.Equal(t, key.RecordedAt, get.RecordedAt)
-	_, err = registry.Validate(get)
-	require.NoError(t, err, "decoded Get event must satisfy the registered schema")
-	getData, err := json.Marshal(get.Data)
-	require.NoError(t, err)
-	requirePostgresExactNumericJSON(t, getData)
-
 	rows, err := adapter.BusinessEvents().Query(ctx, model.BusinessEventQuery{
 		Subject: model.BusinessEventSubject{Principal: subject},
 		Start:   event.OccurredAt.Add(-time.Second), End: event.OccurredAt.Add(time.Second),
@@ -314,8 +297,8 @@ func TestBusinessEventQuery_GetPreservesExactRegisteredIntegers(t *testing.T) {
 	require.NoError(t, err)
 	requirePostgresExactNumericJSON(t, queryData)
 
-	get.Data["unreviewed"] = "not in the schema"
-	_, err = registry.Validate(get)
+	rows[0].Data["unreviewed"] = "not in the schema"
+	_, err = registry.Validate(rows[0])
 	require.Error(t, err, "lossless decoding must not relax the closed payload schema")
 }
 

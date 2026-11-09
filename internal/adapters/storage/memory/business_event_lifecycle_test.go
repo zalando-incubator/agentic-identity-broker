@@ -13,7 +13,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,6 +21,7 @@ type memoryLifecycleFixture struct {
 	events       *BusinessEventRepository
 	clock        time.Time
 	examples     []model.BusinessEvent
+	subjects     map[model.BusinessEventKey]model.BusinessEventSubject
 }
 
 func newMemoryLifecycleFixture(t *testing.T, at time.Time) *memoryLifecycleFixture {
@@ -30,7 +30,7 @@ func newMemoryLifecycleFixture(t *testing.T, at time.Time) *memoryLifecycleFixtu
 	require.NoError(t, err)
 	contents, err := fs.ReadFile(eventschemas.Schemas, "examples.json")
 	require.NoError(t, err)
-	fixture := &memoryLifecycleFixture{transactions: NewTransactionManager(), clock: at}
+	fixture := &memoryLifecycleFixture{transactions: NewTransactionManager(), clock: at, subjects: make(map[model.BusinessEventKey]model.BusinessEventSubject)}
 	require.NoError(t, json.Unmarshal(contents, &fixture.examples))
 	fixture.events = NewBusinessEventRepository(fixture.transactions, registry)
 	fixture.events.now = func() time.Time { return fixture.clock }
@@ -55,7 +55,13 @@ func (f *memoryLifecycleFixture) append(t *testing.T, ctx context.Context, name 
 		f.clock = recordedAt
 		require.NoError(t, f.events.Append(ctx, &event, queue))
 		require.Equal(t, recordedAt.UTC().Truncate(time.Microsecond), event.RecordedAt)
-		return model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
+		key := model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
+		selector := model.BusinessEventSubject{NoSubject: subject == nil}
+		if subject != nil {
+			selector.Principal = *subject
+		}
+		f.subjects[key] = selector
+		return key
 	}
 	t.Fatalf("no published business-event example for %q", name)
 	return model.BusinessEventKey{}
@@ -80,21 +86,14 @@ func (f *memoryLifecycleFixture) query(t *testing.T, subject model.BusinessEvent
 
 func (f *memoryLifecycleFixture) assertDeleted(t *testing.T, key model.BusinessEventKey) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_, err := f.events.Get(ctx, key)
-	require.True(t, ports.IsNotFoundErr(err), "deleted event must not remain addressable: %v", err)
+	require.NotContains(t, f.query(t, f.subjects[key]), key, "deleted event must not remain queryable")
 	_, pending := f.events.pending[key]
 	require.False(t, pending, "deleted event must not retain a delivery reference")
 }
 
 func (f *memoryLifecycleFixture) assertRetained(t *testing.T, key model.BusinessEventKey, queued bool) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	row, err := f.events.Get(ctx, key)
-	require.NoError(t, err)
-	require.Equal(t, key.ID, row.ID)
+	require.Contains(t, f.query(t, f.subjects[key]), key)
 	_, pending := f.events.pending[key]
 	require.Equal(t, queued, pending, "retention/erasure must not change another event's pending state")
 }
@@ -113,6 +112,7 @@ func TestMemoryBusinessEventAppendRetryPreservesPreparedKey(t *testing.T) {
 	event.Data = map[string]any{}
 	require.NoError(t, f.events.Append(ctx, &event, true))
 	require.Equal(t, key, model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID})
+	f.subjects[key] = model.BusinessEventSubject{Principal: *event.Subject}
 	f.assertRetained(t, key, true)
 	err := f.events.Append(ctx, &event, true)
 	var conflict *storage.StorageError
@@ -272,9 +272,10 @@ func TestMemoryBusinessEventLifecycleWaitsForPredecessorsAndHonorsCancellation(t
 	count, err := f.events.EraseSubject(blocked, target)
 	require.ErrorIs(t, err, context.DeadlineExceeded, "erasure must not complete while an earlier writer owns the lifecycle gate")
 	require.Zero(t, count)
-	inside, err := f.events.Get(owner, key)
+	inside, err := f.events.Query(owner, model.BusinessEventQuery{Subject: model.BusinessEventSubject{Principal: target}, Start: at, End: at.Add(time.Microsecond)})
 	require.NoError(t, err)
-	require.Equal(t, key.ID, inside.ID)
+	require.Len(t, inside, 1)
+	require.Equal(t, key.ID, inside[0].ID)
 	require.NoError(t, f.transactions.Commit(owner))
 
 	finalCtx, stopFinal := context.WithTimeout(ctx, 2*time.Second)
@@ -514,9 +515,10 @@ func TestMemoryBusinessEventCollectorReleasesVisibilityButProtectsErasure(t *tes
 	defer stopRead()
 	owner, err := f.transactions.BeginTX(readCtx)
 	require.NoError(t, err, "collector I/O must not hold the exclusive visibility gate")
-	row, err := f.events.Get(owner, otherKey)
+	rows, err := f.events.Query(owner, model.BusinessEventQuery{Subject: model.BusinessEventSubject{Principal: other}, Start: at, End: at.Add(time.Microsecond)})
 	require.NoError(t, err)
-	require.Equal(t, otherKey.ID, row.ID)
+	require.Len(t, rows, 1)
+	require.Equal(t, otherKey.ID, rows[0].ID)
 	require.NoError(t, f.transactions.Commit(owner))
 
 	blockedErase, stopErase := context.WithTimeout(context.Background(), 50*time.Millisecond)

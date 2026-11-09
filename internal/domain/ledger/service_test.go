@@ -33,10 +33,6 @@ func (e ledgerServiceEvents) Query(ctx context.Context, query model.BusinessEven
 	return e.queryFn(ctx, query)
 }
 
-func (ledgerServiceEvents) Get(context.Context, model.BusinessEventKey) (*model.BusinessEvent, error) {
-	panic("unexpected business event get")
-}
-
 type ledgerServiceTransactions struct {
 	beginFn    func(context.Context) (context.Context, error)
 	commitFn   func(context.Context) error

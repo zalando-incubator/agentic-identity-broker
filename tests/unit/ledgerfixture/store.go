@@ -113,9 +113,6 @@ func (s *Store) Append(ctx context.Context, event *model.BusinessEvent, _ bool) 
 func (*Store) Query(context.Context, model.BusinessEventQuery) ([]*model.BusinessEvent, error) {
 	panic("unexpected producer query")
 }
-func (*Store) Get(context.Context, model.BusinessEventKey) (*model.BusinessEvent, error) {
-	panic("unexpected producer get")
-}
 func (s *transaction) AfterCommit(fn func()) error {
 	s.callbacks = append(s.callbacks, fn)
 	return nil

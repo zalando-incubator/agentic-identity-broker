@@ -84,7 +84,7 @@ func (a *Adapter) BeginTX(ctx context.Context) (context.Context, error) {
 	if a == nil || a.db == nil {
 		return nil, storage.NewStorageError("StorageTransaction.BeginTX", storage.ErrorKindConnection, nil, "database not initialized")
 	}
-	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelRepeatableRead, sql.LevelSerializable}
+	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelSerializable}
 	var tx *sqlx.Tx
 	var err error
 	if conn, ok := ctx.Value(refreshConnectionKey{}).(*sqlx.Conn); ok {
@@ -246,8 +246,6 @@ func (a *Adapter) beginSQLTransaction(ctx context.Context, options *sql.TxOption
 		hints := ports.StorageTransactionHintsFromContext(ctx)
 		switch options.Isolation {
 		case sql.LevelDefault, sql.LevelReadCommitted:
-		case sql.LevelRepeatableRead:
-			hints.Isolation = max(hints.Isolation, ports.StorageRepeatableRead)
 		case sql.LevelSerializable:
 			hints.Isolation = ports.StorageSerializable
 		default:

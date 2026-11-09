@@ -81,9 +81,9 @@ func TestBusinessEventPartialSuccessRetainsDeliveryReference(t *testing.T) {
 			request := <-collector.requests
 			records := request.GetResourceLogs()[0].GetScopeLogs()[0].GetLogRecords()
 			require.Len(t, records, 1)
-			event, err := store.BusinessEvents().Get(t.Context(), key)
-			require.NoError(t, err)
-			require.Equal(t, key.ID, event.ID)
+			events := deliveryTestQuery(t, store, "pre-existing-delivery")
+			require.Len(t, events, 1)
+			require.Equal(t, key.ID, events[0].ID)
 			// A rejected export reschedules, rather than removing, this exact key.
 			require.Eventually(t, func() bool {
 				return len(deliveryTestPending(t, store.BusinessEventDelivery())) == 1

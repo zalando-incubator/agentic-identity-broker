@@ -209,11 +209,6 @@ func TestBuilderBusinessEventSchemasAddsOfflineTypeWithoutReinterpretingExisting
 	require.NotZero(t, all[1].RecordedAt)
 	fixtureOnly := businessEventSchemaQuery(t, extended, businessEventSchemaFixtureType)
 	require.Equal(t, []*model.BusinessEvent{all[1]}, fixtureOnly)
-	retained, err := extended.LedgerService.Get(context.Background(), model.BusinessEventKey{
-		ID: fixture.ID, RecordedAt: all[1].RecordedAt,
-	})
-	require.NoError(t, err)
-	require.Equal(t, all[1], retained)
 }
 
 func TestBuilderBusinessEventSchemasRejectsUnsafeSourcesAtStartup(t *testing.T) {

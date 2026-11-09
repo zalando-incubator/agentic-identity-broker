@@ -64,9 +64,13 @@ func TestBusinessEventDelivery_DueCandidatesAreBoundedReferences(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []model.BusinessEventKey{ledgerKey(first), ledgerKey(second)}, keys)
 	for _, event := range []*model.BusinessEvent{first, second, future, unrequested} {
-		got, err := adapter.BusinessEvents().Get(ctx, ledgerKey(event))
+		rows, err := adapter.BusinessEvents().Query(ctx, model.BusinessEventQuery{
+			Subject: model.BusinessEventSubject{Principal: *event.Subject},
+			Start:   event.OccurredAt, End: event.OccurredAt.Add(time.Microsecond),
+		})
 		require.NoError(t, err)
-		require.Equal(t, event.ID, got.ID, "candidate scans must not consume or replace retained history")
+		require.Len(t, rows, 1)
+		require.Equal(t, event.ID, rows[0].ID, "candidate scans must not consume or replace retained history")
 	}
 }
 
@@ -319,8 +323,6 @@ func TestBusinessEventDelivery_DeletionWaitsForExportAndCannotReplayFailedCopy(t
 			events, references := lifecycleCounts(t, db, event)
 			require.Zero(t, events)
 			require.Zero(t, references, "deletion must remove even a deferred retry")
-			_, err := adapter.BusinessEvents().Get(ctx, ledgerKey(event))
-			require.True(t, ports.IsNotFoundErr(err))
 			var replayed bool
 			sent, err := adapter.BusinessEventDelivery().DispatchOne(ctx, ledgerKey(event), func(context.Context, *model.BusinessEvent) error {
 				replayed = true

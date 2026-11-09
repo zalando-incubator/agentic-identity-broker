@@ -70,7 +70,7 @@ func memoryLedgerSubject(principal id.Principal) model.BusinessEventSubject {
 	return model.BusinessEventSubject{Principal: principal}
 }
 
-func TestMemoryBusinessEventAppendGetAndIndependentValues(t *testing.T) {
+func TestMemoryBusinessEventAppendQueryAndIndependentValues(t *testing.T) {
 	ctx := context.Background()
 	store := memoryLedgerStore(t)
 	event := memoryLedgerExample(t, "approval-denied")
@@ -84,6 +84,10 @@ func TestMemoryBusinessEventAppendGetAndIndependentValues(t *testing.T) {
 	key := memoryLedgerAppend(t, store, ctx, event, false)
 	want, err := json.Marshal(event)
 	require.NoError(t, err)
+	query := model.BusinessEventQuery{
+		Subject: memoryLedgerSubject(*event.Subject),
+		Start:   event.OccurredAt.Add(-time.Second), End: event.OccurredAt.Add(time.Second),
+	}
 
 	event.ID = id.NewBusinessEventID()
 	event.ApprovalID = id.NewApprovalID()
@@ -95,8 +99,10 @@ func TestMemoryBusinessEventAppendGetAndIndependentValues(t *testing.T) {
 	event.Client.IP = "198.51.100.12"
 	event.Data["reason_code"] = "changed-input-reason"
 
-	read, err := store.BusinessEvents().Get(ctx, key)
+	rows, err := store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	read := rows[0]
 	require.Equal(t, key.ID, read.ID)
 	require.Equal(t, key.RecordedAt, read.RecordedAt)
 	got, err := json.Marshal(read)
@@ -106,41 +112,19 @@ func TestMemoryBusinessEventAppendGetAndIndependentValues(t *testing.T) {
 	read.ID = id.NewBusinessEventID()
 	read.ApprovalID = id.NewApprovalID()
 	read.RecordedAt = time.Time{}
-	*read.Subject = "changed-get-subject"
-	*read.Actor.ID = "changed-get-actor"
-	*read.Actor.OnBehalfOf = "changed-get-delegator"
+	*read.Subject = "changed-query-subject"
+	*read.Actor.ID = "changed-query-actor"
+	*read.Actor.OnBehalfOf = "changed-query-delegator"
 	read.PermissionSetIDs[0] = id.NewPermissionSetID()
 	read.Client.IP = "203.0.113.9"
-	read.Data["reason_code"] = "changed-get-reason"
+	read.Data["reason_code"] = "changed-query-reason"
 
-	second, err := store.BusinessEvents().Get(ctx, key)
-	require.NoError(t, err)
-	got, err = json.Marshal(second)
-	require.NoError(t, err)
-	require.JSONEq(t, string(want), string(got), "a Get result must not mutate the retained event")
-
-	query := model.BusinessEventQuery{
-		Subject: memoryLedgerSubject(*second.Subject),
-		Start:   second.OccurredAt.Add(-time.Second),
-		End:     second.OccurredAt.Add(time.Second),
-	}
-	rows, err := store.BusinessEvents().Query(ctx, query)
+	rows, err = store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, key.ID, rows[0].ID)
-	rows[0].Data["reason_code"] = "changed-query-reason"
-	rows[0].PermissionSetIDs[0] = id.NewPermissionSetID()
-	*rows[0].Subject = "changed-query-subject"
-	again, err := store.BusinessEvents().Get(ctx, key)
-	require.NoError(t, err)
-	got, err = json.Marshal(again)
+	got, err = json.Marshal(rows[0])
 	require.NoError(t, err)
 	require.JSONEq(t, string(want), string(got), "a Query result must not mutate the retained event")
-
-	_, err = store.BusinessEvents().Get(ctx, model.BusinessEventKey{RecordedAt: key.RecordedAt.Add(time.Microsecond), ID: key.ID})
-	require.True(t, ports.IsNotFoundErr(err), "a different recorded_at must not retrieve an event merely by ID")
-	_, err = store.BusinessEvents().Get(ctx, model.BusinessEventKey{RecordedAt: key.RecordedAt, ID: id.NewBusinessEventID()})
-	require.True(t, ports.IsNotFoundErr(err), "a different ID must not retrieve an event merely by recorded_at")
 }
 
 func TestMemoryBusinessEventRetainsExactNumericPayloadAndIndependentArrays(t *testing.T) {
@@ -181,19 +165,10 @@ func TestMemoryBusinessEventRetainsExactNumericPayloadAndIndependentArrays(t *te
 	mutateNumericArray(t, event.Data["values"])
 	event.Data["scalar"] = int64(0)
 
-	get, err := store.BusinessEvents().Get(ctx, key)
-	require.NoError(t, err)
-	require.Equal(t, key.ID, get.ID)
-	requireMemoryExactNumbers(t, get.Data)
-	_, err = registry.Validate(get)
-	require.NoError(t, err)
-	mutateNumericArray(t, get.Data["values"])
-	get.Data["scalar"] = int64(0)
-
 	query := model.BusinessEventQuery{
-		Subject: model.BusinessEventSubject{Principal: *get.Subject},
-		Start:   get.OccurredAt.Add(-time.Second), End: get.OccurredAt.Add(time.Second),
-		Type: get.Type,
+		Subject: model.BusinessEventSubject{Principal: *event.Subject},
+		Start:   event.OccurredAt.Add(-time.Second), End: event.OccurredAt.Add(time.Second),
+		Type: event.Type,
 	}
 	rows, err := store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
@@ -205,9 +180,10 @@ func TestMemoryBusinessEventRetainsExactNumericPayloadAndIndependentArrays(t *te
 	mutateNumericArray(t, rows[0].Data["values"])
 	rows[0].Data["scalar"] = int64(0)
 
-	again, err := store.BusinessEvents().Get(ctx, key)
+	rows, err = store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
-	requireMemoryExactNumbers(t, again.Data)
+	require.Len(t, rows, 1)
+	requireMemoryExactNumbers(t, rows[0].Data)
 }
 
 func mutateNumericArray(t *testing.T, value any) {
@@ -249,10 +225,6 @@ func TestMemoryBusinessEventSurvivesReferencedGrantDeletion(t *testing.T) {
 	_, err := store.UserGrants().Get(ctx, grant.ID)
 	require.True(t, ports.IsNotFoundErr(err))
 
-	retained, err := store.BusinessEvents().Get(ctx, key)
-	require.NoError(t, err)
-	require.Equal(t, grant.ID, retained.GrantID)
-	require.Equal(t, grant.Principal, *retained.Subject)
 	rows, err := store.BusinessEvents().Query(ctx, model.BusinessEventQuery{
 		Subject: memoryLedgerSubject(grant.Principal),
 		Start:   event.OccurredAt.Add(-time.Second),
@@ -261,6 +233,8 @@ func TestMemoryBusinessEventSurvivesReferencedGrantDeletion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, key.ID, rows[0].ID)
+	require.Equal(t, grant.ID, rows[0].GrantID)
+	require.Equal(t, grant.Principal, *rows[0].Subject)
 }
 
 func TestMemoryBusinessEventQueryScopeRangeAndFilters(t *testing.T) {
@@ -281,10 +255,7 @@ func TestMemoryBusinessEventQueryScopeRangeAndFilters(t *testing.T) {
 	memoryLedgerAppend(t, store, ctx, denied, false)
 	atEnd := memoryLedgerExample(t, "grant-created")
 	atEnd.OccurredAt = start.Add(3 * time.Hour)
-	atEndKey := memoryLedgerAppend(t, store, ctx, atEnd, false)
-	atEndRow, err := store.BusinessEvents().Get(ctx, atEndKey)
-	require.NoError(t, err)
-	require.Equal(t, atEnd.ID, atEndRow.ID)
+	memoryLedgerAppend(t, store, ctx, atEnd, false)
 	elsewhere := memoryLedgerExample(t, "grant-created")
 	elsewhere.OccurredAt = start.Add(time.Hour)
 	elsewhere.Subject = &other

@@ -102,22 +102,6 @@ func (r *BusinessEventRepository) appendInTransaction(ctx context.Context, event
 	return nil
 }
 
-func (r *BusinessEventRepository) Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error) {
-	guard, err := r.transactions.lock(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	defer guard.release()
-	key.RecordedAt = key.RecordedAt.UTC()
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	event, found := r.events[key]
-	if !found {
-		return nil, storage.NewStorageError("BusinessEvents.Get", storage.ErrorKindNotFound, ports.ErrNotFound, "business event not found")
-	}
-	return copyBusinessEvent(event), nil
-}
-
 func (r *BusinessEventRepository) Query(ctx context.Context, query model.BusinessEventQuery) ([]*model.BusinessEvent, error) {
 	if err := r.registry.Load().validator.ValidateQuery(query); err != nil {
 		return nil, storage.NewStorageError("BusinessEvents.Query", storage.ErrorKindValidation, nil, "invalid business event query")

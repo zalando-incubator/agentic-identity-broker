@@ -408,7 +408,7 @@ func (r *SigningKeyRepo) WithBootstrapLock(ctx context.Context, fn func(context.
 	}
 	defer conn.Close() //nolint:errcheck
 
-	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelRepeatableRead, sql.LevelSerializable}
+	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelSerializable}
 	tx, err := conn.BeginTxx(ctx, &sql.TxOptions{Isolation: levels[hints.Isolation]})
 	if err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.WithBootstrapLock", err, "failed to begin transaction")

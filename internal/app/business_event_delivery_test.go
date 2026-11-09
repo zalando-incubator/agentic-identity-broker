@@ -66,6 +66,17 @@ func deliveryTestRecord(t *testing.T, service *ledger.Service, subject id.Princi
 	return model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
 }
 
+func deliveryTestQuery(t *testing.T, store *storagefactory.Adapter, subject id.Principal) []*model.BusinessEvent {
+	t.Helper()
+	rows, err := store.BusinessEvents().Query(t.Context(), model.BusinessEventQuery{
+		Subject: model.BusinessEventSubject{Principal: subject},
+		Start:   time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:     time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	return rows
+}
+
 func deliveryTestSeed(t *testing.T, store *storagefactory.Adapter) model.BusinessEventKey {
 	t.Helper()
 	registry, err := ledger.NewRegistry(eventschemas.Schemas)
@@ -145,10 +156,10 @@ func TestBuilderBusinessEventDeliveryScansAtStartupAndAfterCommit(t *testing.T) 
 		3*time.Second, 10*time.Millisecond, "a one-second scan must deliver a newly committed fact")
 	require.Eventually(t, func() bool { return len(deliveryTestPending(t, store.BusinessEventDelivery())) == 0 },
 		5*time.Second, 10*time.Millisecond, "the one-second scan must acknowledge newly committed work")
-	for _, key := range []model.BusinessEventKey{queued, later} {
-		stored, getErr := store.BusinessEvents().Get(t.Context(), key)
-		require.NoError(t, getErr)
-		require.Equal(t, key.ID, stored.ID, "successful telemetry must not remove the ledger fact")
+	for subject, key := range map[id.Principal]model.BusinessEventKey{"pre-existing-delivery": queued, "recorded-after-startup": later} {
+		rows := deliveryTestQuery(t, store, subject)
+		require.Len(t, rows, 1)
+		require.Equal(t, key.ID, rows[0].ID, "successful telemetry must not remove the ledger fact")
 		require.Equal(t, 1, deliveryTestCount(receiver, key))
 	}
 }
@@ -253,7 +264,7 @@ func TestBuilderBusinessEventDeliveryBoundsStorageAndExporterDeadlines(t *testin
 		application, err := builder.Build()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, application.Shutdown(context.Background())) })
-		key := deliveryTestRecord(t, application.LedgerService, id.NewPrincipal("deadline-subject"))
+		deliveryTestRecord(t, application.LedgerService, id.NewPrincipal("deadline-subject"))
 		deliveryTestWaitForAttempt(t, receiver, 1)
 		// After the exporter deadline the real memory erasure must acquire the
 		// lifecycle barrier despite the collector never returning success.
@@ -263,8 +274,7 @@ func TestBuilderBusinessEventDeliveryBoundsStorageAndExporterDeadlines(t *testin
 		removed, err := store.BusinessEventLifecycle().EraseSubject(ctx, id.NewPrincipal("deadline-subject"))
 		require.NoError(t, err)
 		require.EqualValues(t, 1, removed)
-		_, err = store.BusinessEvents().Get(t.Context(), key)
-		require.ErrorIs(t, err, ports.ErrNotFound)
+		require.Empty(t, deliveryTestQuery(t, store, "deadline-subject"))
 		release()
 		time.Sleep(150 * time.Millisecond)
 		require.Empty(t, receiver.LedgerRecords(), "timed-out export must never acknowledge a deleted fact")
@@ -415,8 +425,9 @@ func TestBuilderBusinessEventCommitDoesNotWaitForCollector(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("business commit waited for ledger telemetry export")
 	}
-	_, err = store.BusinessEvents().Get(t.Context(), second)
-	require.NoError(t, err)
+	rows := deliveryTestQuery(t, store, "collector-blocked-second")
+	require.Len(t, rows, 1)
+	require.Equal(t, second.ID, rows[0].ID)
 	require.Empty(t, receiver.LedgerRecords(), "the receiver is still paused while both facts are durable")
 	release()
 	deliveryTestWaitForCopy(t, receiver, first, 1)
@@ -530,9 +541,9 @@ func TestBuilderBusinessEventDeliveryCopySwitchPausesWithoutBackfill(t *testing.
 			time.Sleep(1200 * time.Millisecond) // A later scan must not discover the disabled-period fact.
 			require.Zero(t, deliveryTestCount(receiver, disabledPeriod), "copy resume must not backfill disabled-period events")
 			require.Len(t, receiver.LedgerRecords(), 1)
-			stored, getErr := store.BusinessEvents().Get(t.Context(), disabledPeriod)
-			require.NoError(t, getErr)
-			require.Equal(t, disabledPeriod.ID, stored.ID, "the switch controls copies, not ledger writes")
+			rows := deliveryTestQuery(t, store, "disabled-period")
+			require.Len(t, rows, 1)
+			require.Equal(t, disabledPeriod.ID, rows[0].ID, "the switch controls copies, not ledger writes")
 		})
 	}
 }
@@ -578,9 +589,9 @@ func TestBuilderBusinessEventDeliveryShutdownCancelsExportAndPreservesUnfinished
 	}
 	// The stopped worker must not leave an SDK payload ready to export after shutdown.
 	require.Empty(t, receiver.LedgerRecords(), "canceled work must not be acknowledged as delivered")
-	stored, err := store.BusinessEvents().Get(t.Context(), key)
-	require.NoError(t, err)
-	require.Equal(t, key.ID, stored.ID)
+	rows := deliveryTestQuery(t, store, "shutdown-pending")
+	require.Len(t, rows, 1)
+	require.Equal(t, key.ID, rows[0].ID)
 	release()
 
 	// The process can be restarted with the same store: only the still-pending

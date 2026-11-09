@@ -35,7 +35,7 @@ Use the existing storage factory accessors and builder injection.
 | Contract | Operations and behavior |
 |---|---|
 | StorageTransactionManager | Generalizes the existing BeginTX/Commit/Rollback protocol. Transaction scopes distinguish owning and joined handles. Only the owner commits physically. Joined rollback marks the owner rollback-only. |
-| BusinessEventRepository | Appends a validated event in the ambient transaction. Query requires a subject selector (exact principal or explicit no-subject), with optional filters and a cursor. Get uses `(recorded_at,id)`. There is no Update or generic Delete. |
+| BusinessEventRepository | Appends a validated event in the ambient transaction. Query requires a subject selector (exact principal or explicit no-subject), with optional filters and a cursor. There is no point lookup, Update, or generic Delete. |
 | BusinessEventLifecycleRepository | EraseSubject and SetRetentionPolicy. Memory exposes logical ApplyRetention through the separate BusinessEventRetentionRepository facet. PostgreSQL maintenance is migration-owner SQL only; the runtime adapter exposes no partition-maintenance operation. |
 | BusinessEventDeliveryRepository | ListDue returns reference identifiers. DispatchOne uses barriers and a synchronous callback. It returns no payload outside the barrier for later delivery. |
 | BusinessEventRecorder | Domain service contract for recording registered facts and independent outcomes. Recipes determine identity, outcome, and allowed data, not the HTTP handler. |

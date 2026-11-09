@@ -82,22 +82,14 @@ func TestLifecycleServiceErasesOnlyCommittedExactSubjectWithoutReplacement(t *te
 		return model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
 	}
 
-	first := record("grant-created", &subject, "different-caller")
-	second := record("token-request-failed", &subject, "another-caller")
+	record("grant-created", &subject, "different-caller")
+	record("token-request-failed", &subject, "another-caller")
 	otherKey := record("token-request-failed", &other, actor)
 	noSubjectKey := record("token-request-failed", nil, actor)
 
 	removed, err := service.EraseSubject(t.Context(), subject)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, removed, "count only committed matching event rows")
-	for _, key := range []model.BusinessEventKey{first, second} {
-		_, err := service.Get(t.Context(), key)
-		require.ErrorIs(t, err, ports.ErrNotFound)
-	}
-	for _, key := range []model.BusinessEventKey{otherKey, noSubjectKey} {
-		_, err := service.Get(t.Context(), key)
-		require.NoError(t, err, "another subject or a null subject must survive even when its actor matches")
-	}
 
 	query := func(selector model.BusinessEventSubject) []*model.BusinessEvent {
 		t.Helper()
@@ -110,8 +102,12 @@ func TestLifecycleServiceErasesOnlyCommittedExactSubjectWithoutReplacement(t *te
 		return found
 	}
 	require.Empty(t, query(model.BusinessEventSubject{Principal: subject}), "erasure must not append a tombstone or replacement event")
-	require.Len(t, query(model.BusinessEventSubject{Principal: other}), 1)
-	require.Len(t, query(model.BusinessEventSubject{NoSubject: true}), 1)
+	otherRows := query(model.BusinessEventSubject{Principal: other})
+	require.Len(t, otherRows, 1)
+	require.Equal(t, otherKey.ID, otherRows[0].ID)
+	noSubjectRows := query(model.BusinessEventSubject{NoSubject: true})
+	require.Len(t, noSubjectRows, 1)
+	require.Equal(t, noSubjectKey.ID, noSubjectRows[0].ID)
 
 	removed, err = service.EraseSubject(t.Context(), subject)
 	require.NoError(t, err)

@@ -106,9 +106,13 @@ func TestPostgresBusinessEvent_AppendRetryPreservesPreparedKey(t *testing.T) {
 	delete(event.Data, "unexpected")
 	require.NoError(t, repo.Append(ctx, event, true))
 	require.Equal(t, key, model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID})
-	retained, err := repo.Get(ctx, key)
+	rows, err := repo.Query(ctx, model.BusinessEventQuery{
+		Subject: model.BusinessEventSubject{NoSubject: true},
+		Start:   event.OccurredAt, End: event.OccurredAt.Add(time.Microsecond),
+	})
 	require.NoError(t, err)
-	require.Equal(t, key, model.BusinessEventKey{RecordedAt: retained.RecordedAt, ID: retained.ID})
+	require.Len(t, rows, 1)
+	require.Equal(t, key, model.BusinessEventKey{RecordedAt: rows[0].RecordedAt, ID: rows[0].ID})
 	var references int
 	require.NoError(t, adapter.db.Get(&references, `SELECT count(*) FROM public.business_event_delivery_pending WHERE recorded_at=$1 AND event_id=$2`, key.RecordedAt, key.ID))
 	require.Equal(t, 1, references)

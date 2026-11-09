@@ -10,7 +10,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,12 +21,12 @@ func TestMemoryBusinessEventQueuesOnlyRequestedReferences(t *testing.T) {
 	queued := memoryLedgerExample(t, "grant-updated")
 	queuedKey := memoryLedgerAppend(t, store, ctx, queued, true)
 
-	unqueuedRow, err := store.BusinessEvents().Get(ctx, unqueuedKey)
-	require.NoError(t, err, "the copy switch must not disable retained history")
-	require.Equal(t, unqueued.ID, unqueuedRow.ID)
-	queuedRow, err := store.BusinessEvents().Get(ctx, queuedKey)
+	rows, err := store.BusinessEvents().Query(ctx, model.BusinessEventQuery{
+		Subject: memoryLedgerSubject(*unqueued.Subject),
+		Start:   unqueued.OccurredAt.Add(-time.Second), End: queued.OccurredAt.Add(time.Second),
+	})
 	require.NoError(t, err)
-	require.Equal(t, queued.ID, queuedRow.ID)
+	require.ElementsMatch(t, []model.BusinessEventKey{unqueuedKey, queuedKey}, memoryLedgerKeys(rows), "the copy switch must not disable retained history")
 
 	// A candidate is the exact payload-free (recorded_at, event_id) reference;
 	// the event envelope is obtainable only through the ledger repository.
@@ -52,15 +51,10 @@ func TestMemoryBusinessEventRollbackRemovesEventAndReferenceTogether(t *testing.
 		}
 	}()
 	rolledBack := memoryLedgerExample(t, "grant-updated")
-	rolledBackKey := memoryLedgerAppend(t, store, txCtx, rolledBack, true)
+	memoryLedgerAppend(t, store, txCtx, rolledBack, true)
 	require.NoError(t, store.Rollback(txCtx))
 	settled = true
 
-	_, err = store.BusinessEvents().Get(ctx, rolledBackKey)
-	require.True(t, ports.IsNotFoundErr(err), "rolled-back occurrence must not remain addressable")
-	retained, err := store.BusinessEvents().Get(ctx, committedKey)
-	require.NoError(t, err)
-	require.Equal(t, committedKey.ID, retained.ID, "rollback must preserve a different committed occurrence")
 	rows, err := store.BusinessEvents().Query(ctx, model.BusinessEventQuery{
 		Subject: memoryLedgerSubject(*committed.Subject),
 		Start:   committed.OccurredAt.Add(-time.Second),
@@ -144,11 +138,12 @@ func TestMemoryBusinessEventDeliveryClaimsAreIndependent(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("failed claim did not release after collector returned")
 	}
-	for _, key := range []model.BusinessEventKey{primaryKey, controlKey} {
-		retained, err := store.BusinessEvents().Get(ctx, key)
-		require.NoError(t, err)
-		require.Equal(t, key.ID, retained.ID, "delivery may acknowledge references but must retain the occurrence")
-	}
+	rows, err := store.BusinessEvents().Query(ctx, model.BusinessEventQuery{
+		Subject: memoryLedgerSubject(*primary.Subject),
+		Start:   primary.OccurredAt.Add(-time.Second), End: control.OccurredAt.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []model.BusinessEventKey{primaryKey, controlKey}, memoryLedgerKeys(rows), "delivery retains both occurrences")
 	due, err := store.BusinessEventDelivery().ListDue(ctx, 10)
 	require.NoError(t, err)
 	require.NotContains(t, due, controlKey, "successful control delivery is acknowledged independently")
@@ -162,9 +157,11 @@ func TestMemoryBusinessEventDeliveryFailedCallbackCannotMutateRetainedHistory(t 
 	key := memoryLedgerAppend(t, store, ctx, event, true)
 	control := memoryLedgerExample(t, "grant-updated")
 	controlKey := memoryLedgerAppend(t, store, ctx, control, true)
-	retained, err := store.BusinessEvents().Get(ctx, key)
+	query := model.BusinessEventQuery{Subject: memoryLedgerSubject(*event.Subject), Start: event.OccurredAt.Add(-time.Second), End: event.OccurredAt.Add(time.Second)}
+	rows, err := store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
-	want, err := json.Marshal(retained)
+	require.NotEmpty(t, rows)
+	want, err := json.Marshal(rows)
 	require.NoError(t, err)
 	failure := errors.New("destination rejected export")
 	sent, err := store.BusinessEventDelivery().DispatchOne(ctx, key, func(_ context.Context, copy *model.BusinessEvent) error {
@@ -177,9 +174,9 @@ func TestMemoryBusinessEventDeliveryFailedCallbackCannotMutateRetainedHistory(t 
 	})
 	require.False(t, sent)
 	require.ErrorIs(t, err, failure)
-	stored, err := store.BusinessEvents().Get(ctx, key)
+	rows, err = store.BusinessEvents().Query(ctx, query)
 	require.NoError(t, err)
-	got, err := json.Marshal(stored)
+	got, err := json.Marshal(rows)
 	require.NoError(t, err)
 	require.JSONEq(t, string(want), string(got), "failed exports cannot rewrite the immutable event used by later retries")
 	due, err := store.BusinessEventDelivery().ListDue(ctx, 10)

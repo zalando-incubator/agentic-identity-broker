@@ -225,8 +225,12 @@ func TestRollbackWaitsForAdmittedEventAppend(t *testing.T) {
 	require.Error(t, <-appendDone, "a joined append cannot commit after owner rollback")
 	require.NoError(t, <-rollbackDone)
 	key := model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
-	_, err = repo.Get(context.Background(), key)
-	require.True(t, ports.IsNotFoundErr(err))
+	rows, err := repo.Query(context.Background(), model.BusinessEventQuery{
+		Subject: model.BusinessEventSubject{Principal: *event.Subject},
+		Start:   event.OccurredAt, End: event.OccurredAt.Add(time.Microsecond),
+	})
+	require.NoError(t, err)
+	require.Empty(t, rows)
 	pending, err := repo.ListDue(context.Background(), 100)
 	require.NoError(t, err)
 	require.NotContains(t, pending, key)

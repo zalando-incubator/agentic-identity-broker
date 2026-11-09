@@ -16,7 +16,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-func retentionRecord(t *testing.T, store *storagefactory.Adapter, subject id.Principal) model.BusinessEventKey {
+func retentionRecord(t *testing.T, store *storagefactory.Adapter, subject id.Principal) *model.BusinessEvent {
 	t.Helper()
 	registry, err := ledger.NewRegistry(eventschemas.Schemas)
 	require.NoError(t, err)
@@ -30,21 +30,25 @@ func retentionRecord(t *testing.T, store *storagefactory.Adapter, subject id.Pri
 	})
 	require.NoError(t, err)
 	require.NoError(t, service.Record(t.Context(), event))
-	return model.BusinessEventKey{RecordedAt: event.RecordedAt, ID: event.ID}
+	return event
+}
+func requireRetentionEvent(t *testing.T, store *storagefactory.Adapter, event *model.BusinessEvent, retained bool) {
+	t.Helper()
+	rows, err := store.BusinessEvents().Query(t.Context(), model.BusinessEventQuery{
+		Subject: model.BusinessEventSubject{Principal: *event.Subject},
+		Start:   event.OccurredAt, End: event.OccurredAt.Add(time.Microsecond),
+	})
+	require.NoError(t, err)
+	if retained {
+		require.Len(t, rows, 1, "a record on the retained side of the six-hour boundary must remain")
+		require.Equal(t, event.ID, rows[0].ID)
+	} else {
+		require.Empty(t, rows, "eligible history must actually be deleted")
+	}
 }
 
 func retentionWindowEnd(recordedAt time.Time) time.Time {
 	return recordedAt.Truncate(6 * time.Hour).Add(6 * time.Hour)
-}
-
-func requireRetentionEvent(t *testing.T, store *storagefactory.Adapter, key model.BusinessEventKey, retained bool) {
-	t.Helper()
-	_, err := store.BusinessEvents().Get(t.Context(), key)
-	if retained {
-		require.NoError(t, err, "a record on the retained side of the six-hour boundary must remain")
-	} else {
-		require.ErrorIs(t, err, ports.ErrNotFound, "eligible history must actually be deleted")
-	}
 }
 
 func retentionBuilder(store *storagefactory.Adapter, retention time.Duration, telemetry, logs, copyEnabled bool) *Builder {

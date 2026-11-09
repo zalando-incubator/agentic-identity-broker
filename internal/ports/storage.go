@@ -61,7 +61,6 @@ type StorageTransactionIsolation uint8
 
 const (
 	StorageReadCommitted StorageTransactionIsolation = iota
-	StorageRepeatableRead
 	StorageSerializable
 )
 
@@ -134,7 +133,6 @@ type BusinessEventRepository interface {
 	Append(ctx context.Context, event *model.BusinessEvent, queueDelivery bool) error
 	// Query requires one exact principal or explicit no-subject selection and uses strict tuple continuation.
 	Query(ctx context.Context, query model.BusinessEventQuery) ([]*model.BusinessEvent, error)
-	Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error)
 }
 
 type BusinessEventLifecycleRepository interface {

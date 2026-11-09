@@ -161,29 +161,6 @@ func (r *BusinessEventRepository) Query(ctx context.Context, query model.Busines
 	return events, nil
 }
 
-func (r *BusinessEventRepository) Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error) {
-	const operation = "BusinessEvents.Get"
-	if err := r.requireDB(operation); err != nil {
-		return nil, err
-	}
-	if key.ID.IsZero() || key.RecordedAt.IsZero() || key.RecordedAt.Nanosecond()%1000 != 0 {
-		return nil, storage.NewStorageError(operation, storage.ErrorKindNotFound, ports.ErrNotFound, "business event not found")
-	}
-	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	defer cancel()
-	var envelope []byte
-	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx,
-		`SELECT envelope FROM public.business_events WHERE recorded_at=$1 AND id=$2`, key.RecordedAt, key.ID).Scan(&envelope)
-	if err != nil {
-		return nil, businessEventStorageError(operation, err)
-	}
-	event, err := r.decodeEvent(envelope)
-	if err != nil {
-		return nil, businessEventStorageError(operation, err)
-	}
-	return event, nil
-}
-
 func (r *BusinessEventRepository) requireDB(operation string) error {
 	if r.adapter == nil || r.adapter.db == nil {
 		return storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")

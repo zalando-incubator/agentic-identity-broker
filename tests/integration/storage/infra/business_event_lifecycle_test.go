@@ -166,10 +166,9 @@ func TestBusinessEventLifecycle_ErasureRejectsSnapshotIsolation(t *testing.T) {
 	for _, isolation := range []struct {
 		name string
 		sql  sql.IsolationLevel
-		hint ports.StorageTransactionIsolation
 	}{
-		{name: "repeatable read", sql: sql.LevelRepeatableRead, hint: ports.StorageRepeatableRead},
-		{name: "serializable", sql: sql.LevelSerializable, hint: ports.StorageSerializable},
+		{name: "repeatable read", sql: sql.LevelRepeatableRead},
+		{name: "serializable", sql: sql.LevelSerializable},
 	} {
 		t.Run(isolation.name, func(t *testing.T) {
 			subject := id.NewPrincipal("isolation-" + isolation.name)
@@ -187,19 +186,21 @@ func TestBusinessEventLifecycle_ErasureRejectsSnapshotIsolation(t *testing.T) {
 			require.Equal(t, "25001", pgErr.Code)
 			require.NoError(t, operational.Rollback())
 
-			strong := ports.WithStorageTransactionHints(ctx, ports.StorageTransactionHints{Isolation: isolation.hint})
-			deleted, err = adapter.BusinessEventLifecycle().EraseSubject(strong, subject)
-			require.Error(t, err, "erasure cannot start a transaction with a fixed snapshot")
-			require.Zero(t, deleted)
-			owner, err := adapter.BeginTX(strong)
-			require.NoError(t, err)
-			defer func() { _ = adapter.Rollback(owner) }()
-			// Weaker hints do not weaken the isolation of the existing owner.
-			joined := ports.WithStorageTransactionHints(owner, ports.StorageTransactionHints{})
-			deleted, err = adapter.BusinessEventLifecycle().EraseSubject(joined, subject)
-			require.Error(t, err, "the actual ambient owner, not only its current hints, must be checked")
-			require.Zero(t, deleted)
-			require.NoError(t, adapter.Rollback(owner))
+			if isolation.sql == sql.LevelSerializable {
+				strong := ports.WithStorageTransactionHints(ctx, ports.StorageTransactionHints{Isolation: ports.StorageSerializable})
+				deleted, err = adapter.BusinessEventLifecycle().EraseSubject(strong, subject)
+				require.Error(t, err, "erasure cannot start a transaction with a fixed snapshot")
+				require.Zero(t, deleted)
+				owner, err := adapter.BeginTX(strong)
+				require.NoError(t, err)
+				defer func() { _ = adapter.Rollback(owner) }()
+				// Weaker hints do not weaken the isolation of the existing owner.
+				joined := ports.WithStorageTransactionHints(owner, ports.StorageTransactionHints{})
+				deleted, err = adapter.BusinessEventLifecycle().EraseSubject(joined, subject)
+				require.Error(t, err, "the actual ambient owner, not only its current hints, must be checked")
+				require.Zero(t, deleted)
+				require.NoError(t, adapter.Rollback(owner))
+			}
 			events, references := lifecycleCounts(t, db, event)
 			require.Equal(t, 1, events)
 			require.Equal(t, 1, references)
