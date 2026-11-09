@@ -891,7 +891,7 @@ func (s *OAuth2SessionService) createSession(
 		current.EncryptionContext = storage.EncryptionContext{ServiceID: serviceID}
 		current.UpdatedAt = now
 		// The replaced tokens and the session-established fact commit together.
-		return s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+		return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 			if err := s.refreshRepo.UpdateRefreshedSession(txCtx, &previous, current); err != nil {
 				return err
 			}
@@ -933,7 +933,7 @@ func (s *OAuth2SessionService) createSession(
 	// The unique key chooses the winner even when both callbacks observed no session.
 	// Only the winning insert records session-established, in the same transaction.
 	proposedID := session.ID
-	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		winner, err := s.sessionRepo.CreateIfAbsent(txCtx, session)
 		if err != nil {
 			return err
@@ -1555,7 +1555,7 @@ func (s *OAuth2SessionService) TerminateSession(
 
 	// Step 3: Delete the session and record the fact in one subject-gated transaction
 	hints := ledger.SubjectHints(ctx, &principal)
-	err = s.withTransaction(ctx, hints, func(txCtx context.Context) error {
+	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
 		current, err := s.sessionRepo.FindByPrincipalAndServiceForUpdate(txCtx, principal, serviceID)
 		if err != nil {
 			return err
@@ -1884,31 +1884,6 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		s.logRefreshSuccess(ctx, current.Principal, current.ID, serviceID, trigger, provider)
 	}
 	return current, refreshed, provider, nil
-}
-
-// withTransaction runs work in one owning storage transaction so a session mutation and
-// its ledger fact commit or roll back together.
-func (s *OAuth2SessionService) withTransaction(ctx context.Context, hints ports.StorageTransactionHints, work func(context.Context) error) (err error) {
-	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			if rollbackErr := s.transactions.Rollback(txCtx); rollbackErr != nil {
-				err = errors.Join(err, rollbackErr)
-			}
-		}
-	}()
-	if err := work(txCtx); err != nil {
-		return err
-	}
-	if err := s.transactions.Commit(txCtx); err != nil {
-		return err
-	}
-	committed = true
-	return nil
 }
 
 // persistRefreshedSession owns only the conditional session write and its ledger fact.

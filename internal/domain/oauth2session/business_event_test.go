@@ -338,63 +338,59 @@ func TestSessionLedgerAcceptedRefreshSurvivesLaterExchangeRollback(t *testing.T)
 }
 
 func TestSessionLedgerAutomaticRefreshActor(t *testing.T) {
-	for _, failure := range []bool{false, true} {
-		outcome := "success"
-		if failure {
-			outcome = "failure"
-		}
-		t.Run(outcome, func(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		proactive bool
+		failure   bool
+	}{
+		{name: "on-demand/success"},
+		{name: "on-demand/failure", failure: true},
+		{name: "proactive/success", proactive: true},
+		{name: "proactive/failure", proactive: true, failure: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			failure := scenario.failure
+			mode := "on-demand"
+			if scenario.proactive {
+				mode = "proactive"
+			}
 			for _, caller := range []string{"delegated", "direct-user", "calling-peer-only", "no-context", "anonymous-capture"} {
 				t.Run(caller, func(t *testing.T) {
 					svc, repo, store, request, upstreamRejects := newLedgerSession(t)
 					_, err := svc.HandleCallback(context.Background(), "ledger-user", request)
 					require.NoError(t, err)
 					store.Events = nil
-					expired := time.Now().Add(-time.Minute)
-					repo.session.AccessTokenExpiresAt = &expired
+					expires := time.Now().Add(-time.Minute)
+					if mode == "proactive" {
+						expires = time.Now().Add(time.Minute)
+					}
+					repo.session.AccessTokenExpiresAt = &expires
 					before := copyLedgerSession(repo.session)
-					require.False(t, before.HasValidAccessToken())
+					require.Equal(t, mode == "proactive", before.HasValidAccessToken())
 					require.True(t, before.CanRefresh())
 					upstreamRejects.Store(failure)
 
-					ctx := context.Background()
-					peer := "verified-gateway-client"
-					if caller != "no-context" {
-						holder := security.NewCaptureHolder(security.TransportCapture{})
-						ctx = security.WithCaptureHolder(ctx, holder)
-						callingPeer, principalActor := "", before.Principal.String()
-						if caller == "delegated" || caller == "calling-peer-only" {
-							callingPeer = peer
-						}
-						if caller == "anonymous-capture" {
-							principalActor = ""
-						}
-						resolved, finalized := security.FinalizeCaptureHolder(ctx, id.Principal(principalActor), callingPeer)
-						require.True(t, finalized)
-						require.Equal(t, security.NormalizeActor(principalActor), resolved.Actor.String())
-						require.Equal(t, callingPeer, resolved.CallingPeer)
-					}
-					if caller == "delegated" {
-						// The exchange workflow may supply these facts only after the grant
-						// and requested service have both been authorized.
-						ctx = ledger.WithWorkflowActor(ctx, model.BusinessEventActor{
-							Kind: "gateway", ID: &peer, OnBehalfOf: &before.Principal,
-						})
-					}
+					ctx := sessionRefreshActorContext(t, caller, before.Principal)
 
 					refreshed, _, err := svc.GetValidAccessToken(ctx, before.Principal, before.ServiceID)
-					if failure {
-						require.ErrorIs(t, err, ErrRefreshFailed)
-						require.Nil(t, refreshed)
-						// invalid_grant records the terminal rejection and observation time.
-						require.NotNil(t, repo.session.RefreshRejectedAt)
-						before.RefreshRejectedAt = repo.session.RefreshRejectedAt
-						before.UpdatedAt = repo.session.UpdatedAt
-						require.Equal(t, before, repo.session)
-					} else {
+					if mode == "proactive" {
 						require.NoError(t, err)
 						require.Equal(t, before.ID, refreshed.ID)
-						require.True(t, refreshed.HasValidAccessToken())
+						require.NoError(t, svc.Close(context.Background()))
+					} else {
+						if failure {
+							require.ErrorIs(t, err, ErrRefreshFailed)
+							require.Nil(t, refreshed)
+							// invalid_grant records the terminal rejection and observation time.
+							require.NotNil(t, repo.session.RefreshRejectedAt)
+							before.RefreshRejectedAt = repo.session.RefreshRejectedAt
+							before.UpdatedAt = repo.session.UpdatedAt
+							require.Equal(t, before, repo.session)
+						} else {
+							require.NoError(t, err)
+							require.Equal(t, before.ID, refreshed.ID)
+							require.True(t, refreshed.HasValidAccessToken())
+						}
 					}
 
 					require.Len(t, store.Events, 1)
@@ -409,24 +405,58 @@ func TestSessionLedgerAutomaticRefreshActor(t *testing.T) {
 						require.Equal(t, model.BusinessEventTypePrefix+"session-refreshed", event.Type)
 						require.Empty(t, event.Data)
 					}
-					if caller == "delegated" {
-						require.Equal(t, "gateway", event.Actor.Kind)
-						require.Equal(t, peer, *event.Actor.ID)
-						require.Equal(t, before.Principal, *event.Actor.OnBehalfOf)
-						require.Equal(t, id.ClientID(peer), event.GatewayClientID)
-					} else {
-						require.Equal(t, "user", event.Actor.Kind)
-						if caller == "no-context" || caller == "anonymous-capture" {
-							require.Nil(t, event.Actor.ID, "a known session subject does not authenticate its caller")
-						} else {
-							require.Equal(t, before.Principal.String(), *event.Actor.ID)
-						}
-						require.Nil(t, event.Actor.OnBehalfOf, "a calling peer alone does not establish delegation")
-						require.True(t, event.GatewayClientID.IsZero())
-					}
+					requireSessionRefreshActor(t, event, caller, mode == "proactive")
 				})
 			}
 		})
+	}
+}
+
+func sessionRefreshActorContext(t *testing.T, caller string, principal id.Principal) context.Context {
+	t.Helper()
+	ctx := context.Background()
+	if caller == "no-context" {
+		return ctx
+	}
+	holder := security.NewCaptureHolder(security.TransportCapture{})
+	ctx = security.WithCaptureHolder(ctx, holder)
+	callingPeer, principalActor := "", principal.String()
+	if caller == "delegated" || caller == "calling-peer-only" {
+		callingPeer = "verified-gateway-client"
+	}
+	if caller == "anonymous-capture" {
+		principalActor = ""
+	}
+	_, finalized := security.FinalizeCaptureHolder(ctx, id.Principal(principalActor), callingPeer)
+	require.True(t, finalized)
+	if caller == "delegated" {
+		ctx = ledger.WithWorkflowActor(ctx, model.BusinessEventActor{Kind: "gateway", ID: &callingPeer, OnBehalfOf: &principal})
+	}
+	return ctx
+}
+
+func requireSessionRefreshActor(t *testing.T, event *model.BusinessEvent, caller string, proactive bool) {
+	t.Helper()
+	if caller == "delegated" {
+		require.Equal(t, "gateway", event.Actor.Kind)
+		require.Equal(t, "verified-gateway-client", *event.Actor.ID)
+		require.Equal(t, *event.Subject, *event.Actor.OnBehalfOf)
+		require.Equal(t, id.ClientID("verified-gateway-client"), event.GatewayClientID)
+		return
+	}
+	require.Nil(t, event.Actor.OnBehalfOf, "a calling peer alone does not establish delegation")
+	require.True(t, event.GatewayClientID.IsZero())
+	if proactive {
+		require.Equal(t, "system", event.Actor.Kind)
+		require.NotNil(t, event.Actor.ID)
+		require.Equal(t, "broker-lifecycle", *event.Actor.ID)
+		return
+	}
+	require.Equal(t, "user", event.Actor.Kind)
+	if caller == "no-context" || caller == "anonymous-capture" {
+		require.Nil(t, event.Actor.ID, "a known session subject does not authenticate its caller")
+	} else {
+		require.Equal(t, event.Subject.String(), *event.Actor.ID)
 	}
 }
 

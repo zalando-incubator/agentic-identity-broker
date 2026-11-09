@@ -102,6 +102,8 @@ Unavailable nullable identities remain null. The slog sentinel `anonymous` is no
 
 Automatic session refresh during token exchange keeps the session principal as its subject. Its actor identifies the verified initiating client. The event populates `on_behalf_of` only after the exchange establishes delegation.
 
+Proactive refresh preserves an established workflow actor across its asynchronous boundary, including successful and failed attempts. Without a workflow actor, autonomous proactive work uses `system` with actor ID `broker-lifecycle`; it does not identify the affected session user as the caller.
+
 The request trace comes from authoritative transport capture. A stored span identifies the actual HTTP server span, not an inbound parent or a later domain child span. Without a matching valid request span, the envelope omits the span field.
 
 The ledger retains known references after business-object deletion. It contains no access tokens, refresh tokens, client secrets, assertions, authorization codes, PKCE verifiers, private keys, or credential hashes.

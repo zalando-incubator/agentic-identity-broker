@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -85,16 +88,25 @@ func (p *backgroundRefresher) submit(ctx context.Context, session *storage.UserS
 	}
 	p.mu.Unlock()
 	origin := trace.SpanContextFromContext(ctx)
-	go p.refresh(key, principal, serviceID, sessionID, lookahead, origin)
+	actor, ok := ledger.WorkflowActorFromContext(ctx)
+	if !ok {
+		systemID := "broker-lifecycle"
+		actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
+	}
+	backgroundCtx := ledger.WithWorkflowActor(p.baseCtx, actor)
+	if resolved, ok := security.FromContext(ctx); ok {
+		backgroundCtx = security.WithSecurityContext(backgroundCtx, resolved)
+	}
+	go p.refresh(backgroundCtx, key, principal, serviceID, sessionID, lookahead, origin)
 }
 
-func (p *backgroundRefresher) refresh(key string, principal id.Principal, serviceID id.ServiceID, sessionID id.SessionID, lookahead time.Duration, origin trace.SpanContext) {
+func (p *backgroundRefresher) refresh(ctx context.Context, key string, principal id.Principal, serviceID id.ServiceID, sessionID id.SessionID, lookahead time.Duration, origin trace.SpanContext) {
 	defer p.finish(key)
 	options := []trace.SpanStartOption{trace.WithNewRoot()}
 	if origin.IsValid() {
 		options = append(options, trace.WithLinks(trace.Link{SpanContext: origin}))
 	}
-	spanCtx, span := p.tracer.Start(p.baseCtx, "oauth2session.background_refresh", options...)
+	spanCtx, span := p.tracer.Start(ctx, "oauth2session.background_refresh", options...)
 	defer span.End()
 	span.SetAttributes(attribute.String("oauth2.refresh.triggered_by", string(RefreshTriggerBackground)))
 	refreshCtx, cancel := p.service.refreshOperationContext(spanCtx)

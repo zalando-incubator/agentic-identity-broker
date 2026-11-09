@@ -210,6 +210,7 @@ They keep the receiving agent in `agent_id`.
 
 Only after accepted delegation, set `actor.on_behalf_of` to the represented principal.
 An automatic session refresh inherits that exchange actor.
+Proactive refresh carries the established workflow actor across the asynchronous boundary without inheriting request cancellation. Autonomous proactive work without a workflow actor uses `system` / `broker-lifecycle`.
 
 Gateway approval creation supplies the verified gateway identity and agent association.
 Approval consumption authenticates only the represented principal.
