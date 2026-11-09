@@ -6,6 +6,9 @@ Thank you for contributing! This document provides guidelines for maintaining ou
 
 Install Go for [go.mod](go.mod), Node.js for [web/package.json](web/package.json), npm, and `just`.
 The [justfile](justfile) defines the recipes in this guide and installs the test tools.
+The frontend uses TypeScript 6.0.3 or a compatible 6.0.x release. Keep upgrades within
+the `typescript-eslint` peer range; TypeScript 7 is not yet supported. TypeScript
+path aliases use explicit `./src/` targets without the deprecated `baseUrl` option.
 Infrastructure-backed verification also needs Docker or Podman, as described in the [storage integration guide](tests/integration/storage/README.md).
 
 1. Clone the repository:
