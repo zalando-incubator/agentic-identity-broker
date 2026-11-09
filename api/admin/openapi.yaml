@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 1.0.0
+  version: 3.0.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -11,6 +11,31 @@ info:
     - **AI Agents**: Registry of agents that can request delegated user permissions
     - **Third-Party OAuth2 Services**: External OAuth2 providers (GitHub, Google, Databricks, etc.)
     - **System Health**: Monitoring and health check endpoints
+
+    ### External ID Contract (Admin API 3.0.0)
+
+    - A set `external_id` identifies at most one agent. Comparison is exact and case-sensitive.
+    - `POST /api/agents` and `PUT /api/agents/{agent-id}` return `409 conflict` when another
+      agent holds the resulting external ID, and `400 validation failed` for empty, overlong,
+      invalid UTF-8 or NUL-containing values.
+    - `PUT /api/agents?external_id=` creates or updates the agent holding that external ID.
+    - `GET /api/agents?external_id=` returns `[]` or a one-element array.
+    - Agents without an external ID remain unrestricted in number.
+
+    ### Stable Agent Response Presentation
+
+    Every Admin Agent response (POST, collection PUT, ID-addressed PUT,
+    single GET, and list/filter GET) returns `client_uris` in ascending Go string
+    byte order. URI spelling, other collection ordering and empty-field omission
+    are unchanged. Stored order is irrelevant; equal-URI-set collection PUT replay does not write.
+
+    Every Admin Agent `created_at` and `updated_at` keeps the whole-second UTC
+    RFC 3339 presentation of Admin API 2.1.0. Collection PUT creation sets both
+    stored times to the current time. An actual reconcile update preserves
+    `created_at` and sets `updated_at` to the current time, as POST and ID-addressed
+    PUT do. Two changes within one second may therefore present the same
+    `updated_at`; it is not a revision or ETag. No-op replay preserves stored times
+    and writes nothing.
 
     ## Dual-Port Architecture
 
@@ -67,17 +92,53 @@ info:
     ### Client Secret Protection (SR-003)
 
     - Client secrets are **NEVER** transmitted in plaintext to the frontend
-    - Static confidential-service responses redact `client_secret` as `"REDACTED"`
-    - Public (`none`) and CIMD (`private_key_jwt`) service responses omit `client_secret` because they store no shared secret
+    - Stored static confidential-service responses redact `client_secret` as `"REDACTED"`
+    - Static public (`none`) and both CIMD service modes omit `client_secret` because they store no shared secret
     - Static confidential-service secrets are encrypted at rest using AES-256-GCM
     - Update operations support static confidential-service secret rotation
+    - Discovery-backed DCR client secrets stay encrypted and never appear in responses
+    - Filesystem-service responses omit both `client_id` and `client_secret`, including redaction placeholders
+
+    ### Credential Source Contract (Admin API 2.0.0)
+
+    - Every service response reports `credential_source: stored | filesystem`
+    - Creation omission selects stored. Update omission preserves the existing source. Explicit null and unknown values are invalid
+    - Filesystem mode requires a valid canonical ID and rejects either inline credential field, including null or empty input
+    - Static public, all CIMD, Google-flavor, and protected-resource-discovery services reject filesystem mode
+    - Administrative requests and responses contain no credential-file paths, file values, or internal source-transition marker
+    - Administrative metadata operations never read credential files or require their availability
+    - This approved breaking contract replaces released Admin API 1.0.0 on the existing `/api/services` routes
+    - ADR 041 and the major contract bump were explicitly approved on 2026-10-08. Schema approval does not establish runtime implementation
+
+    ### Client Registration Contract (Increment 2, issue #264, Admin API 2.1.0)
+
+    `client_registration` selects the source of the client identifier. It is independent of
+    `token_endpoint_auth_method`, which selects token-endpoint authentication. Every service
+    response reports `static` or `cimd`.
+
+    - `static` with absent or null authentication is static confidential. `static` with `none` is static public.
+    - `cimd` with `private_key_jwt` is CIMD confidential. `cimd` with `none` is CIMD public.
+    - Discovery-selected hosted CIMD reports `cimd`. Discovery-selected DCR reports `static`.
+      `discovery.client_method` remains the authoritative discovery method. Discovery never selects CIMD public.
+    - Omission on create or full-replacement PUT resolves to `cimd` for `private_key_jwt`, and `static` otherwise.
+      Omission never infers CIMD public. Explicit null, empty, and unknown registrations return `400`.
+    - `static` with `private_key_jwt`, `cimd` with absent or null authentication, and `cimd` with
+      Google flavor or filesystem credentials return `400` before discovery or provider traffic.
+    - A request with `discovery.resource_url` must omit `client_registration`. Presence returns `400` before discovery traffic.
+    - Both CIMD modes use the broker-hosted client identifier URL and reject a non-empty caller
+      `client_id` or `client_secret`. CIMD public needs no CIMD client-authentication key.
+    - Stored services from before this change report `cimd` for `private_key_jwt`, and `static` otherwise.
 
     ### URL Validation
 
-    - All URLs must use HTTP or HTTPS schemes
+    - All URLs must use HTTP or HTTPS schemes — except agent `redirect_uris`, which also accept native-app private-use scheme URIs (see the `redirect_uris` schema)
     - OAuth2 issuer URIs **must** use HTTPS
     - Metadata URLs **must** use HTTPS
     - URL validation prevents injection attacks
+    - Protected-resource discovery and every discovered endpoint require public HTTPS.
+    - Discovery and registration share a 10-second deadline and a 256-KiB cap per response.
+    - Discovery and registration use a guarded client without redirects or proxies. It rejects blocked resolved IP addresses before connection.
+    - Discovery-backed token calls use a separate guarded client with the configured upstream token timeout, no redirects, and no proxies.
 
     ### Referential Integrity
 
@@ -86,10 +147,28 @@ info:
 
     ## OAuth2 Discovery Support
 
-    Services can be configured with automatic endpoint discovery:
-    - **Enabled**: System fetches endpoints from `{issuer_uri}/.well-known/oauth-authorization-server`
-    - **Disabled**: Requires manual `token_endpoint` and `authorize_endpoint` configuration
-    - **Metadata URL**: Optional override for non-standard discovery locations
+    Direct authorization-server metadata discovery keeps its existing `metadata_url` behavior.
+    Protected-resource discovery uses `discovery.resource_url` with `enable_discovery: true`.
+    The broker validates the resource and issuer, then selects hosted CIMD or DCR.
+    The authenticated discovery-status resource reads stored status without contacting the provider.
+    DCR needs a non-blank deployment-wide `third_party_oauth2.client_name`; manual and CIMD modes do not.
+
+    Discovery and registration failures return safe `ErrorResponse.message` codes only.
+    They do not return provider bodies, URL queries, secrets, assertions, or tokens.
+    A `400` discovery failure uses one of these codes:
+    `resource_metadata_not_found`, `resource_metadata_unavailable`,
+    `resource_metadata_invalid`, `resource_mismatch`, `authorization_server_missing`,
+    `issuer_selection_required`, `issuer_not_advertised`,
+    `authorization_server_metadata_not_found`, `authorization_server_metadata_unavailable`,
+    `authorization_server_metadata_invalid`, `issuer_mismatch`,
+    `unsafe_destination`, `response_too_large`.
+    A `400` client-registration failure uses `no_compatible_client_method`,
+    `cimd_unavailable`, `client_name_unconfigured`, `client_registration_rejected`,
+    `client_registration_invalid`, or `client_method_changed`.
+    `timeout` returns `504`; `duplicate_client_identity` and
+    `issuer_change_requires_no_sessions` return `409`. Local storage or encryption
+    failures return `500` without a failure code. Only `issuer_selection_required`
+    adds the validated `authorization_servers` list to its authenticated error response.
 
 
     ## Trace Correlation
@@ -196,16 +275,37 @@ paths:
 
   /api/agents:
     get:
-      summary: List all agents
+      summary: List agents, optionally filtered by external ID
       description: |
-        Retrieve a list of all registered agents in the system.
+        Retrieve registered agents. Without `external_id`, return all agents.
+        With one `external_id`, return the exact, case-sensitive match, if any.
+        External IDs are unique, so the array contains zero or one agent.
+        Do not trim, normalize, or interpret the value as a pattern. The filter
+        does not match agent IDs, canonical IDs, or client IDs.
 
-        Returns a direct array of agent objects (no envelope).
-        Agents are returned in no guaranteed order.
+        Percent-encode reserved characters in the value, such as `&`, `+`, and `;`.
+        For example, send `urn:example:ai-registry:agent:7f3a9c` as
+        `urn%3Aexample%3Aai-registry%3Aagent%3A7f3a9c`.
+        Invalid filters return `400` with `error: invalid external_id`.
+        This includes empty or repeated values, invalid UTF-8, NUL, more than
+        255 Unicode code points, malformed percent-encoding, and an unencoded `;`.
+        Unknown parameters and malformed query parts outside `external_id`
+        retain their existing handling.
+
+        Returns a direct array of agent objects (no envelope), in no guaranteed order.
       operationId: listAgents
       tags:
         - Agents
       parameters:
+        - name: external_id
+          in: query
+          required: false
+          description: Exact, case-sensitive external governance ID. Percent-encode reserved characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+          example: urn:example:ai-registry:agent:7f3a9c
         - $ref: '#/components/parameters/PreferCanonicalReferences'
       responses:
         '200':
@@ -247,8 +347,30 @@ paths:
                       created_at: '2025-12-05T14:30:00Z'
                       updated_at: '2025-12-10T09:15:00Z'
                 empty_list:
-                  summary: No agents configured
+                  summary: No agents match the filter or none are registered
                   value: []
+        '400':
+          description: Invalid external_id filter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty_external_id:
+                  summary: Empty external ID
+                  value:
+                    error: invalid external_id
+                    message: external_id must be 1 to 255 characters
+                repeated_external_id:
+                  summary: Repeated external ID parameter
+                  value:
+                    error: invalid external_id
+                    message: external_id must appear at most once
+                malformed_external_id:
+                  summary: Malformed percent-encoding
+                  value:
+                    error: invalid external_id
+                    message: external_id contains malformed percent-encoding
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -270,7 +392,13 @@ paths:
         - `client_id`: Optional; when provided must be non-empty; unique across all agents when `multi_agent_client.enabled = false`
         - `display_name`: Required, max 255 characters
         - `description`: Required, max 1000 characters
-        - URLs: Must be valid HTTP/HTTPS URLs if provided
+        - URLs: Must be valid HTTP/HTTPS URLs if provided; `redirect_uris` entries follow the `redirect_uris` schema rules
+
+        **external_id uniqueness**: When supplied, `external_id` must be valid UTF-8 text with
+        1–255 Unicode code points and no NUL character, and must not
+        be held by another agent. An empty string returns `400 validation failed`. A held value
+        returns `409 conflict` with message `external_id is already held by another agent`.
+        Omit `external_id` or send `null` for agents without one; any number of agents may omit it.
 
         **ID Generation**: System generates a UUID for the agent ID. `client_id` is not auto-generated — omit it for agents that do not need one.
       operationId: createAgent
@@ -331,7 +459,166 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequestError'
         '409':
-          $ref: '#/components/responses/ConflictError'
+          $ref: '#/components/responses/AgentConflictError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Reconcile the agent holding an external ID
+      description: |
+        Idempotently reconcile the agent identified by an external governance ID.
+
+        - No agent holds `external_id`: create one and return `201 Created` with `Location`.
+        - An agent holds it: update that agent and return `200 OK`. The selector never matches
+          agent IDs, canonical IDs, or client IDs.
+        - Replaying an identical request with no intervening change returns `200` with the
+          unchanged representation, including `updated_at`. Nothing is written.
+        - Concurrent first requests with one external ID create exactly one agent.
+          Without `If-Match`, concurrent different definitions are last-writer-wins; each
+          successful request applies its complete definition.
+
+        **Selector**: exactly one `external_id` query parameter, 1–255 Unicode code points,
+        valid UTF-8, no NUL, valid percent-encoding, and no unencoded `;`. Percent-encode `&`,
+        `+`, and `;`. Otherwise `400 invalid external_id`.
+
+        **Body**: `AgentCreateRequest`. Omitted `external_id` takes the selector. A supplied
+        `external_id` must equal the decoded selector; a different value, `""`, or `null`
+        returns `400 invalid external_id`.
+
+        **Update-branch field policy** (FR-012):
+
+        | Fields | Omitted | `null` | Value |
+        | --- | --- | --- | --- |
+        | `client_id` | preserved | `400 validation failed` | replaced |
+        | `canonical_id` | preserved | removed | replaced |
+        | `governance_url`, `user_documentation_url`, `agent_interface_url` | removed | removed | replaced |
+        | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | emptied | emptied | replaced |
+        | `display_name`, `description`, `permission_sets` | `400` | `400` | replaced |
+
+        On creation, omitted optional fields are absent or empty and no `client_id` is generated.
+        Grants and other relationships of an updated agent are not changed. To clear an existing
+        `client_id`, use `PUT /api/agents/{agent-id}` with `client_id: null`.
+
+        Invalid definitions, attributes, and references on either branch return `400`
+        with the existing `validation failed` envelope. Canonical-ID conflicts,
+        configuration-dependent `client_id` conflicts (`multi_agent_client.enabled`),
+        and client-URI identity conflicts return `409 conflict` on both branches.
+        Failed requests change no agent. Agent ordering and timestamps follow
+        "Stable Agent Response Presentation" above on create, update, and replay.
+      operationId: reconcileAgentByExternalId
+      tags:
+        - Agents
+      parameters:
+        - $ref: '#/components/parameters/ExternalIdSelector'
+        - $ref: '#/components/parameters/PreferCanonicalReferences'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentCreateRequest'
+            examples:
+              desired_state:
+                summary: Desired agent definition
+                value:
+                  canonical_id: research-assistant
+                  external_id: urn:example:ai-registry:agent:7f3a9c
+                  display_name: Research Assistant
+                  description: Helps with academic research
+                  permission_sets:
+                    - permission_set_id: github-read
+                      requirement_type: mandatory
+      responses:
+        '200':
+          description: The agent holding the external ID was updated, or already matched the request.
+          headers:
+            Preference-Applied:
+              $ref: '#/components/headers/PreferenceApplied'
+            Vary:
+              $ref: '#/components/headers/VaryPrefer'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440000
+                canonical_id: research-assistant
+                external_id: urn:example:ai-registry:agent:7f3a9c
+                display_name: Research Assistant v2
+                description: Helps with academic research
+                permission_sets:
+                  - permission_set_id: github-read
+                    requirement_type: mandatory
+                created_at: '2026-10-30T08:00:00Z'
+                updated_at: '2026-10-30T09:00:00Z'
+        '201':
+          description: No agent held the external ID; one was created.
+          headers:
+            Location:
+              description: Relative URI of the created agent, addressed by UUID.
+              schema:
+                type: string
+              example: /api/agents/550e8400-e29b-41d4-a716-446655440000
+            Preference-Applied:
+              $ref: '#/components/headers/PreferenceApplied'
+            Vary:
+              $ref: '#/components/headers/VaryPrefer'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440000
+                canonical_id: research-assistant
+                external_id: urn:example:ai-registry:agent:7f3a9c
+                display_name: Research Assistant
+                description: Helps with academic research
+                permission_sets:
+                  - permission_set_id: github-read
+                    requirement_type: mandatory
+                created_at: '2026-10-30T08:00:00Z'
+                updated_at: '2026-10-30T08:00:00Z'
+        '400':
+          description: Invalid selector, body external_id, or agent definition. No agent changes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id selector is required
+                empty_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id must be 1 to 255 characters
+                repeated_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id must appear at most once
+                malformed_selector:
+                  value:
+                    error: invalid external_id
+                    message: external_id contains malformed percent-encoding
+                body_mismatch:
+                  value:
+                    error: invalid external_id
+                    message: body external_id must equal the selector
+                body_null:
+                  value:
+                    error: invalid external_id
+                    message: external_id must not be null
+                null_client_id:
+                  value:
+                    error: validation failed
+                    message: client_id must be a nonempty string when supplied
+                missing_permission_sets:
+                  value:
+                    error: validation failed
+                    message: at least one permission set entry is required
+        '409':
+          $ref: '#/components/responses/AgentConflictError'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -389,9 +676,14 @@ paths:
       description: |
         Update configuration for an existing agent.
 
+        When supplied, `external_id` must be non-empty and must not be held by another agent
+        (`400 validation failed` / `409 conflict`). Retaining its own external ID is not a
+        conflict. Canonical-ID, client-ID, and client-URI conflicts also return `409`.
+
         **Update Semantics**:
-        - All fields in the request body will update the agent
-        - Omitted optional fields are preserved from existing configuration
+        - PUT is a full replacement, not PATCH. Send every field you want to keep
+        - Omitted or null `external_id`, `governance_url`, `user_documentation_url`, `agent_interface_url`, `service_requirements`, `redirect_uris`, `allowed_scopes`, and `client_uris` are cleared
+        - `canonical_id` and `client_id` are the exceptions: omitted preserves the existing value, and explicit null clears it
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
@@ -418,7 +710,7 @@ paths:
               $ref: '#/components/schemas/AgentUpdateRequest'
             examples:
               update_display_name:
-                summary: Update display name only
+                summary: Update the display name of an agent with no other optional fields
                 value:
                   client_id: agent-research-assistant
                   display_name: Advanced Research Assistant
@@ -427,7 +719,7 @@ paths:
                     - permission_set_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
                       requirement_type: mandatory
               update_urls:
-                summary: Update documentation URLs
+                summary: Set documentation URLs on an agent with no other optional fields
                 value:
                   client_id: agent-research-assistant
                   display_name: Research Assistant
@@ -456,6 +748,8 @@ paths:
                 updated_at: '2025-12-19T15:45:00Z'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '409':
+          $ref: '#/components/responses/AgentConflictError'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '500':
@@ -500,7 +794,10 @@ paths:
 
         Returns a direct array of service objects (no envelope).
 
-        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
+        Every object reports `credential_source` and `client_registration`.
+        Static confidential services return their client ID and `"REDACTED"` secret.
+        Static public, CIMD, and DCR services omit the secret. Filesystem services omit inline credentials.
+        Listing never reads files or returns paths or file values.
       operationId: listServices
       tags:
         - Services
@@ -526,12 +823,16 @@ paths:
                   value:
                     - id: 770e8400-e29b-41d4-a716-446655440002
                       display_name: GitHub Production
+                      credential_source: stored
+                      client_registration: static
+                      oauth2_flavor: github
                       client_id: Iv1.1234567890abcdef
                       client_secret: REDACTED
                       token_endpoint_auth_method: null
                       issuer_uri: https://github.com
                       discovery:
                         enable_discovery: true
+                        authorization_param_resource_strategy: null
                       endpoints:
                         token_endpoint: https://github.com/login/oauth/access_token
                         authorize_endpoint: https://github.com/login/oauth/authorize
@@ -544,12 +845,16 @@ paths:
                       updated_at: '2025-12-15T14:30:00Z'
                     - id: 880e8400-e29b-41d4-a716-446655440003
                       display_name: Google Cloud
+                      credential_source: stored
+                      client_registration: static
+                      oauth2_flavor: google
                       client_id: 123456789-abcdef.apps.googleusercontent.com
                       client_secret: REDACTED
                       token_endpoint_auth_method: null
                       issuer_uri: https://accounts.google.com
                       discovery:
                         enable_discovery: true
+                        authorization_param_resource_strategy: null
                       endpoints:
                         token_endpoint: https://oauth2.googleapis.com/token
                         authorize_endpoint: https://accounts.google.com/o/oauth2/v2/auth
@@ -558,6 +863,21 @@ paths:
                           description: View and download Google Drive files
                       created_at: '2025-12-05T11:20:00Z'
                       updated_at: '2025-12-05T11:20:00Z'
+                    - id: 990e8400-e29b-41d4-a716-446655440004
+                      canonical_id: zalando-platform
+                      display_name: Zalando Platform
+                      credential_source: filesystem
+                      client_registration: static
+                      oauth2_flavor: standard
+                      token_endpoint_auth_method: null
+                      issuer_uri: https://oauth.example.com
+                      discovery:
+                        enable_discovery: false
+                      endpoints:
+                        token_endpoint: https://oauth.example.com/token
+                        authorize_endpoint: https://oauth.example.com/authorize
+                      created_at: '2026-10-08T09:00:00Z'
+                      updated_at: '2026-10-08T09:00:00Z'
                 empty_list:
                   summary: No services configured
                   value: []
@@ -571,29 +891,39 @@ paths:
 
         **Validation Rules**:
         - `display_name`: Required, max 255 characters
-        - `client_id`: Required and unique across services for static confidential and public services, except Google derives it from its credential document
-        - `client_secret`: Required for static confidential services (encrypted at rest, never returned); public services accept only omitted, null, or empty values
-        - `issuer_uri`: Required, must be HTTPS URL
+        - `credential_source`: `stored` or `filesystem`; omission selects `stored`; explicit null and unknown values are invalid
+        - `client_registration`: Optional `static` or `cimd`. Omission selects `cimd` for `private_key_jwt` and `static` otherwise. Explicit null, empty, or unknown values return `400`
+        - Stored manual `client_id`: Required and unique under existing validation, except Google derives it and CIMD generates it; discovery selects the client identity
+        - Stored `client_secret`: Required for static confidential services. Static public and both CIMD modes accept omitted, null, or empty secret input
+        - Filesystem: Requires a valid canonical ID, shared-secret authentication, and standard/GitHub flavor
+        - Filesystem: Rejects either inline field whenever present, including null or empty input
+        - Manual `issuer_uri`: Required and HTTPS, subject to existing Google service-account rules; optional for protected-resource discovery with one issuer
         - `scopes`: Optional. Omit it or provide an empty array when the provider does not use OAuth2 scopes.
 
-        **CIMD confidential mode**: `token_endpoint_auth_method: private_key_jwt` requires
-        `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty.
-        A non-empty value for either field, or `oauth2_flavor: google`, returns the existing
-        `400` error representation before endpoint discovery or provider traffic. The broker
-        creates the service ID first, then assigns the immutable HTTPS Client ID Metadata
-        Document URL for the service lifetime.
+        **Filesystem registration** never reads files or requires an available binding.
+        Paths belong only to operator configuration and cannot be supplied through this API.
+        Every successful response reports the selected source. Filesystem responses omit both inline fields.
 
-        **Discovery Modes**:
+        **CIMD modes**: `client_registration: cimd` with `private_key_jwt` is confidential.
+        With `none`, it is public and needs no CIMD client-authentication key.
+        Both require omitted or null `client_id` and omitted, null, or empty `client_secret`.
+        The broker rejects a non-empty caller value, Google flavor, or filesystem source with
+        `400` before provider traffic. It assigns the HTTPS client identifier URL after it creates the service ID.
+        `static` with `private_key_jwt`, or `cimd` with absent or null authentication, returns `400`.
 
-        1. **Automatic Discovery** (`enable_discovery: true`):
-           - System fetches endpoints from `{issuer_uri}/.well-known/oauth-authorization-server`
-           - Optional `metadata_url` can override default discovery location
-           - Falls back to manual `endpoints` if discovery fails
+        **Direct metadata discovery**: Without `resource_url`, `metadata_url` can select an
+        authorization-server document. The existing manual-endpoint fallback remains unchanged.
 
-        2. **Manual Configuration** (`enable_discovery: false`):
-           - Requires `endpoints.token_endpoint` and `endpoints.authorize_endpoint`
+        **Protected-resource discovery**: Set `discovery.resource_url` with
+        `enable_discovery: true`. Omit `client_registration`, manual endpoints, client credentials,
+        `metadata_url`, and `token_endpoint_auth_method`. A supplied registration returns `400`
+        before discovery traffic. An issuer selection is optional for one issuer.
+        The broker derives `authorization_params.resource` unless the request supplies an
+        explicit value. A selected DCR client needs a non-blank broker client name from
+        deployment configuration, not the service display name. Failures do not create a service.
 
-        **Security**: Static confidential-service `client_secret` values are encrypted with AES-256-GCM before storage.
+        **Security**: Static and DCR confidential secrets are encrypted before storage.
+        A DCR secret never appears in an Admin API response.
       operationId: createService
       tags:
         - Services
@@ -637,6 +967,42 @@ paths:
                       description: Access user profile information
                     - scope_value: corporate_data
                       description: Access corporate data systems
+              cimd_public:
+                summary: Create a CIMD public ServiceNow client without credentials
+                value:
+                  display_name: ServiceNow
+                  credential_source: stored
+                  client_registration: cimd
+                  token_endpoint_auth_method: none
+                  oauth2_flavor: standard
+                  issuer_uri: https://auth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://auth.example.com/oauth/token
+                    authorize_endpoint: https://auth.example.com/oauth/authorize
+              protected_resource:
+                summary: Discover a protected resource without supplying a client
+                value:
+                  display_name: Example MCP
+                  discovery:
+                    enable_discovery: true
+                    resource_url: https://mcp.example.com/mcp
+                  authorization_params:
+                    resource: https://mcp.example.com/api
+              filesystem:
+                summary: Filesystem registration without inline credentials or paths
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: filesystem
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
       responses:
         '201':
           description: Service created successfully
@@ -644,36 +1010,175 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Service'
-              example:
-                id: 770e8400-e29b-41d4-a716-446655440002
-                display_name: GitHub Production
-                client_id: Iv1.1234567890abcdef
-                client_secret: REDACTED
-                token_endpoint_auth_method: null
-                issuer_uri: https://github.com
-                discovery:
-                  enable_discovery: true
-                endpoints:
-                  token_endpoint: https://github.com/login/oauth/access_token
-                  authorize_endpoint: https://github.com/login/oauth/authorize
-                scopes:
-                  - scope_value: repo
-                    description: Full control of private repositories
-                  - scope_value: read:org
-                    description: Read organization membership
-                created_at: '2025-12-19T10:30:00Z'
-                updated_at: '2025-12-19T10:30:00Z'
+              examples:
+                static_service:
+                  value:
+                    id: 770e8400-e29b-41d4-a716-446655440002
+                    display_name: GitHub Production
+                    credential_source: stored
+                    client_registration: static
+                    oauth2_flavor: github
+                    client_id: Iv1.1234567890abcdef
+                    client_secret: REDACTED
+                    token_endpoint_auth_method: null
+                    issuer_uri: https://github.com
+                    discovery:
+                      enable_discovery: true
+                      authorization_param_resource_strategy: null
+                    endpoints:
+                      token_endpoint: https://github.com/login/oauth/access_token
+                      authorize_endpoint: https://github.com/login/oauth/authorize
+                    scopes:
+                      - scope_value: repo
+                        description: Full control of private repositories
+                      - scope_value: read:org
+                        description: Read organization membership
+                    created_at: '2025-12-19T10:30:00Z'
+                    updated_at: '2025-12-19T10:30:00Z'
+                cimd_public:
+                  summary: Broker-hosted public client without a secret
+                  value:
+                    id: 770e8400-e29b-41d4-a716-446655440002
+                    display_name: ServiceNow
+                    credential_source: stored
+                    client_registration: cimd
+                    client_id: https://broker.example.com/.well-known/oauth-client/770e8400-e29b-41d4-a716-446655440002
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com
+                    discovery:
+                      enable_discovery: false
+                      client_method: null
+                      authorization_param_resource_strategy: null
+                    endpoints:
+                      token_endpoint: https://auth.example.com/oauth/token
+                      authorize_endpoint: https://auth.example.com/oauth/authorize
+                    created_at: '2026-10-22T10:00:00Z'
+                    updated_at: '2026-10-22T10:00:00Z'
+                protected_resource_dcr:
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440003
+                    display_name: Example MCP
+                    credential_source: stored
+                    client_registration: static
+                    client_id: dcr-client-123
+                    token_endpoint_auth_method: client_secret_basic
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com/tenant
+                    discovery:
+                      enable_discovery: true
+                      resource_url: https://mcp.example.com/mcp
+                      client_method: dcr
+                      authorization_param_resource_strategy: pinned
+                    endpoints:
+                      token_endpoint: https://auth.example.com/tenant/token
+                      authorize_endpoint: https://auth.example.com/tenant/authorize
+                    authorization_params:
+                      resource: https://mcp.example.com/api
+                    created_at: '2026-10-06T10:00:00Z'
+                    updated_at: '2026-10-06T10:00:00Z'
+                derived_resource:
+                  summary: Discovery derives its effective token audience
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440004
+                    display_name: Files MCP
+                    credential_source: stored
+                    client_registration: static
+                    client_id: dcr-files-client
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com/tenant
+                    discovery:
+                      enable_discovery: true
+                      resource_url: https://files.example/mcp
+                      client_method: dcr
+                      authorization_param_resource_strategy: derived
+                    endpoints:
+                      authorize_endpoint: https://auth.example.com/tenant/authorize
+                      token_endpoint: https://auth.example.com/tenant/token
+                    authorization_params:
+                      resource: https://files.example/mcp
+                    created_at: '2026-10-06T10:00:00Z'
+                    updated_at: '2026-10-06T10:00:00Z'
+                pinned_equal_resource:
+                  summary: Administrator pins the same token audience as the discovery URL
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440005
+                    display_name: Files MCP
+                    credential_source: stored
+                    client_registration: static
+                    client_id: dcr-files-client-2
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com/tenant
+                    discovery:
+                      enable_discovery: true
+                      resource_url: https://files.example/mcp
+                      client_method: dcr
+                      authorization_param_resource_strategy: pinned
+                    endpoints:
+                      authorize_endpoint: https://auth.example.com/tenant/authorize
+                      token_endpoint: https://auth.example.com/tenant/token
+                    authorization_params:
+                      resource: https://files.example/mcp
+                    created_at: '2026-10-06T10:00:00Z'
+                    updated_at: '2026-10-06T10:00:00Z'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: Invalid request, discovery failure, or client registration failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                issuer_selection_required:
+                  value:
+                    error: discovery failed
+                    message: issuer_selection_required
+                    authorization_servers:
+                      - https://login-a.example.com
+                      - https://login-b.example.com
+                broker_name_missing:
+                  value:
+                    error: client registration failed
+                    message: client_name_unconfigured
+                invalid_client_registration:
+                  summary: Explicit null, empty, unknown, or discovery-supplied registration
+                  value:
+                    error: validation failed
+                    message: invalid client_registration
+                incompatible_client_registration:
+                  summary: Registration and authentication method do not match
+                  value:
+                    error: validation failed
+                    message: incompatible client registration and authentication method
         '409':
-          description: Conflict - duplicate client_id
+          description: Manual client-ID conflict, duplicate issuer-scoped DCR identity, or protected-resource ownership conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                duplicate_dcr_identity:
+                  value:
+                    error: conflict
+                    message: duplicate_client_identity
+                protected_resource_owned:
+                  value:
+                    error: conflict
+                    message: protected resource URI already configured for another service
+                manual_duplicate:
+                  value:
+                    error: conflict
+                    message: Service with client_id 'Iv1.1234567890abcdef' already exists
+        '504':
+          description: Discovery or registration exceeded the 10-second attempt deadline
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: conflict
-                message: Service with client_id 'Iv1.1234567890abcdef' already exists
+                error: discovery failed
+                message: timeout
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -683,7 +1188,10 @@ paths:
       description: |
         Retrieve detailed configuration for a specific OAuth2 service.
 
-        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
+        Every response reports `credential_source` and `client_registration` without reading files.
+        Stored responses always include `client_id`. Static confidential secrets return only
+        `"REDACTED"`; static public, CIMD, and DCR responses omit the secret.
+        Filesystem responses omit both inline credential fields, file paths, and file values.
       operationId: getService
       tags:
         - Services
@@ -709,12 +1217,16 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                credential_source: stored
+                client_registration: static
+                oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
                 token_endpoint_auth_method: null
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
+                  authorization_param_resource_strategy: null
                 endpoints:
                   token_endpoint: https://github.com/login/oauth/access_token
                   authorize_endpoint: https://github.com/login/oauth/authorize
@@ -742,17 +1254,32 @@ paths:
         Update configuration for an existing OAuth2 service.
 
         **Update Semantics**:
-        - All fields in the request body will update the service
-        - Omitted optional fields are preserved from existing configuration
-        - `token_endpoint_auth_method` is evaluated from the complete replacement request. Omit it or set it to `null` for static confidential authentication, which requires a new non-empty `client_secret` in that request.
+        - PUT remains a full replacement, not PATCH. Existing documented omission exceptions remain unchanged
+        - `credential_source` omission preserves the current source. Explicit null and unknown selectors are invalid
+        - Omitted `client_registration` resolves to `cimd` for `private_key_jwt` and `static` otherwise, not to the old value. Explicit null, empty, or unknown values return `400`
+        - CIMD public must repeat `client_registration: cimd`. Without it, PUT resolves to `static` and fails without an operator `client_id`
+        - For manual replacements, `token_endpoint_auth_method` is evaluated from the complete request. Omitted or null means shared-secret authentication: stored requires an explicit non-empty secret, while filesystem forbids inline credentials. Protected-resource refresh retains the broker-selected method and credentials
         - `token_endpoint_auth_method: private_key_jwt` requires `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty. A valid replacement removes any prior static secret and assigns the stable broker-generated HTTPS Client ID Metadata Document URL.
-        - A private-to-static replacement requires a new non-empty `client_secret`. A private-to-public replacement removes any secret state and stops client assertion use.
+        - CIMD confidential to CIMD public or back keeps the client identifier URL. Switching to CIMD confidential requires a usable CIMD client-authentication key
+        - Switching `static` to `cimd` replaces the operator client ID and removes a stored secret only after validation. Switching back requires an operator `client_id`. Static confidential also requires a new secret
+        - A switch to `static` makes the hosted document return `404`. Providers can cache the previous document for up to 300 seconds. The broker never falls back to another token authentication method
         - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
+        **Source Transitions**:
+        - Stored to filesystem requires explicit `filesystem`, a valid resulting canonical ID, and neither inline field
+        - The source change, removal of both stored credentials, and irreversible internal transition evidence commit atomically
+        - Filesystem to stored requires explicit `stored` and explicitly supplied non-empty `client_id` and `client_secret`
+        - Returning to stored encrypts the supplied secret before the atomic update. Files never supply reverse-transition credentials
+        - No-op source selections preserve transition evidence. A source round trip never resets it or rewrites established identities
+        - Omitted canonical ID preserves the existing ID. Null cannot clear a filesystem canonical ID
+        - Filesystem rejects static public, both CIMD methods, and Google-flavor replacements and either inline field, including null or empty input
+        - Validation failures and version conflicts leave the previous source, credentials, and transition evidence unchanged
+        - Updates never read files or require available bindings. File paths and transition evidence are not administrative inputs
+
         **Secret Rotation**:
-        - Provide new `client_secret` to rotate static confidential-service credentials
+        - Provide a new `client_secret` to rotate stored static confidential-service credentials
         - New secret is encrypted before storage
         - Old secret is securely discarded
 
@@ -760,7 +1287,26 @@ paths:
         - If `enable_discovery: true`, endpoints are re-fetched
         - Useful for services that change endpoint URLs
 
-        **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
+        **Protected-resource refresh**: An omitted `issuer_uri` retains the active issuer
+        only if fresh resource metadata still advertises it. A different issuer requires
+        explicit selection and zero user sessions. An effective `authorization_params.resource`
+        change also requires zero user sessions, even when the issuer stays the same.
+        Keep the client method and the exact token authentication method. Preserve the
+        client ID and secret for an unchanged issuer. For a discovery-backed refresh,
+        omitted `authorization_params` keeps the map and its explicit or derived source.
+        A replacement without `resource` restores the derived resource. On replacement
+        with manual configuration, omission keeps the parameter map but clears the
+        discovery source and resource source marker. For a manual replacement, an explicit
+        empty map clears all parameters. A discovery-backed rejection writes a safe
+        failure-only status without changing the active service ETag. A manual conversion
+        rejected for an audience change writes no discovery status.
+        A request with `discovery.resource_url` must omit `client_registration`. Presence
+        returns `400` before discovery traffic. Hosted CIMD reports `cimd`. DCR reports
+        `static`. The selected `discovery.client_method` remains authoritative.
+
+        **Security**: Static confidential-service `client_secret` values are redacted in responses.
+        Static public, CIMD, and DCR responses omit the property. Filesystem responses omit inline
+        credentials, paths, and file values. Every response reports `credential_source` and `client_registration`.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
         - `protected_resources` present (including `[]`): replaces the entire set and requires `If-Match`
 
@@ -808,6 +1354,65 @@ paths:
                       description: Read organization membership
                     - scope_value: workflow
                       description: Update GitHub Actions workflows
+              cimd_public:
+                summary: Replace a CIMD public service while keeping its hosted client identifier URL
+                value:
+                  display_name: ServiceNow
+                  client_registration: cimd
+                  token_endpoint_auth_method: none
+                  oauth2_flavor: standard
+                  issuer_uri: https://auth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://auth.example.com/oauth/token
+                    authorize_endpoint: https://auth.example.com/oauth/authorize
+              refresh_protected_resource:
+                summary: Refresh discovery without changing the stored client
+                value:
+                  display_name: Example MCP
+                  discovery:
+                    enable_discovery: true
+                    resource_url: https://mcp.example.com/mcp
+              stored_to_filesystem:
+                summary: Remove stored credentials atomically without reading files
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: filesystem
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
+              filesystem_to_stored:
+                summary: Supply both explicit credentials for the reverse transition
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: stored
+                  oauth2_flavor: standard
+                  client_id: platform-client
+                  client_secret: replacement-secret
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
+              preserve_filesystem_source:
+                summary: Full filesystem replacement with omitted source and preserved canonical ID
+                value:
+                  display_name: Renamed Zalando Platform
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
       responses:
         '200':
           description: Service updated successfully
@@ -824,12 +1429,16 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                credential_source: stored
+                client_registration: static
+                oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
                 token_endpoint_auth_method: null
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
+                  authorization_param_resource_strategy: null
                 endpoints:
                   token_endpoint: https://github.com/login/oauth/access_token
                   authorize_endpoint: https://github.com/login/oauth/authorize
@@ -843,15 +1452,81 @@ paths:
                 created_at: '2025-12-19T10:30:00Z'
                 updated_at: '2025-12-19T16:00:00Z'
         '400':
-          $ref: '#/components/responses/BadRequestError'
+          description: Invalid request, discovery failure, or client registration failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                discovery_failure:
+                  value:
+                    error: discovery failed
+                    message: authorization_server_metadata_invalid
+                invalid_client_registration:
+                  summary: Explicit null, empty, unknown, or discovery-supplied registration
+                  value:
+                    error: validation failed
+                    message: invalid client_registration
+                incompatible_client_registration:
+                  summary: Registration and authentication method do not match
+                  value:
+                    error: validation failed
+                    message: incompatible client registration and authentication method
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
-          $ref: '#/components/responses/ConflictError'
+          description: |
+            Issuer or audience change with sessions, duplicate client identity or identifier,
+            protected-resource ownership conflict, or concurrent service modification.
+            A concurrent update leaves this request's source, credentials, and transition evidence unchanged.
+            Read the current service and reconcile the full replacement before retrying.
+            A stale If-Match on protected-resource replacement returns 412 instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                issuer_change_with_sessions:
+                  value:
+                    error: conflict
+                    message: issuer_change_requires_no_sessions
+                resource_change_with_sessions:
+                  value:
+                    error: conflict
+                    message: resource_change_requires_no_sessions
+                protected_resource_owned:
+                  value:
+                    error: conflict
+                    message: protected resource URI already configured for another service
+                duplicate_dcr_identity:
+                  value:
+                    error: conflict
+                    message: duplicate_client_identity
+                manual_duplicate:
+                  value:
+                    error: conflict
+                    message: Service with client_id 'Iv1.1234567890abcdef' already exists
+                duplicate_identifier:
+                  value:
+                    error: conflict
+                    message: Service identifier already exists
+                concurrent_modification:
+                  value:
+                    error: conflict
+                    message: provider version is stale
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '428':
           $ref: '#/components/responses/PreconditionRequired'
+        '504':
+          description: Discovery or registration exceeded the 10-second attempt deadline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: discovery failed
+                message: timeout
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -896,6 +1571,76 @@ paths:
                   value:
                     error: conflict
                     message: Cannot delete service 'GitHub Production' - 15 user grants reference it. Revoke grants first.
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/services/{service-id}/discovery-status:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      summary: Read the last discovery attempt and active configuration
+      description: |
+        Read stored status without contacting a resource or authorization server.
+        A missing operator principal returns `401` before the service is read.
+        A failed refresh keeps the last successful issuer, client method, and resource URL.
+        Manual services return `not_applicable` and null discovery fields.
+      operationId: getServiceDiscoveryStatus
+      tags:
+        - Services
+      responses:
+        '200':
+          description: Stored discovery status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceDiscoveryStatus'
+              examples:
+                ready:
+                  value:
+                    status: ready
+                    resource_url: https://mcp.example.com/mcp
+                    issuer_uri: https://auth.example.com/tenant
+                    client_method: dcr
+                    last_attempt_at: '2026-10-06T10:00:00Z'
+                    last_success_at: '2026-10-06T10:00:00Z'
+                    failure_reason: null
+                failed_refresh:
+                  value:
+                    status: failed
+                    resource_url: https://mcp.example.com/mcp
+                    issuer_uri: https://auth.example.com/tenant
+                    client_method: dcr
+                    last_attempt_at: '2026-10-06T11:00:00Z'
+                    last_success_at: '2026-10-06T10:00:00Z'
+                    failure_reason: authorization_server_metadata_invalid
+                manual_service:
+                  value:
+                    status: not_applicable
+                    resource_url: null
+                    issuer_uri: null
+                    client_method: null
+                    last_attempt_at: null
+                    last_success_at: null
+                    failure_reason: null
+        '401':
+          description: Operator principal is missing or empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: missing or empty principal
+        '400':
+          description: Malformed service identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: invalid service ID
+                message: service ID is invalid
+        '404':
+          $ref: '#/components/responses/NotFoundError'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -1698,8 +2443,8 @@ paths:
       description: |
         Refreshes every stored third-party user session whose access token expires within the
         lookahead window, across all principals and services. Intended to be called on a schedule
-        by an operator-managed job (for example a Kubernetes CronJob); the broker runs no internal
-        scheduler.
+        by an external job, such as the CronJob the broker Helm chart renders when
+        `sessionSweep.enabled` is true; the broker runs no internal scheduler.
 
         **Selection**: A session is a candidate when its access token has a recorded expiry at or
         before `now + lookahead_duration`. Sessions with no access-token expiry are never
@@ -1711,7 +2456,10 @@ paths:
         are stored. A candidate that another refresh already renewed, or that was deleted during
         the sweep, is counted as `skipped`. A candidate that cannot be refreshed (no usable refresh
         token, upstream error) is counted as `failed`. The sweep then continues and the stored
-        session is left unchanged.
+        tokens are left unchanged. When the provider rejects the refresh token with a 4xx
+        `invalid_grant` (other than `429`), the broker records the rejection and counts that
+        attempt as `failed`. Later sweeps exclude the session from their candidates, so it
+        contributes to no count and the provider is not contacted again until the user reconnects.
 
         **Dry run**: With `dry_run: true`, candidates are classified without calling any upstream
         provider and without writing. Candidates that would be refreshed are counted in
@@ -1749,9 +2497,9 @@ paths:
                 summary: Use configured lookahead and page size
                 value: {}
               scheduled:
-                summary: Ten-minute window for a CronJob that runs every five minutes
+                summary: Two-hour window for the chart's hourly CronJob
                 value:
-                  lookahead_duration: PT10M
+                  lookahead_duration: PT2H
               dry_run_wide:
                 summary: Preview a one-day window without refreshing
                 value:
@@ -1893,6 +2641,16 @@ paths:
 
 components:
   parameters:
+    ExternalIdSelector:
+      name: external_id
+      in: query
+      required: true
+      description: Exact, case-sensitive external governance ID that selects the agent. Percent-encode reserved characters.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      example: urn:example:ai-registry:agent:7f3a9c
     AgentId:
       name: agent-id
       in: path
@@ -2022,6 +2780,10 @@ components:
         uptime_seconds: 3600
 
     Agent:
+      description: |
+        Admin Agent timestamps use whole-second UTC RFC 3339 presentation.
+        client_uris is presented in ascending Go string byte order on a copy;
+        stored order and other collections are unchanged.
       type: object
       required:
         - id
@@ -2054,8 +2816,9 @@ components:
         external_id:
           type: string
           nullable: true
-          description: Optional external governance system identifier for tracking and audit
+          description: Optional external governance identifier; valid UTF-8 with 1–255 Unicode code points, no NUL, and globally unique when set, by exact case-sensitive equality.
           example: gov-sys-12345
+          minLength: 1
           maxLength: 255
         display_name:
           type: string
@@ -2124,12 +2887,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true
@@ -2161,13 +2939,13 @@ components:
         created_at:
           type: string
           format: date-time
-          description: Timestamp when the agent was created (RFC3339 format)
+          description: Timestamp when the agent was created (whole-second UTC RFC 3339 format)
           example: '2025-12-19T10:30:00Z'
           readOnly: true
         updated_at:
           type: string
           format: date-time
-          description: Timestamp when the agent was last updated (RFC3339 format)
+          description: Timestamp when the agent was last updated (whole-second UTC RFC 3339 format)
           example: '2025-12-19T15:45:00Z'
           readOnly: true
 
@@ -2196,8 +2974,9 @@ components:
         external_id:
           type: string
           nullable: true
-          description: Optional external governance system identifier
+          description: Optional external governance identifier; valid UTF-8 with 1–255 Unicode code points, no NUL, and globally unique when set. Collection PUT requires a supplied value to equal its selector and rejects null.
           example: gov-sys-12345
+          minLength: 1
           maxLength: 255
         display_name:
           type: string
@@ -2262,12 +3041,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true
@@ -2329,8 +3123,9 @@ components:
         external_id:
           type: string
           nullable: true
-          description: Optional external governance system identifier
+          description: Optional external governance identifier; valid UTF-8 with 1–255 Unicode code points, no NUL, and globally unique when set. Omission or null clears it; retaining the current agent's value is not a conflict.
           example: gov-sys-12345
+          minLength: 1
           maxLength: 255
         display_name:
           type: string
@@ -2395,12 +3190,27 @@ components:
             List of allowed redirect URIs for OAuth2 authorization code flow.
             When the broker acts as an OAuth2 server, only these URIs are accepted
             as valid redirect targets for this agent.
+            Each entry is an `https` URI or an `http` URI with host `localhost`, `127.0.0.1`, or `[::1]`.
+            The port is ignored when matching loopback `http` URIs.
+            An entry can also be a native-app private-use scheme URI (RFC 8252 §7.1).
+            It can use `scheme:/path` (`com.example.app:/oauth2redirect/example-provider`) or `scheme://host/path` (`github-app://oauth/callback`).
+            A private-use URI must contain only ASCII letters, digits, and `-._~:/?@!$&'()+,;=`.
+            It must be canonical, have a lowercase scheme of at least two characters, and have no opaque path, userinfo, or empty query delimiter.
+            The scheme cannot be `http`, `https`, `about`, `blob`, `data`, `file`, `filesystem`, `ftp`, `javascript`, `vbscript`, `view-source`, `ws`, or `wss`.
+            The URI must use either a single-slash path or a nonempty lowercase authority host.
+            An authority cannot have an empty, zero, or out-of-range port, and no path segment can be `.` or `..`.
+            A private-use URI matches only character for character.
+            No entry may contain a fragment. Invalid entries cause `400 validation failed`.
+            Accepted entries are stored and returned unchanged.
+            For an agent with `client_uris`, the fetched document's `redirect_uris` are authoritative.
+            This list then only allowlists private-use callbacks that the document also declares (ADR 042).
           items:
             type: string
             format: uri
           example:
             - https://agent.example.com/callback
             - http://localhost:9002/callback
+            - github-app://oauth/callback
         allowed_scopes:
           type: array
           nullable: true
@@ -2515,12 +3325,313 @@ components:
             provide for this service; required_scopes must be empty. When false (default),
             required_scopes is the per-agent scope ceiling.
 
+    ClientRegistration:
+      type: string
+      nullable: false
+      enum: [static, cimd]
+      description: |
+        Client identifier source. `static` uses an operator-supplied identifier or an existing
+        Google, filesystem, or discovery-backed DCR identity. `cimd` uses the broker-hosted
+        client identifier URL. This field never selects token-endpoint authentication.
+      example: static
+
+    ServiceCredentialMetadataBoundary:
+      type: object
+      description: File paths belong only to operator configuration. The source-transition marker is internal, not administrative input or output.
+      not:
+        anyOf:
+          - required: [client_id_file]
+          - required: [client_secret_file]
+          - required: [credential_files]
+          - required: [credential_source_transitioned]
+
+    FilesystemServiceFields:
+      type: object
+      description: |
+        Eligible filesystem credentials require neither inline field. Presence alone is invalid,
+        including null or empty input. Only standard/GitHub shared-secret authentication is eligible.
+        Creation and responses require canonical_id. An update can omit it to preserve the current ID,
+        but the resulting filesystem service must retain a valid canonical ID.
+      properties:
+        discovery:
+          type: object
+          properties:
+            resource_url:
+              type: string
+              nullable: true
+              enum: [null]
+        canonical_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          not:
+            anyOf:
+              - pattern: '^[0-9A-Fa-f]{32}$'
+              - pattern: '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+              - pattern: '^[A-Za-z0-9._-][0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}[A-Za-z0-9._-]$'
+        client_registration:
+          type: string
+          enum: [static]
+        token_endpoint_auth_method:
+          type: string
+          nullable: true
+          enum: [null]
+        oauth2_flavor:
+          type: string
+          enum: [standard, github]
+      not:
+        anyOf:
+          - required: [client_id]
+          - required: [client_secret]
+
+    StoredServiceCredentialsRequest:
+      type: object
+      description: Stored manual credentials and broker-selected protected-resource clients.
+      oneOf:
+        - title: Manual stored credentials
+          allOf:
+            - $ref: '#/components/schemas/ManualStoredServiceCredentialsRequest'
+          properties:
+            discovery:
+              type: object
+              properties:
+                resource_url:
+                  type: string
+                  nullable: true
+                  enum: [null]
+        - title: Protected-resource discovery
+          type: object
+          required: [discovery]
+          not:
+            required: [client_registration]
+          properties:
+            discovery:
+              type: object
+              required: [resource_url, enable_discovery]
+              properties:
+                enable_discovery:
+                  type: boolean
+                  enum: [true]
+                resource_url:
+                  type: string
+                  format: uri
+                metadata_url:
+                  type: string
+                  nullable: true
+                  enum: [null]
+                client_method:
+                  type: string
+                  nullable: true
+                  enum: [null]
+            oauth2_flavor:
+              type: string
+              enum: [standard]
+            token_endpoint_auth_method:
+              type: string
+              nullable: true
+              enum: [null]
+            client_id:
+              type: string
+              nullable: true
+              enum: ['', null]
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+            endpoints:
+              type: object
+              nullable: true
+              enum: [null]
+
+    ManualStoredServiceCredentialsRequest:
+      type: object
+      description: Manual stored credentials. Registration and authentication form four valid combinations.
+      oneOf:
+        - title: Stored shared-secret authentication
+          type: object
+          required: [client_secret]
+          properties:
+            client_registration:
+              type: string
+              enum: [static]
+            token_endpoint_auth_method:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              minLength: 1
+          oneOf:
+            - title: Standard or GitHub credentials
+              type: object
+              required: [client_id]
+              properties:
+                oauth2_flavor:
+                  type: string
+                  enum: [standard, github]
+                client_id:
+                  type: string
+                  minLength: 1
+            - title: Google service account credentials
+              type: object
+              required: [oauth2_flavor]
+              properties:
+                oauth2_flavor:
+                  type: string
+                  enum: [google]
+        - title: Stored static public authentication
+          type: object
+          required: [token_endpoint_auth_method, client_id]
+          properties:
+            client_registration:
+              type: string
+              enum: [static]
+            token_endpoint_auth_method:
+              type: string
+              enum: [none]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              minLength: 1
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+        - title: Stored CIMD public authentication
+          type: object
+          required: [client_registration, token_endpoint_auth_method]
+          properties:
+            client_registration:
+              type: string
+              enum: [cimd]
+            token_endpoint_auth_method:
+              type: string
+              enum: [none]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+        - title: Stored CIMD confidential authentication
+          type: object
+          required: [token_endpoint_auth_method]
+          properties:
+            client_registration:
+              type: string
+              enum: [cimd]
+            token_endpoint_auth_method:
+              type: string
+              enum: [private_key_jwt]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+
     Service:
       type: object
+      description: |
+        Source-aware representation for list, get, create, and update responses.
+        Stored services always include client_id. Static confidential responses include only REDACTED,
+        while static public, CIMD, and DCR responses omit client_secret. Filesystem responses omit both inline fields.
+        This representation never resolves files or returns file paths, values, or transition evidence.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Stored service response
+          type: object
+          required: [client_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          oneOf:
+            - title: Stored confidential redaction
+              type: object
+              required: [client_secret]
+              properties:
+                client_registration:
+                  type: string
+                  enum: [static]
+                token_endpoint_auth_method:
+                  type: string
+                  nullable: true
+                  enum: [null]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [null]
+                client_secret:
+                  type: string
+                  enum: [REDACTED]
+            - title: Stored static public or DCR service
+              type: object
+              properties:
+                client_registration:
+                  type: string
+                  enum: [static]
+                token_endpoint_auth_method:
+                  type: string
+                  enum: [none, client_secret_basic, client_secret_post]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [dcr, null]
+              not:
+                required: [client_secret]
+            - title: Stored CIMD public or confidential service
+              type: object
+              properties:
+                client_registration:
+                  type: string
+                  enum: [cimd]
+                token_endpoint_auth_method:
+                  type: string
+                  enum: [none, private_key_jwt]
+                discovery:
+                  type: object
+                  properties:
+                    client_method:
+                      type: string
+                      nullable: true
+                      enum: [cimd, null]
+              not:
+                required: [client_secret]
+        - title: Filesystem service response
+          type: object
+          required: [canonical_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - id
         - display_name
-        - client_id
+        - credential_source
+        - client_registration
         - token_endpoint_auth_method
         - oauth2_flavor
         - issuer_uri
@@ -2529,6 +3640,19 @@ components:
         - created_at
         - updated_at
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          description: Registered credential source. Reported without resolving files.
+          readOnly: true
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Resolved client identifier source. Present on every service response.
+            `cimd` uses the broker-hosted client identifier URL. Hosted CIMD discovery reports `cimd`.
+            DCR discovery reports `static`. `discovery.client_method` remains the discovery method.
+          readOnly: true
         id:
           type: string
           format: uuid
@@ -2550,14 +3674,15 @@ components:
         client_id:
           type: string
           description: |
-            OAuth2 client_id for this service.
+            Stored OAuth2 client_id for this service. Always present in stored mode and omitted in filesystem mode.
 
-            For `oauth2_flavor: standard`: an operator supplies the value for static confidential
-            and public services. For `oauth2_flavor: google`: it is extracted from the `client_id`
-            field in the service account JSON credential. For `private_key_jwt`: the broker generates
-            the immutable HTTPS Client ID Metadata Document URL
-            `<enduser-public-url>/.well-known/oauth-client/<service-id>` after allocating the service
-            ID; an operator cannot supply or replace it during the service lifetime.
+            For stored `oauth2_flavor: standard`, an operator supplies the value for static confidential
+            and static public services. For `oauth2_flavor: google`, the broker extracts it from the
+            service account JSON credential. For `client_registration: cimd`, the broker generates
+            `<enduser-public-url>/.well-known/oauth-client/<service-id>` after allocating the ID.
+            The URL stays the same while registration is `cimd`. A switch to `static` replaces the identity.
+            For discovery-backed DCR, the authorization server issues this value. The broker
+            scopes its identity to the selected `issuer_uri`; a client ID alone is not unique.
           example: Iv1.1234567890abcdef
         client_secret:
           type: string
@@ -2567,30 +3692,32 @@ components:
             - **standard**: Plain OAuth2 client secret string
             - **google**: Serialized Google service account JSON key document
 
-            **SECURITY**: For a static confidential service this always returns `"REDACTED"`; the
-            stored secret is never transmitted. For public (`token_endpoint_auth_method: none`) and
-            CIMD (`token_endpoint_auth_method: private_key_jwt`) services this property is omitted
-            entirely because no shared credential exists. Client secrets are encrypted at rest using
-            AES-256-GCM.
+            **SECURITY**: Stored static confidential services return only `"REDACTED"`.
+            Static public, CIMD public, CIMD confidential, filesystem, and discovery-backed DCR
+            services omit this property entirely, even when DCR stores an encrypted secret.
+            Filesystem services also omit `client_id`. Stored encryption remains unchanged.
+            The broker never sends a stored credential in an administrative response.
           example: REDACTED
           readOnly: true
         token_endpoint_auth_method:
           type: string
           nullable: true
-          enum: [none, private_key_jwt, null]
+          enum: [none, private_key_jwt, client_secret_basic, client_secret_post, null]
           readOnly: true
           description: |
             Client authentication method for this service's upstream token endpoint.
 
-            - `none` — the service is a **public client**. It stores no credential and transmits
-              none upstream; it authenticates the authorization-code exchange with the PKCE code
-              verifier alone.
+            - `none` — the service is static public or CIMD public, as selected by
+              `client_registration`. It stores no credential and sends none upstream.
+              Authorization-code exchange uses the PKCE code verifier.
             - `private_key_jwt` — the service is a CIMD **confidential client**. The broker assigns
               its stable HTTPS Client ID Metadata Document URL, stores no shared secret, and
               authenticates upstream with an ES256 client assertion from the dedicated CIMD
               client-authentication key set.
-            - `null` — the service is a **static confidential client**. It declares no method and
-              authenticates upstream with its stored client secret.
+            - `client_secret_basic` or `client_secret_post` — a discovery-backed confidential DCR
+              client. The broker uses only the selected method and never returns its secret.
+            - `null` — the service is a **shared-secret confidential client**. Stored mode uses its
+              stored client secret. Filesystem mode uses its configured file pair at authentication.
           example: none
         oauth2_flavor:
           type: string
@@ -2648,7 +3775,7 @@ components:
             - https://github.com/api/v3
         authorization_params:
           type: object
-          description: Static provider authorization parameters. Broker-owned OAuth2 names are rejected.
+          description: Provider authorization parameters. Discovery-backed services include one effective `resource` audience, derived from verified metadata or explicitly supplied by an administrator. The read-only source is in `discovery.authorization_param_resource_strategy`.
           additionalProperties:
             type: string
           example:
@@ -2668,10 +3795,53 @@ components:
 
     ServiceCreateRequest:
       type: object
+      description: |
+        For protected-resource discovery, use `discovery.resource_url` and omit endpoints,
+        client credentials, and token authentication method. The broker selects the issuer
+        and client method. An explicit `authorization_params.resource` must be a non-empty
+        absolute URI without a fragment. Direct metadata and manual requests retain their
+        existing requirements.
+        Omitted credential_source selects stored. Explicit null and unknown selectors are invalid.
+        Filesystem creation requires a valid canonical_id and neither inline credential field.
+        Registration never reads files. Missing bindings or files do not prevent registration.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Stored creation (default)
+          type: object
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          allOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+        - title: Filesystem creation
+          type: object
+          required: [credential_source, canonical_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - display_name
         - discovery
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          default: stored
+          description: Omission selects stored. Null is invalid. Filesystem rejects inline fields and excluded authentication modes.
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Optional on create. Omission resolves to `cimd` for `private_key_jwt`, or `static`
+            otherwise. An explicit null, empty, or unknown value returns `400`.
+            `cimd` requires `none` or `private_key_jwt` and stored, non-Google credentials.
+            `static` rejects `private_key_jwt`. Omit this field with `discovery.resource_url`.
+            The broker reports the registration selected by discovery.
         canonical_id:
           type: string
           nullable: true
@@ -2697,13 +3867,14 @@ components:
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
             - **standard**: Static confidential services require a non-empty plain `client_secret`;
-              public services require `client_id`
+              static public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
             - **github**: Same as static confidential standard but scopes in token responses are parsed as comma-separated
 
             `private_key_jwt` requires a non-credential-derived variant; `google` is rejected.
+            Protected-resource discovery requires omitted or `standard` flavor.
           example: standard
         client_id:
           type: string
@@ -2711,15 +3882,14 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`, except when
-            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
-            `google` because it is extracted from the service account JSON.
+            In stored mode, manual static `standard` or `github` clients require this field.
+            Stored `google` derives it from the service account JSON. Both CIMD methods require
+            omission or null. The broker assigns the HTTPS client identifier URL after it allocates
+            the service ID. Protected-resource discovery selects the identity.
+            Filesystem mode requires omission, including null or empty input.
 
-            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
-            null. After the broker allocates the service ID, it generates the immutable HTTPS Client
-            ID Metadata Document URL `<enduser-public-url>/.well-known/oauth-client/<service-id>`.
+            For protected-resource discovery, this property must be omitted, null, or empty.
           example: Iv1.1234567890abcdef
-          minLength: 1
         client_secret:
           type: string
           nullable: true
@@ -2736,10 +3906,11 @@ components:
             **SECURITY**: Static confidential-service secrets are encrypted at rest using AES-256-GCM
             and return only as `"REDACTED"` on read responses.
 
-            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
-            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
-            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
-            The broker never stores a secret for public or CIMD services.
+            For manual stored services, an omitted or null `token_endpoint_auth_method` requires
+            a non-empty static secret. Manual `none` and `private_key_jwt` accept only omitted,
+            null, or empty secrets. For protected-resource discovery, this property must also
+            be omitted, null, or empty. The broker never accepts a caller-supplied DCR secret.
+            Filesystem mode requires this property to be absent, including null or empty input.
           example: ghp_secretkey1234567890abcdef
           writeOnly: true
         token_endpoint_auth_method:
@@ -2747,18 +3918,20 @@ components:
           nullable: true
           enum: [none, private_key_jwt, null]
           description: |
-            Client authentication method for the upstream token endpoint. Omit this property, or send
-            `null`, for a static confidential client; this requires a non-empty `client_secret`.
+            Client authentication method for the upstream token endpoint. Omit it or send `null` for
+            shared-secret authentication for manual clients. Stored mode requires client_secret. Filesystem mode forbids inline credentials.
 
-            When `none`, the service is a public client: `client_secret` can be omitted, null, or
-            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected.
+            When `none`, the service is static public unless `client_registration: cimd` is explicit.
+            Static public requires `client_id`. CIMD public requires omission or null `client_id`.
+            Both reject a non-empty `client_secret` and `oauth2_flavor: google`.
 
-            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
-            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
-            either field returns the existing `400` error representation. `oauth2_flavor: google` is
-            rejected. The broker validates these contradictions before endpoint discovery or provider
-            traffic, allocates the service ID, and assigns its immutable HTTPS Client ID Metadata
-            Document URL.
+            When `private_key_jwt`, the service is CIMD confidential. The caller omits `client_id`
+            or sends null, and omits `client_secret` or sends null or `""`.
+            The broker rejects a non-empty value before discovery or provider traffic.
+            It assigns the HTTPS client identifier URL after it allocates the service ID.
+
+            With `discovery.resource_url`, omit or set this method to null. The broker
+            chooses one method; `client_secret_basic` and `client_secret_post` are response-only.
           example: none
         issuer_uri:
           type: string
@@ -2766,10 +3939,10 @@ components:
           description: |
             OAuth2 issuer URI.
 
-            Required when `oauth2_flavor` is `standard` (must be HTTPS).
-            Optional when `oauth2_flavor` is `google`. If provided, its scheme and host must match
-            the `token_uri` in the service account JSON. If omitted, the `token_uri` from the
-            service account JSON serves as the token endpoint.
+            Required for manual standard services and HTTPS. Optional for protected-resource
+            discovery with one issuer. If the resource advertises several issuers, the
+            administrator must select an identical `issuer_uri`. Google retains its existing
+            service-account rules.
           example: https://github.com
         discovery:
           $ref: '#/components/schemas/DiscoveryConfigRequest'
@@ -2799,7 +3972,7 @@ components:
             - https://github.com/api/v3
         authorization_params:
           type: object
-          description: Static provider authorization parameters. Broker-owned OAuth2 names are rejected.
+          description: Provider parameters. For protected-resource discovery, `resource` is an optional explicit absolute URI without a fragment. The broker derives it from verified metadata when omitted. Other broker-owned OAuth2 names are rejected.
           additionalProperties:
             type: string
           example:
@@ -2807,17 +3980,80 @@ components:
 
     ServiceUpdateRequest:
       type: object
+      description: |
+        Protected-resource refresh uses fresh resource and issuer metadata. An omitted
+        `issuer_uri` keeps the active issuer if still advertised. A new issuer requires
+        explicit selection and zero user sessions. Omit manual endpoints and credentials.
+        The broker keeps the exact client and token authentication methods. On a
+        discovery-backed refresh, omitted `authorization_params` keeps the map and its
+        resource source. A replacement without `resource` restores the verified resource
+        URL. On replacement with manual configuration, omission keeps the parameter map
+        but clears the discovery source and resource source marker. For a manual replacement,
+        an explicit empty map clears all parameters.
+        PUT remains a full replacement with existing documented omission exceptions.
+        Omitted credential_source preserves the current source, not a stored default.
+        Explicit null and unknown selectors are invalid. The omission branch models both possible
+        request shapes; the domain validates the body against the existing source and canonical ID.
+        A resulting filesystem service rejects either inline field and requires a valid canonical ID.
+        An explicit stored-to-filesystem transition atomically removes both credentials and records
+        irreversible internal transition evidence. The reverse requires explicitly supplied non-empty
+        client_id and client_secret, with encryption before the atomic update. Files never supply them.
+        Invalid input or a version conflict preserves the entire previous state. No administrative
+        operation reads files. Existing If-Match requirements remain unchanged.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Explicit stored update
+          type: object
+          required: [credential_source]
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          allOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+        - title: Explicit filesystem update
+          type: object
+          required: [credential_source]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
+        - title: Preserve existing source
+          type: object
+          not:
+            required: [credential_source]
+          oneOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - display_name
         - discovery
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          description: Omission preserves the existing source. Explicit null is invalid. No creation default applies to PUT.
+        client_registration:
+          allOf:
+            - $ref: '#/components/schemas/ClientRegistration'
+          description: |
+            Optional on full-replacement PUT. Omission resolves to `cimd` for `private_key_jwt`,
+            or `static` otherwise; it never preserves the existing registration.
+            An explicit null, empty, or unknown value returns `400`.
+            A CIMD public replacement must send `cimd` again. Without it, the request resolves
+            to `static` and fails unless the caller supplies a static `client_id`.
+            Omit this field with `discovery.resource_url`. The broker keeps or selects the
+            discovery-backed registration from the selected client method.
         canonical_id:
           type: string
           nullable: true
           minLength: 1
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
-          description: Omitted preserves the current canonical ID; null removes it; a string replaces it.
+          description: Omission preserves the current ID. Null clears it only in stored mode. Filesystem mode requires a valid resulting ID.
           example: github-prod
         display_name:
           type: string
@@ -2837,13 +4073,14 @@ components:
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
             - **standard**: Static confidential services require a non-empty plain `client_secret`;
-              public services require `client_id`
+              static public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
             - **github**: Same as static confidential standard but scopes in token responses are parsed as comma-separated
 
             `private_key_jwt` requires a non-credential-derived variant; `google` is rejected.
+            Protected-resource discovery requires omitted or `standard` flavor.
           example: standard
         client_id:
           type: string
@@ -2851,15 +4088,15 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`, except when
-            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
-            `google` because it is extracted from the service account JSON.
+            In stored mode, manual static `standard` or `github` clients require this field.
+            Stored `google` derives it from the service account JSON. Both CIMD methods require
+            omission or null. The broker assigns the same HTTPS client identifier URL while
+            registration stays `cimd`. Protected-resource discovery keeps or selects the identity.
+            Filesystem mode requires omission. A filesystem-to-stored transition requires an explicit
+            non-empty value.
 
-            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
-            null. The broker assigns the immutable HTTPS Client ID Metadata Document URL
-            `<enduser-public-url>/.well-known/oauth-client/<service-id>` for the service lifetime.
+            For protected-resource discovery, this property must be omitted, null, or empty.
           example: Iv1.1234567890abcdef
-          minLength: 1
         client_secret:
           type: string
           nullable: true
@@ -2873,10 +4110,12 @@ components:
             **SECURITY**: Static confidential-service secrets are encrypted at rest and never returned
             in responses.
 
-            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
-            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
-            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
-            The broker never stores a secret for public or CIMD services.
+            For manual stored services, an omitted or null authentication method requires a new
+            non-empty static secret. Manual public and CIMD modes accept omitted, null, or empty
+            values. Protected-resource updates also require an omitted, null, or empty value;
+            the broker keeps the stored DCR credential when eligible.
+            Filesystem mode forbids this property, including null or empty input.
+            Returning to stored requires an explicit non-empty secret.
           example: ghp_newsecretkey9876543210zyxwvu
           writeOnly: true
         token_endpoint_auth_method:
@@ -2886,21 +4125,28 @@ components:
           description: |
             Client authentication method for the upstream token endpoint. This request retains the
             existing full-replacement semantics: the method is evaluated from the complete replacement
-            request. Omit this property, or send `null`, for a static confidential client; this
-            requires a non-empty `client_secret` in the request.
+            request. Omit this property, or send `null`, for shared-secret authentication.
+            Manual stored mode requires a non-empty client_secret. Filesystem mode forbids inline credentials.
+            When `none`, the service is static public unless `client_registration: cimd` is explicit.
+            Static public requires `client_id`. CIMD public requires omission or null `client_id`.
+            Both accept omitted, null, or empty `client_secret` and reject Google flavor.
+            A valid update removes any stored secret.
 
-            When `none`, the service is a public client: `client_secret` can be omitted, null, or
-            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected. The update
-            removes any stored secret.
+            When `private_key_jwt`, the service is CIMD confidential. Omit `client_id` or send null.
+            Omit `client_secret` or send null or `""`. The broker rejects a non-empty value before
+            provider traffic. A switch to this mode requires a usable CIMD client-authentication key.
 
-            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
-            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
-            either field returns the existing `400` error representation. `oauth2_flavor: google` is
-            rejected. The broker validates the complete replacement before removing a prior static
-            secret and assigning the stable HTTPS Client ID Metadata Document URL.
+            CIMD confidential and CIMD public keep the same client identifier URL when switching.
+            A switch from `static` to `cimd` replaces the operator ID with the broker URL.
+            The broker removes a stored secret only after the full replacement validates.
+            A switch from `cimd` to `static` requires an operator `client_id`.
+            Static confidential also requires a new non-empty `client_secret`.
+            The old hosted document returns `404` after a switch to `static`.
+            Providers can cache the previous document for up to 300 seconds.
+            The broker never retries token acquisition with another method after provider rejection.
 
-            A private-to-static update requires a new non-empty `client_secret`. A private-to-public
-            update removes any secret state and stops client assertion use.
+            With `discovery.resource_url`, omit or set the method to null. The broker
+            keeps the exact active method. Basic and POST DCR modes are response-only.
           example: none
         issuer_uri:
           type: string
@@ -2908,9 +4154,10 @@ components:
           description: |
             OAuth2 issuer URI.
 
-            Required when `oauth2_flavor` is `standard` (must be HTTPS).
-            Optional when `oauth2_flavor` is `google`. If provided, its scheme and host must match
-            the `token_uri` in the service account JSON.
+            Required for manual standard services and HTTPS. For protected-resource
+            discovery, omission keeps the active issuer if fresh metadata advertises it.
+            A different issuer needs explicit selection and zero user sessions.
+            Google retains its existing service-account rules.
           example: https://github.com
         discovery:
           $ref: '#/components/schemas/DiscoveryConfigRequest'
@@ -2937,7 +4184,13 @@ components:
             - https://github.com/api/v3
         authorization_params:
           type: object
-          description: Static provider authorization parameters. Omission preserves the current map; an empty object clears it.
+          description: |
+            Provider parameters. Omission preserves the map, including on replacement with
+            manual configuration. For a manual replacement, an explicit empty object clears
+            the map. For discovery-backed services, a replacement with `resource` sets an
+            explicit absolute URI without a fragment. A replacement without `resource`
+            clears the override and restores the verified resource URL, including when the
+            replacement object is empty.
           additionalProperties:
             type: string
           example:
@@ -2978,12 +4231,10 @@ components:
           format: uri
           description: Absolute target URI (scheme and host required), normalized by trailing-slash trim.
           example: https://api.example.com/v2
-
     ProtectedResourceMutationResult:
       type: object
       required:
         - resource
-        - protected_resources
       properties:
         resource:
           type: string
@@ -3000,23 +4251,83 @@ components:
       type: object
       required:
         - enable_discovery
+        - authorization_param_resource_strategy
       properties:
         enable_discovery:
           type: boolean
           description: |
-            Whether to automatically discover OAuth2 endpoints.
-
-            - `true`: Fetch from `{issuer_uri}/.well-known/oauth-authorization-server`
-            - `false`: Use manually configured endpoints (required)
+            `true` uses the configured discovery source. `metadata_url` selects direct
+            authorization-server discovery; `resource_url` selects protected-resource discovery.
+            `false` uses manually configured endpoints.
           example: true
         metadata_url:
           type: string
           format: uri
           nullable: true
-          description: |
-            Optional override for metadata discovery URL (must be HTTPS).
-            If not provided, defaults to `{issuer_uri}/.well-known/oauth-authorization-server`
+          description: Direct authorization-server metadata override. Absent for protected-resource discovery.
           example: https://github.com/.well-known/oauth-authorization-server
+        resource_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Verified public HTTPS resource identifier. Distinct from the effective token audience and the protected-resource ownership set.
+          example: https://mcp.example.com/mcp
+        client_method:
+          type: string
+          nullable: true
+          enum: [cimd, dcr, null]
+          readOnly: true
+          description: Broker-selected client bootstrap method. Null for manual and direct-metadata services.
+          example: dcr
+        authorization_param_resource_strategy:
+          type: string
+          nullable: true
+          readOnly: true
+          enum: [derived, pinned, null]
+          description: Source of the effective authorization_params.resource audience. Null for manual and direct-metadata services.
+          example: derived
+    ServiceDiscoveryStatus:
+      type: object
+      required:
+        - status
+        - resource_url
+        - issuer_uri
+        - client_method
+        - last_attempt_at
+        - last_success_at
+        - failure_reason
+      properties:
+        status:
+          type: string
+          enum: [ready, failed, not_applicable]
+          description: Derived from the last attempt and last successful active configuration.
+        resource_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Active discovery source URL, not the failed replacement URL.
+        issuer_uri:
+          type: string
+          format: uri
+          nullable: true
+          description: Active validated issuer.
+        client_method:
+          type: string
+          nullable: true
+          enum: [cimd, dcr, null]
+          description: Active client bootstrap method.
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_success_at:
+          type: string
+          format: date-time
+          nullable: true
+        failure_reason:
+          type: string
+          nullable: true
+          description: Safe failure code without a remote response body, URL query, or credential. Null after success and for manual services.
 
     DiscoveryConfigRequest:
       type: object
@@ -3025,14 +4336,23 @@ components:
       properties:
         enable_discovery:
           type: boolean
-          description: Whether to automatically discover OAuth2 endpoints
+          description: Set true when `resource_url` is present; false requires manual endpoints.
           example: true
         metadata_url:
           type: string
           format: uri
           nullable: true
-          description: Optional override for metadata discovery URL (must be HTTPS)
+          description: Direct authorization-server metadata override. Must be absent or null with `resource_url`.
           example: https://github.com/.well-known/oauth-authorization-server
+        resource_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >-
+            Public HTTPS protected-resource identifier. Requires enable_discovery true.
+            Excludes metadata_url, manual endpoints, and caller-supplied credentials.
+            No user information or fragment.
+          example: https://mcp.example.com/mcp
 
     OAuth2Endpoints:
       type: object
@@ -3057,7 +4377,7 @@ components:
         OAuth2 endpoints configuration.
 
         **Required when** `discovery.enable_discovery = false`
-        **Optional when** `discovery.enable_discovery = true` (used as fallback)
+        **Optional when** `discovery.enable_discovery = true` without `resource_url` (direct-metadata fallback only). Must be absent with `resource_url`.
 
         Each supplied `token_endpoint` and `authorize_endpoint` must use HTTPS. Under the default strict policy, HTTP is accepted only for `localhost`, `127.0.0.1`, or `[::1]`; HTTP is accepted for any host only when `security.skip_thirdparty_https_validation` is enabled for development/test.
       properties:
@@ -3364,6 +4684,14 @@ components:
           type: string
           description: Additional context about the error
           example: display_name exceeds 255 characters (got 300)
+        authorization_servers:
+          type: array
+          minItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            format: uri
+          description: Validated issuers from matching protected-resource metadata; present only when `message` is `issuer_selection_required`.
 
     ServiceScope:
       type: object
@@ -3495,6 +4823,30 @@ components:
           readOnly: true
 
   responses:
+    AgentConflictError:
+      description: Another agent holds a requested unique identifier. No agent changes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            external_id:
+              value:
+                error: conflict
+                message: external_id is already held by another agent
+            canonical_id:
+              value:
+                error: conflict
+                message: agent canonical_id already exists
+            client_id:
+              value:
+                error: conflict
+                message: agent with this client_id already exists
+            client_uri:
+              value:
+                error: conflict
+                message: client URI already registered to another agent
+
     BadRequestError:
       description: Invalid request parameters or validation errors
       content:
@@ -3507,6 +4859,11 @@ components:
               value:
                 error: invalid request body
                 message: display_name is required
+            empty_external_id:
+              summary: Empty agent external ID
+              value:
+                error: validation failed
+                message: external_id cannot be empty when provided
             validation_failed:
               summary: Validation failure
               value:

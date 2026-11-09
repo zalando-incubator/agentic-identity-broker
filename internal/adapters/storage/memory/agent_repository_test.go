@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
 
@@ -545,6 +546,116 @@ func TestAgentRepository_List(t *testing.T) {
 		original, err := repo.Get(ctx, agents[0].ID)
 		require.NoError(t, err)
 		assert.Equal(t, "Original Name", original.DisplayName)
+	})
+}
+
+func TestAgentRepository_GetByExternalID(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("exact matches only, including literal identifiers", func(t *testing.T) {
+		repo := NewAgentRepository()
+		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
+		other := id.ExternalID("urn:example:ai-registry:agent:other")
+		canonical := "canonical-only"
+		clientID := id.ClientID("client-only")
+		agents := []*storage.Agent{
+			{ExternalID: &shared, DisplayName: "Research Assistant", Description: "First deployment", PermissionSets: testPermissionSets()},
+			{ExternalID: &other, DisplayName: "Other", Description: "Different external ID", PermissionSets: testPermissionSets()},
+			{CanonicalID: &canonical, ClientID: &clientID, DisplayName: "No external ID", Description: "Other identifiers", PermissionSets: testPermissionSets()},
+		}
+		for _, agent := range agents {
+			require.NoError(t, repo.Create(ctx, agent))
+		}
+
+		check := func(value id.ExternalID, expected ...id.AgentID) {
+			t.Helper()
+			found, err := repo.GetByExternalID(ctx, value)
+			if len(expected) == 0 {
+				require.ErrorIs(t, err, ports.ErrNotFound)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, found.ExternalID)
+			assert.Equal(t, value, *found.ExternalID)
+			assert.Equal(t, expected[0], found.ID)
+		}
+		check(shared, agents[0].ID)
+		check(other, agents[1].ID)
+		check(id.ExternalID("urn:example:ai-registry:agent:missing"))
+		check(id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))
+		check(id.ExternalID(" " + string(shared)))
+		check(id.ExternalID(canonical))
+		check(id.ExternalID(clientID))
+		check(id.ExternalID(agents[0].ID.String()))
+		accented := id.ExternalID("urn:example:café")
+		accentedAgent := &storage.Agent{ExternalID: &accented, DisplayName: "Accented", Description: "Unicode identifier", PermissionSets: testPermissionSets()}
+		require.NoError(t, repo.Create(ctx, accentedAgent))
+		check(accented, accentedAgent.ID)
+		check(id.ExternalID("urn:example:cafe\u0301"))
+	})
+
+	t.Run("wildcards are ordinary characters", func(t *testing.T) {
+		repo := NewAgentRepository()
+		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
+			agent := &storage.Agent{ExternalID: &value, DisplayName: string(value), Description: "Literal identifier", PermissionSets: testPermissionSets()}
+			require.NoError(t, repo.Create(ctx, agent))
+			found, err := repo.GetByExternalID(ctx, value)
+			require.NoError(t, err)
+			assert.Equal(t, agent.ID, found.ID)
+		}
+	})
+
+	t.Run("reads full independent copies and observes lifecycle", func(t *testing.T) {
+		repo := NewAgentRepository()
+		oldID := id.ExternalID("urn:example:old")
+		newID := id.ExternalID("urn:example:new")
+		canonical := "research-assistant"
+		uri := "https://example.com/agent/client.json"
+		agent := &storage.Agent{
+			ExternalID: &oldID, CanonicalID: &canonical, DisplayName: "Original", Description: "Lookup copy",
+			ClientURIs: []string{uri}, PermissionSets: testPermissionSets(),
+		}
+		_, err := repo.GetByExternalID(ctx, oldID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
+		require.NoError(t, repo.Create(ctx, agent))
+		found, err := repo.GetByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		require.NotNil(t, found.ExternalID)
+		require.NotNil(t, found.CanonicalID)
+		require.Len(t, found.ClientURIs, 1)
+		require.Len(t, found.PermissionSets, 1)
+		assert.Equal(t, agent.ClientURIs, found.ClientURIs)
+		assert.Equal(t, agent.PermissionSets, found.PermissionSets)
+		found.DisplayName = "Changed"
+		*found.ExternalID = id.ExternalID("modified")
+		*found.CanonicalID = "modified"
+		found.ClientURIs[0] = "https://example.com/changed.json"
+		found.PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
+
+		again, err := repo.GetByExternalID(ctx, oldID)
+		require.NoError(t, err)
+		require.NotNil(t, again.ExternalID)
+		require.NotNil(t, again.CanonicalID)
+		assert.Equal(t, agent.ID, again.ID)
+		assert.Equal(t, "Original", again.DisplayName)
+		assert.Equal(t, oldID, *again.ExternalID)
+		assert.Equal(t, canonical, *again.CanonicalID)
+		assert.Equal(t, agent.ClientURIs, again.ClientURIs)
+		assert.Equal(t, agent.PermissionSets, again.PermissionSets)
+
+		agent.ExternalID = &newID
+		require.NoError(t, repo.Update(ctx, agent))
+		_, err = repo.GetByExternalID(ctx, oldID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
+		moved, err := repo.GetByExternalID(ctx, newID)
+		require.NoError(t, err)
+		assert.Equal(t, agent.ID, moved.ID)
+
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		require.True(t, deleted)
+		_, err = repo.GetByExternalID(ctx, newID)
+		require.ErrorIs(t, err, ports.ErrNotFound)
 	})
 }
 

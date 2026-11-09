@@ -54,20 +54,20 @@ func newProxyTokenGrantStrategyForTest(endpoint string, verifier ports.MultiAgen
 // mockTokenMintingStrategy is a configurable test double for ports.TokenMintingStrategy.
 type mockTokenMintingStrategy struct {
 	clientCredentialsFn         func(context.Context, id.ClientID, string, string) (*ports.TokenResponse, error)
-	authorizationCodeExchangeFn func(context.Context, id.ClientID, string, string, string, string) (*ports.TokenResponse, error)
-	refreshTokenFn              func(context.Context, id.ClientID, string, string, string) (*ports.TokenResponse, error)
+	authorizationCodeExchangeFn func(context.Context, id.ClientID, ports.ClientCredentials, string, string, string) (*ports.TokenResponse, error)
+	refreshTokenFn              func(context.Context, id.ClientID, ports.ClientCredentials, string, string) (*ports.TokenResponse, error)
 }
 
 func (m *mockTokenMintingStrategy) HandleClientCredentials(ctx context.Context, clientID id.ClientID, clientSecret, scope string) (*ports.TokenResponse, error) {
 	return m.clientCredentialsFn(ctx, clientID, clientSecret, scope)
 }
 
-func (m *mockTokenMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, clientSecret, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
-	return m.authorizationCodeExchangeFn(ctx, clientID, clientSecret, code, redirectURI, codeVerifier)
+func (m *mockTokenMintingStrategy) HandleAuthorizationCodeExchange(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, code, redirectURI, codeVerifier string) (*ports.TokenResponse, error) {
+	return m.authorizationCodeExchangeFn(ctx, clientID, creds, code, redirectURI, codeVerifier)
 }
 
-func (m *mockTokenMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, clientSecret, refreshToken, scope string) (*ports.TokenResponse, error) {
-	return m.refreshTokenFn(ctx, clientID, clientSecret, refreshToken, scope)
+func (m *mockTokenMintingStrategy) HandleRefreshToken(ctx context.Context, clientID id.ClientID, creds ports.ClientCredentials, refreshToken, scope string) (*ports.TokenResponse, error) {
+	return m.refreshTokenFn(ctx, clientID, creds, refreshToken, scope)
 }
 
 // fixedMinting returns a mock strategy that always returns the given response/error for all local grant types.
@@ -76,10 +76,10 @@ func fixedMinting(resp *ports.TokenResponse, err error) *mockTokenMintingStrateg
 		clientCredentialsFn: func(_ context.Context, _ id.ClientID, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
-		authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _, _, _, _ string) (*ports.TokenResponse, error) {
+		authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
-		refreshTokenFn: func(_ context.Context, _ id.ClientID, _, _, _ string) (*ports.TokenResponse, error) {
+		refreshTokenFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
 			return resp, err
 		},
 	}
@@ -256,6 +256,309 @@ func TestOAuth2TokenHandler_ServeHTTP_ContentTypeValidation(t *testing.T) {
 			assert.Equal(t, tt.wantStatusCode, w.Code)
 		})
 	}
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_RejectsMultipleContentTypes(t *testing.T) {
+	for _, contentTypes := range [][]string{
+		{"application/x-www-form-urlencoded", "application/x-www-form-urlencoded"},
+		{"application/x-www-form-urlencoded", "application/json"},
+		{"application/json", "application/x-www-form-urlencoded"},
+		{"application/x-www-form-urlencoded", ""},
+		{"application/x-www-form-urlencoded, application/x-www-form-urlencoded"},
+	} {
+		t.Run(strings.Join(contentTypes, "|"), func(t *testing.T) {
+			strategy := &mockTokenGrantStrategy{}
+			resolveCalls := 0
+			handler := &OAuth2TokenHandler{
+				GrantHandler: strategy,
+				OAuth2Service: &mockOAuth2ServiceForToken{
+					resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+						resolveCalls++
+						return &ports.TokenGrantResolution{}, nil
+					},
+				},
+			}
+			body := strings.NewReader("grant_type=authorization_code&client_id=client&code=code")
+			bodyLength := body.Len()
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", body)
+			for _, contentType := range contentTypes {
+				req.Header.Add("Content-Type", contentType)
+			}
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+			var response map[string]string
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			assert.Equal(t, "invalid_request", response["error"])
+			assert.NotEmpty(t, response["error_description"])
+			assert.Equal(t, bodyLength, body.Len(), "reject ambiguous headers before reading the body")
+			assert.Zero(t, resolveCalls)
+			assert.Nil(t, strategy.capturedFormData)
+		})
+	}
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_RejectsRepeatedSingletonParameters(t *testing.T) {
+	parameters := []struct {
+		name      string
+		grantType string
+	}{
+		{"grant_type", "authorization_code"},
+		{"grant_type", "client_credentials"},
+		{"grant_type", "refresh_token"},
+		{"grant_type", tokenexchange.TokenExchangeGrantType},
+		{"client_id", "authorization_code"},
+		{"client_secret", "client_credentials"},
+		{"code", "authorization_code"},
+		{"redirect_uri", "authorization_code"},
+		{"refresh_token", "refresh_token"},
+		{"code_verifier", "authorization_code"},
+		{"scope", "client_credentials"},
+		{"subject_token", tokenexchange.TokenExchangeGrantType},
+		{"subject_token_type", tokenexchange.TokenExchangeGrantType},
+		{"client_assertion", tokenexchange.TokenExchangeGrantType},
+		{"client_assertion_type", tokenexchange.TokenExchangeGrantType},
+		{"actor_token", tokenexchange.TokenExchangeGrantType},
+		{"actor_token_type", tokenexchange.TokenExchangeGrantType},
+		{"requested_token_type", tokenexchange.TokenExchangeGrantType},
+	}
+	for _, parameter := range parameters {
+		for _, duplicate := range []string{"identical", "different"} {
+			t.Run(parameter.grantType+"/"+parameter.name+"/"+duplicate, func(t *testing.T) {
+				form := url.Values{
+					"grant_type": {parameter.grantType},
+					"client_id":  {"client"},
+				}
+				value := form.Get(parameter.name)
+				if value == "" {
+					value = "CREDENTIAL_SENTINEL"
+				}
+				switch duplicate {
+				case "identical":
+					form[parameter.name] = []string{value, value}
+				case "different":
+					form[parameter.name] = []string{value, "OTHER_CREDENTIAL_SENTINEL"}
+				}
+				assertTokenFormRejectedBeforeDispatch(t, form.Encode(), parameter.name)
+			})
+		}
+	}
+	t.Run("percent encoded parameter name", func(t *testing.T) {
+		assertTokenFormRejectedBeforeDispatch(t, "grant_type=authorization_code&client_id=client&code=CREDENTIAL_SENTINEL&%63ode=OTHER_CREDENTIAL_SENTINEL", "code")
+	})
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_TreatsEmptyParametersAsOmitted(t *testing.T) {
+	tests := []struct {
+		name string
+		form string
+		want url.Values
+	}{
+		{
+			name: "empty duplicate grant_type",
+			form: "grant_type=&grant_type=authorization_code&client_id=client&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "empty duplicate client_id",
+			form: "grant_type=authorization_code&client_id=&client_id=client&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "empty duplicate code",
+			form: "grant_type=authorization_code&client_id=client&code=&code=code",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}},
+		},
+		{
+			name: "all empty scope",
+			form: "grant_type=client_credentials&client_id=client&scope=&scope=",
+			want: url.Values{"grant_type": {"client_credentials"}, "client_id": {"client"}},
+		},
+		{
+			name: "bare repeated scope",
+			form: "grant_type=client_credentials&client_id=client&scope&scope",
+			want: url.Values{"grant_type": {"client_credentials"}, "client_id": {"client"}},
+		},
+		{
+			name: "empty duplicate resource",
+			form: "grant_type=authorization_code&client_id=client&code=code&resource=&resource=https://api.example.com",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}, "resource": {"https://api.example.com"}},
+		},
+		{
+			name: "empty duplicate audience",
+			form: "grant_type=authorization_code&client_id=client&code=code&audience=&audience=https://api.example.com",
+			want: url.Values{"grant_type": {"authorization_code"}, "client_id": {"client"}, "code": {"code"}, "audience": {"https://api.example.com"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy := &mockTokenGrantStrategy{}
+			handler := &OAuth2TokenHandler{
+				GrantHandler: strategy,
+				OAuth2Service: &mockOAuth2ServiceForToken{
+					resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+						return &ports.TokenGrantResolution{}, nil
+					},
+				},
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tt.want, strategy.capturedFormData)
+		})
+	}
+
+	t.Run("all empty required parameter is missing", func(t *testing.T) {
+		assertTokenFormRejectedBeforeDispatch(t, "grant_type=&grant_type=&client_id=client&code=code", "grant_type")
+	})
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_RejectsInvalidExchangeResources(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []string
+		wantError string
+	}{
+		{"different", []string{"https://api.example.com", "https://other.example.com"}, "invalid_target"},
+		{"invalid URI", []string{"https://api.example.com", "not a uri"}, "invalid_request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spans := captureTokenExchangeSpans(t)
+			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			impersonationService := &recordingTokenImpersonationService{}
+			handler := &OAuth2TokenHandler{Impersonation: impersonationService, Logger: slog.New(logs)}
+			form := url.Values{
+				"grant_type": {tokenexchange.TokenExchangeGrantType},
+				"resource":   tt.resources,
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			var response map[string]string
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			assert.Equal(t, tt.wantError, response["error"])
+			assert.NotEmpty(t, response["error_description"])
+			assert.Equal(t, 1, impersonationService.resolveCalls)
+			assert.Zero(t, impersonationService.impersonateCalls)
+			require.Len(t, spans.Ended(), 1)
+			require.Len(t, *logs.records, 1)
+			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
+		})
+	}
+}
+
+func assertTokenFormRejectedBeforeDispatch(t *testing.T, form, parameter string) {
+	t.Helper()
+	resolveCalls := 0
+	strategy := &mockTokenGrantStrategy{}
+	impersonationService := &recordingTokenImpersonationService{}
+	handler := &OAuth2TokenHandler{
+		GrantHandler:  strategy,
+		Impersonation: impersonationService,
+		OAuth2Service: &mockOAuth2ServiceForToken{
+			resolveFn: func(context.Context, id.ClientID) (*ports.TokenGrantResolution, error) {
+				resolveCalls++
+				return &ports.TokenGrantResolution{}, nil
+			},
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	var response map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "invalid_request", response["error"], "repeated %s must be rejected", parameter)
+	assert.NotEmpty(t, response["error_description"])
+	assert.NotContains(t, response["error_description"], "CREDENTIAL_SENTINEL")
+	assert.Zero(t, resolveCalls, "ambiguous input must not reach client resolution")
+	assert.Nil(t, strategy.capturedFormData, "ambiguous input must not reach a grant strategy")
+	assert.Zero(t, impersonationService.resolveCalls, "ambiguous input must not reach exchange routing")
+	assert.Zero(t, impersonationService.impersonateCalls)
+}
+
+type recordingTokenImpersonationService struct {
+	resolveCalls     int
+	impersonateCalls int
+	audiences        []string
+}
+
+func (s *recordingTokenImpersonationService) ResolveTarget(_ context.Context, audiences []string) (*impersonation.Target, bool, error) {
+	s.resolveCalls++
+	s.audiences = audiences
+	return nil, false, nil
+}
+
+func (s *recordingTokenImpersonationService) Impersonate(context.Context, *impersonation.Request, *impersonation.Target) (*impersonation.Outcome, error) {
+	s.impersonateCalls++
+	return nil, errors.New("unexpected impersonation dispatch")
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_PreservesRepeatableParametersAndIgnoresQuery(t *testing.T) {
+	strategy := &mockTokenGrantStrategy{}
+	handler := &OAuth2TokenHandler{
+		GrantHandler: strategy,
+		OAuth2Service: &mockOAuth2ServiceForToken{
+			resolveFn: func(_ context.Context, clientID id.ClientID) (*ports.TokenGrantResolution, error) {
+				assert.Equal(t, id.ClientID("body-client"), clientID)
+				return &ports.TokenGrantResolution{}, nil
+			},
+		},
+	}
+	form := url.Values{
+		"grant_type": {"authorization_code"},
+		"client_id":  {"body-client"},
+		"code":       {"body-code"},
+		"extension":  {"one", "", "one"},
+		"audience":   {"https://one.example.com", "https://two.example.com"},
+		"resource":   {"https://one.example.com", "https://two.example.com"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token?grant_type=refresh_token&grant_type=client_credentials&client_id=query-client&code=query-code&scope=query-scope", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, form, strategy.capturedFormData)
+}
+
+func TestOAuth2TokenHandler_ServeHTTP_PreservesExchangeAudienceRouting(t *testing.T) {
+	service := &recordingTokenImpersonationService{}
+	handler := &OAuth2TokenHandler{Impersonation: service}
+	form := url.Values{
+		"grant_type": {tokenexchange.TokenExchangeGrantType},
+		"audience":   {"https://one.example.com", "https://two.example.com"},
+		"extension":  {"one", "two"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 1, service.resolveCalls)
+	assert.Equal(t, form["audience"], service.audiences)
+	assert.Zero(t, service.impersonateCalls)
+	var response map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "unsupported_grant_type", response["error"])
 }
 
 // TestOAuth2TokenHandler_PreFlightErrorsReturnJSON verifies that all pre-flight error
@@ -463,6 +766,40 @@ func TestOAuth2TokenHandler_ServeHTTP_UpstreamError(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	respBody, _ := io.ReadAll(w.Body)
 	assert.Contains(t, string(respBody), "invalid_grant")
+}
+
+// TestProxyGrantStrategy_SpanUsesCanonicalHTTPKeys verifies that the oauth2.token_proxy
+// span uses the HTTP keys from coding-standards/OPENTELEMETRY.md §4.1.
+func TestProxyGrantStrategy_SpanUsesCanonicalHTTPKeys(t *testing.T) {
+	recorder := captureTokenExchangeSpans(t)
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": "invalid_grant"}`))
+	}))
+	defer mockUpstream.Close()
+
+	strategy := newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil)
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+	resolution := &ports.TokenGrantResolution{AgentID: id.NewAgentID(), ClientType: storage.ProxyClient, ClientID: ptr.To(id.ClientID("upstream-client"))}
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), req, "authorization_code", url.Values{"grant_type": {"authorization_code"}}, resolution)
+
+	var span sdktrace.ReadOnlySpan
+	for _, ended := range recorder.Ended() {
+		if ended.Name() == "oauth2.token_proxy" {
+			span = ended
+		}
+	}
+	require.NotNil(t, span)
+	attrs := make(map[string]any, len(span.Attributes()))
+	for _, attr := range span.Attributes() {
+		attrs[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	assert.Equal(t, http.MethodPost, attrs["http.request.method"])
+	assert.Equal(t, int64(http.StatusBadRequest), attrs["http.response.status_code"])
+	assert.NotContains(t, attrs, "http.method")
+	assert.NotContains(t, attrs, "http.status_code")
 }
 
 // TestProxyGrantStrategy_InfraErrorsReturnJSON verifies that infrastructure failures
@@ -830,7 +1167,7 @@ func TestWriteTokenResponse(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.writeTokenResponse(w, &ports.TokenResponse{
+		s.writeTokenResponse(t.Context(), w, &ports.TokenResponse{
 			AccessToken:  "tok123",
 			RefreshToken: "refresh123",
 			TokenType:    "Bearer",
@@ -854,7 +1191,7 @@ func TestWriteTokenResponse(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.writeTokenResponse(w, &ports.TokenResponse{
+		s.writeTokenResponse(t.Context(), w, &ports.TokenResponse{
 			AccessToken: "tok456",
 			TokenType:   "Bearer",
 			ExpiresIn:   900,
@@ -998,7 +1335,7 @@ func TestHandleLocalMinting_AuthorizationCode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			minting := &mockTokenMintingStrategy{
-				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _, _, _, _ string) (*ports.TokenResponse, error) {
+				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
 					if tt.mintingErr != nil {
 						return nil, tt.mintingErr
 					}
@@ -1065,7 +1402,7 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			minting := &mockTokenMintingStrategy{
-				refreshTokenFn: func(_ context.Context, _ id.ClientID, _, _, _ string) (*ports.TokenResponse, error) {
+				refreshTokenFn: func(_ context.Context, _ id.ClientID, _ ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
 					if tt.mintingErr != nil {
 						return nil, tt.mintingErr
 					}
@@ -1091,6 +1428,46 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 				assert.EqualValues(t, 1800, body["expires_in"])
 				assert.Equal(t, "read offline_access", body["scope"])
 			}
+		})
+	}
+}
+
+func TestLocalGrantStrategyPassesClientAssertions(t *testing.T) {
+	for _, grantType := range []string{"authorization_code", "refresh_token"} {
+		t.Run(grantType, func(t *testing.T) {
+			var received ports.ClientCredentials
+			minting := &mockTokenMintingStrategy{
+				authorizationCodeExchangeFn: func(_ context.Context, _ id.ClientID, creds ports.ClientCredentials, _, _, _ string) (*ports.TokenResponse, error) {
+					received = creds
+					return &ports.TokenResponse{AccessToken: "access", TokenType: "Bearer"}, nil
+				},
+				refreshTokenFn: func(_ context.Context, _ id.ClientID, creds ports.ClientCredentials, _, _ string) (*ports.TokenResponse, error) {
+					received = creds
+					return &ports.TokenResponse{AccessToken: "access", TokenType: "Bearer"}, nil
+				},
+			}
+			form := url.Values{
+				"grant_type":            {grantType},
+				"client_id":             {"550e8400-e29b-41d4-a716-446655440000"},
+				"client_assertion_type": {oauth2server.ClientAssertionTypeJWTBearer},
+				"client_assertion":      {"signed-client-assertion"},
+			}
+			if grantType == "authorization_code" {
+				form.Set("code", "authorization-code")
+				form.Set("redirect_uri", "https://client.example/callback")
+				form.Set("code_verifier", "pkce-verifier")
+			} else {
+				form.Set("refresh_token", "refresh-token")
+			}
+			handler := &OAuth2TokenHandler{GrantHandler: NewLocalGrantStrategy(minting, nil), OAuth2Service: newLocalModeOAuth2Service()}
+			request := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			assert.Equal(t, "signed-client-assertion", received.Assertion)
+			assert.Equal(t, oauth2server.ClientAssertionTypeJWTBearer, received.AssertionType)
 		})
 	}
 }
@@ -1133,7 +1510,7 @@ func TestHandleMintingError_RFC6749StatusCodes(t *testing.T) {
 			s := &localGrantStrategy{}
 			w := httptest.NewRecorder()
 
-			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", "broker_test")
+			s.handleMintingError(w, context.Background(), tt.err, "client_credentials", false)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
@@ -1151,7 +1528,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", "broker_test")
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_scope", "scope not allowed", http.StatusBadRequest, oauth2server.ErrInvalidScope)), "client_credentials", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1164,7 +1541,7 @@ func TestHandleMintingError_OpaqueDescriptions(t *testing.T) {
 		s := &localGrantStrategy{}
 		w := httptest.NewRecorder()
 
-		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", "broker_test")
+		s.handleMintingError(w, context.Background(), fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_grant", "invalid grant", http.StatusBadRequest, oauth2server.ErrInvalidGrant)), "authorization_code", false)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		body, _ := io.ReadAll(w.Body)
@@ -1184,7 +1561,7 @@ func TestHandleMintingError_LogDoesNotLeakErrorChain(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	wrapped := fmt.Errorf("%s: %w", internalDetail, oauth2server.NewRFC6749Error("invalid_client", "client auth failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient))
-	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", "broker_test")
+	s.handleMintingError(w, context.Background(), wrapped, "client_credentials", false)
 
 	logLine := buf.String()
 	assert.NotContains(t, logLine, internalDetail)
@@ -1214,7 +1591,80 @@ func TestLocalGrantStrategy_MintingFailureLogCarriesRequestContext(t *testing.T)
 	record, ok := findTokenEndpointLogRecord(*base.records, "TokenRequestFailed")
 	require.True(t, ok)
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"])
-	assert.Equal(t, want.Actor, record.attrs["actor"])
+	assert.Equal(t, want.Actor.String(), record.attrs["actor"])
+}
+
+func TestLocalGrantStrategy_CIMDAuthorizationCodeFailureDoesNotLogClientURI(t *testing.T) {
+	const clientURI = "https://agent.example.com/client?marker=untrusted"
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil,
+		oauth2server.NewRFC6749Error("invalid_client", "client authentication failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient),
+	), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"authorization_code", url.Values{
+			"client_id": {clientURI},
+			"code":      {"authorization-code"},
+		}, &ports.TokenGrantResolution{ClientType: storage.CIMDClient})
+
+	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
+}
+
+func TestLocalGrantStrategy_CIMDRefreshFailureDoesNotLogClientURI(t *testing.T) {
+	const clientURI = "https://agent.example.com/client?marker=untrusted"
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil,
+		oauth2server.NewRFC6749Error("invalid_client", "client authentication failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient),
+	), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"refresh_token", url.Values{
+			"client_id":     {clientURI},
+			"refresh_token": {"refresh-token"},
+		}, &ports.TokenGrantResolution{ClientType: storage.CIMDClient})
+
+	assert.NotContains(t, fmt.Sprint(*base.records), clientURI)
+}
+
+func TestLocalGrantStrategy_AuthorizationCodeFailureDoesNotLogUserInput(t *testing.T) {
+	const (
+		clientID     = "client-id-user-input-marker"
+		errorMessage = "user-input-error-marker"
+	)
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil, errors.New(errorMessage)), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"authorization_code", url.Values{
+			"client_id": {clientID},
+			"code":      {"authorization-code"},
+		}, &ports.TokenGrantResolution{ClientType: storage.LocalClient})
+
+	logs := fmt.Sprint(*base.records)
+	assert.NotContains(t, logs, clientID)
+	assert.NotContains(t, logs, errorMessage)
+}
+
+func TestLocalGrantStrategy_RefreshFailureDoesNotLogUserInput(t *testing.T) {
+	const (
+		clientID     = "client-id-user-input-marker"
+		errorMessage = "user-input-error-marker"
+	)
+	base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	strategy := NewLocalGrantStrategy(fixedMinting(nil, errors.New(errorMessage)), slog.New(telemetry.NewContextHandler(base)))
+
+	strategy.HandleTokenGrant(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/oauth2/token", nil),
+		"refresh_token", url.Values{
+			"client_id":     {clientID},
+			"refresh_token": {"refresh-token"},
+		}, &ports.TokenGrantResolution{ClientType: storage.LocalClient})
+
+	logs := fmt.Sprint(*base.records)
+	assert.NotContains(t, logs, clientID)
+	assert.NotContains(t, logs, errorMessage)
+	record, ok := findTokenEndpointLogRecord(*base.records, "refresh_token grant failed")
+	require.True(t, ok)
+	assert.NotContains(t, record.attrs, "error")
 }
 
 func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
@@ -1259,7 +1709,7 @@ func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
 			record, ok := findTokenEndpointLogRecord(*base.records, tt.message)
 			require.True(t, ok)
 			assert.Equal(t, want.TraceID, record.attrs["trace_id"])
-			assert.Equal(t, want.Actor, record.attrs["actor"])
+			assert.Equal(t, want.Actor.String(), record.attrs["actor"])
 			assert.Equal(t, want.CallingPeer, record.attrs["calling_peer"])
 		})
 	}
@@ -1744,7 +2194,7 @@ func (h *tokenEndpointLogCaptureHandler) storeAttr(dst map[string]any, attr slog
 	if len(h.groups) > 0 {
 		key = strings.Join(append(append([]string{}, h.groups...), attr.Key), ".")
 	}
-	dst[key] = attr.Value.Any()
+	dst[key] = attr.Value.Resolve().Any()
 }
 
 func findTokenEndpointLogRecord(records []tokenEndpointLogRecord, message string) (tokenEndpointLogRecord, bool) {
@@ -1897,7 +2347,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		&oauth2TokenNoopBranchKeyManager{},
 		nil,
 		false,
-		nil,
+		slog.New(slog.DiscardHandler),
 	)
 	permissionSetService := permissionset.NewPermissionSetService(nil, nil, slog.Default())
 	t.Cleanup(permissionSetService.Close)
@@ -1946,7 +2396,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
 		"iss": "https://auth.example.com",
 		"aud": "agentic-identity-broker",
-		"sub": want.Actor,
+		"sub": want.Actor.String(),
 		"azp": id.NewAgentID().String(),
 		"exp": now.Add(time.Hour).Unix(),
 		"iat": now.Unix(),
@@ -1987,7 +2437,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	record, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, want.TraceID, record.attrs["trace_id"], "handler logs must remain bound to the request trace")
-	assert.Equal(t, want.Actor, record.attrs["actor"], "handler logs must include the finalized actor")
+	assert.Equal(t, want.Actor.String(), record.attrs["actor"], "handler logs must include the finalized actor")
 	assert.Equal(t, want.CallingPeer, record.attrs["calling_peer"], "handler logs must include the finalized calling_peer")
 }
 
@@ -2027,13 +2477,13 @@ func TestOAuth2TokenHandler_FinalizesSecurityContextBeforeGrantHandler(t *testin
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	require.True(t, stub.observedOK, "grant handler must observe a finalized SecurityContext — non-exchange grants finalize at the /oauth2/token seam before dispatch so in-handler TokenIssued audit logs carry actor/trace_id")
-	assert.Equal(t, "svc-account@example.com", stub.observedSC.Actor)
+	assert.Equal(t, id.NewPrincipal("svc-account@example.com"), stub.observedSC.Actor)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", stub.observedSC.TraceID)
 	assert.Empty(t, stub.observedSC.CallingPeer, "non-delegated grants carry no calling peer")
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok)
-	assert.Equal(t, "svc-account@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("svc-account@example.com"), sc.Actor)
 }
 
 func TestOAuth2TokenHandler_TokenExchangeResourceOmittedFromLogsAndSpan(t *testing.T) {
@@ -2288,7 +2738,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			require.NoError(t, json.Unmarshal(writer.Body.Bytes(), &body))
 			assert.Len(t, body, 9, "observation context must not add wire fields")
 			assert.Equal(t, response.AccessToken, body["access_token"])
-			assert.Equal(t, response.Principal, body["principal"])
+			assert.Equal(t, response.Principal.String(), body["principal"])
 			assert.Equal(t, response.AgentID, body["agent_id"])
 			assert.Equal(t, map[string]any{"permission-set": []any{serviceID.String()}}, body["granted_permission_sets"])
 			assert.NotContains(t, body, "Authorization")
@@ -2299,7 +2749,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], tokenexchange.SuccessDiagnostic(tokenexchange.ExchangeThirdParty))
 			test.want["token_exchange.service.id"] = serviceID.String()
 			assertTokenExchangeObservationContext(t, (*logs.records)[0], spans.Ended()[0], test.want)
-			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", response.Principal)
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "ACCESS_TOKEN_SENTINEL", "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", response.Principal.String())
 		})
 	}
 }

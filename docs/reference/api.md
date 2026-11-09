@@ -57,12 +57,13 @@ Successful and error responses follow a small set of consistent shapes.
 |---|---|---|
 | `{"data": <resource-or-array>}` | Most resource responses | `{"data": {"principal": "…"}}` |
 | Bare JSON array | Admin list endpoints `GET /api/agents`, `GET /api/services` | `[{"id": "…"}]` |
+| Bare JSON object | Admin service create, get, update, and discovery-status GET | See the discovery-status response example. |
 | `{"items": [ … ]}` | `GET /api/oauth2-server/signing-keys` | `{"items": [{"kid": "…"}]}` |
-| `{"error": "<code>", "message": "<text>"}` | Standard errors (end-user and admin) | `{"error": "agent not found", "message": "…"}` |
+| `{"error": "<code>"}` with optional `message` | Standard errors (end-user and admin) | `{"error": "internal server error"}` |
 | `{"error": "<code>", "error_description": "…"}` | OAuth2 endpoints (RFC 6749 / 8693) | `{"error": "access_denied", "error_description": "…"}` |
 
-The error envelope depends on the API surface. End-user and admin APIs use `{error, message}`.
-Both fields are required. OAuth2 endpoints use the RFC `{error, error_description}` envelope.
+The error envelope depends on the API surface. The End-user and Admin `ErrorResponse` require `error`.
+Their `message` is optional. OAuth2 endpoints use the RFC `{error, error_description}` envelope.
 
 ## Error codes
 
@@ -151,26 +152,237 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | GET | `/api/services/{service-id}` | Get a service (secret redacted). |
 | PUT | `/api/services/{service-id}` | Update a service. |
 | DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
+| GET | `/api/services/{service-id}/discovery-status` | Read stored discovery status without contacting the provider. |
+| GET | `/api/services/{service-id}/protected-resources` | List the service's protected-resource URIs. |
+| POST | `/api/services/{service-id}/protected-resources` | Add one protected-resource URI. |
+| PUT | `/api/services/{service-id}/protected-resources/{resource}` | Add one URI by its encoded path segment. |
+| PATCH | `/api/services/{service-id}/protected-resources/{resource}` | Rename a protected-resource URI. |
+| DELETE | `/api/services/{service-id}/protected-resources/{resource}` | Remove a protected-resource URI. |
 
-### Outbound CIMD confidential services
+### Protected-resource discovery
 
-The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
+The authenticated Admin `POST /api/services` creates a service from protected-resource metadata.
+Set `discovery.enable_discovery` to `true` and supply a public HTTPS `discovery.resource_url`.
+Omit manual endpoints, client credentials, `discovery.metadata_url`, `token_endpoint_auth_method`, and `client_registration`.
+The broker validates the resource and issuer before it selects hosted CIMD or DCR.
+It does not create a service when discovery or registration fails.
 
-A service can use one of three token-endpoint authentication methods:
+This create body does not contain credentials:
 
-| Method | Client ID | `client_secret` in read responses |
+```json
+{
+  "display_name": "Example MCP",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  }
+}
+```
+
+If the resource advertises more than one issuer, the broker returns `400` with `issuer_selection_required`.
+Only this error includes `authorization_servers`, a list of validated issuers from matching resource metadata:
+
+```json
+{
+  "error": "discovery failed",
+  "message": "issuer_selection_required",
+  "authorization_servers": [
+    "https://login-a.example.com",
+    "https://login-b.example.com"
+  ]
+}
+```
+
+Retry the create request with an `issuer_uri` that matches one listed URI exactly:
+
+```json
+{
+  "display_name": "Example MCP",
+  "issuer_uri": "https://login-a.example.com",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  }
+}
+```
+
+With one advertised issuer, `issuer_uri` is optional. A successful create returns `201` and a service object.
+The broker derives one effective `authorization_params.resource` from verified metadata unless an administrator supplies an explicit value.
+The explicit value must be a non-empty absolute URI without a fragment.
+This effective resource is distinct from `discovery.resource_url` and the `protected_resources` ownership set.
+The authenticated Admin `GET /api/services/{service-id}` returns the active service and its effective resource without a DCR secret.
+The same service representation appears in create, read, list, and update responses. It always reports `client_registration: cimd` for hosted CIMD or `static` for DCR; `discovery.client_method` remains the authoritative discovery selection.
+Its `discovery.authorization_param_resource_strategy` is required, read-only, and nullable:
+
+| Value | Source of `authorization_params.resource` |
+|---|---|
+| `derived` | The verified `discovery.resource_url`. |
+| `pinned` | An administrator-supplied `authorization_params.resource`, even when it equals the verified URL. |
+| `null` | A manual or direct-`metadata_url` service. |
+
+The response `discovery.metadata_url`, `discovery.resource_url`, and `discovery.client_method` can be null.
+The strategy belongs to `discovery`, not to the forwarded `authorization_params` map.
+Do not send the strategy in a create or update request.
+
+These response fragments show a derived audience A, a pinned audience A, and a manual service:
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"derived"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"pinned"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"authorization_params":{}}
+```
+
+For example, a DCR create response can contain this service without a client secret:
+
+```json
+{
+  "id": "880e8400-e29b-41d4-a716-446655440003",
+  "display_name": "Example MCP",
+  "client_id": "dcr-client-123",
+  "client_registration": "static",
+  "token_endpoint_auth_method": "client_secret_basic",
+  "oauth2_flavor": "standard",
+  "issuer_uri": "https://login-a.example.com",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp",
+    "client_method": "dcr",
+    "authorization_param_resource_strategy": "derived"
+  },
+  "endpoints": {
+    "token_endpoint": "https://login-a.example.com/token",
+    "authorize_endpoint": "https://login-a.example.com/authorize"
+  },
+  "authorization_params": {
+    "resource": "https://mcp.example.com/mcp"
+  },
+  "created_at": "2026-10-06T10:00:00Z",
+  "updated_at": "2026-10-06T10:00:00Z"
+}
+```
+
+A confidential DCR response can show `client_secret_basic` or `client_secret_post` as `token_endpoint_auth_method`.
+These DCR methods are response-only. Create and update requests cannot supply them.
+DCR responses omit `client_secret` even when the broker stores an encrypted secret.
+
+For DCR, configure the deployment-wide `third_party_oauth2.client_name` before registration.
+The broker uses that name for the registered client, not the service `display_name`.
+If the name is blank, DCR returns `400` with `client_name_unconfigured`.
+Manual and CIMD services do not require this name.
+Hosted CIMD requires an HTTPS end-user public URL. Only CIMD confidential services require a generated ES256 client-authentication key.
+DCR also requires a public HTTPS end-user URL for its registered callback.
+
+The authenticated Admin `PUT /api/services/{service-id}` refreshes protected-resource discovery.
+The request requires `display_name` and `discovery` and omits manual endpoints and credentials.
+To pin the audience, supply `authorization_params.resource` in the request, even when it equals the current audience:
+
+```json
+{
+  "display_name": "Example MCP",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  },
+  "authorization_params": {
+    "resource": "https://mcp.example.com/mcp"
+  }
+}
+```
+
+Omit unchanged `authorization_params` on PUT to retain the parameter map and its derived or pinned source.
+Supply `resource` in that map to pin the audience. Supply a map without `resource`, such as `{}`, to restore derivation from the verified URL.
+An unchanged explicit audience permits a verified change to `discovery.resource_url`, even while user sessions exist.
+If the effective audience changes, terminate all user sessions first, including expired sessions.
+Otherwise, the broker returns `409` with `{"error":"conflict","message":"resource_change_requires_no_sessions"}` before provider discovery and checks again at commit.
+An omitted `issuer_uri` retains the active issuer only when fresh metadata still advertises it.
+A different issuer requires an explicit selection and no user sessions. The issuer conflict takes precedence when both the issuer and audience change.
+For an unchanged issuer, the broker keeps the client ID, client method, credential, and exact token authentication method.
+A callback from the prior issuer or audience cannot create a session after a session-free change.
+On a full manual replacement, omit `authorization_params` to retain the map or supply `{}` to clear it. The response strategy becomes `null` after conversion.
+If that conversion changes the audience while sessions exist, the broker returns the same `409` without a discovery-status write.
+A rejected discovery-backed audience change or failed discovery attempt keeps active configuration, owned resources, sessions, and the service ETag unchanged.
+It writes only the stored attempt time and safe failure reason. For an audience conflict, that reason is `resource_change_requires_no_sessions`.
+An invalid request that stops before discovery does not write status.
+The service ETag covers active configuration and owned protected resources, not this failure-only status.
+
+The authenticated Admin `GET /api/services/{service-id}/discovery-status` reads stored state without provider traffic.
+Its `status` is `ready`, `failed`, or `not_applicable`.
+The response always includes `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
+Each of those fields can be `null`. A manual service returns `not_applicable` and null discovery fields.
+After a failed refresh, `resource_url`, `issuer_uri`, and `client_method` describe the last successful active configuration.
+The discovery-status GET has no ETag. A failure-only status update does not change the service version.
+For example, a failed refresh can return:
+
+```json
+{
+  "status": "failed",
+  "resource_url": "https://mcp.example.com/mcp",
+  "issuer_uri": "https://login-a.example.com",
+  "client_method": "dcr",
+  "last_attempt_at": "2026-10-06T11:00:00Z",
+  "last_success_at": "2026-10-06T10:00:00Z",
+  "failure_reason": "authorization_server_metadata_invalid"
+}
+```
+
+For a manual service, the stored status has null discovery fields:
+
+```json
+{
+  "status": "not_applicable",
+  "resource_url": null,
+  "issuer_uri": null,
+  "client_method": null,
+  "last_attempt_at": null,
+  "last_success_at": null,
+  "failure_reason": null
+}
+```
+
+Discovery and registration errors use safe `message` codes. They never include provider bodies, URL queries, credentials, assertions, or tokens.
+
+| HTTP status | Admin operation | Meaning |
 |---|---|---|
-| `null` | Operator-provided | `REDACTED` |
-| `none` | Operator-provided | Omitted |
-| `private_key_jwt` | Broker-generated HTTPS metadata URL | Omitted |
+| `400` | Create or update | Invalid request, discovery failure, or client registration failure. |
+| `400` | Discovery-status GET | Malformed service ID. |
+| `401` | Discovery-status GET | An operator principal is required. |
+| `404` | Update or discovery-status GET | The service does not exist. Missing provider metadata instead returns `400`. |
+| `409` | Create or update | Duplicate client identity or protected-resource ownership. Manual client-ID conflicts also return `409`. |
+| `409` | Update | An issuer or effective audience change with user sessions, including expired sessions. |
+| `504` | Create or update | Discovery or registration exceeded the 10-second attempt deadline. The `message` is `timeout`. |
 
-For `private_key_jwt`, omit `client_id` and `client_secret` in the create or replacement request.
+Discovery failures use `error: "discovery failed"` and a safe `message` code.
+Resource codes are `resource_metadata_not_found`, `resource_metadata_unavailable`, `resource_metadata_invalid`, and `resource_mismatch`.
+Issuer codes are `authorization_server_missing`, `issuer_selection_required`, `issuer_not_advertised`, and `issuer_mismatch`.
+Authorization-server codes are `authorization_server_metadata_not_found`, `authorization_server_metadata_unavailable`, and `authorization_server_metadata_invalid`.
+Other discovery codes are `unsafe_destination` and `response_too_large`.
+Registration failures use `error: "client registration failed"`.
+Their codes are `no_compatible_client_method`, `cimd_unavailable`, `client_name_unconfigured`, `client_registration_rejected`, `client_registration_invalid`, and `client_method_changed`.
+Conflict reasons include `duplicate_client_identity`, `issuer_change_requires_no_sessions`, and `resource_change_requires_no_sessions`.
+Local storage or encryption errors return `500` without a discovery failure code.
 
-The broker generates the client ID after it allocates the service ID. The broker signs each token request with a fresh ES256 client assertion.
+### Outbound CIMD client registration
 
-The end-user server serves the public Client ID Metadata Document at the generated client ID. It serves the matching CIMD public JWK Set at `<client-id>/jwks.json`.
+`client_registration` chooses the client ID source independently of `token_endpoint_auth_method`. This outbound client identity is separate from inbound agent CIMD resolution.
 
-Both routes return `Cache-Control: public, max-age=300`. They return JSON `404` responses for unavailable services.
+| `client_registration` | `token_endpoint_auth_method` | Client ID | `client_secret` on read |
+|---|---|---|---|
+| `static` | Omitted or `null` | Operator-provided (except existing Google/filesystem rules) | `REDACTED` for stored services |
+| `static` | `none` | Operator-provided | Omitted |
+| `cimd` | `private_key_jwt` | Broker-hosted HTTPS document URL | Omitted |
+| `cimd` | `none` | Broker-hosted HTTPS document URL | Omitted |
+
+For create and full-replacement `PUT`, omitted registration resolves to `cimd` only for `private_key_jwt` and to `static` otherwise. A CIMD public replacement must repeat `client_registration: cimd`. Explicit null, empty, or unknown registration values return JSON `400`. The pairs `static` + `private_key_jwt` and `cimd` + absent/null method also return `400` before discovery or provider traffic. Google flavor and filesystem source reject `cimd`.
+
+For either CIMD mode, omit `client_id` and `client_secret` in the request. The broker assigns the client identifier URL after allocating the service ID. The anonymous end-user metadata route at that URL returns `200`, `application/json`, and `Cache-Control: public, max-age=300`. CIMD confidential publishes `private_key_jwt`, `ES256`, and a JWK URL after a usable key becomes available. CIMD public publishes `none` and neither key member, even if the CIMD key set is empty. Its `<client-id>/jwks.json` returns the uniform JSON `404`.
+
+Both public modes use PKCE S256 for authorization. They send `client_id` without client authentication in code exchange and refresh. CIMD confidential signs each token request with a fresh ES256 client assertion. The broker never changes authentication methods after a provider rejection. A CIMD-to-static switch ends document serving. Providers can retain the previous document for 300 seconds. Static replacement requires a caller `client_id`, and static confidential also requires a new secret.
 
 ### Permission sets
 

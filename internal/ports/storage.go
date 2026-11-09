@@ -14,6 +14,8 @@ import (
 var (
 	// ErrNotFound is returned when a requested entity does not exist.
 	ErrNotFound = errors.New("entity not found")
+	// ErrExternalIDConflict identifies a set external ID held by another agent.
+	ErrExternalIDConflict = errors.New("external_id already held by another agent")
 )
 
 // IsNotFoundErr returns true if err represents a not-found condition from any
@@ -41,6 +43,14 @@ type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+}
+
+// ThirdpartyOAuth2ProviderDiscoveryStatusWriter records a failed discovery
+// attempt without changing the service's active configuration or version.
+type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
+	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
+	// the stored attempt or success. failureCode contains no remote response data.
+	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
 }
 
 // User represents a user entity in the storage layer.
@@ -100,6 +110,8 @@ type UserRepository interface {
 // Agents represent AI agents registered in the identity broker.
 // Following Interface Segregation Principle: focused interface for agent operations.
 type AgentRepository interface {
+	// Create and Update atomically reject external IDs held by another agent with
+	// ErrorKindConflict wrapping ErrExternalIDConflict; empty IDs are invalid.
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
@@ -108,6 +120,8 @@ type AgentRepository interface {
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
+	// GetByExternalID returns an independent copy of the exact match, or ErrNotFound.
+	GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
 	// GetByClientURI resolves an exact CIMD URL first, then a URI pattern.
@@ -220,13 +234,15 @@ type UserSessionRepository interface {
 	// Create creates a new user session.
 	// Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
 	// Returns error if:
-	// - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
+	// - Service ID doesn't exist (StorageError with Kind=NotFound)
+	// - The service's issuer, audience, or discovery source no longer matches the session's expected values (StorageError with Kind=Conflict)
 	// - Storage connection fails (StorageError with Kind=Connection)
 	// - Operation timeout (StorageError with Kind=Timeout)
 	Create(ctx context.Context, session *storage.UserSession) error
 
 	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
 	// Returns the inserted session or the existing winner.
+	// It returns the same NotFound and Conflict errors as Create.
 	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
 
 	// Get retrieves a session by ID.
@@ -249,7 +265,7 @@ type UserSessionRepository interface {
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
-	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
+	// Used for FR-020 consent submission validation.
 	// Returns empty slice if no active sessions exist (not an error).
 	ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
@@ -263,15 +279,16 @@ type UserSessionRepository interface {
 	// Idempotent: safe to delete non-existent session.
 	DeleteByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) error
 
-	// CountByService counts sessions referencing a service.
-	// Used to enforce deletion protection (cannot delete service with active sessions).
+	// CountByService counts every session referencing a service, including expired ones.
+	// Used to block deletion, issuer changes, and effective-audience changes.
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
 // UserSessionRefreshRepository serializes a read-modify-write of one session's tokens, used by
 // refresh and by re-connect. The callback sees the latest session under a lock; it returns true
 // only when it has changed the session and the adapter must atomically persist the encrypted
-// tokens, both expiries, token type, scope, encryption context and callback generation.
+// tokens, access expiry, refresh rejection, token type, scope, encryption context and callback generation.
+// Only a new callback generation may replace the established upstream client identity.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
@@ -288,6 +305,17 @@ type UserSessionExpiryRepository interface {
 	// No matches return an empty slice and no error. Failures return domain
 	// storage.StorageError values.
 	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
+}
+
+// UserSessionHealthRepository counts stored sessions for session-health metrics.
+// It reads metadata columns only and never returns or decrypts token material.
+type UserSessionHealthRepository interface {
+	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
+	// relative to now and threshold (after threshold; due when after now and at or before
+	// threshold; expired when at or before now; unknown when not recorded), and by whether the
+	// refresh token is present and not rejected by the provider. Groups with no sessions are omitted.
+	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
+	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }
 
 // PermissionSetRepository defines storage operations for permission set entities.
@@ -327,7 +355,7 @@ type ToolApprovalRepository interface {
 	// Approve transitions a pending approval to approved status with the user decision.
 	Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
-	// Deny transitions a pending approval to denied status.
+	// Deny transitions a pending approval to denied status, clearing parameter constraints for permanent denials.
 	Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
 
 	// RevokePermanent atomically clears a permanent approval or denial.
@@ -486,5 +514,15 @@ type PKCESessionRepository interface {
 	Delete(ctx context.Context, signature string) error
 
 	// DeleteExpired removes PKCE sessions whose authorization codes have expired.
+	DeleteExpired(ctx context.Context) (int, error)
+}
+
+// ClientAssertionReplayRepository atomically consumes each CIMD client assertion jti once.
+type ClientAssertionReplayRepository interface {
+	// Consume inserts the client/jti pair until expiresAt. It must be atomic and must not join an ambient transaction.
+	// A previously consumed pair returns a conflict StorageError.
+	Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error
+
+	// DeleteExpired removes replay records whose retention period has elapsed.
 	DeleteExpired(ctx context.Context) (int, error)
 }

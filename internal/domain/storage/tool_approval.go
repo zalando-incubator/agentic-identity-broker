@@ -147,6 +147,9 @@ func (a *ToolApproval) Deny(actingPrincipal id.Principal, persistence *ApprovalP
 	a.Status = ApprovalStatusDenied
 	a.Persistence = persistence
 	a.DeniedAt = &now
+	if persistence != nil && *persistence == ApprovalPersistencePermanent {
+		a.ParamsPattern = map[string]string{}
+	}
 	return nil
 }
 

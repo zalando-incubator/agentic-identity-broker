@@ -9,7 +9,7 @@
 Close the Tier-2 authorization loop between ExtProc's OPA engine (feature 020) and the broker's tool
 approval service (feature 024). ExtProc stops collapsing OPA's `approval_required` action to deny and
 instead: matches the invocation against a locally-synced approval cache using the shared
-`internal/toolpattern` matcher (ADR 035); on a match-miss performs an authoritative
+`internal/domain/approval/toolpattern` matcher ([accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md)); on a match-miss performs an authoritative
 `GET /api/approvals?principal=…` read; on a confirmed miss creates a pending approval via
 `POST /api/approvals` and returns an MCP `URLElicitationRequiredError` (`-32042`) carrying the broker's
 `approval_url`; consumes `once` approvals synchronously before forwarding; and keeps the cache current
@@ -18,11 +18,16 @@ never reaches the creation path, so no user is ever prompted to approve a tool t
 
 The design reuses existing machinery throughout: the ADR 012 cache pattern
 (`internal/extproc/server/exchanger.go`), the shipped MCP elicitation builder
-(`server.go:1123-1156`), the shared glob matcher (`internal/toolpattern`), the ADR 014 long-poll
+(`server.go:1123-1156`), the shared glob matcher ([`internal/domain/approval/toolpattern`](../../internal/domain/approval/toolpattern)), the ADR 014 long-poll
 contract, and the existing `tests/e2e/extproc/` Ginkgo harness. One new ExtProc package,
 `internal/extproc/approval/`, owns the cache, the broker client, the syncer, and the per-request gate.
 See [research.md](research.md) for the grounded decisions and [data-model.md](data-model.md) for
 entities.
+
+Synchronization follows [accepted ADR 036](../../adrs/036-extproc-approval-cache-and-gate.md) and the [current snapshot contract](spec.md#current-synchronization-contract).
+Every `200` replaces its full scope, including removal of omitted records and pairs. An ETag is a version token, not a delta cursor.
+Targeted reads preserve other principals, the background ETag, and global confirmation time.
+See [the cache](../../internal/extproc/approval/cache.go) and [the syncer](../../internal/extproc/approval/syncer.go).
 
 **Two broker changes are in scope.** Both are additive, optional-valued fields on responses ExtProc
 already consumes, specified as spec FR-017 / FR-018 and
@@ -51,18 +56,17 @@ stakeholder directed that both broker changes be implemented with this feature.
 
 ## Technical Context
 
-**Language/Version**: Go 1.26.8
+**Language/Version**: Go, as declared in [go.mod](../../go.mod).
 **Primary Dependencies**: `envoyproxy/go-control-plane` (ExtProc gRPC), `open-policy-agent/opa/v1`
-(embedded, ADR 028), `mark3labs/mcp-go` (elicitation error), `internal/toolpattern` (ADR 035),
+(embedded, ADR 028), `mark3labs/mcp-go` (elicitation error), [`internal/domain/approval/toolpattern`](../../internal/domain/approval/toolpattern) ([accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md)),
 Viper/Cobra (ExtProc config), `otelhttp` (outbound tracing), stdlib `net/http`
-**Storage**: None. No new persistent entity, no migration. The broker's `tool_approvals` table and
-migrations 024–026 + 030 already exist and are unchanged.
+**Storage**: This feature adds no persistent entity or migration. Existing approval columns come from [the production migrations](../../migrations/), including [032_add_approval_patterns.up.sql](../../migrations/032_add_approval_patterns.up.sql).
 **Testing**: stdlib `testing` + testify with `-race` for `internal/extproc/**`; Ginkgo/Gomega for
 `tests/e2e/extproc/`; `httptest` broker fakes plus a composed production broker for sync semantics
-**Target Platform**: Linux container (`Dockerfile.extproc`), deployed alongside agentgateway
+**Target Platform**: Linux container ([Dockerfile.extproc](../../build/docker/Dockerfile.extproc)), deployed alongside agentgateway
 **Project Type**: Standalone Go gRPC service (ExtProc); no frontend, no broker UI change
 **Performance Goals**: SC-001 gate processing <500 ms measured independently of a controllable broker-client duration; SC-002 approval propagation <2 s; SC-004 zero broker round-trips on a cached permanent match; SC-005 non-blocking bootstrap request deadline ≤5 s; SC-007 long-poll reconnect <5 s
-**Constraints**: Fail closed on every authorization error, timeout, malformed broker response, and undefined decision; a failed authoritative read is never a confirmed miss and MUST NOT create an approval; a `once` approval forwards only after a confirmed `200` consume; no approval records in the OPA input; no unverified identity may key the cache; `internal/extproc/*` may import no broker package except `internal/toolpattern`
+**Constraints**: Fail closed on every authorization error, timeout, malformed broker response, and undefined decision; a failed authoritative read is never a confirmed miss and MUST NOT create an approval; a `once` approval forwards only after a confirmed `200` consume; no approval records in the OPA input; no unverified identity may key the cache. The only permitted broker-domain import is `internal/domain/approval/toolpattern`, under [accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md).
 **Scale/Scope**: ExtProc-only except two additive broker response field sets (`principal`/`agent_id`
 on the token-exchange response; `approved_at` on the approval sync summary); 1 new ExtProc package,
 2 new config sections, 1 new OPA context field, 1 changed decision action, 1 new E2E test file plus
@@ -82,7 +86,7 @@ unchanged.*
   Gate) will be added to the `ARCHITECTURE.md` Glossary during implementation. **ToolApproval** is
   already present.
 - [x] **Entity IDs**: N/A — no new UUID-backed persistent entity. ExtProc holds broker approval ids as
-  opaque strings and cannot import `internal/domain/id` (ADR 035 permits only `internal/toolpattern`).
+  opaque strings and cannot import `internal/domain/id` ([accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md) permits only `internal/domain/approval/toolpattern`).
   ADR 013 applies to broker domain entities with UUID primary keys.
 - [x] **Configuration Design**: Both new sections specified with a working YAML example, defaults, env
   mappings, and seven startup validation rules —
@@ -131,7 +135,7 @@ unchanged.*
 - [x] **Migration Testing**: N/A — no migrations.
 - [x] **Hexagonal Architecture**: `internal/extproc/approval` declares the interfaces it consumes
   (`AssertionProvider`, `BrokerClient`); `server` imports `approval`, never the reverse. ExtProc's
-  isolation invariant holds: the only broker import is `internal/toolpattern` under ADR 035.
+  isolation invariant permits only `internal/domain/approval/toolpattern`, under [accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md).
   Composition stays in `cmd/extproc-token-exchange/root.go`.
 - [x] **Persistence Patterns**: N/A — stateless with respect to durable storage.
 
@@ -318,8 +322,7 @@ client receives a conformant `-32042` with the correct JSON-RPC id.
 ### Unit & Integration Tests
 
 **Unit** (`internal/extproc/approval/*_test.go`, `package approval_test`, run with `-race`):
-cache matching and precedence driven through `toolpattern.MatchVectors()` /
-`PrecedenceVectors()` so broker/ExtProc semantics cannot drift; the FR-015 decision-time tie-break
+cache matching driven through `toolpattern.MatchVectors()` and selection through ExtProc's `precedenceVectors()` ([cache tests](../../internal/extproc/approval/cache_test.go), [accepted ADR 035](../../adrs/035-shared-tool-pattern-matching.md)); the FR-015 decision-time tie-break
 asserted with ids chosen so the lexicographically smaller id belongs to the *older* approval (a
 zero-timestamp regression must fail, not pass by coincidence); fail-closed rejection of an `approved`
 record delivered without `approved_at`; persistence-scope filtering

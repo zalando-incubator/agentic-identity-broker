@@ -3,7 +3,6 @@ package approval
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"sync"
 	"testing"
@@ -42,7 +41,7 @@ func (p *pollerStub) recordedCalls() []pollCall {
 }
 
 func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 func TestSyncerBootstrapStoresFullSnapshotAndETag(t *testing.T) {

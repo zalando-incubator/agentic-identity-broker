@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"reflect"
 	"testing"
@@ -185,7 +184,7 @@ func newTestService(repo *mockApprovalRepo) *Service {
 		NewApprovalSyncBroadcaster(0),
 		10*time.Minute,
 		"https://broker.example.com",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 }
 
@@ -413,7 +412,7 @@ func TestService_ApproveApproval(t *testing.T) {
 	t.Run("increments sync version after approval", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		syncRepo := &mockSyncStateRepo{}
-		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.DiscardHandler))
 
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
@@ -555,7 +554,7 @@ func TestService_DenyApproval(t *testing.T) {
 	t.Run("increments sync version after deny", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		syncRepo := &mockSyncStateRepo{}
-		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		svc := NewService(repo, nil, nil, syncRepo, nil, NewApprovalRateLimiter(50, 10), nil, 10*time.Minute, "", slog.New(slog.DiscardHandler))
 
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
@@ -718,7 +717,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			NewApprovalSyncBroadcaster(0),
 			10*time.Minute,
 			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			slog.New(slog.DiscardHandler),
 		)
 
 		req := makeRequest()
@@ -740,7 +739,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		queries := &mockQueryRepo{}
 		svc := NewService(repo, queries, nil, &mockSyncStateRepo{}, nil,
 			NewApprovalRateLimiter(1, 1), NewApprovalSyncBroadcaster(0), 10*time.Minute,
-			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+			"https://broker.example.com", slog.New(slog.DiscardHandler))
 		req := makeRequest()
 		first := makePendingApproval(principal, agentID)
 		first.ToolName = req.ToolName
@@ -762,7 +761,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		repo := newMockApprovalRepo()
 		svc := NewService(repo, repo, repo, &mockSyncStateRepo{}, nil,
 			NewApprovalRateLimiter(1, 10), NewApprovalSyncBroadcaster(0), 10*time.Minute,
-			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+			"https://broker.example.com", slog.New(slog.DiscardHandler))
 		req := makeRequest()
 		first, err := svc.CreatePendingApproval(context.Background(), req)
 		require.NoError(t, err)
@@ -788,7 +787,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			NewApprovalSyncBroadcaster(0),
 			10*time.Minute,
 			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			slog.New(slog.DiscardHandler),
 		)
 
 		req := makeRequest()
@@ -838,7 +837,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			NewApprovalSyncBroadcaster(0),
 			10*time.Minute,
 			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			slog.New(slog.DiscardHandler),
 		)
 
 		// First request should succeed
@@ -868,7 +867,7 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			NewApprovalSyncBroadcaster(0),
 			10*time.Minute,
 			"https://broker.example.com",
-			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			slog.New(slog.DiscardHandler),
 		)
 
 		req := makeRequest()
@@ -1020,7 +1019,7 @@ func newTestServiceWithQueries(repo *mockApprovalRepo, queries *mockQueryRepo, s
 		NewApprovalSyncBroadcaster(0),
 		10*time.Minute,
 		"https://broker.example.com",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 }
 

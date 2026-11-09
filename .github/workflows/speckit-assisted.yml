@@ -1,0 +1,717 @@
+name: Spec Kit Assisted
+
+on:
+  issues:
+    types: [labeled]
+  pull_request_target: # zizmor: ignore[dangerous-triggers] -- Maintainer-gated; host steps only execute default-branch code.
+    types: [labeled]
+  issue_comment: # zizmor: ignore[dangerous-triggers] -- Maintainer commands are data; PR code only runs in the worker sandbox.
+    types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
+  pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
+    types: [submitted]
+  # Failed container tests on a code phase's commit start a bounded repair. The tests run the PR code in the branch's
+  # own unprivileged context; this workflow only reads their outcome and reports as data, and repairs in the sandbox.
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the test run.
+    workflows: [Container tests]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  route:
+    if: >-
+      (github.event_name == 'issues' && github.event.label.name == 'speckit:specify') ||
+      (github.event_name == 'pull_request_target' &&
+        (github.event.label.name == 'speckit:plan-execution' || github.event.label.name == 'speckit:implement')) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.comment.user.type == 'User' &&
+        (startsWith(github.event.comment.body, '/speckit-') || startsWith(github.event.comment.body, '/architecture-review'))) ||
+      (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.sender.type == 'User' &&
+        github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
+      (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
+        startsWith(github.event.review.body, '/speckit-')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        startsWith(github.event.workflow_run.head_branch, 'speckit/issue-'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.route.outputs.action }}
+      issue: ${{ steps.route.outputs.issue }}
+      pr: ${{ steps.route.outputs.pr }}
+      comment: ${{ steps.route.outputs.comment }}
+      review: ${{ steps.route.outputs.review }}
+      proposal: ${{ steps.route.outputs.proposal }}
+      validation: ${{ steps.route.outputs.validation }}
+      round: ${{ steps.route.outputs.round }}
+      error: ${{ steps.route.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Check automation guards
+        run: node --test .github/scripts/speckit-automation.test.cjs
+      - name: Authorize and route
+        id: route
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { route } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const result = await route({ github, context });
+              for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
+              core.info(`Spec Kit route: ${result.action}`);
+            } catch (error) {
+              core.setOutput('error', error.message);
+              if (error.pr) core.setOutput('pr', error.pr);
+              throw error;
+            }
+
+  acknowledge:
+    needs: route
+    if: >-
+      always() && github.event_name == 'issue_comment' &&
+      (needs.route.result == 'failure' || (needs.route.result == 'success' && needs.route.outputs.action != 'noop'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: React to the maintainer command
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          ROUTE_RESULT: ${{ needs.route.result }}
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo,
+              comment_id: context.payload.comment.id,
+              content: process.env.ROUTE_RESULT === 'success' ? 'eyes' : 'confused',
+            });
+
+  # Replaces the PR's status comment with "running" so a queued or late command sees that work is in progress.
+  # A new specification announces once specify has created its PR.
+  announce:
+    needs: [route, specify]
+    if: >-
+      always() && needs.route.result == 'success' && needs.route.outputs.action != 'noop' &&
+      (needs.route.outputs.pr != '0' || needs.specify.outputs.created_pr_number != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the running status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const { announce } = require('./.github/scripts/speckit-automation.cjs');
+            await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+
+  specify:
+    needs: route
+    if: needs.route.outputs.action == 'specify'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-specify.lock.yml
+    with:
+      issue: ${{ fromJSON(needs.route.outputs.issue) }}
+      comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  clarify:
+    needs: [route, specify]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'clarify' ||
+        (needs.specify.result == 'success' && needs.specify.outputs.created_pr_number != ''))
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-phase.lock.yml
+    with:
+      phase: clarify
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'clarify' && needs.route.outputs.comment || '0') }}
+      review: ${{ fromJSON(needs.route.outputs.action == 'clarify' && needs.route.outputs.review || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # A completed clarification continues into planning only once a plan exists; the first spec is reviewed by hand.
+  clarified:
+    needs: clarify
+    if: always() && needs.clarify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      plan: ${{ steps.status.outputs.plan }}
+      error: ${{ steps.status.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the clarification result
+        id: status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.clarify.outputs.comment_id }}
+        with:
+          script: |
+            const { continuesToPlan, verify } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const result = await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: 'clarify' });
+              core.setOutput('plan', String(continuesToPlan(result)));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  plan:
+    needs: [route, specify, clarified]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'plan' || needs.clarified.outputs.plan == 'true')
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-plan.lock.yml
+    with:
+      phase: plan
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'plan' && needs.route.outputs.comment || '0') }}
+      review: ${{ fromJSON(needs.route.outputs.action == 'plan' && needs.route.outputs.review || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  tasks:
+    needs: [route, specify, plan]
+    if: always() && needs.plan.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-phase.lock.yml
+    with:
+      phase: tasks
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  analyze:
+    needs: [route, specify, tasks]
+    if: always() && needs.tasks.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-analyze.lock.yml
+    with:
+      phase: analyze
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  remediate:
+    needs: [route, specify, analyze]
+    if: always() && needs.analyze.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-phase.lock.yml
+    with:
+      phase: remediate
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  reanalyze:
+    needs: [route, specify, remediate]
+    if: always() && needs.remediate.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-analyze.lock.yml
+    with:
+      phase: reanalyze
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  implement:
+    needs: route
+    if: needs.route.outputs.action == 'implement'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-implement.lock.yml
+    with:
+      phase: implement
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
+      validation: ${{ fromJSON(needs.route.outputs.validation || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  verify:
+    needs: [reanalyze, implement]
+    if: always() && (needs.reanalyze.result == 'success' || needs.implement.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.verify.outputs.error }}
+    steps:
+      - name: Checkout trusted verifier only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify published result and current PR artifacts
+        id: verify
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.reanalyze.result == 'success' && needs.reanalyze.outputs.comment_id || needs.implement.outputs.comment_id }}
+          RESULT_PHASE: ${{ needs.reanalyze.result == 'success' && 'reanalyze' || 'implement' }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: process.env.RESULT_PHASE });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # The single approval comment: a maintainer's 👍 on it is the sign-off that /speckit-implement checks.
+  approvals:
+    needs: [reanalyze, verify]
+    if: always() && needs.reanalyze.result == 'success' && needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      error: ${{ steps.publish.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the approval comment
+        id: publish
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.reanalyze.outputs.comment_id }}
+        with:
+          script: |
+            const { publishApprovals } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await publishApprovals({ github, context, comment: process.env.RESULT_COMMENT });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # A completed implementation, or a maintainer's /architecture-review, gets the architectural review in this run.
+  # A CI repair does not: the implementation it repairs was already reviewed.
+  review:
+    needs: [route, implement, verify]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'review' ||
+        (needs.implement.result == 'success' && needs.verify.result == 'success' && needs.route.outputs.validation == ''))
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'review' && needs.route.outputs.comment || '0') }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # The review's buckets decide what follows: automatic fixes now, a proposal for the rest.
+  reviewed:
+    needs: review
+    if: always() && needs.review.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      auto: ${{ steps.status.outputs.auto }}
+      remediable: ${{ steps.status.outputs.remediable }}
+      error: ${{ steps.status.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the review and find automatic fixes
+        id: status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_COMMENT: ${{ needs.review.outputs.comment_id }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/architecture-review-automation.cjs');
+            try {
+              const { remediable } = require('./.github/scripts/speckit-automation.cjs');
+              const review = await verify({ github, context, comment: process.env.REVIEW_COMMENT });
+              core.setOutput('auto', String(review.items.some((item) => item.bucket === 'auto')));
+              core.setOutput('remediable', String(await remediable({ github, context, pr: review.pr })));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # Automatic fixes stay out of contracts, ADRs, schema, and the approved design; the worker's push scope enforces it.
+  fix:
+    needs: [route, reviewed]
+    if: >-
+      always() && needs.reviewed.result == 'success' &&
+      needs.reviewed.outputs.auto == 'true' && needs.reviewed.outputs.remediable == 'true'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-remediate-review.lock.yml
+    with:
+      phase: remediate-review
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # Ticked proposal items are the maintainer's sign-off for exactly those changes.
+  apply:
+    needs: route
+    if: needs.route.outputs.action == 'apply'
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/speckit-apply-review.lock.yml
+    with:
+      phase: apply-review
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      proposal: ${{ fromJSON(needs.route.outputs.proposal) }}
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  verified:
+    needs: [fix, apply]
+    if: always() && (needs.fix.result == 'success' || needs.apply.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.verify.outputs.error }}
+    steps:
+      - name: Checkout trusted verifier only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the remediation result and current PR artifacts
+        id: verify
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.fix.result == 'success' && needs.fix.outputs.comment_id || needs.apply.outputs.comment_id }}
+          RESULT_PHASE: ${{ needs.fix.result == 'success' && 'remediate-review' || 'apply-review' }}
+        with:
+          script: |
+            const { verify } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: process.env.RESULT_PHASE });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # One re-review per run keeps the loop bounded; what it still flags goes to the maintainer.
+  rereview:
+    needs: [route, verified]
+    if: always() && needs.verified.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.route.outputs.pr) }}
+      focus: >-
+        Verify that the findings of the previous architecture review are resolved by the remediation commits,
+        and check those commits for new concerns. Keep the review of unchanged code brief.
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
+  # The proposal comment: a maintainer ticks items and Apply, and the pipeline applies them in a new run.
+  proposals:
+    needs: [route, review, reviewed, fix, rereview]
+    if: >-
+      always() && (needs.rereview.result == 'success' ||
+        (needs.reviewed.result == 'success' && needs.fix.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      comment_id: ${{ steps.publish.outputs.comment_id }}
+      recommendation: ${{ steps.publish.outputs.recommendation }}
+      questions: ${{ steps.publish.outputs.questions }}
+      remediable: ${{ steps.publish.outputs.remediable }}
+      error: ${{ steps.publish.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the remediation proposal
+        id: publish
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_COMMENT: ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id || needs.review.outputs.comment_id }}
+          REVIEW_REMEDIABLE: ${{ needs.rereview.result == 'success' || needs.reviewed.outputs.remediable == 'true' }}
+        with:
+          script: |
+            const { publishProposals } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const result = await publishProposals({
+                github, context, review: process.env.REVIEW_COMMENT, remediable: process.env.REVIEW_REMEDIABLE === 'true',
+              });
+              for (const [key, value] of Object.entries(result)) core.setOutput(key, String(value));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  # After a code phase pushes, the container tests run on its commit in the PR branch's own context; their failure
+  # starts a repair through workflow_run. Only this job holds the App key, and it never checks out PR code.
+  tests:
+    needs: [route, implement, verify, review, reviewed, fix, verified, apply]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      needs.verify.result != 'failure' && needs.verified.result != 'failure' &&
+      (needs.implement.result == 'success' || needs.fix.result == 'success' || needs.apply.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      error: ${{ steps.dispatch.outputs.error || steps.target.outputs.error }}
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Find the pushed commit to test
+        id: target
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR: ${{ needs.route.outputs.pr }}
+        with:
+          script: |
+            const { testTarget } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              const target = await testTarget({ github, context, pr: process.env.PR });
+              core.setOutput('target', target ? JSON.stringify(target) : '');
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+      - name: Create an App token that may dispatch workflows
+        id: app
+        if: steps.target.outputs.target != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: zalando-incubator
+          repositories: agentic-identity-broker
+          permission-actions: write
+      - name: Dispatch the container tests on the PR branch
+        id: dispatch
+        if: steps.target.outputs.target != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET: ${{ steps.target.outputs.target }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { dispatchTests } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await dispatchTests({ github, context, target: JSON.parse(process.env.TARGET) });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+
+  report:
+    needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals,
+      review, reviewed, fix, verified, apply, rereview, proposals, tests]
+    if: always() && needs.route.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout trusted automation only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Publish the status comment and fold agent reports
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const { report } = require('./.github/scripts/speckit-automation.cjs');
+            await report({ github, context, needs: JSON.parse(process.env.NEEDS) });

@@ -1,0 +1,2 @@
+DROP INDEX idx_client_assertion_replays_expires_at;
+DROP TABLE client_assertion_replays;

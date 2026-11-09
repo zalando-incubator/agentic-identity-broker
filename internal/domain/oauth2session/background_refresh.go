@@ -37,7 +37,7 @@ type backgroundRefresher struct {
 	triggered metric.Int64Counter
 	dropped   metric.Int64Counter
 	failed    metric.Int64Counter
-	label     metric.AddOption
+	trigger   attribute.KeyValue
 }
 
 func newBackgroundRefresher(service *OAuth2SessionService, workers int) *backgroundRefresher {
@@ -54,7 +54,7 @@ func newBackgroundRefresher(service *OAuth2SessionService, workers int) *backgro
 		baseCtx: baseCtx, cancel: cancel, tracer: otel.Tracer("oauth2session"),
 		drained:   make(chan struct{}),
 		triggered: triggered, dropped: dropped, failed: failed,
-		label: metric.WithAttributes(attribute.String("triggered_by", string(RefreshTriggerBackground))),
+		trigger: attribute.String("triggered_by", string(RefreshTriggerBackground)),
 	}
 }
 
@@ -75,7 +75,7 @@ func (p *backgroundRefresher) submit(ctx context.Context, session *storage.UserS
 	default:
 		p.inflight.Delete(key)
 		p.mu.Unlock()
-		p.dropped.Add(ctx, 1, p.label)
+		p.dropped.Add(ctx, 1, metric.WithAttributes(p.trigger))
 		p.service.logger.WarnContext(ctx, "oauth2 proactive refresh dropped",
 			"event", "session.oauth2.proactive_refresh_dropped",
 			"session_id", sessionID.String(), "service_id", serviceID.String(),
@@ -84,7 +84,6 @@ func (p *backgroundRefresher) submit(ctx context.Context, session *storage.UserS
 		return
 	}
 	p.mu.Unlock()
-	p.triggered.Add(ctx, 1, p.label)
 	origin := trace.SpanContextFromContext(ctx)
 	go p.refresh(key, principal, serviceID, sessionID, lookahead, origin)
 }
@@ -100,6 +99,9 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	span.SetAttributes(attribute.String("oauth2.refresh.triggered_by", string(RefreshTriggerBackground)))
 	refreshCtx, cancel := p.service.refreshOperationContext(spanCtx)
 	defer cancel()
+	// Counted here rather than in submit, so the canonical ID lookup stays off the exchange path.
+	serviceAttr := p.service.lookupServiceIDAttribute(refreshCtx, serviceID)
+	p.triggered.Add(refreshCtx, 1, metric.WithAttributes(p.trigger, serviceAttr))
 
 	value, err, _ := p.service.refreshGroup.Do(key, func() (any, error) {
 		current, changed, provider, err := p.service.refreshDueSession(refreshCtx, principal, serviceID, func() time.Time { return time.Now().Add(lookahead) }, RefreshTriggerBackground)
@@ -123,7 +125,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 		return
 	}
 	span.SetAttributes(attribute.String("oauth2.refresh.outcome", "failed"))
-	p.failed.Add(refreshCtx, 1, p.label)
+	p.failed.Add(refreshCtx, 1, metric.WithAttributes(p.trigger, serviceAttr, attribute.String("failure_detail", string(metadata.Detail()))))
 	level := slog.LevelError
 	switch metadata.Kind() {
 	case KindProvider, KindSession, KindConfiguration, KindCanceled:
@@ -136,7 +138,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	attrs := []slog.Attr{
 		slog.String("event", "session.oauth2.refresh_failed"),
 		slog.String("session_id", sessionID.String()),
-		slog.String("principal", principal.String()),
+		slog.Any("principal", principal),
 		slog.String("service_id", serviceID.String()),
 		slog.String("triggered_by", string(RefreshTriggerBackground)),
 		slog.Any("oauth2_session", metadata),
@@ -149,7 +151,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 }
 
 func (p *backgroundRefresher) continueSharedRefresh(ctx context.Context, principal id.Principal, serviceID id.ServiceID, lookahead time.Duration, flight refreshFlightResult) (refreshFlightResult, error) {
-	if flight.trigger == RefreshTriggerOnDemand && !flight.refreshed && flight.session != nil && flight.session.AccessTokenExpiresBy(time.Now().Add(lookahead)) {
+	if flight.trigger == RefreshTriggerOnDemand && !flight.refreshed && flight.session != nil && !flight.session.RefreshRejected() && flight.session.AccessTokenExpiresBy(time.Now().Add(lookahead)) {
 		current, refreshed, provider, err := p.service.refreshDueSession(ctx, principal, serviceID, func() time.Time { return time.Now().Add(lookahead) }, RefreshTriggerBackground)
 		return refreshFlightResult{session: current, refreshed: refreshed, trigger: RefreshTriggerBackground, client: clientInfoFromProvider(provider)}, err
 	}

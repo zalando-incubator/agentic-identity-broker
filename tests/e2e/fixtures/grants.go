@@ -9,6 +9,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // PlaceholderPermissionSetID is the stable permission set ID used by grant fixtures
@@ -109,10 +110,16 @@ func SeedPlaceholderGrantData(ctx context.Context, store *storageadapter.Adapter
 	return store.PermissionSets().Create(ctx, ps2)
 }
 
-// SeedDefaultConsentData inserts the shared default permission set and an active
-// opaque session for the supplied principal. It avoids encryption because consent
-// flows only need session presence, not token decryption.
+// SeedDefaultConsentData inserts a manual placeholder service, its permission set,
+// and an active opaque session for the principal. Consent flows need session
+// presence, not token decryption.
 func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, principal id.Principal) error {
+	svc := ServiceWithID(PlaceholderServiceID.String())
+	svc.ProtectedResources = nil
+	if err := store.Services().Create(ctx, svc); err != nil {
+		return err
+	}
+
 	if err := store.PermissionSets().Create(ctx, &storagedomain.PermissionSet{
 		ID:          PlaceholderPermissionSetID,
 		Name:        "Default Test Permission Set",
@@ -133,6 +140,36 @@ func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, 
 		TokenType:            "Bearer",
 		EncryptionContext:    storagedomain.EncryptionContext{ServiceID: PlaceholderServiceID},
 	})
+}
+
+// SeedGrantSessions stores a usable session for every service the grant includes,
+// as FR-020 of specs/019-permission-sets/spec.md requires before consent is saved.
+// Authorization redirects to consent while an included service has no session (FR-022).
+// Included services that are not stored yet are created with ServiceWithID and no protected resources.
+func SeedGrantSessions(ctx context.Context, store *storageadapter.Adapter, grant *storagedomain.UserGrant) error {
+	seen := make(map[id.ServiceID]bool)
+	for _, entry := range grant.GrantedPermissionSets {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			if seen[serviceID] {
+				continue
+			}
+			seen[serviceID] = true
+			if _, err := store.Services().Get(ctx, serviceID); err != nil {
+				if !ports.IsNotFoundErr(err) {
+					return err
+				}
+				svc := ServiceWithID(serviceID.String())
+				svc.ProtectedResources = nil
+				if err := store.Services().Create(ctx, svc); err != nil {
+					return err
+				}
+			}
+			if err := store.UserSessions().Create(ctx, SessionForService(grant.Principal.String(), serviceID.String())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ActiveGrant returns a user grant that is currently active (not expired).

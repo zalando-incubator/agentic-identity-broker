@@ -132,6 +132,80 @@ func TestGateServesCachedApprovalWithoutBrokerRoundTrip(t *testing.T) {
 	assert.Zero(t, consumes)
 }
 
+func TestGatePermanentDenialBlocksToolUntilRevoked(t *testing.T) {
+	tests := []struct {
+		name     string
+		cached   bool
+		approved bool
+	}{
+		{name: "refreshed"},
+		{name: "cached", cached: true},
+		{name: "conflicting approval", cached: true, approved: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invocation := testInvocation()
+			denial := Record{ID: "denied", ToolName: invocation.ToolName, ToolPattern: invocation.ToolName,
+				ParamsPattern: map[string]string{"repo": "acme/app"}, Status: "denied", Persistence: new("permanent")}
+			pairs := []Pair{{Identity: invocation.Identity, Approvals: []Record{denial}}}
+			if test.approved {
+				newerApproval := approvedRecord("approved", invocation.ToolName, map[string]string{"repo": "acme/other"}, "once", time.Now().UTC())
+				pairs[0].Approvals = append([]Record{newerApproval}, pairs[0].Approvals...)
+			}
+			cache := NewCache(time.Minute, time.Minute)
+			if test.cached {
+				cache.Replace(pairs, `"v2"`)
+			}
+			broker := &brokerStub{pairs: pairs, etag: `"v2"`, createURL: "https://broker.example/approval"}
+			gate := NewGate(cache, broker)
+			invocation.Arguments = map[string]any{"repo": "acme/other"}
+			invocation.AgentSessionID = "different-session"
+			outcome := gate.Evaluate(context.Background(), invocation)
+			assert.False(t, outcome.Proceed)
+			assert.Empty(t, outcome.URL)
+			assert.Equal(t, "tool permanently denied", outcome.Reason)
+			_, creates, consumes, _ := broker.calls()
+			assert.Empty(t, creates)
+			assert.Zero(t, consumes)
+
+			cache.Replace(nil, `"v3"`)
+			broker.pairs = nil
+			broker.etag = `"v3"`
+			outcome = gate.Evaluate(context.Background(), invocation)
+			assert.False(t, outcome.Proceed)
+			assert.Equal(t, broker.createURL, outcome.URL, "revoking the denial must allow a new approval request")
+		})
+	}
+}
+
+func TestGateDenialDoesNotBlockOtherScopes(t *testing.T) {
+	tests := []struct {
+		name        string
+		identity    Identity
+		tool        string
+		persistence *string
+	}{
+		{name: "other principal", identity: Identity{Principal: "bob", AgentID: "agent"}, tool: "create_issue", persistence: new("permanent")},
+		{name: "other agent", identity: Identity{Principal: "alice", AgentID: "other"}, tool: "create_issue", persistence: new("permanent")},
+		{name: "other tool", identity: testInvocation().Identity, tool: "create_issue_other", persistence: new("permanent")},
+		{name: "non permanent denial", identity: testInvocation().Identity, tool: "create_issue"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invocation := testInvocation()
+			cache := NewCache(time.Minute, time.Minute)
+			pairs := []Pair{{Identity: test.identity, Approvals: []Record{{ID: "denied", ToolName: test.tool,
+				ToolPattern: "create_*", Status: "denied", Persistence: test.persistence}}}}
+			cache.Replace(pairs, `"v2"`)
+			broker := &brokerStub{pairs: pairs, etag: `"v2"`, createURL: "https://broker.example/approval"}
+			outcome := NewGate(cache, broker).Evaluate(context.Background(), invocation)
+			assert.False(t, outcome.Proceed)
+			assert.Equal(t, broker.createURL, outcome.URL)
+			assert.Empty(t, outcome.Reason)
+		})
+	}
+}
+
 func TestGateRefreshesAuthoritativelyWhenCacheIsStale(t *testing.T) {
 	invocation := testInvocation()
 	cache := NewCache(time.Minute, 50*time.Millisecond)

@@ -102,6 +102,14 @@ func deepCopyDocument(doc *ClientIDMetadataDocument) *ClientIDMetadataDocument {
 	cp.RedirectURIs = append([]string(nil), doc.RedirectURIs...)
 	cp.GrantTypes = append([]string(nil), doc.GrantTypes...)
 	cp.ResponseTypes = append([]string(nil), doc.ResponseTypes...)
+	if doc.KeySet != nil {
+		cloned, err := doc.KeySet.Clone()
+		if err == nil {
+			cp.KeySet = cloned
+		} else {
+			cp.KeySet = nil
+		}
+	}
 	return &cp
 }
 

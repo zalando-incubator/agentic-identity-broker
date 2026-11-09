@@ -1,150 +1,170 @@
 ---
 title: "Get started"
-description: Run the Agentic Identity Broker stack locally with Docker Compose. Complete one delegation from the sample agent to the consent UI and stored grant.
+description: Run the local stack, grant an agent access, and call an MCP tool through Agentgateway without giving the agent a provider token.
 ---
 
 # Get started
 
-This tutorial starts with a fresh clone and ends with a working delegation. You run the
-broker stack locally. Then you start a sample agent authorization request, give consent in
-the browser, and view the stored grant through the admin API.
+This tutorial starts with a fresh clone and ends with an agent tool call. You grant access
+in the browser, inspect the stored grant, and send a broker token through Agentgateway.
+The mock MCP server shows which provider claims it receives after token exchange.
 
-Docker Compose runs every service in one stack. The stack seeds sample data automatically.
-You can complete the flow before you register agents or services.
+Docker Compose seeds sample agents, services, and permission sets automatically.
+The demo uses mock providers, not real GitHub or Google accounts.
 
 ## Before you start
 
-You need:
+You need Docker with Docker Compose v2, Git, curl, and OpenSSL.
+The host-side key-generation script requires OpenSSL.
+The grant lookup also uses [jq](https://jqlang.org/download/).
 
-- **Docker**, with Docker Compose v2 (`docker compose`). Docker Compose runs the local
-  services.
-- **[just](https://github.com/casey/just)**. The project uses this command runner for its
-  workflows.
-- **The repository**, cloned locally:
+The project uses [just](https://github.com/casey/just) as a command runner.
+Install it with `brew install just` or `cargo install just`, or use the plain Compose commands in Step 1.
 
-  ```bash
-  git clone https://github.com/zalando-incubator/agentic-identity-broker.git
-  cd agentic-identity-broker
-  ```
+```bash
+git clone https://github.com/zalando-incubator/agentic-identity-broker.git
+cd agentic-identity-broker
+```
 
-You do not need Go, Node.js, PostgreSQL, or any cloud credentials for this tutorial. The
-stack uses an in-memory store and a local encryption key generated for you at startup.
+You do not need Go, Node.js, PostgreSQL, or cloud credentials on your host.
+The stack uses an in-memory store and generates local encryption keys at startup.
+This development stack trusts a simulated user identity. Do not expose it to other machines.
 
 ## Step 1: Start the stack
 
-From the repository root, bring the whole stack up in the background:
+From the repository root:
 
 ```bash
 just compose-up-detached
 ```
 
-This command builds and starts every service for the flow. It seeds sample agents,
-services, and permission sets after the broker reports healthy. The command then prints a
-health summary and the service URLs:
+Without `just`, run:
+
+```bash
+test -f .env.compose || cp .env.compose.example .env.compose
+IDENTITY_BROKER_JWE_SIGNING_KEY="$(./scripts/generate-jwe-key.sh)" \
+IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)" \
+  docker compose --env-file .env.compose -f docker-compose.yml up -d --build --wait --wait-timeout 600
+```
+
+The first run builds eight service images, including the Go backend and Vite frontend.
+Startup depends on your machine, network, and build cache. A clean-machine cold-start time is not yet measured.
+Startup waits for service health, including the frontend. The frontend runs `npm ci` to synchronize its dependency volume before Vite starts.
+Broker health alone does not mean that sample-data seeding has finished.
+Wait for the agents in Step 2 and enabled login buttons on the sample client.
+
+The `just` command prints these URLs after its health summary:
 
 ```text
 Service URLs:
-  - Broker (end-user): http://localhost:8000
-  - Broker (admin): http://localhost:14000
-  - Frontend (consent UI): http://localhost:3000
-  - Sample OAuth2 client: http://localhost:9002/oauth2/authorize
+  - Browser UI (Vite proxy includes development identity): http://localhost:3000/
+  - End-user broker (protected API requires upstream auth): http://localhost:8000/
+  - Admin API: http://localhost:14000/api/agents
+  - Admin health: http://localhost:14000/health
+  - Sample OAuth2 client: http://localhost:9002/
+  - Agentgateway MCP endpoint: http://localhost:4000/mcp
 ```
-
-The stack is:
 
 | Service | URL | Role |
 |---|---|---|
-| Broker — end-user API | http://localhost:8000 | Consent, third-party sessions, OAuth2 server surface |
-| Broker — admin API | http://localhost:14000 | Agents, services, permission sets, credentials |
-| Consent UI | http://localhost:3000 | The React screen where you approve delegations |
-| Mock OAuth2 services | http://localhost:9000, `:9001`, `:9002` | A mock third-party provider, a mock upstream authorization server, and a sample agent/client |
-
-The summary shows each broker port as healthy. If a broker port is in use, stop the
-process that holds it. Then run the command again.
+| Consent UI | http://localhost:3000/ | Browser interface and development identity proxy |
+| Broker — end-user API | http://localhost:8000/ | Consent, provider sessions, and OAuth2 endpoints |
+| Broker — admin API | http://localhost:14000/ | Agent and service configuration |
+| Sample agent | http://localhost:9002/ | OAuth2 client and broker-token display |
+| Agentgateway | http://localhost:4000/mcp | JWT validation and transparent token exchange |
+| Mock MCP server | http://localhost:9003/mcp | Tool backend; call it through the gateway |
+| Mock OAuth2 providers | http://localhost:9000/, http://localhost:9001/ | Provider tokens and upstream authorization |
 
 :::note
-During local development, the consent UI dev server adds
-`X-Remote-User: dev@example.com` to each proxied request. This simulates the
-authenticating reverse proxy in production. The broker does not authenticate users. It
-trusts the principal asserted by the proxy.
+The Vite proxy adds `X-Remote-User: dev@example.com` to browser requests.
+It simulates an authenticating reverse proxy. The broker trusts that asserted identity; it does not authenticate users itself.
 :::
 
 ## Step 2: Review the seeded data
 
-The stack seeds sample agents and services. List them through the admin API:
+List the agents through the admin API:
 
 ```bash
-curl http://localhost:14000/api/agents
+curl --fail-with-body http://localhost:14000/api/agents
 ```
 
-The response shows a JSON array of sample agents, such as a weather assistant and a task
-manager. You can grant these agents access without registering them first.
+The response is a JSON array. Wait until it includes **Local Research Agent**.
+If startup fails, inspect `docker compose --env-file .env.compose -f docker-compose.yml logs`.
 
 ## Step 3: Start the sample agent's authorization request
 
-Open the sample OAuth2 client in your browser:
+Open `http://localhost:9002/` in your browser. Select **Login as Local Client**.
+This flow returns a broker-issued token. **Proxy Client** instead returns a token from the mock upstream authorization server.
 
-```text
-http://localhost:9002/oauth2/authorize
-```
-
-The sample client acts like an agent that requests access for you. It sends an OAuth2
-authorization request to the broker on port 8000. The broker redirects you to the consent
-interface because the agent does not yet have a grant.
-
-The browser opens the consent interface at `http://localhost:3000`. It shows the agent
-that requests access.
+The sample client redirects you to the broker's consent interface at `http://localhost:3000`.
+The interface shows **Local Research Agent** and its requested permission sets.
 
 ## Step 4: Review and grant consent
 
-The consent interface shows the requested **permission sets**. Each set is **mandatory**
-or **optional**. The sets group provider scopes into business-readable capabilities.
+Select the optional **Identity Access** permission set.
+Connect **Mock OAuth2 Service (Dev)** before you submit consent.
+Complete the mock provider authorization in the browser. This stores the provider token in the broker, not the agent.
 
-Select the permission sets to grant. You can set an expiry. Then submit the request.
-
-The consent interface shows the grant. The broker resumes the authorization request and
-redirects you to the sample client. The sample client then holds broker-issued, scoped
-access. It does not hold a third-party credential.
+Review your selection, then submit consent.
+The broker redirects you to the sample client. Its **Access Token Claims** table describes the broker-issued token.
 
 ## Step 5: View the stored delegation
 
-You can list the agents again through the admin API. You can also view broker activity in
-the logs:
+The admin API lists agent configuration, not user grants. Find the agent UUID there,
+then read the grant from the authenticated end-user API through the development proxy:
 
 ```bash
-just compose-logs
+AGENT_ID=$(curl --fail --silent http://localhost:14000/api/agents \
+  | jq -er '.[] | select(.display_name == "Local Research Agent") | .id')
+curl --fail-with-body "http://localhost:3000/api/consent/agents/$AGENT_ID/grants"
 ```
 
-The streamed logs show the consent request and grant creation. Press `Ctrl+C` to stop the
-log stream. The stack continues to run.
+The response's `data` array contains grant objects. Each grant contains its ID,
+`principal`, `agent_id`, `granted_permission_sets`, and timestamps.
+The principal is `dev@example.com`.
+A grant with an expiry also includes `valid_until`.
+The response does not contain provider credentials.
 
-## Step 6: Tear down
+## Step 6: Call a tool through the gateway
 
-When you are done, stop the whole stack:
+On the sample client page, select **Call MCP Tool: whoami (allowed)**.
+The sample client sends your logged-in Local Client token through the configured gateway.
+It handles MCP initialization and session headers automatically. You do not need to copy the token into a shell.
+
+The result shows **Token Exchange Successful!**, the tool response, the gateway URL, and **JWT Claims**.
+The tool response contains `auth_scheme=Bearer` and `jwt_claims=...` from the token visible to the MCP server.
+Compare those provider claims with the **Access Token Claims** table on the same page.
+
+| Claim | Broker token sent by the agent | Provider token received by the MCP server |
+|---|---|---|
+| `iss` | `http://localhost:3000` | `http://third-party-oauth2:9000` |
+| `aud` | `token-exchange-broker` | `mcp-server` |
+| `azp` | The Local Research Agent UUID | `mock-oauth2-client-dev` |
+
+The gateway validates the broker JWT; ExtProc exchanges it for the stored provider token before forwarding the request.
+The mock returns decoded claims for inspection, not the reusable provider token. Its claim decoder is not a signature verifier.
+
+A 401 indicates a JWT validation problem, such as an expired token or the wrong client flow.
+A session-recovery error means that the broker needs a usable provider session in addition to the grant.
+Return to the consent UI to connect the mock provider, then retry.
+
+## Step 7: Tear down
 
 ```bash
 just compose-down
 ```
 
-All containers stop. This tutorial uses the in-memory store. The stack discards the seeded
-data and your grant. The next `just compose-up-detached` starts with new data.
+Without `just`:
 
-## What you did
+```bash
+docker compose --env-file .env.compose -f docker-compose.yml down
+```
 
-You completed a full local delegation:
-
-- You started the end-user broker on 8000 and admin broker on 14000. You also started the
-  consent interface on 3000 and the mock OAuth2 services. The stack seeded sample data.
-- You started an agent authorization request from the sample client.
-- You reviewed permission sets and gave consent in the browser. The broker accepted the
-  proxy-supplied `X-Remote-User` principal.
-- You viewed the stored grant. Then you stopped the stack.
+The in-memory store discards the seeded data, provider sessions, and grants when the broker stops.
 
 ## Where to go next
 
-- **[Delegation and consent](/docs/concepts/delegation-and-consent)** — Learn about
-  principals, agents, permission sets, grants, and sessions.
-- **[Manage agents and services](/docs/guides/manage-agents-and-services)** — Register
-  services, permission sets, and agents through the admin API.
-- **[Deploy on Kubernetes](/docs/guides/deploy-on-kubernetes)** — Deploy the broker beyond
-  the local stack.
+- **[Delegation and consent](/docs/concepts/delegation-and-consent)** — Principals, agents, permission sets, grants, and sessions.
+- **[Manage agents and services](/docs/guides/manage-agents-and-services)** — Register your own services and agents.
+- **[Gateway token exchange](/docs/guides/token-exchange-gateway)** — Configure the validation and exchange boundary.
+- **[Deploy on Kubernetes](/docs/guides/deploy-on-kubernetes)** — Deploy beyond the local demo.

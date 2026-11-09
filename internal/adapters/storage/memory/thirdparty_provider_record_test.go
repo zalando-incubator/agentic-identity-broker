@@ -36,6 +36,40 @@ func TestProviderEntityCopy_Success(t *testing.T) {
 	assert.Equal(t, ciphertext, ct)
 }
 
+func TestProviderEntityCopy_ResolvesOmittedClientRegistrationOnce(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		provider *model.ThirdpartyOAuth2ProviderEntity
+		want     model.ClientRegistration
+	}{
+		{"static confidential", testProvider(id.NewServiceID()), model.ClientRegistrationStatic},
+		{"CIMD confidential", testCIMDProvider(id.NewServiceID()), model.ClientRegistrationCIMD},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			copied, err := providerEntityCopy(tt.provider)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, copied.ClientRegistration)
+			assert.False(t, copied.ClientRegistrationProvided)
+
+			again, err := providerEntityCopy(copied)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, again.ClientRegistration)
+		})
+	}
+}
+
+func TestProviderEntityCopy_RejectsCorruptClientRegistration(t *testing.T) {
+	for _, registration := range []model.ClientRegistration{"", "other"} {
+		t.Run(string(registration), func(t *testing.T) {
+			provider := testProvider(id.NewServiceID())
+			provider.ClientRegistration = registration
+			provider.ClientRegistrationProvided = true
+			_, err := providerEntityCopy(provider)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestProviderEntityCopy_NilEntityFails(t *testing.T) {
 	_, err := providerEntityCopy(nil)
 	require.Error(t, err)

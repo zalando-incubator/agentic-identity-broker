@@ -12,15 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jws"
 	"github.com/stretchr/testify/assert"
@@ -229,22 +225,7 @@ func setupMigratedPostgresDatabase(t *testing.T) (string, func()) {
 	t.Helper()
 
 	postgres := testbootstrap.RequireSharedPostgres(t)
-	_, connStr, cleanupDatabase := postgres.SetupDatabaseFromTemplate(t, "oauth2_signing_key_bootstrap_full_migrations", func(t *testing.T, dbName string) {
-		projectRoot, err := testbootstrap.FindProjectRoot()
-		require.NoError(t, err)
-		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
-		require.NoError(t, err)
-
-		migrationConnStr := postgres.ConnectionString(dbName)
-		migrationRunner, err := migrate.New("file://"+migrationsDir, migrationConnStr)
-		require.NoError(t, err)
-		defer func() { _, _ = migrationRunner.Close() }()
-
-		err = migrationRunner.Up()
-		if err != nil && err != migrate.ErrNoChange {
-			require.NoError(t, err)
-		}
-	})
+	_, connStr, cleanupDatabase := postgres.SetupMigratedDatabase(t)
 
 	return connStr, cleanupDatabase
 }

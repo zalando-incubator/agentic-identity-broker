@@ -9,18 +9,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
 func TestGetSessionWithAgentsSecurity_PrincipalIsolation(t *testing.T) {
 	ctx := context.Background()
-	service, _, sessionRepo, grantRepo, agentRepo, _ := setupServiceWithConfig(t, nil)
+	service, providerRepo, sessionRepo, grantRepo, agentRepo, _ := setupServiceWithConfig(t, nil)
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
 	serviceID := id.NewServiceID()
 	permissionSetAID := id.NewPermissionSetID()
 	permissionSetBID := id.NewPermissionSetID()
 	now := time.Now()
+	provider := createTestService(serviceID)
+	provider.Secret = model.NewEncryptedSecret([]byte("opaque-credential"))
+	require.NoError(t, providerRepo.Create(ctx, provider))
 
 	for _, session := range []*storage.UserSession{
 		{ID: id.NewSessionID(), Principal: principalA, ServiceID: serviceID, EncryptedAccessToken: []byte("token-a"), TokenType: "Bearer", InitiatedAt: now, CreatedAt: now},

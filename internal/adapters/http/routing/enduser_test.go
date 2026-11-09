@@ -19,6 +19,7 @@ import (
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/go-chi/chi/v5"
@@ -208,6 +209,10 @@ func newEnduserConsentRouter(t *testing.T) (http.Handler, string) {
 
 	testAgent := fixtures.ValidAgent()
 	require.NoError(t, storage.Agents().Create(context.Background(), testAgent))
+	require.NoError(t, storage.Services().Create(context.Background(), &model.ThirdpartyOAuth2ProviderEntity{
+		ID: fixtures.PlaceholderServiceID, DisplayName: "Router test provider", ClientID: "router-test-client",
+		Secret: model.NewEncryptedSecret([]byte("opaque-credential")), IssuerURI: "https://provider.example.test",
+	}))
 	require.NoError(t, storage.PermissionSets().Create(context.Background(), &domainstorage.PermissionSet{
 		ID:          fixtures.PlaceholderPermissionSetID,
 		Name:        "Router Permission Set",

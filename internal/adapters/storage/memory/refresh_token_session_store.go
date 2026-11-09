@@ -59,6 +59,10 @@ func (s *RefreshTokenSessionStore) createLocked(session *storage.RefreshTokenSes
 		grantID := *session.GrantID
 		copy.GrantID = &grantID
 	}
+	if session.ClientAuthMethod != nil {
+		method := *session.ClientAuthMethod
+		copy.ClientAuthMethod = &method
+	}
 	s.bySignature[copy.Signature] = &copy
 	return nil
 }
@@ -77,6 +81,10 @@ func (s *RefreshTokenSessionStore) FindBySignature(_ context.Context, signature 
 	if session.GrantID != nil {
 		grantID := *session.GrantID
 		copy.GrantID = &grantID
+	}
+	if session.ClientAuthMethod != nil {
+		method := *session.ClientAuthMethod
+		copy.ClientAuthMethod = &method
 	}
 	return &copy, nil
 }

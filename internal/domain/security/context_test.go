@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 func TestWithSecurityContext_RoundTrip(t *testing.T) {
@@ -60,7 +62,7 @@ func TestWithSecurityContext_UsesImmutableValueSemantics(t *testing.T) {
 
 		got, ok := FromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "alice@example.com", got.Actor)
+		assert.Equal(t, id.NewPrincipal("alice@example.com"), got.Actor)
 		assert.Equal(t, "gateway-client-1", got.CallingPeer)
 		assert.Equal(t, "/api/me", got.RequestTarget)
 	})
@@ -86,7 +88,7 @@ func TestWithSecurityContext_UsesImmutableValueSemantics(t *testing.T) {
 
 		secondRead, ok := FromContext(ctx)
 		require.True(t, ok)
-		assert.Equal(t, "service-user", secondRead.Actor)
+		assert.Equal(t, id.NewPrincipal("service-user"), secondRead.Actor)
 		assert.Equal(t, "gateway-client-2", secondRead.CallingPeer)
 	})
 }
@@ -115,7 +117,7 @@ func TestFromContext_EmptyCallingPeerRoundTripsAsOmitted(t *testing.T) {
 
 	got, ok := FromContext(ctx)
 	require.True(t, ok)
-	assert.Equal(t, "anonymous", got.Actor)
+	assert.Equal(t, id.NewPrincipal("anonymous"), got.Actor)
 	assert.Empty(t, got.CallingPeer, "calling_peer must stay omitted when no distinct peer exists")
 }
 
@@ -138,7 +140,7 @@ func TestCaptureHolder_FinalizeOnceForDownstreamReaders(t *testing.T) {
 	_, ok := FromContext(ctx)
 	assert.False(t, ok, "downstream readers must not observe transport-only state before delegated finalization")
 
-	finalized, finalizedNow := holder.Finalize("subject-user@example.com", "privileged-client-1")
+	finalized, finalizedNow := holder.Finalize(id.NewPrincipal("subject-user@example.com"), "privileged-client-1")
 	require.True(t, finalizedNow, "the delegated seam must finalize exactly once")
 
 	expected := SecurityContext{
@@ -157,7 +159,7 @@ func TestCaptureHolder_FinalizeOnceForDownstreamReaders(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, expected, got, "downstream readers must observe the finalized security context")
 
-	again, finalizedAgain := holder.Finalize("other-user@example.com", "other-client")
+	again, finalizedAgain := holder.Finalize(id.NewPrincipal("other-user@example.com"), "other-client")
 	assert.False(t, finalizedAgain, "once finalized, subsequent attempts must be ignored")
 	assert.Equal(t, expected, again, "subsequent finalization attempts must return the original final context")
 
@@ -238,8 +240,8 @@ func TestNewSecurityContext_NormalizesAndCompletes(t *testing.T) {
 
 	t.Run("normalizes actor and retains a distinct calling peer", func(t *testing.T) {
 		t.Parallel()
-		sc := NewSecurityContext(capture, "  user@example.com  ", "peer@example.com")
-		assert.Equal(t, "user@example.com", sc.Actor)
+		sc := NewSecurityContext(capture, id.NewPrincipal("  user@example.com  "), "peer@example.com")
+		assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 		assert.Equal(t, "peer@example.com", sc.CallingPeer)
 		assert.Equal(t, capture.TraceID, sc.TraceID)
 		assert.Equal(t, capture.ClientIP, sc.ClientIP)
@@ -249,22 +251,22 @@ func TestNewSecurityContext_NormalizesAndCompletes(t *testing.T) {
 
 	t.Run("oversized actor falls back to anonymous", func(t *testing.T) {
 		t.Parallel()
-		sc := NewSecurityContext(capture, strings.Repeat("a", MaxActorRunes+1), "")
-		assert.Equal(t, AnonymousActor, sc.Actor)
+		sc := NewSecurityContext(capture, id.NewPrincipal(strings.Repeat("a", MaxActorRunes+1)), "")
+		assert.Equal(t, id.NewPrincipal(AnonymousActor), sc.Actor)
 		assert.Empty(t, sc.CallingPeer)
 	})
 
 	t.Run("calling peer equal to actor collapses to empty", func(t *testing.T) {
 		t.Parallel()
-		sc := NewSecurityContext(capture, "same@example.com", "same@example.com")
-		assert.Equal(t, "same@example.com", sc.Actor)
+		sc := NewSecurityContext(capture, id.NewPrincipal("same@example.com"), "same@example.com")
+		assert.Equal(t, id.NewPrincipal("same@example.com"), sc.Actor)
 		assert.Empty(t, sc.CallingPeer)
 	})
 
 	t.Run("oversized user agent is truncated", func(t *testing.T) {
 		t.Parallel()
 		oversized := strings.Repeat("u", MaxUserAgentByte+50)
-		sc := NewSecurityContext(TransportCapture{UserAgent: oversized}, "actor", "")
+		sc := NewSecurityContext(TransportCapture{UserAgent: oversized}, id.NewPrincipal("actor"), "")
 		assert.LessOrEqual(t, len(sc.UserAgent), MaxUserAgentByte)
 	})
 }

@@ -74,6 +74,56 @@ func TestService_Resolve_CacheHit(t *testing.T) {
 	assert.Equal(t, 0, fetcher.calls, "should not fetch when cache hit")
 }
 
+func TestService_Resolve_PrivateUseRedirectURIAllowlisted(t *testing.T) {
+	agent := testAgent(id.NewAgentID())
+	agent.RedirectURIs = []string{"github-app://oauth/callback"}
+	fetcher := &mockFetcher{result: &ports.CIMDFetchResult{
+		Body:         []byte(`{"client_id":"https://agent.example.com/client","client_name":"Test Agent","redirect_uris":["github-app://oauth/callback","http://127.0.0.1/callback"]}`),
+		CacheControl: "max-age=300",
+	}}
+	svc := NewService(fetcher, mustNewCIMDCache(t, 60*time.Second, time.Hour), nil, slog.Default())
+	for range 2 {
+		doc, err := svc.Resolve(context.Background(), fetchURL, agent)
+		require.NoError(t, err)
+		assert.Equal(t, "github-app://oauth/callback", doc.RedirectURIs[0])
+	}
+	assert.Equal(t, 1, fetcher.calls, "a validated document must be cached")
+}
+
+func TestService_Resolve_PrivateUseRedirectURINotAllowlisted(t *testing.T) {
+	agent := testAgent(id.NewAgentID())
+	fetcher := &mockFetcher{result: &ports.CIMDFetchResult{
+		Body:         []byte(`{"client_id":"https://agent.example.com/client","client_name":"Test Agent","redirect_uris":["github-app://oauth/callback","http://127.0.0.1/callback"]}`),
+		CacheControl: "max-age=300",
+	}}
+	var logs bytes.Buffer
+	svc := NewService(fetcher, mustNewCIMDCache(t, 60*time.Second, time.Hour), nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	for range 2 {
+		_, err := svc.Resolve(context.Background(), fetchURL, agent)
+		require.ErrorContains(t, err, "redirect_uris[0]")
+	}
+	assert.Equal(t, 2, fetcher.calls, "a disallowed document must not be cached")
+	assert.Contains(t, logs.String(), "cimd_document_invalid")
+}
+
+func TestService_Resolve_CacheHitRechecksAgentAllowlist(t *testing.T) {
+	cache := mustNewCIMDCache(t, 60*time.Second, time.Hour)
+	cache.Set(fetchURL, &ClientIDMetadataDocument{
+		ClientID:     fetchURL,
+		RedirectURIs: []string{"github-app://oauth/callback", "http://127.0.0.1/callback"},
+	}, CacheHeaders{}, time.Now())
+	fetcher := &mockFetcher{}
+	svc := NewService(fetcher, cache, nil, slog.Default())
+	agent := testAgent(id.NewAgentID())
+	_, err := svc.Resolve(context.Background(), fetchURL, agent)
+	require.ErrorContains(t, err, "redirect_uris[0]")
+	agent.RedirectURIs = []string{"github-app://oauth/callback"}
+	doc, err := svc.Resolve(context.Background(), fetchURL, agent)
+	require.NoError(t, err)
+	assert.Equal(t, "github-app://oauth/callback", doc.RedirectURIs[0])
+	assert.Equal(t, 0, fetcher.calls, "cache hit must not refetch after Agent change")
+}
+
 func TestService_Resolve_FetchError(t *testing.T) {
 	agentID := id.MustParseAgentID("00000000-0000-0000-0000-000000000001")
 	agent := testAgent(agentID)

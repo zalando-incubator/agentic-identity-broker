@@ -8,6 +8,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwa"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 )
 
 // RFC 8693 parameter and type identifiers reused from the token-exchange bounded context so
@@ -25,20 +26,11 @@ const (
 	BearerTokenType = tokenexchange.BearerTokenType
 )
 
-// approvedAlgorithms is the broker-approved asymmetric signature algorithm set for signed
-// impersonation credentials (CR-007). none and all symmetric (HS*) algorithms are always
-// rejected; a trusted issuer's allowed_algorithms must be a non-empty subset of this set.
-var approvedAlgorithms = map[jwa.SignatureAlgorithm]struct{}{
-	jwa.RS256(): {}, jwa.RS384(): {}, jwa.RS512(): {},
-	jwa.PS256(): {}, jwa.PS384(): {}, jwa.PS512(): {},
-	jwa.ES256(): {}, jwa.ES384(): {}, jwa.ES512(): {},
-	jwa.EdDSA(): {},
-}
-
 // isApprovedAlgorithm reports whether alg is in the broker-approved asymmetric set (CR-007).
+// none and all symmetric (HS*) algorithms are always rejected; a trusted issuer's
+// allowed_algorithms must be a non-empty subset of this set.
 func isApprovedAlgorithm(alg jwa.SignatureAlgorithm) bool {
-	_, ok := approvedAlgorithms[alg]
-	return ok
+	return trustanchor.IsApprovedAlgorithm(alg.String())
 }
 
 // IsApprovedAlgorithm reports whether the named algorithm is approved (CR-007). Config supplies

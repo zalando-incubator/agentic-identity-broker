@@ -3,6 +3,7 @@ package id
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
@@ -316,5 +317,13 @@ func TestGolden_JSONOutputIdenticalToStringBased(t *testing.T) {
 
 	if string(typedJSON) != string(stringJSON) {
 		t.Fatalf("JSON output mismatch:\n  typed:  %s\n  string: %s", typedJSON, stringJSON)
+	}
+}
+
+func TestPrincipal_LogValue(t *testing.T) {
+	var p slog.LogValuer = NewPrincipal("user@example.com")
+	v := p.LogValue()
+	if v.Kind() != slog.KindString || v.String() != "user@example.com" {
+		t.Fatalf("Principal LogValue() = %v (%s), want string %q", v, v.Kind(), "user@example.com")
 	}
 }

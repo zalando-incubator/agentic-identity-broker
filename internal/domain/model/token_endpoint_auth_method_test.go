@@ -16,8 +16,6 @@ func TestTokenEndpointAuthMethod_Validate(t *testing.T) {
 		{"absent method is valid", "", false},
 		{"none is valid", TokenEndpointAuthMethodNone, false},
 		{"private key JWT is valid", TokenEndpointAuthMethod("private_key_jwt"), false},
-		{"client secret basic is invalid", "client_secret_basic", true},
-		{"client secret post is invalid", "client_secret_post", true},
 		{"case variant is invalid", "NONE", true},
 		{"whitespace variant is invalid", "none ", true},
 		{"unknown value is invalid", "invalid", true},

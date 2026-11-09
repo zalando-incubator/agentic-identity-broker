@@ -21,6 +21,9 @@ There is no Prometheus registry, no `/metrics` endpoint, and no `/health` counte
 - Unit `"{refresh}"`. Each instrument has a description string.
 - Exactly one attribute per instrument, so cardinality is constant. `service_id`, `session_id`, and
   principal are **never** metric attributes.
+  *Superseded by [053 User Story 4](../../053-session-auto-refresh/spec.md): the triggered,
+  refreshed, and failed counters also carry `service_id`, and the failed counters carry
+  `failure_detail`. `session_id` and principal remain excluded.*
 - Not counted: deduplicated submissions (key already in flight), submissions after `Close`, and any
   dry-run outcome.
 - Instruments are created once per constructor. They are not created per request.

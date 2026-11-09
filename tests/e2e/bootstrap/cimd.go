@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	adaptercmd "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/cimd"
 	httpAdapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/outboundhttp"
 	brokerapp "github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
-	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -53,22 +53,27 @@ func NewCIMDTestFetcher(server *httptest.Server, fakeHostname string, maxRespons
 // NewCIMDTestFetcherFromClient builds a CIMDFetcher from a pre-configured *http.Client.
 // Use with CIMDTestHTTPClient when custom client configuration is needed (e.g., Timeout).
 func NewCIMDTestFetcherFromClient(client *http.Client, maxResponseBytes int64) (ports.CIMDFetcher, error) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	if err != nil {
 		return nil, err
 	}
-	return adaptercmd.NewFetcherWithClient(client, bl, maxResponseBytes), nil
+	return outboundhttp.NewFetcherWithClient(client, bl, maxResponseBytes), nil
 }
 
 // NewCIMDEndUserTestServer creates a production-built end-user server for CIMD tests.
 // It preserves a configured HTTPS public URL and starts a TLS test server for outbound
 // CIMD-client scenarios. Other CIMD tests keep the existing HTTP URL-alignment behavior.
 func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetcher ports.CIMDFetcher, logger *slog.Logger) (*TestServer, error) {
+	return NewCIMDEndUserTestServerWithFetchers(storage, sf, cimdFetcher, nil, logger)
+}
+
+// NewCIMDEndUserTestServerWithFetchers creates a CIMD test server with independent document and key-set fetchers.
+func NewCIMDEndUserTestServerWithFetchers(storage interface{}, sf *ServerFactory, documentFetcher, keySetFetcher ports.CIMDFetcher, logger *slog.Logger) (*TestServer, error) {
 	if sf == nil || sf.config == nil {
 		return nil, fmt.Errorf("CIMD server factory config is required")
 	}
 	if _, ok := cimdHTTPSOrigin(sf.config.Server.EndUser.PublicURL); ok {
-		appInstance, err := sf.BuildAppWithCIMDFetcher(storage, cimdFetcher)
+		appInstance, err := sf.BuildAppWithCIMDFetchers(storage, documentFetcher, keySetFetcher)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build CIMD HTTPS app: %w", err)
 		}
@@ -85,7 +90,7 @@ func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetche
 	}
 
 	sf.config.Server.EndUser.PublicURL = "http://" + listener.Addr().String()
-	appInstance, err := sf.BuildAppWithCIMDFetcher(storage, cimdFetcher)
+	appInstance, err := sf.BuildAppWithCIMDFetchers(storage, documentFetcher, keySetFetcher)
 	if err != nil {
 		_ = listener.Close()
 		return nil, fmt.Errorf("failed to build CIMD app: %w", err)

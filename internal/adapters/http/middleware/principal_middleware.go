@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -65,14 +66,14 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					result, err := authenticator.Authenticate(r.Context(), jwtHeaderValue)
 					if err != nil {
 						if errors.Is(err, domjwtauth.ErrJWKSUnavailable) {
-							logger.Error("JWKS endpoint unavailable (503 SERVICE UNAVAILABLE)",
+							logger.ErrorContext(r.Context(), "JWKS endpoint unavailable (503 SERVICE UNAVAILABLE)",
 								"error", err.Error(),
 								"jwt_header", jwtHeaderName,
 								"remote_addr", r.RemoteAddr,
 								"path", r.URL.Path)
 							writeErrorJSON(w, http.StatusServiceUnavailable, mapJWTError(err))
 						} else {
-							logger.Warn("JWT authentication failed (401 REJECT)",
+							logger.WarnContext(r.Context(), "JWT authentication failed (401 REJECT)",
 								"error", err.Error(),
 								"jwt_header", jwtHeaderName,
 								"remote_addr", r.RemoteAddr,
@@ -85,7 +86,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					// Validate principal length
 					if len(result.Principal) > maxPrincipalLength {
 						err := principal.PrincipalTooLongError(len(result.Principal), maxPrincipalLength)
-						logger.Warn("JWT principal exceeds maximum length",
+						logger.WarnContext(r.Context(), "JWT principal exceeds maximum length",
 							"length", len(result.Principal),
 							"max_length", maxPrincipalLength,
 							"remote_addr", r.RemoteAddr,
@@ -111,7 +112,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					ctx = principal.WithProfile(ctx, profile)
 					r = r.WithContext(ctx)
 
-					logger.Debug("JWT principal extracted",
+					logger.DebugContext(r.Context(), "JWT principal extracted",
 						"jwt_header", jwtHeaderName,
 						"principal", result.Principal,
 						"has_display_name", result.DisplayName != nil,
@@ -125,7 +126,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 				}
 				// JWT configured but header absent — fail closed, no fallback to plain header
 				missingErr := principal.NewMissingPrincipalError(jwtHeaderName)
-				logger.Warn("JWT authentication configured but JWT header absent (401 REJECT)",
+				logger.WarnContext(r.Context(), "JWT authentication configured but JWT header absent (401 REJECT)",
 					"header", jwtHeaderName,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
@@ -134,12 +135,11 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 			}
 
 			// Plain header extraction path (original behavior)
-			principalValue := r.Header.Get(headerName)
-			principalValue = strings.TrimSpace(principalValue)
+			principalValue := id.NewPrincipal(strings.TrimSpace(r.Header.Get(headerName)))
 
 			if principalValue == "" {
 				err := principal.NewMissingPrincipalError(headerName)
-				logger.Warn("Missing or empty principal (401 REJECT)",
+				logger.WarnContext(r.Context(), "Missing or empty principal (401 REJECT)",
 					"header", headerName,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
@@ -149,7 +149,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 
 			if len(principalValue) > maxPrincipalLength {
 				err := principal.PrincipalTooLongError(len(principalValue), maxPrincipalLength)
-				logger.Warn("Principal exceeds maximum length",
+				logger.WarnContext(r.Context(), "Principal exceeds maximum length",
 					"header", headerName,
 					"length", len(principalValue),
 					"max_length", maxPrincipalLength,
@@ -165,7 +165,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 			ctx = principal.WithProfile(ctx, profile)
 			r = r.WithContext(ctx)
 
-			logger.Debug("Principal extracted",
+			logger.DebugContext(r.Context(), "Principal extracted",
 				"header", headerName,
 				"principal", principalValue,
 				"remote_addr", r.RemoteAddr,
@@ -213,7 +213,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 				if jwtHeaderValue != "" {
 					result, err := authenticator.Authenticate(r.Context(), jwtHeaderValue)
 					if err != nil {
-						logger.Debug("Optional JWT authentication failed, continuing without principal",
+						logger.DebugContext(r.Context(), "Optional JWT authentication failed, continuing without principal",
 							"error", err.Error(),
 							"jwt_header", jwtHeaderName,
 							"remote_addr", r.RemoteAddr,
@@ -239,7 +239,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 						ctx = principal.WithProfile(ctx, profile)
 						r = r.WithContext(ctx)
 
-						logger.Debug("Optional JWT principal extracted",
+						logger.DebugContext(r.Context(), "Optional JWT principal extracted",
 							"jwt_header", jwtHeaderName,
 							"principal", result.Principal,
 							"remote_addr", r.RemoteAddr,
@@ -255,8 +255,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 			}
 
 			// Plain header extraction path
-			principalValue := r.Header.Get(headerName)
-			principalValue = strings.TrimSpace(principalValue)
+			principalValue := id.NewPrincipal(strings.TrimSpace(r.Header.Get(headerName)))
 
 			if principalValue != "" && len(principalValue) <= maxPrincipalLength {
 				ctx := principal.WithPrincipal(r.Context(), principalValue)
@@ -264,13 +263,13 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 				ctx = principal.WithProfile(ctx, profile)
 				r = r.WithContext(ctx)
 
-				logger.Debug("Optional principal extracted",
+				logger.DebugContext(r.Context(), "Optional principal extracted",
 					"header", headerName,
 					"principal", principalValue,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
 			} else if principalValue != "" && len(principalValue) > maxPrincipalLength {
-				logger.Debug("Optional principal ignored (exceeds max length)",
+				logger.DebugContext(r.Context(), "Optional principal ignored (exceeds max length)",
 					"header", headerName,
 					"length", len(principalValue),
 					"max_length", maxPrincipalLength,

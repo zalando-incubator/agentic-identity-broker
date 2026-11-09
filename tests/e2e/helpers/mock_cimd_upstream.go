@@ -47,6 +47,15 @@ func WithCIMDUpstreamHTTPClient(client *http.Client) CIMDUpstreamOption {
 	}
 }
 
+// WithPublicClientMode requires the broker's keyless CIMD public document and
+// rejects token-endpoint client authentication.
+func WithPublicClientMode() CIMDUpstreamOption {
+	return func(upstream *MockCIMDUpstream) {
+		upstream.publicClientMode = true
+		upstream.publicRefreshTokens = make(map[[sha256.Size]byte]string)
+	}
+}
+
 // CIMDAuthorizationRequestObservation is the safe subset of an authorization
 // request that a test may inspect. It never contains a code or PKCE value.
 type CIMDAuthorizationRequestObservation struct {
@@ -104,6 +113,7 @@ type cachedCIMDClient struct {
 	redirectURIs map[string]struct{}
 	keys         jwk.Set
 	keyIDs       []string
+	publicClient bool
 }
 
 type cimdPKCESession struct {
@@ -113,19 +123,20 @@ type cimdPKCESession struct {
 	expiresAt   time.Time
 }
 
-// MockCIMDUpstream is a per-test OAuth2 authorization server double for a
-// broker that is a private_key_jwt CIMD client. It retrieves the broker's
-// public metadata and JWKS over HTTP, then retains only the current public
-// verification keys until RefreshClientMetadata is called.
+// MockCIMDUpstream is an isolated OAuth2 provider double for both CIMD
+// authentication modes. Confidential mode retrieves metadata and JWKS;
+// public mode requires the keyless document and never retrieves JWKS.
 type MockCIMDUpstream struct {
 	Server *httptest.Server
 
 	brokerHTTPClient *http.Client
+	publicClientMode bool
 
 	mu                    sync.RWMutex
 	clients               map[string]*cachedCIMDClient
 	codes                 map[[sha256.Size]byte]cimdPKCESession
 	usedAssertionIDs      map[[sha256.Size]byte]time.Time
+	publicRefreshTokens   map[[sha256.Size]byte]string
 	authorizationRequests []CIMDAuthorizationRequestObservation
 	tokenRequests         []CIMDTokenRequestObservation
 	metadataFetchCount    int
@@ -133,8 +144,8 @@ type MockCIMDUpstream struct {
 	tokenError            string
 }
 
-// NewMockCIMDUpstream starts a conformant, isolated private_key_jwt provider
-// double. Call Close when the test finishes.
+// NewMockCIMDUpstream starts an isolated CIMD provider double. Call Close when
+// the test finishes.
 func NewMockCIMDUpstream(options ...CIMDUpstreamOption) *MockCIMDUpstream {
 	upstream := &MockCIMDUpstream{
 		brokerHTTPClient: &http.Client{Timeout: 5 * time.Second},
@@ -353,20 +364,30 @@ func (m *MockCIMDUpstream) handleToken(w http.ResponseWriter, r *http.Request) {
 	assertions := r.PostForm["client_assertion"]
 	observation.ClientAssertionTypeCount = len(assertionTypes)
 	observation.ClientAssertionCount = len(assertions)
-	if len(assertionTypes) != 1 || len(assertions) != 1 || assertions[0] == "" || assertionTypes[0] != cimdClientAssertionType {
-		writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
-		return
-	}
-	observation.JWTBearerAssertionType = true
+	if client.publicClient {
+		if _, present := r.PostForm["client_assertion_type"]; present {
+			writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
+		if _, present := r.PostForm["client_assertion"]; present {
+			writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
+	} else {
+		if len(assertionTypes) != 1 || len(assertions) != 1 || assertions[0] == "" || assertionTypes[0] != cimdClientAssertionType {
+			writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
+		observation.JWTBearerAssertionType = true
 
-	keyID, err := m.validateClientAssertion(assertions[0], client, m.tokenAudience(r))
-	if err != nil {
-		writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
-		return
+		keyID, err := m.validateClientAssertion(assertions[0], client, m.tokenAudience(r))
+		if err != nil {
+			writeCIMDOAuthError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
+		observation.AssertionKeyID = keyID
+		observation.AssertionValidated = true
 	}
-	observation.AssertionKeyID = keyID
-	observation.AssertionValidated = true
-
 	switch grantType {
 	case "authorization_code":
 		code, codeOK := exactlyOneNonEmpty(r.PostForm, "code")
@@ -389,6 +410,34 @@ func (m *MockCIMDUpstream) handleToken(w http.ResponseWriter, r *http.Request) {
 	m.mu.RUnlock()
 	if tokenError != "" {
 		writeCIMDOAuthError(w, http.StatusBadRequest, tokenError)
+		return
+	}
+
+	if client.publicClient {
+		accessToken, accessErr := randomCIMDOpaqueValue()
+		refreshToken, refreshErr := randomCIMDOpaqueValue()
+		if accessErr != nil || refreshErr != nil {
+			writeCIMDOAuthError(w, http.StatusInternalServerError, "server_error")
+			return
+		}
+		m.mu.Lock()
+		if grantType == "refresh_token" {
+			oldHash := sha256.Sum256([]byte(r.PostForm.Get("refresh_token")))
+			if m.publicRefreshTokens[oldHash] != clientID {
+				m.mu.Unlock()
+				writeCIMDOAuthError(w, http.StatusBadRequest, "invalid_grant")
+				return
+			}
+			delete(m.publicRefreshTokens, oldHash)
+		}
+		m.publicRefreshTokens[sha256.Sum256([]byte(refreshToken))] = clientID
+		m.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": accessToken, "refresh_token": refreshToken,
+			"token_type": "Bearer", "expires_in": 3600,
+		})
 		return
 	}
 
@@ -435,20 +484,46 @@ func (m *MockCIMDUpstream) refreshClientMetadata(ctx context.Context, clientID s
 	if err := json.Unmarshal(metadataBody, &metadata); err != nil {
 		return fmt.Errorf("client metadata is not valid JSON")
 	}
-	if err := validateCIMDClientMetadata(metadata, clientID); err != nil {
+	if m.publicClientMode {
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(metadataBody, &members); err != nil || len(members) != 5 {
+			return fmt.Errorf("client metadata is not a five-member public document")
+		}
+		for _, name := range []string{"client_id", "redirect_uris", "grant_types", "response_types", "token_endpoint_auth_method"} {
+			if _, present := members[name]; !present {
+				return fmt.Errorf("client metadata is missing a public document member")
+			}
+		}
+		if metadata.ClientID != clientID || metadata.TokenEndpointAuthMethod != "none" || len(metadata.RedirectURIs) != 1 ||
+			len(metadata.GrantTypes) != 2 || !containsExact(metadata.GrantTypes, "authorization_code") || !containsExact(metadata.GrantTypes, "refresh_token") ||
+			len(metadata.ResponseTypes) != 1 || metadata.ResponseTypes[0] != "code" {
+			return fmt.Errorf("client metadata does not declare keyless public authentication")
+		}
+		serviceID := metadataURL.Path[strings.LastIndex(metadataURL.Path, "/")+1:]
+		baseURL := strings.TrimSuffix(clientID, "/.well-known/oauth-client/"+serviceID)
+		if metadata.RedirectURIs[0] != baseURL+"/api/third-party/"+serviceID+"/oauth2/callback" {
+			return fmt.Errorf("client metadata callback does not match its hosted identifier")
+		}
+	} else if err := validateCIMDClientMetadata(metadata, clientID); err != nil {
 		return err
+	}
+	if !m.publicClientMode {
+		m.mu.Lock()
+		m.jwksFetchCount++
+		m.mu.Unlock()
 	}
 
-	m.mu.Lock()
-	m.jwksFetchCount++
-	m.mu.Unlock()
-	jwksBody, err := m.getJSON(ctx, metadata.JWKSURI)
-	if err != nil {
-		return fmt.Errorf("client JWKS request failed: %w", err)
-	}
-	keySet, keyIDs, err := parseCIMDPublicJWKS(jwksBody)
-	if err != nil {
-		return err
+	var keySet jwk.Set
+	var keyIDs []string
+	if !m.publicClientMode {
+		jwksBody, err := m.getJSON(ctx, metadata.JWKSURI)
+		if err != nil {
+			return fmt.Errorf("client JWKS request failed: %w", err)
+		}
+		keySet, keyIDs, err = parseCIMDPublicJWKS(jwksBody)
+		if err != nil {
+			return err
+		}
 	}
 
 	redirectURIs := make(map[string]struct{}, len(metadata.RedirectURIs))
@@ -460,6 +535,7 @@ func (m *MockCIMDUpstream) refreshClientMetadata(ctx context.Context, clientID s
 		redirectURIs: redirectURIs,
 		keys:         keySet,
 		keyIDs:       keyIDs,
+		publicClient: m.publicClientMode,
 	}
 
 	m.mu.Lock()
@@ -676,7 +752,10 @@ func isFormPost(r *http.Request) bool {
 }
 
 func hasSecretAuthentication(r *http.Request) bool {
-	if r.Header.Get("Authorization") != "" || r.Header.Get("Proxy-Authorization") != "" {
+	if _, present := r.Header["Authorization"]; present {
+		return true
+	}
+	if _, present := r.Header["Proxy-Authorization"]; present {
 		return true
 	}
 	for name := range r.Header {

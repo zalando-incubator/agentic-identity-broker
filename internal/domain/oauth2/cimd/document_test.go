@@ -1,12 +1,29 @@
 package cimd
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"testing"
 
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func publicTestJWKS(t *testing.T) json.RawMessage {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	key, err := jwk.Import[jwk.Key](&privateKey.PublicKey)
+	require.NoError(t, err)
+	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
+	set := jwk.NewSet()
+	require.NoError(t, set.AddKey(key))
+	encoded, err := json.Marshal(set)
+	require.NoError(t, err)
+	return encoded
+}
 
 func validDoc(overrides map[string]any) []byte {
 	doc := map[string]any{
@@ -34,6 +51,24 @@ func TestParseDocument(t *testing.T) {
 		assert.Equal(t, fetchURL, doc.ClientID)
 		assert.Equal(t, "Test Agent", doc.ClientName)
 		assert.Equal(t, []string{"https://agent.example.com/callback"}, doc.RedirectURIs)
+	})
+
+	t.Run("accepts published GitHub Copilot Desktop document structurally", func(t *testing.T) {
+		const clientID = "https://github.com/copilot/desktop/client-metadata.json"
+		data := []byte(`{"client_id":"https://github.com/copilot/desktop/client-metadata.json","client_name":"GitHub Copilot","client_uri":"https://github.com/github/app","application_type":"native","grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:device_code"],"response_types":["code"],"token_endpoint_auth_method":"none","redirect_uris":["github-app://oauth/callback","http://127.0.0.1/","http://127.0.0.1/callback"]}`)
+		doc, err := ParseDocument(data, clientID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"github-app://oauth/callback", "http://127.0.0.1/", "http://127.0.0.1/callback"}, doc.RedirectURIs)
+	})
+
+	t.Run("rejects executable redirect scheme", func(t *testing.T) {
+		_, err := ParseDocument(validDoc(map[string]any{"redirect_uris": []string{"javascript://agent.example.com/callback"}}), fetchURL, nil)
+		require.ErrorContains(t, err, "not a valid redirect URI")
+	})
+
+	t.Run("rejects mixed-case private-use scheme", func(t *testing.T) {
+		_, err := ParseDocument(validDoc(map[string]any{"redirect_uris": []string{"GitHub-App://oauth/callback"}}), fetchURL, nil)
+		require.ErrorContains(t, err, "not a valid redirect URI")
 	})
 
 	t.Run("rejects malformed JSON", func(t *testing.T) {
@@ -88,11 +123,125 @@ func TestParseDocument(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("rejects private_key_jwt auth method", func(t *testing.T) {
-		data := validDoc(map[string]any{"token_endpoint_auth_method": "private_key_jwt"})
-		_, err := ParseDocument(data, fetchURL, nil)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "private_key_jwt")
+	t.Run("accepts private_key_jwt with an HTTPS jwks_uri", func(t *testing.T) {
+		data := validDoc(map[string]any{
+			"token_endpoint_auth_method": "private_key_jwt",
+			"jwks_uri":                   "https://agent.example.com/keys/jwks.json",
+		})
+		doc, err := ParseDocument(data, fetchURL, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "RS256", doc.SigningAlg)
+		assert.Equal(t, "https://agent.example.com/keys/jwks.json", doc.JWKSURI)
+	})
+
+	t.Run("accepts private_key_jwt with an inline public jwks", func(t *testing.T) {
+		data := validDoc(map[string]any{
+			"token_endpoint_auth_method": "private_key_jwt",
+			"jwks":                       publicTestJWKS(t),
+		})
+		doc, err := ParseDocument(data, fetchURL, nil)
+		require.NoError(t, err)
+		require.NotNil(t, doc.KeySet)
+		assert.Equal(t, 1, doc.KeySet.Len())
+	})
+
+	t.Run("requires exactly one key source", func(t *testing.T) {
+		for _, test := range []struct {
+			name      string
+			overrides map[string]any
+		}{
+			{name: "missing", overrides: map[string]any{"token_endpoint_auth_method": "private_key_jwt"}},
+			{name: "both", overrides: map[string]any{
+				"token_endpoint_auth_method": "private_key_jwt",
+				"jwks_uri":                   "https://agent.example.com/keys/jwks.json",
+				"jwks":                       publicTestJWKS(t),
+			}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				_, err := ParseDocument(validDoc(test.overrides), fetchURL, nil)
+				require.Error(t, err)
+			})
+		}
+	})
+
+	t.Run("validates jwks_uri using CIMD URL rules", func(t *testing.T) {
+		for _, rawURL := range []string{
+			"http://agent.example.com/keys.json",
+			"https://agent.example.com:8443/keys.json",
+			"https://user:pass@agent.example.com/keys.json",
+			"https://agent.example.com/keys.json#fragment",
+			"https://agent.example.com/a/../keys.json",
+		} {
+			t.Run(rawURL, func(t *testing.T) {
+				data := validDoc(map[string]any{
+					"token_endpoint_auth_method": "private_key_jwt",
+					"jwks_uri":                   rawURL,
+				})
+				_, err := ParseDocument(data, fetchURL, nil)
+				require.Error(t, err)
+			})
+		}
+	})
+
+	t.Run("accepts only RS256 and ES256 signing algorithms", func(t *testing.T) {
+		for _, algorithm := range []string{"none", "HS256", "PS256"} {
+			data := validDoc(map[string]any{
+				"token_endpoint_auth_method":      "private_key_jwt",
+				"token_endpoint_auth_signing_alg": algorithm,
+				"jwks_uri":                        "https://agent.example.com/keys/jwks.json",
+			})
+			_, err := ParseDocument(data, fetchURL, nil)
+			require.Error(t, err, "algorithm %s must be rejected", algorithm)
+		}
+		for _, algorithm := range []string{"RS256", "ES256"} {
+			data := validDoc(map[string]any{
+				"token_endpoint_auth_method":      "private_key_jwt",
+				"token_endpoint_auth_signing_alg": algorithm,
+				"jwks_uri":                        "https://agent.example.com/keys/jwks.json",
+			})
+			doc, err := ParseDocument(data, fetchURL, nil)
+			require.NoError(t, err)
+			assert.Equal(t, algorithm, doc.SigningAlg)
+		}
+	})
+
+	t.Run("rejects inline jwks containing private key material", func(t *testing.T) {
+		for _, member := range []string{"d", "p", "q", "dp", "dq", "qi", "k"} {
+			t.Run(member, func(t *testing.T) {
+				var set map[string][]map[string]any
+				require.NoError(t, json.Unmarshal(publicTestJWKS(t), &set))
+				set["keys"][0][member] = "AQAB"
+				data := validDoc(map[string]any{
+					"token_endpoint_auth_method": "private_key_jwt",
+					"jwks":                       set,
+				})
+				_, err := ParseDocument(data, fetchURL, nil)
+				require.Error(t, err, "private JWK member %s must be rejected", member)
+			})
+		}
+	})
+
+	t.Run("ignores the plural method field for selection", func(t *testing.T) {
+		data := validDoc(map[string]any{
+			"token_endpoint_auth_method":            "private_key_jwt",
+			"token_endpoint_auth_methods_supported": []string{"none", "private_key_jwt"},
+			"jwks_uri":                              "https://agent.example.com/keys/jwks.json",
+		})
+		doc, err := ParseDocument(data, fetchURL, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "private_key_jwt", doc.AuthMethod)
+	})
+
+	t.Run("ignores key sources for none clients", func(t *testing.T) {
+		data := validDoc(map[string]any{
+			"token_endpoint_auth_method": "none",
+			"jwks_uri":                   "not a valid URL",
+			"jwks":                       []byte("not a key set"),
+		})
+		doc, err := ParseDocument(data, fetchURL, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "none", doc.AuthMethod)
+		assert.Nil(t, doc.KeySet)
 	})
 
 	t.Run("rejects unknown auth method", func(t *testing.T) {
@@ -193,4 +342,31 @@ func TestParseDocument(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "HTTPS")
 	})
+}
+
+func TestClientIDMetadataDocument_ValidatePrivateUseRedirectURIs(t *testing.T) {
+	const callback = "github-app://oauth/callback"
+	tests := []struct {
+		name      string
+		redirects []string
+		agent     []string
+		wantErr   string
+	}{
+		{"allowlisted entry", []string{callback, "http://127.0.0.1/callback"}, []string{callback}, ""},
+		{"missing Agent list", []string{callback}, nil, `redirect_uris[0]: private-use redirect_uri "github-app://oauth/callback" is not listed in the agent's redirect_uris`},
+		{"second private-use entry missing", []string{callback, "com.example.app:/oauth2redirect/example-provider"}, []string{callback}, "redirect_uris[1]"},
+		{"web and loopback need no Agent entry", []string{"https://agent.example.com/callback", "http://127.0.0.1/callback"}, nil, ""},
+		{"trailing slash is not equal", []string{callback}, []string{callback + "/"}, "redirect_uris[0]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := &ClientIDMetadataDocument{RedirectURIs: tt.redirects}
+			err := document.ValidatePrivateUseRedirectURIs(tt.agent)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tt.wantErr)
+			}
+		})
+	}
 }

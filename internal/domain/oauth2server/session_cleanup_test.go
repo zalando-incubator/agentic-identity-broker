@@ -41,7 +41,16 @@ func (r cleanupRefreshRepository) DeleteExpired(ctx context.Context) (int, error
 	return r.deleteExpired(ctx)
 }
 
-func assertCleanupCounts(t *testing.T, want [3]int32, counts *[3]atomic.Int32) {
+type cleanupReplayRepository struct {
+	ports.ClientAssertionReplayRepository
+	deleteExpired func(context.Context) (int, error)
+}
+
+func (r cleanupReplayRepository) DeleteExpired(ctx context.Context) (int, error) {
+	return r.deleteExpired(ctx)
+}
+
+func assertCleanupCounts(t *testing.T, want [4]int32, counts *[4]atomic.Int32) {
 	t.Helper()
 	for i, expected := range want {
 		assert.Equal(t, expected, counts[i].Load())
@@ -50,7 +59,7 @@ func assertCleanupCounts(t *testing.T, want [3]int32, counts *[3]atomic.Int32) {
 
 func TestSessionCleanup_StartupAndPeriodicSweeps(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var calls [3]atomic.Int32
+		var calls [4]atomic.Int32
 		deletion := func(index int) func(context.Context) (int, error) {
 			return func(context.Context) (int, error) {
 				calls[index].Add(1)
@@ -61,35 +70,36 @@ func TestSessionCleanup_StartupAndPeriodicSweeps(t *testing.T) {
 			cleanupCodeRepository{deleteExpired: deletion(0)},
 			cleanupPKCERepository{deleteExpired: deletion(1)},
 			cleanupRefreshRepository{deleteExpired: deletion(2)},
+			cleanupReplayRepository{deleteExpired: deletion(3)},
 			slog.Default(),
 		)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		go cleanup.Run(ctx)
 		synctest.Wait()
-		assertCleanupCounts(t, [3]int32{1, 1, 1}, &calls)
+		assertCleanupCounts(t, [4]int32{1, 1, 1, 1}, &calls)
 
 		time.Sleep(time.Minute - time.Nanosecond)
 		synctest.Wait()
-		assertCleanupCounts(t, [3]int32{1, 1, 1}, &calls)
+		assertCleanupCounts(t, [4]int32{1, 1, 1, 1}, &calls)
 		time.Sleep(time.Nanosecond)
 		synctest.Wait()
-		assertCleanupCounts(t, [3]int32{2, 2, 2}, &calls)
+		assertCleanupCounts(t, [4]int32{2, 2, 2, 2}, &calls)
 
 		cancel()
 		synctest.Wait()
 		time.Sleep(2 * time.Minute)
 		synctest.Wait()
-		assertCleanupCounts(t, [3]int32{2, 2, 2}, &calls)
+		assertCleanupCounts(t, [4]int32{2, 2, 2, 2}, &calls)
 	})
 }
 
 func TestSessionCleanup_ContinuesAfterRepositoryFailure(t *testing.T) {
-	for failedRepo, name := range []string{"authorization_codes", "pkce_sessions", "refresh_token_sessions"} {
+	for failedRepo, name := range []string{"authorization_codes", "pkce_sessions", "refresh_token_sessions", "client_assertion_replays"} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var logs bytes.Buffer
-				var successes [3]atomic.Int32
+				var successes [4]atomic.Int32
 				failed := false
 				deletion := func(index int) func(context.Context) (int, error) {
 					return func(context.Context) (int, error) {
@@ -105,13 +115,14 @@ func TestSessionCleanup_ContinuesAfterRepositoryFailure(t *testing.T) {
 					cleanupCodeRepository{deleteExpired: deletion(0)},
 					cleanupPKCERepository{deleteExpired: deletion(1)},
 					cleanupRefreshRepository{deleteExpired: deletion(2)},
+					cleanupReplayRepository{deleteExpired: deletion(3)},
 					slog.New(slog.NewJSONHandler(&logs, nil)),
 				)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				go cleanup.Run(ctx)
 				synctest.Wait()
-				want := [3]int32{1, 1, 1}
+				want := [4]int32{1, 1, 1, 1}
 				want[failedRepo] = 0
 				assertCleanupCounts(t, want, &successes)
 				assert.Contains(t, logs.String(), name)
@@ -146,6 +157,7 @@ func TestSessionCleanup_CancellationStopsInflightDeletion(t *testing.T) {
 			}},
 			cleanupPKCERepository{deleteExpired: unexpectedDeletion},
 			cleanupRefreshRepository{deleteExpired: unexpectedDeletion},
+			cleanupReplayRepository{deleteExpired: unexpectedDeletion},
 			slog.Default(),
 		)
 		ctx, cancel := context.WithCancel(t.Context())

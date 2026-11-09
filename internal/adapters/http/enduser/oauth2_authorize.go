@@ -72,7 +72,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		OriginalURL:         r.URL.String(),
 	}
 
-	decision, err := h.Service.HandleAuthorization(r.Context(), authReq, id.NewPrincipal(principalValue))
+	decision, err := h.Service.HandleAuthorization(r.Context(), authReq, principalValue)
 	if err != nil {
 		if h.Logger != nil {
 			h.Logger.ErrorContext(r.Context(), "authorization_request_failed", "error", err)
@@ -89,7 +89,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			redirectWithError(w, r, authReq.RedirectURI, authReq.State, "server_error", "OAuth2 authorization server not configured")
 			return
 		}
-		h.ProceedHandler.HandleProceed(w, r, decision, authReq, id.NewPrincipal(principalValue))
+		h.ProceedHandler.HandleProceed(w, r, decision, authReq, principalValue)
 
 	case "redirect_to_consent":
 		http.Redirect(w, r, decision.RedirectURL, http.StatusFound)
@@ -99,7 +99,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	default:
 		if h.Logger != nil {
-			h.Logger.Error("unexpected authorization decision action", "action", decision.Action)
+			h.Logger.ErrorContext(r.Context(), "unexpected authorization decision action", "action", decision.Action)
 		}
 		redirectWithError(w, r, authReq.RedirectURI, authReq.State, "server_error", "unexpected authorization decision")
 	}

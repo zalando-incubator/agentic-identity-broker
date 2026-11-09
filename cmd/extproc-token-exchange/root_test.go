@@ -5,11 +5,17 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"testing"
 	"time"
 
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -215,4 +221,59 @@ func TestShutdownTelemetry_LogsShutdownError(t *testing.T) {
 	})
 
 	assert.Contains(t, logBuf.String(), "exporter close failed")
+}
+
+// recvOneProcessor accepts a single ProcessingRequest and answers it.
+type recvOneProcessor struct {
+	extprocv3.UnimplementedExternalProcessorServer
+}
+
+func (recvOneProcessor) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	return stream.Send(&extprocv3.ProcessingResponse{})
+}
+
+// A BUFFERED request body reaches ExtProc as one ProcessingRequest, so the gRPC
+// server must accept every body that authorization.max_body_size allows.
+func TestGRPCServerOptions_AcceptsBufferedBodyUpToMaxBodySize(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxBodySize int
+		bodySize    int
+	}{
+		{name: "body above grpc-go default within max_body_size", maxBodySize: 30 << 20, bodySize: 5 << 20},
+		{name: "default max_body_size keeps grpc-go default limit", maxBodySize: 1 << 20, bodySize: 3 << 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &extprocconfig.Config{}
+			cfg.GRPC.MaxConcurrentStreams = 100
+			cfg.Authorization.MaxBodySize = tt.maxBodySize
+
+			srv := grpc.NewServer(grpcServerOptions(cfg)...)
+			extprocv3.RegisterExternalProcessorServer(srv, recvOneProcessor{})
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			go func() { _ = srv.Serve(listener) }()
+			t.Cleanup(srv.Stop)
+
+			conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close() })
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stream, err := extprocv3.NewExternalProcessorClient(conn).Process(ctx)
+			require.NoError(t, err)
+
+			require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: make([]byte, tt.bodySize), EndOfStream: true},
+				},
+			}))
+			_, err = stream.Recv()
+			require.NoError(t, err, "a %d-byte body within max_body_size=%d must reach ExtProc", tt.bodySize, tt.maxBodySize)
+		})
+	}
 }

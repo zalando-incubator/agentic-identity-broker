@@ -31,7 +31,7 @@ func TestRefreshErrorBodyTimeoutIsNotRetried(t *testing.T) {
 				})
 				ctx := context.Background()
 				start := time.Now()
-				_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+				_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 				requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 				assert.ErrorIs(t, err, context.DeadlineExceeded)
 				assert.NoError(t, ctx.Err())
@@ -52,7 +52,7 @@ func TestRefreshIncompleteErrorResponseIsNotRetried(t *testing.T) {
 					attempts++
 					return &http.Response{StatusCode: status, Body: io.NopCloser(operationFailingReader{cause: io.ErrUnexpectedEOF})}, nil
 				})
-				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 				metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 				assert.Equal(t, status, metadata.StatusCode())
 				assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
@@ -84,7 +84,7 @@ func TestRefreshErrorBodyLimitControlsRetries(t *testing.T) {
 					attempts++
 					return operationTokenResponse(tc.status, body), nil
 				})
-				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 				metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 				assert.Equal(t, tc.status, metadata.StatusCode())
 				assert.Equal(t, tc.wantAttempts, attempts)
@@ -127,7 +127,7 @@ func TestRefreshRetryScheduling(t *testing.T) {
 					ctx, cancel = context.WithTimeout(ctx, tc.budget)
 					defer cancel()
 				}
-				_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+				_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 				requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 				assert.Equal(t, tc.want, attempts)
 				assert.Equal(t, tc.want[len(tc.want)-1], time.Since(start))
@@ -150,7 +150,7 @@ func TestRefreshBackoffCancellationPreservesProviderError(t *testing.T) {
 		defer cancel()
 		finished := make(chan error, 1)
 		go func() {
-			_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+			_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 			finished <- err
 		}()
 		synctest.Wait()
@@ -183,7 +183,7 @@ func TestMalformedRefreshSuccessIsNotRetried(t *testing.T) {
 				}
 				return operationTokenResponse(http.StatusOK, body), nil
 			})
-			_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+			_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 			metadata := requireOperationError(t, err, OperationRefresh, DetailProviderResponseInvalid)
 			assert.Equal(t, http.StatusOK, metadata.StatusCode())
 			assert.Equal(t, 1, attempts)

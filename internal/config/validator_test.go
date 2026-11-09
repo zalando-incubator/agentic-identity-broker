@@ -16,6 +16,7 @@ func validTokenRefreshConfig() ports.TokenRefreshConfig {
 		LookaheadDuration: 5 * time.Minute,
 		BackgroundWorkers: 10,
 		Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: 100},
+		HealthMetrics:     ports.TokenRefreshHealthMetricsConfig{Enabled: true, QueryTimeout: 5 * time.Second},
 	}
 }
 
@@ -992,6 +993,7 @@ func TestValidateTokenRefreshConfig(t *testing.T) {
 				LookaheadDuration: tt.lookahead,
 				BackgroundWorkers: tt.workers,
 				Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: tt.pageSize},
+				HealthMetrics:     validTokenRefreshConfig().HealthMetrics,
 			}
 			err := Validate(cfg)
 			if tt.wantField == "" {
@@ -1020,6 +1022,44 @@ func TestValidateTokenRefreshConfig(t *testing.T) {
 						t.Errorf("worker validation error %q omits pool rationale %q", err, detail)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestValidateTokenRefreshHealthMetricsConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		enabled      bool
+		queryTimeout time.Duration
+		wantErr      bool
+	}{
+		{name: "default", enabled: true, queryTimeout: 5 * time.Second},
+		{name: "disabled with positive timeout", enabled: false, queryTimeout: time.Millisecond},
+		{name: "zero timeout", enabled: true, queryTimeout: 0, wantErr: true},
+		{name: "negative timeout", enabled: false, queryTimeout: -time.Second, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.TokenRefresh.HealthMetrics = ports.TokenRefreshHealthMetricsConfig{Enabled: tt.enabled, QueryTimeout: tt.queryTimeout}
+			err := Validate(cfg)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("valid health_metrics config rejected: %v", err)
+				}
+				return
+			}
+			configErr, ok := err.(*config.ConfigError)
+			if !ok {
+				t.Fatalf("validation error type = %T, want *config.ConfigError: %v", err, err)
+			}
+			if configErr.Field != "token_refresh.health_metrics.query_timeout" {
+				t.Errorf("validation field = %q, want token_refresh.health_metrics.query_timeout", configErr.Field)
+			}
+			if !strings.Contains(err.Error(), "greater than 0") {
+				t.Errorf("validation error %q does not explain bound", err)
 			}
 		})
 	}

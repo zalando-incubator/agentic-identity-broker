@@ -8,10 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
-
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -35,13 +31,9 @@ func NewUserGrantRepository(adapter *Adapter) *UserGrantRepository {
 // The grant ID should be generated before calling this method.
 // Uses ON CONFLICT to implement upsert semantics (one grant per principal-agent pair).
 // Successful writes copy committed ID, timestamps, and defensive nullable validity back to grant.
-func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.create.user_grant")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "CreateUserGrant"),
-	)
+func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.create.user_grant", "CreateUserGrant")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return storage.NewStorageError(
@@ -513,13 +505,9 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 // ListByPrincipal retrieves all active grants for a principal across all agents.
 // Filters expired grants (valid_until < NOW()).
 // Returns empty slice if no active grants exist (not an error).
-func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.list.user_grants_by_principal")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ListByPrincipal"),
-	)
+func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) (_ []storage.UserGrant, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.list.user_grants_by_principal", "ListByPrincipal")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(

@@ -3,7 +3,6 @@ package routing_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -85,6 +86,47 @@ func TestSetupAdminRoutes_RequestSecurity(t *testing.T) {
 	}
 }
 
+func TestCollectionAgentPutSecurity(t *testing.T) {
+	for _, tc := range []struct {
+		name, host, origin, contentType, principal string
+		status                                     int
+	}{
+		{"valid", "admin.example.com:14000", "", "application/json", "operator", http.StatusCreated},
+		{"missing principal", "admin.example.com:14000", "", "application/json", "", http.StatusUnauthorized},
+		{"wrong host", "attacker.example", "", "application/json", "operator", http.StatusForbidden},
+		{"cross origin", "admin.example.com:14000", "https://attacker.example", "application/json", "operator", http.StatusForbidden},
+		{"non JSON", "admin.example.com:14000", "", "text/plain", "operator", http.StatusUnsupportedMediaType},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logger := slog.New(slog.DiscardHandler)
+			router := middleware.RequirePrincipalMiddleware(fixtures.DefaultOAuth2Config().Server.Admin.Authentication, nil, logger)(newAdminRouter(t, "https://admin.example.com:14000"))
+			body := `{"display_name":"Security test agent","description":"Admin request security regression","permission_sets":[{"permission_set_id":"` + fixtures.PlaceholderPermissionSetID.String() + `","requirement_type":"optional"}]}`
+			req := httptest.NewRequest(http.MethodPut, "/api/agents?external_id=registry", strings.NewReader(body))
+			req.Host = tc.host
+			req.Header.Set("Origin", tc.origin)
+			req.Header.Set("Content-Type", tc.contentType)
+			req.Header.Set("X-Remote-User", tc.principal)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			list := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+			list.Host = "admin.example.com:14000"
+			list.Header.Set("X-Remote-User", "operator")
+			result := httptest.NewRecorder()
+			router.ServeHTTP(result, list)
+			require.Equal(t, http.StatusOK, result.Code)
+			var agents []any
+			require.NoError(t, json.NewDecoder(result.Body).Decode(&agents))
+			if tc.status == http.StatusCreated {
+				require.Len(t, agents, 1)
+			} else {
+				require.Empty(t, agents)
+				require.NotContains(t, rec.Body.String(), "permission_sets")
+			}
+		})
+	}
+}
+
 func TestSetupAdminRoutes_RejectsNonJSONWritesAndBodies(t *testing.T) {
 	t.Parallel()
 	router := newAdminRouter(t, "https://admin.example.com:14000")
@@ -124,7 +166,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/cimd-client-keys", strings.NewReader(`{"algorithm":"ES256"}`))
 		req.Host = "admin.example.com:14000"
 		req.Header.Set("Content-Type", "application/json")
-		req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -156,7 +198,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 			if tc.contentType != "" {
 				req.Header.Set("Content-Type", tc.contentType)
 			}
-			req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+			req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusUnsupportedMediaType, rec.Code, rec.Body.String())
@@ -166,7 +208,7 @@ func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/cimd-client-keys/"+keys[0].KID+"/current", nil)
 	req.Host = "admin.example.com:14000"
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(fixtures.AdminPrincipal().String())))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -336,7 +378,7 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 		ServiceScopes: []domainstorage.ServiceScope{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: domainstorage.RequirementTypeOptional}},
 	}))
 	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(storage).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithLogger(slog.New(slog.DiscardHandler)).
 		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {

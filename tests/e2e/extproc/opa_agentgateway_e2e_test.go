@@ -32,6 +32,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -441,19 +442,13 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"deny response should explain that permission-set context was unavailable")
 	})
 
-	// When OPA is enabled, token exchange runs eagerly in the headers phase before the body
-	// is read. If the broker returns error_uri (re-auth required), the URLElicitationRequiredError
-	// is returned as an ImmediateResponse from the headers phase. Because the body has not been
-	// read at that point, the JSON-RPC request id is unknown and the error carries id=null.
-	It("should return URLElicitationRequiredError from headers phase with null id when exchange requires re-auth", NodeTimeout(time.Minute), func(ctx SpecContext) {
+	// Feature 023 User Story 1 Amendment, Scenario 3 (specs/023-extproc-mcp-elicitation/spec.md): OPA mode.
+	It("should return the 403 insufficient_scope challenge from the headers phase when exchange requires re-auth", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		const opaAgentgwReAuthURL = "https://broker.example.com/sessions"
 		mockTokenExchangeSvr.withReAuthErrorURI(opaAgentgwReAuthURL)
 		defer mockTokenExchangeSvr.reset()
 
-		// Send a tools/call for list_repositories (OPA allows) via raw HTTP so we can
-		// inspect the JSON-RPC response body directly (mcp-go may reject custom error codes).
-		// Use a distinct minted JWT so the exchanger cache (populated during BeforeAll
-		// Initialize()) does not return a cached successful exchange for this scenario.
+		// This token is distinct from the cached initialization token.
 		const requestID = 99
 		reqBody := fmt.Sprintf(
 			`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}`,
@@ -462,32 +457,13 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		resp := opaAgentgwPostMCP(ctx, agentgatewayPort, reAuthJWT, reqBody)
 		defer resp.Body.Close() //nolint:errcheck
 
-		Expect(resp.StatusCode).To(Equal(http.StatusOK),
-			"URLElicitationRequiredError must be HTTP 200 (JSON-RPC error over HTTP)")
-
-		var envelope struct {
-			JSONRPC string `json:"jsonrpc"`
-			ID      any    `json:"id"`
-			Error   struct {
-				Code int `json:"code"`
-				Data struct {
-					Elicitations []struct {
-						URL string `json:"url"`
-					} `json:"elicitations"`
-				} `json:"data"`
-			} `json:"error"`
-		}
-		Expect(json.NewDecoder(resp.Body).Decode(&envelope)).To(Succeed())
-
-		Expect(envelope.JSONRPC).To(Equal("2.0"))
-		Expect(envelope.Error.Code).To(Equal(mcp.URL_ELICITATION_REQUIRED),
-			"must use JSON-RPC error code -32042")
-		// id is null because exchange fails in the headers phase before the body is read.
-		Expect(envelope.ID).To(BeNil(),
-			"headers-phase re-auth: JSON-RPC id is unknown (body not yet read)")
-		Expect(envelope.Error.Data.Elicitations).To(HaveLen(1))
-		Expect(envelope.Error.Data.Elicitations[0].URL).To(Equal(opaAgentgwReAuthURL),
-			"elicitation URL must match the error_uri returned by the broker")
+		Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
+		Expect(resp.Header.Get("WWW-Authenticate")).To(Equal(
+			`Bearer error="insufficient_scope", error_description="Session expired, please re-authenticate", error_uri="https://broker.example.com/sessions"`,
+		))
+		body, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		helpers.ExpectReauthElicitationBody(body, opaAgentgwReAuthURL, "Session expired, please re-authenticate")
 		Expect(mockTokenExchangeSvr.callCount()).To(BeNumerically(">=", 1),
 			"broker endpoint must be reached — a cache hit would silently bypass the re-auth path")
 	})

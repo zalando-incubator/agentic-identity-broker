@@ -19,10 +19,12 @@ import (
 	e2ebootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
+	testbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
 func TestRefreshConsentEuropeBerlin(t *testing.T) {
-	pg, dbName, connStr, cleanupDB := setupCIMDKeyDomainDatabase(t, 36)
+	pg := testbootstrap.RequireSharedPostgres(t)
+	dbName, connStr, cleanupDB := pg.SetupMigratedDatabase(t)
 	defer cleanupDB()
 	pg.ExecuteSQL(t, dbName, fmt.Sprintf("ALTER DATABASE %s SET timezone TO 'Europe/Berlin'", dbName))
 	require.Equal(t, "Europe/Berlin", pg.QuerySQL(t, dbName, "SHOW timezone"))
@@ -39,6 +41,7 @@ func TestRefreshConsentEuropeBerlin(t *testing.T) {
 	validUntil := now.Add(time.Hour)
 	grant.ValidUntil = &validUntil
 	require.NoError(t, store.UserGrants().Create(ctx, grant))
+	require.NoError(t, fixtures.SeedGrantSessions(ctx, store, grant))
 	logger := e2ebootstrap.TestLogger(slog.LevelInfo)
 	config := fixtures.LocalConfig()
 	config.Storage.Backend = "postgres"

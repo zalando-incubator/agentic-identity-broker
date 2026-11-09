@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -42,7 +41,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 	const localAgentRedirectURI = "http://localhost:9999/callback"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 		principal = fixtures.DefaultPrincipal().String()
@@ -75,7 +74,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		config.TokenExchange = ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{
 				PrincipalExpression: "subject_token.sub",
-				AgentIDExpression:   "subject_token.azp",
+				AgentIDExpression:   fmt.Sprintf(`has(subject_token.azp) && subject_token.iss == %q ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))`, config.Server.EndUser.PublicURL),
 			},
 			Authorization: ports.AuthorizationConfig{
 				Type: "cel",
@@ -296,7 +295,7 @@ var _ = Describe("Token Exchange Client-Assertion JWKS Override", func() {
 	const localAgentRedirectURI = "http://localhost:9999/callback"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 		mockJWKS = helpers.NewMockJWKSServer()

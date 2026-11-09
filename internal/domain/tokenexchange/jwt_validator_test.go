@@ -219,6 +219,8 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 			require.NotNil(t, validator)
 			assert.Equal(t, []string{"https://upstream.example.com", "https://broker.example.com"}, validator.subjectTokenPolicy.ExpectedIssuers)
 			assert.Equal(t, []string{"https://upstream.example.com"}, validator.clientAssertionPolicy.ExpectedIssuers)
+			assert.Equal(t, "broker-id", validator.subjectTokenPolicy.ExpectedAudience)
+			assert.Equal(t, "broker-id", validator.clientAssertionPolicy.ExpectedAudience)
 		})
 	}
 }
@@ -463,9 +465,10 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 	t.Parallel()
 
 	const (
-		upstreamIssuer = "https://upstream.example.com"
-		localIssuer    = "https://broker.example.com"
-		audience       = "broker-id"
+		upstreamIssuer  = "https://upstream.example.com"
+		localIssuer     = "https://broker.example.com"
+		subjectAudience = "subject-audience"
+		clientAudience  = "client-audience"
 	)
 
 	upstreamKey, upstreamSet := newTestKeyPairWithID(t, "upstream-kid")
@@ -475,14 +478,16 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 
 	validator, err := NewJWTValidatorWithPolicies(
 		JWTValidationPolicy{
-			JWKSProvider:    subjectTokenProvider,
-			ExpectedIssuers: []string{upstreamIssuer, localIssuer},
+			JWKSProvider:     subjectTokenProvider,
+			ExpectedIssuers:  []string{upstreamIssuer, localIssuer},
+			ExpectedAudience: subjectAudience,
 		},
 		JWTValidationPolicy{
-			JWKSProvider:    clientAssertionProvider,
-			ExpectedIssuers: []string{upstreamIssuer},
+			JWKSProvider:     clientAssertionProvider,
+			ExpectedIssuers:  []string{upstreamIssuer},
+			ExpectedAudience: clientAudience,
 		},
-		audience,
+		subjectAudience,
 		60,
 	)
 	require.NoError(t, err)
@@ -490,7 +495,7 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 	t.Run("subject token signed by upstream is accepted", func(t *testing.T) {
 		t.Parallel()
 
-		tokenString := newSignedToken(t, upstreamKey, upstreamIssuer, []string{audience}, "upstream-user", time.Now().Add(time.Hour))
+		tokenString := newSignedToken(t, upstreamKey, upstreamIssuer, []string{subjectAudience}, "upstream-user", time.Now().Add(time.Hour))
 
 		token, err := validator.ValidateSubjectToken(context.Background(), tokenString)
 
@@ -504,7 +509,7 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 	t.Run("subject token signed by local broker key is accepted", func(t *testing.T) {
 		t.Parallel()
 
-		tokenString := newSignedToken(t, localKey, localIssuer, []string{audience}, "local-user", time.Now().Add(time.Hour))
+		tokenString := newSignedToken(t, localKey, localIssuer, []string{subjectAudience}, "local-user", time.Now().Add(time.Hour))
 
 		token, err := validator.ValidateSubjectToken(context.Background(), tokenString)
 
@@ -518,11 +523,42 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 	t.Run("client assertion signed by local broker key is rejected", func(t *testing.T) {
 		t.Parallel()
 
-		tokenString := newSignedToken(t, localKey, localIssuer, []string{audience}, "local-client", time.Now().Add(time.Hour))
+		tokenString := newSignedToken(t, localKey, localIssuer, []string{clientAudience}, "local-client", time.Now().Add(time.Hour))
 
 		_, err := validator.ValidateClientAssertion(context.Background(), tokenString)
 
 		_ = assertOriginDiagnostic(t, err, "invalid_client", OutcomeAuthenticationFailed, StageClientValidation, DetailClientInvalid)
+	})
+
+	t.Run("client assertion uses its own audience", func(t *testing.T) {
+		t.Parallel()
+
+		tokenString := newSignedToken(t, upstreamKey, upstreamIssuer, []string{clientAudience}, "upstream-client", time.Now().Add(time.Hour))
+
+		token, err := validator.ValidateClientAssertion(context.Background(), tokenString)
+
+		require.NoError(t, err)
+		require.NotNil(t, token)
+	})
+
+	t.Run("client assertion rejects subject token audience", func(t *testing.T) {
+		t.Parallel()
+
+		tokenString := newSignedToken(t, upstreamKey, upstreamIssuer, []string{subjectAudience}, "upstream-client", time.Now().Add(time.Hour))
+
+		_, err := validator.ValidateClientAssertion(context.Background(), tokenString)
+
+		_ = assertOriginDiagnostic(t, err, "invalid_client", OutcomeAuthenticationFailed, StageClientValidation, DetailClientInvalid)
+	})
+
+	t.Run("subject token rejects client assertion audience", func(t *testing.T) {
+		t.Parallel()
+
+		tokenString := newSignedToken(t, upstreamKey, upstreamIssuer, []string{clientAudience}, "upstream-user", time.Now().Add(time.Hour))
+
+		_, err := validator.ValidateSubjectToken(context.Background(), tokenString)
+
+		_ = assertOriginDiagnostic(t, err, "invalid_grant", OutcomeAuthenticationFailed, StageSubjectValidation, DetailSubjectInvalid)
 	})
 }
 

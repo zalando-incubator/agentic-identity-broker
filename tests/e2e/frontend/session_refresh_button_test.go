@@ -2,12 +2,14 @@ package e2e_test
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/pages"
+	"github.com/mxschmitt/playwright-go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -84,5 +86,121 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 			_ = request.ParseForm()
 			return request.FormValue("grant_type")
 		}).WithPolling(100*time.Millisecond).Should(Equal("refresh_token"), "Refresh should call the upstream refresh_token grant")
+	})
+})
+
+var _ = Describe("Third-Party Sessions Rejected Refresh Token", func() {
+	var (
+		ctx          context.Context
+		sessionsPage *pages.SessionsPage
+		serviceID    id.ServiceID
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		principal := fixtures.DefaultPrincipal().String()
+		GetMockUpstream().WithErrorResponse("invalid_grant")
+
+		serviceID = id.NewServiceID()
+		Expect(GetTestStorage().Services().Create(ctx, refreshTestService(serviceID))).To(Succeed())
+
+		session := fixtures.SessionForService(principal, serviceID.String())
+		expired := time.Now().Add(-time.Minute)
+		session.AccessTokenExpiresAt = &expired
+		Expect(GetTestStorage().UserSessions().Create(ctx, session)).To(Succeed())
+
+		sessionsPage = pages.NewSessionsPage(GetTestPage(), GetFrontendURL())
+	})
+
+	// Scenario 1.6 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("shows the session as requiring login after the provider rejects its refresh token", func() {
+		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
+		Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
+
+		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed(), "a rejected session must offer Login")
+		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
+		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0), "a rejected session must not offer Refresh")
+		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1), "a rejected session can still be terminated")
+		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_rejected_refresh_login")).To(Succeed())
+
+		page := sessionsPage.GetPlaywrightPage()
+		authorizeURL := make(chan string, 1)
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			authorizeURL <- route.Request().URL()
+			Expect(route.Abort()).To(Succeed())
+		})).To(Succeed())
+		Expect(sessionsPage.ClickLoginButton(ctx)).To(Succeed())
+
+		var requested string
+		Eventually(authorizeURL).Should(Receive(&requested))
+		target, err := url.Parse(requested)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(target.Path).To(Equal("/api/third-party/" + serviceID.String() + "/oauth2/authorize"))
+		Expect(target.Query().Get("redirect_uri")).To(HaveSuffix("/sessions"))
+	})
+})
+
+var _ = Describe("Third-Party Sessions Login Offer", func() {
+	var (
+		ctx          context.Context
+		sessionsPage *pages.SessionsPage
+		principal    string
+		serviceID    id.ServiceID
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		principal = fixtures.DefaultPrincipal().String()
+
+		serviceID = id.NewServiceID()
+		Expect(GetTestStorage().Services().Create(ctx, refreshTestService(serviceID))).To(Succeed())
+
+		sessionsPage = pages.NewSessionsPage(GetTestPage(), GetFrontendURL())
+	})
+
+	// Scenario 1.7 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("offers Login next to Terminate when the provider rejected the refresh token but the access token is valid", func() {
+		session := fixtures.SessionForService(principal, serviceID.String())
+		rejectedAt := time.Now().Add(-time.Minute)
+		session.RefreshRejectedAt = &rejectedAt
+		Expect(GetTestStorage().UserSessions().Create(ctx, session)).To(Succeed())
+
+		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
+		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
+
+		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Expiring Soon")).To(BeFalse())
+		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1))
+		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0))
+		Expect(sessionsPage.IsRefreshTokenExpiryVisible(ctx)).To(BeFalse())
+		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_rejected_refresh_token_login")).To(Succeed())
+	})
+
+	// Scenario 1.8 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("offers neither Login nor Refresh for a usable session without a refresh token", func() {
+		Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionWithoutRefreshToken(principal, serviceID.String()))).To(Succeed())
+
+		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
+		Expect(sessionsPage.WaitForTerminateButton(ctx)).To(Succeed())
+
+		Expect(sessionsPage.GetLoginButtonCount(ctx)).To(Equal(0))
+		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0))
+		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_access_only_terminate")).To(Succeed())
+	})
+
+	// Scenario 1.9 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("tells the user to log in after the provider rejects the refresh token", func() {
+		GetMockUpstream().WithErrorResponse("invalid_grant")
+		Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForService(principal, serviceID.String()))).To(Succeed())
+
+		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
+		Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
+
+		Expect(sessionsPage.WaitForErrorMessage(ctx, "Your Refreshable Service session can no longer be renewed. Log in to reconnect.")).To(Succeed())
+		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
+		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0))
+		Expect(sessionsPage.TakeScreenshot(ctx, "sessions_rejected_refresh_banner")).To(Succeed())
 	})
 })

@@ -4,30 +4,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 )
 
 // ClientIDMetadataDocument is a parsed and validated CIMD JSON document.
-// Immutable after construction via Parse.
+// Immutable after construction via ParseDocument.
 type ClientIDMetadataDocument struct {
-	ClientID      string   `json:"client_id"`
-	ClientName    string   `json:"client_name,omitempty"`
-	LogoURI       string   `json:"logo_uri,omitempty"`
-	RedirectURIs  []string `json:"redirect_uris"`
-	AuthMethod    string   `json:"token_endpoint_auth_method,omitempty"`
-	GrantTypes    []string `json:"grant_types,omitempty"`
-	ResponseTypes []string `json:"response_types,omitempty"`
-	PolicyURI     string   `json:"policy_uri,omitempty"`
-	TosURI        string   `json:"tos_uri,omitempty"`
+	ClientID      string          `json:"client_id"`
+	ClientName    string          `json:"client_name,omitempty"`
+	LogoURI       string          `json:"logo_uri,omitempty"`
+	RedirectURIs  []string        `json:"redirect_uris"`
+	AuthMethod    string          `json:"token_endpoint_auth_method,omitempty"`
+	SigningAlg    string          `json:"token_endpoint_auth_signing_alg,omitempty"`
+	JWKSURI       string          `json:"jwks_uri,omitempty"`
+	JWKS          json.RawMessage `json:"jwks,omitempty"`
+	KeySet        jwk.Set         `json:"-"`
+	GrantTypes    []string        `json:"grant_types,omitempty"`
+	ResponseTypes []string        `json:"response_types,omitempty"`
+	PolicyURI     string          `json:"policy_uri,omitempty"`
+	TosURI        string          `json:"tos_uri,omitempty"`
+}
+
+// ValidatePrivateUseRedirectURIs checks native callbacks against the resolved Agent.
+// Call it on every resolution, including cache hits.
+func (d *ClientIDMetadataDocument) ValidatePrivateUseRedirectURIs(agentRedirectURIs []string) error {
+	for i, redirectURI := range d.RedirectURIs {
+		if urivalidation.IsValidPrivateUseRedirectURI(redirectURI) && !slices.Contains(agentRedirectURIs, redirectURI) {
+			return fmt.Errorf("redirect_uris[%d]: private-use redirect_uri %q is not listed in the agent's redirect_uris", i, redirectURI)
+		}
+	}
+	return nil
 }
 
 // ParseDocument parses and validates a CIMD JSON document fetched from fetchURL.
 // Returns an error if the document is malformed, the client_id field does not
 // match fetchURL, redirect_uris is empty, auth_method is a secret-bearing method,
 // any redirect_uri violates same-origin with fetchURL, or logo_uri (when present)
-// is not an absolute HTTPS URL.
+// is not an absolute HTTPS URL. private_key_jwt documents must provide exactly one
+// public key source: an HTTPS jwks_uri or an inline jwks.
 // nameBlocklist is a list of forbidden client_name values (case-insensitive exact match).
 func ParseDocument(data []byte, fetchURL string, nameBlocklist []string) (*ClientIDMetadataDocument, error) {
 	var doc ClientIDMetadataDocument
@@ -61,9 +79,34 @@ func ParseDocument(data []byte, fetchURL string, nameBlocklist []string) (*Clien
 		return nil, fmt.Errorf("redirect_uris is required and must not be empty")
 	}
 
-	// FR-022: only "none" is permitted; CIMD clients are always public clients
-	if doc.AuthMethod != "none" {
-		return nil, fmt.Errorf("token_endpoint_auth_method %q is not supported; CIMD clients must use \"none\"", doc.AuthMethod)
+	if doc.AuthMethod != "none" && doc.AuthMethod != "private_key_jwt" {
+		return nil, fmt.Errorf("token_endpoint_auth_method %q is not supported", doc.AuthMethod)
+	}
+
+	if doc.AuthMethod == "private_key_jwt" {
+		if (doc.JWKSURI == "") == (len(doc.JWKS) == 0) {
+			return nil, fmt.Errorf("private_key_jwt requires exactly one of jwks_uri or jwks")
+		}
+		if doc.SigningAlg == "" {
+			doc.SigningAlg = "RS256"
+		}
+		if doc.SigningAlg != "RS256" && doc.SigningAlg != "ES256" {
+			return nil, fmt.Errorf("token_endpoint_auth_signing_alg %q is not supported", doc.SigningAlg)
+		}
+		if doc.JWKSURI != "" {
+			if err := urivalidation.ValidateCIMDClientURL(doc.JWKSURI); err != nil {
+				return nil, fmt.Errorf("jwks_uri: %w", err)
+			}
+		} else {
+			if err := rejectPrivateJWKMaterial(doc.JWKS); err != nil {
+				return nil, err
+			}
+			keySet, err := jwk.Parse(doc.JWKS)
+			if err != nil {
+				return nil, fmt.Errorf("invalid inline jwks: %w", err)
+			}
+			doc.KeySet = keySet
+		}
 	}
 
 	// FR-023b: client_name keyword blocklist (case-insensitive exact match)
@@ -76,7 +119,7 @@ func ParseDocument(data []byte, fetchURL string, nameBlocklist []string) (*Clien
 		}
 	}
 
-	// FR-004a: each redirect_uri must be same-origin with client_id URL (localhost excepted)
+	// FR-004a: enforce web origins and validate private-use URI structure.
 	clientURL, err := url.Parse(fetchURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid fetch URL: %w", err)
@@ -96,6 +139,24 @@ func ParseDocument(data []byte, fetchURL string, nameBlocklist []string) (*Clien
 	return &doc, nil
 }
 
+func rejectPrivateJWKMaterial(data []byte) error {
+	var keySet struct {
+		Keys []map[string]json.RawMessage `json:"keys"`
+	}
+	if err := json.Unmarshal(data, &keySet); err != nil {
+		return fmt.Errorf("invalid inline jwks: %w", err)
+	}
+	privateMembers := []string{"d", "p", "q", "dp", "dq", "qi", "k"}
+	for keyIndex, key := range keySet.Keys {
+		for _, member := range privateMembers {
+			if _, ok := key[member]; ok {
+				return fmt.Errorf("inline jwks key %d contains private member %q", keyIndex, member)
+			}
+		}
+	}
+	return nil
+}
+
 func validateLogoURI(logoURI string) error {
 	u, err := url.Parse(logoURI)
 	if err != nil || !u.IsAbs() || u.Scheme != "https" {
@@ -105,8 +166,11 @@ func validateLogoURI(logoURI string) error {
 }
 
 // validateRedirectOrigin enforces same-origin between a redirect URI and the
-// client_id URL, with an exception for localhost/127.0.0.1 redirect URIs.
+// client_id URL, with exceptions for loopback and private-use redirect URIs.
 func validateRedirectOrigin(clientURL *url.URL, redirectURI string) error {
+	if urivalidation.IsValidPrivateUseRedirectURI(redirectURI) {
+		return nil
+	}
 	// Structural validity check first (catches ftp://, fragments, missing host, etc.)
 	if !urivalidation.IsValidRedirectURI(redirectURI) {
 		return fmt.Errorf("redirect_uri %q is not a valid redirect URI", redirectURI)

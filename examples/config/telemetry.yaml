@@ -38,3 +38,10 @@ telemetry:
     timeout: 10s
     insecure: false      # TLS enabled by default (only applies to gRPC); never disable in production
     compression: none    # none (default) or gzip
+
+# Session-health gauge (oauth2_sessions{service_id,expiry,refreshable}), published only when telemetry metrics are enabled
+token_refresh:
+  lookahead_duration: 5m    # also the boundary between expiry="valid" and expiry="expiring"
+  health_metrics:
+    enabled: true           # one grouped count query per metric export cycle per replica
+    query_timeout: 5s       # a slower query reports no data for that cycle

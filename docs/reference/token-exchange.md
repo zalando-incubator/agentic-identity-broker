@@ -38,6 +38,18 @@ request under RFC 8693. The same endpoint also supports `authorization_code` and
 `client_credentials`. See [API overview](/docs/reference/api) and
 [OAuth2 server modes](/docs/concepts/oauth2-server-modes).
 
+Requests require exactly one `Content-Type` field. Per RFC 6749 Section 3.2, a parameter sent
+without a value is treated as omitted. A singleton form parameter with more than one non-empty
+value returns `400 invalid_request`. The singleton parameters are `grant_type`, `client_id`,
+`client_secret`, `code`, `redirect_uri`, `refresh_token`, `code_verifier`, `scope`,
+`subject_token`, `subject_token_type`, `client_assertion`, `client_assertion_type`,
+`actor_token`, `actor_token_type`, and `requested_token_type`.
+
+The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2.1. Repeated
+`resource` values that normalize to the same URI are accepted. Because the broker returns one
+service token, distinct `resource` values return `400 invalid_target` per RFC 8693 Section
+2.2.2.
+
 ## Key concepts
 
 ### Tokens
@@ -94,6 +106,9 @@ applies only when the request does not activate user impersonation.
 | `client_assertion_type` | `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` | The client authentication method. |
 | `resource` | URI string | Target service resource URI (for example `https://api.github.com`). |
 
+Both type identifiers must match exactly. Missing identifiers, empty values, case changes,
+and surrounding whitespace return `400 invalid_request`. The broker does not supply defaults.
+
 ### Optional parameters
 
 | Parameter | Value | Description |
@@ -146,7 +161,7 @@ After the stored access token expires, the broker waits for an on-demand refresh
 
 Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
 
-Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable while its access token is valid or its stored refresh token is usable. An access-only connection requires login after access-token expiry. Unknown refresh-token expiry does not guarantee indefinite validity.
+Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable until it requires reauthentication: the provider rejected its refresh token, or its access token expired without a stored refresh token. A recorded rejection stops token exchange immediately, even while the stored access token is still valid. The broker never predicts refresh-token expiry.
 
 During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
@@ -180,7 +195,7 @@ Descriptions are credential-free summaries, not stable diagnostic identifiers. C
 | HTTP status | `error` | When it occurs |
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
-| 400 | `invalid_target` | The `resource` matches no configured service. |
+| 400 | `invalid_target` | The `resource` matches no configured service, or repeated resource values identify distinct targets. |
 | 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
 | 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
@@ -214,15 +229,17 @@ No service has the requested URI in its `protected_resources`.
 ```json
 {
   "error": "invalid_grant",
-  "error_description": "User has no active session with the requested service"
+  "error_description": "User session is unavailable. Please re-authenticate.",
+  "error_uri": "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 }
 ```
 
-Rejected subject credentials do not require provider-session recovery.
-A missing, expired, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
-This URI opens the existing session-management page. It does not automatically start provider login.
-The page's Refresh action uses an existing refresh token. It cannot replace a missing or rejected token.
-Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
+Rejected subject credentials do not require provider-session recovery and have no recovery URI.
+A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
+The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
+The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`.
+Opening the link starts third-party OAuth with PKCE. The provider callback returns to `/sessions`.
+The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
@@ -276,6 +293,7 @@ Successful logs and spans omit failure-only stage/detail fields. Successful metr
 Recovery values are diagnostic recommendations, not instructions for automatic retries.
 
 Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+Conflicting resource values use `request_validation` / `request_malformed` diagnostics while returning `invalid_target`; no registration lookup has occurred. `resource_unregistered` means a lookup found no configured service.
 CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
 Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
 
@@ -296,10 +314,13 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
+Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
 Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
+Credential-file availability failures use `credential_source_unavailable` with outcome `infrastructure_error` at the affected session stage.
+They return `server_error` without a recovery URI. Missing or mismatched established client identity instead uses `credential_identity_changed`, `reauth_required`, and `reauthenticate` targeting `provider_session`.
+Identity failures return `invalid_grant` with the same service-specific `error_uri` before provider authentication.
 
 Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
 Origin metadata maps to exchange diagnostics without inspecting error text.
@@ -329,6 +350,22 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+`extproc.token_exchange` spans have span kind `Server`.
+They set the error status only when the client receives a 5xx response, unless the caller canceled the request.
+A 4xx response, such as a re-authentication challenge or a header-only policy denial, leaves the status unset. Use `token_exchange.outcome` to find those requests.
+For a request with a body, the span ends after the headers phase. A later policy denial is recorded on `extproc.opa.evaluate`, and `token_exchange.outcome` stays `success` because the exchange succeeded.
+When the exchange call fails, ExtProc `extproc.token_exchange` spans also carry the attributes below.
+All `extproc.client_assertion.refresh` spans carry them.
+Other `extproc.token_exchange` failures carry only the diagnostic attributes above. Rejected token-exchange metadata gets a 503 response, so it also carries the error status and `error.type=rejected`.
+
+| Attribute | Values |
+|---|---|
+| `token_exchange.operation` | `exchange`, `assertion_refresh`, `configuration` |
+| `token_exchange.dependency` | `local`, `broker`, `oauth_provider` |
+| `error.type` | Failures only: `configuration`, `unavailable`, `rejected`, `invalid_response`, `caller_canceled`, `assertion_expired`, `circuit_open`, `internal` |
+| `token_exchange.oauth_error_code` | Allowlisted OAuth error code from the broker or OAuth provider; `unknown` otherwise. On `extproc.token_exchange`, only for broker errors. |
+| `token_exchange.broker_status_code` | Broker HTTP status on `extproc.token_exchange` broker errors. |
+
 OPA audit data retains action, result code, protocol, allowlisted MCP method, duration, policy reasons, tool name, and target server name.
 
 Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.
@@ -362,8 +399,9 @@ The existing request-security logger decorator supplies authenticated `actor` an
 
 User impersonation is a separate RFC 8693 profile on this endpoint. It is available only
 when `oauth2_authorization_server.mode` is `local`. Proxy and hybrid modes reject the
-request without forwarding it upstream. Impersonation does not get a third-party token,
-require a user grant, or accept `resource`.
+request without forwarding it upstream. Impersonation does not get a third-party token or
+accept `resource`. Eligible humans require an active user grant; eligible signed self-agent
+subjects do not, under ADR 045.
 
 The token contains subject claim `sub` and actor claim `act`. In RFC 8693 terms, this is
 delegation. This feature uses the name "impersonation" for operators. `act` preserves actor
@@ -389,7 +427,7 @@ Send these form fields:
 | `actor_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
 | `actor_token` | Signed JWT | Required. Its validated issuer and identity populate `act.iss` and `act.sub`. |
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
-| `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates `sub`. |
+| `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates human `sub`; eligible agent `sub` is target-derived. |
 | `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. |
 | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token` | Optional. Another value returns `invalid_request`. |
 
@@ -423,6 +461,12 @@ subjects. A signed client assertion and the subject-binding CEL predicate author
 caller-provided claims. The predicate must bind `subject_token.email` before the broker
 issues an email claim.
 
+### Category eligibility
+
+`allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. An unsigned subject with that exact `sub` is agent-category only when the rule's authorization predicate binds `subject_token.sub`. A `sub` or extracted subject principal that is another registered agent's canonical UUID is rejected on every rule, without human fallback. Other subjects are human. No aliases, UUID normalization, principal-expression mapping or request category input selects agent issuance. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+
+Every principal extraction and CEL authorization remains mandatory. Eligible agents skip delegation and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and delegation principal. Missing/expired delegation is terminal `403 access_denied` with the established target consent `error_uri`; verifier failure is `500 server_error` without one. A denied human never retries as agent. Unsigned rules may list `agent`, but it has no effect; ADR 031 controls remain intact.
+
 ### Response and errors
 
 Success returns a locally signed broker JWT. It does not return a provider credential:
@@ -449,13 +493,34 @@ rejected scopes.
 ### Audit events
 
 Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
-The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`. After classification it also contains `subject_category` (`human` or `agent`); `subject_identity` is the represented/minted subject. It contains no wholesale claims.
+When one token-exchange grant and its audience identify an impersonation request, repeated nonempty parameters also produce this event before credential authentication.
+The event records `invalid_request` and the resolved target, without unvalidated identities or credential values.
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
 See [Configuration](/docs/configuration) and
 `examples/config/impersonation.yaml` for operator setup and examples.
 
+
+## Agent-subject boundary
+
+Third-party exchange evaluates `token_exchange.claim_extraction.agent_subject_expression` after validated principal extraction and security capture finalization, before agent extraction, authorization, resources, grants or sessions. The default is:
+
+```cel
+has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+```
+
+A matching result returns `403 access_denied`, description `agent-subject tokens cannot be exchanged for third-party service tokens`, with no `error_uri` or human grant/session/provider access, even with same-text human state. Default detection also rejects equal-claim legacy, mapped-principal/unsigned human and trusted external issuer tokens. An evaluation error/timeout returns `500 server_error` (`identity_resolution/cel_evaluation_failed`); dynamic non-boolean output returns `500 server_error` (`identity_resolution/cel_configuration`). Neither is treated as false or consults human state. Compilation errors, static output types other than boolean/dynamic, and expressions that do not reference `subject_token.sub` fail startup.
+
+A non-empty override **replaces the default entirely**. A configured expression must reference `subject_token.sub` (field selection, `has()`, or `subject_token["sub"]`); otherwise startup fails with a CEL configuration error, so `false`, `true`, or an `azp`-only comparison cannot be configured. Operators must retain broker agent-token matching, for example by preserving the default as a disjunct. **A non-matching override that references `sub`, such as `has(subject_token.sub) && subject_token.sub == 'nobody'`, removes categorical rejection and same-text human-credential isolation.** Existing checks can then read human grants/sessions and return consent errors. This is not supported third-party agent identity or guaranteed exchange success.
+
+| Diagnostic detail | Failure stage | Exchange kind | External result |
+| --- | --- | --- | --- |
+| `subject_category_ineligible` | `client_authorization` | `impersonation` | Rule fall-through; no match is generic `403 access_denied`, no `error_uri` |
+| `subject_category_unsupported` | `identity_resolution` | `third_party` | `403 access_denied`, no `error_uri` |
+
+See the [token-endpoint request/claims/denial examples](../api/enduser-api.md#agent-subject-token-exchange), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [configuration](../configuration.md#agent-subject-detection-for-third-party-exchange), and [detector example](../../examples/config/token-exchange.yaml).
 
 ## Configuration
 

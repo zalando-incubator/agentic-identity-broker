@@ -12,14 +12,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
-var agentServiceRequirementsMigrations = []bootstrap.SQLMigration{
-	{File: "001_create_agents.up.sql", Version: 1},
-	{File: "002_create_thirdparty_services.up.sql", Version: 2},
-	{File: "003_create_user_grants.up.sql", Version: 3},
-	{File: "004_create_user_sessions.up.sql", Version: 4},
-	{File: "005_add_agent_service_requirements.up.sql", Version: 5},
-}
-
 // TestAgentServiceRequirementsMigration tests migration 005.
 func TestAgentServiceRequirementsMigration(t *testing.T) {
 	postgres, dbName, cleanup := setupAgentServiceRequirementsDatabase(t, "agent_service_requirements_base_004", 4)
@@ -113,7 +105,7 @@ func setupAgentServiceRequirementsDatabase(t *testing.T, templateKey string, upT
 
 	postgres := bootstrap.RequireSharedPostgres(t)
 	dbName, _, cleanup := postgres.SetupDatabaseFromTemplate(t, templateKey, func(t *testing.T, dbName string) {
-		postgres.ApplyMigrationsUpTo(t, dbName, agentServiceRequirementsMigrations, upTo)
+		postgres.ApplyMigrationsUpTo(t, dbName, uint(upTo))
 	})
 
 	return postgres, dbName, cleanup

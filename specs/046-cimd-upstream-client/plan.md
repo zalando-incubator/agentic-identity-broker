@@ -215,7 +215,7 @@ The advertised callback is `<server.enduser.public_url>/api/third-party/<service
 Register the two anonymous routes under `/.well-known`.
 Return JSON and the exact five-minute public cache policy.
 Return one generic JSON `404` response for all unavailable service states.
-No inactive service state is introduced. The metadata service serves only existing, non-deleted CIMD confidential services with usable public-key publication. It returns the same JSON `404` response for every other state.
+No inactive service state is introduced. The metadata service serves existing, non-deleted CIMD confidential services with usable public keys and CIMD public services without a key. It returns JSON `404` for static, deleted, unknown, or unavailable CIMD services. The JWK Set route returns JSON `404` for CIMD public services.
 
 Build the CIMD JWK Set only from active CIMD key-domain rows.
 Include public ES256 keys with `kid`, `alg`, `use: sig`, P-256 coordinates, and no private member.
@@ -410,3 +410,112 @@ It exercises service registration, anonymous document access, complete connect a
 No constitution violation needs a complexity exception.
 
 The feature adds a bounded key domain because the specification requires separate trust surfaces. The shared signing-key table avoids a second lifecycle implementation while retaining a database-enforced global key-ID boundary.
+
+## Increment 2 (issue #264)
+
+**Date**: 2026-10-22 | **Scope**: Augment feature 046 in place. This section does not change the original 046 plan.
+
+### Summary and technical context delta
+
+Add `client_registration` (`static` or `cimd`) as a service setting independent of `token_endpoint_auth_method`. The four manual modes are static confidential, static public, CIMD confidential, and CIMD public. CIMD public uses the broker-hosted client identifier URL with `none` authentication. ServiceNow needs this explicit mode. CIMD draft-02 §4.1 excludes shared-secret CIMD methods, while §8.2 recommends authentication when available. `private_key_jwt` remains the recommended CIMD mode.
+
+On create or full-replacement `PUT`, an omitted registration resolves to `cimd` for `private_key_jwt` and `static` otherwise. The broker never infers CIMD public. Read and list responses always include the resolved setting. Legacy rows with `private_key_jwt` become `cimd`. All other rows become `static`. Discovery reports the selected registration but never selects CIMD public.
+
+The Go version for this increment is 1.27.3 (`go.mod`). Existing dependencies, Go crypto, PostgreSQL/sqlx, memory storage, and Ginkgo remain in use. No new dependency, configuration key, Helm value, frontend change, ExtProc change, or CIMD key-lifecycle change is required. The existing HTTPS public URL remains necessary for every CIMD service. The hosted document keeps `Cache-Control: public, max-age=300`. Providers can cache a prior variant for 300 seconds after a mode switch.
+
+### Stakeholder gates
+
+Issue #264 approves the field, the four-mode matrix, omission, read/list reporting, and legacy classification (API-013). Plan approval alone did not confirm D-A–D-D or accept ADR 044. On 2026-10-22, the stakeholder explicitly confirmed all four API-014 decisions and accepted the decision now in ADR 044 (previously numbered 042, then 043), including D-E–D-J and the D-I rolling-upgrade limitation. Both gates passed before Stage 2. The acceptance note and ADR index appear in `AGENTS.md`.
+
+### Constitution Check — pre-design
+
+| Principle | Status | Planned control |
+|---|---|---|
+| I. Security-first | Design passes, implementation gated | CIMD public is explicit and secretless. PKCE S256 and the hosted callback remain mandatory. No method fallback occurs after provider rejection. |
+| II. Architecture and ADRs | Accepted 2026-10-22 | ADR 044 records D-A–D-J. Amend `ARCHITECTURE.md` and its glossary in the same PR. |
+| IV. OpenAPI transparency | Confirmed 2026-10-22 | Specify the Admin 2.1.0 field and end-user 1.1.0 document variants before code. The stakeholder confirmed D-A–D-D. |
+| V. Domain concepts | Planned | Add client registration, CIMD public service, and static public service to the model and architecture glossary. |
+| VI. Hexagonal boundaries | Planned | Put registration resolution and validation in the domain. Keep HTTP handlers as parsers and storage behind existing ports. |
+| VIII. TDD | Planned | Write unit, migration, adapter, and E2E tests first. Observe semantic red failures before implementing behavior. |
+| IX. Persistence | Planned | Add reversible migrations 044 and 045, a separate constraint, both adapter changes, and PostgreSQL migration tests. |
+| X. API-first | Confirmed 2026-10-22 | The stakeholder confirmed D-A–D-D before the OpenAPI cutover or implementation. |
+| XII. Builder wiring | Planned | Builder checks every CIMD identity and bootstraps keys only for CIMD confidential services. Existing route ownership stays unchanged. |
+| XIII. E2E traceability | Planned | Map US6 (6), US7 (6), and US8 (8) to exactly 20 new production-bootstrap `It()` blocks. |
+| XIV. Reviewable journeys | Planned | Add six chronological journeys to `spec.md`, including RFC-style exchanges, configuration, and decoded assertion claims. No UI wireframes apply. |
+
+### Affected files and design approach
+
+| Area | Increment 2 changes |
+|---|---|
+| Planning and decisions | `specs/046-cimd-upstream-client/{spec,plan,research,data-model,quickstart}.md`, `contracts/{admin-api,enduser-api}.md`, `checklists/requirements.md`, `adrs/044-client-registration-independent-of-authentication.md`, and `AGENTS.md`. Append Increment 2 tasks to `tasks.md` only after the gates. |
+| Architecture and guides | `ARCHITECTURE.md`, `examples/config/third-party-oauth2.yaml`, `docs/reference/api.md`, `docs/guides/{manage-agents-and-services,operate-oauth2-server-modes}.md`, and `docs/concepts/oauth2-server-modes.md`. No new configuration key or Helm change. |
+| API contracts | `api/admin/openapi.yaml` adds a required response setting and an optional non-null create/PUT setting, plus the matrix and errors. `api/enduser/openapi.yaml` adds closed confidential/public document variants and the JWK Set `404`. Versions become 2.1.0 and 1.1.0 after confirmation. |
+| Domain | Add `internal/domain/model/client_registration.go`. Update `thirdparty_oauth2_provider.go`, `internal/domain/thirdparty/{service,protected_resource_discovery}.go`, and `internal/domain/cimdclient/metadata_service.go`. Identity follows registration. Key readiness follows `private_key_jwt`. Secretless wire behavior follows `none`. |
+| Ports and application | Update `internal/ports/cimd_client.go` for optional key members and `internal/app/builder.go` for conditional key bootstrap. Keep `internal/domain/oauth2session/**` behavior unchanged. |
+| HTTP and storage | Update `internal/adapters/http/handlers/admin/services_handler.go` and both `internal/adapters/storage/{memory,postgres}/thirdparty_provider{,_record}.go`. The end-user CIMD metadata handler needs tests but no logic change. |
+| Database | Add `migrations/044_add_thirdparty_client_registration.{up,down}.sql` and `045_validate_thirdparty_client_registration.{up,down}.sql`. Add `tests/integration/migrations/client_registration_migration_test.go`. |
+| Tests | Add `internal/domain/model/client_registration_test.go` and the three `tests/e2e/thirdparty_{cimd_public_service,client_registration,cimd_public_authentication}_test.go` files. Extend domain, handler, adapter, Builder, session, and existing E2E exact-shape tests. Extend `tests/e2e/helpers/mock_cimd_upstream.go`. |
+
+The domain resolves an omitted registration before validating the four-mode matrix. Explicit `null`, empty, or unknown values fail with `400`. Invalid combinations, Google CIMD requests, filesystem CIMD requests, and discovery requests that supply registration fail before provider traffic. Full replacement preserves the CIMD URL between confidential and public methods. A static/CIMD switch changes identity. A switch to CIMD confidential requires a usable key. A switch to static requires an operator `client_id` and, for static confidential, a secret. No runtime method fallback occurs. Existing sessions follow feature 046 and `051-oauth2-secret-file-overrides` behavior. The provider can reject an old refresh token after an identity switch, so the user reconnects.
+
+Every CIMD row must have the exact broker client identifier URL at startup. Only CIMD confidential rows require CIMD key bootstrap or published-key readiness. The CIMD public document has exactly five members: `client_id`, `redirect_uris`, `grant_types`, `response_types`, and `token_endpoint_auth_method: none`. The broker serves it without keys. Its `jwks.json` returns the existing uniform JSON `404`. The public token exchange and refresh reuse `IsPublicClient()` and never send a secret, assertion, or Authorization header. Preserve existing public-client retries and session audit records. Lifecycle records use `CIMD public service`. The existing mode-neutral metadata-access record needs no duplicate.
+
+The database column is `TEXT NOT NULL DEFAULT 'static'`. Migration 044 adds a separate `NOT VALID` registration constraint under a one-second `ACCESS EXCLUSIVE NOWAIT` lock. The constraint checks the matrix, absent CIMD secret, stored credential source, discovery method, and broker URL suffix. Migration 045 backfills `private_key_jwt` rows to `cimd` and validates under `SHARE UPDATE EXCLUSIVE NOWAIT`. The domain and startup check enforce the exact URL. The 044 down migration refuses CIMD public rows. Operators convert or delete those rows, use `migrate force 44` after the guarded failure, and retry. During rolling upgrade, old pods can fail closed on CIMD confidential creates and CIMD rewrites. Retry those writes after rollout. ADR 044 records this limitation. Do not add a database trigger.
+
+### Phase 2 design preconditions (after both gates)
+
+#### Phase 2a: Domain model and architecture
+
+Add the glossary terms to `ARCHITECTURE.md`. Update its hosted-document and public-JWK trust-surface descriptions. Apply the independent registration model in [data-model.md](./data-model.md).
+
+#### Phase 2b: Configuration design
+
+Change the comment in `examples/config/third-party-oauth2.yaml` so the HTTPS public-URL precondition covers every `client_registration: cimd` service. Add no broker configuration key or Helm value.
+
+#### Phase 2c: API design
+
+Apply [contracts/admin-api.md](./contracts/admin-api.md) and [contracts/enduser-api.md](./contracts/enduser-api.md) to their OpenAPI files before implementation. Update `docs/reference/api.md`. Redocusaurus renders API pages from these files, so no hand-written `docs/api/` page is necessary. Document the full-replacement omission hazard for CIMD public services.
+
+#### Phase 2d: Database design
+
+Add migrations 044 and 045 with their guarded down paths. Write migration tests before storage implementation. Cover legacy classification, forbidden combinations, rollback refusal, and replay.
+
+#### Phase 2e: Frontend and design system review
+
+Record that this increment changes no frontend or UI state. No design-system component, Playwright test, or screenshot applies.
+
+#### Phase 2f: E2E acceptance test design
+
+Write all 20 `It()` blocks before production behavior changes. Use `Label("cimd-upstream-client", "cimd-public-client")` and a nearby `US#-S# from specs/046-cimd-upstream-client/spec.md` comment on each block. Use the production bootstrap. Add `WithPublicClientMode()` to the provider double. It checks `none`, the five-member document, PKCE, credential absence, and the exact client identifier URL. It never fetches a JWK Set or logs codes, verifiers, or tokens. Obtain compiled, semantic-red results, not placeholder failures.
+
+### Implementation and testing strategy (Stage 2 only)
+
+After design preconditions, add domain validation and predicates, then update service identity, metadata, conditional key readiness, ports, handlers, storage, and migrations. Update exact-shape assertions to include `client_registration`. Keep code exchange, refresh retry policy, key lifecycle, and metadata handler logic unchanged. Update operator and OAuth-mode guides, then do the Phase N constitution review.
+
+| Layer | Acceptance coverage |
+|---|---|
+| Model and domain | Four valid manual pairs, two invalid pairs, omission, explicit invalid values, Google/filesystem, discovery selection, stored consistency, identity transitions, startup URL check, conditional key readiness, and audits. |
+| Metadata and session | Closed five-member keyless document, uniform JWK `404`, unchanged confidential document, PKCE exchange and refresh without credentials, encrypted session, and fail-closed provider rejection. |
+| Handlers and adapters | Request presence, all four response modes, memory/PostgreSQL round trips, invalid stored values, constraint violations, and exact response shapes. |
+| Migrations and startup | Backfill legacy modes, rollback and replay, mismatch failure, and an empty key set for CIMD-public-only brokers in proxy, local, and hybrid modes. |
+| E2E | One block per US6-S1–S6, US7-S1–S6, and US8-S1–S8. Include no-key startup, all server modes, and session storage on exchange and refresh. |
+
+The `cimd-public-client` label selects exactly 20 new E2E scenarios. `cimd-upstream-client && !performance` selects 51 functional scenarios (31 existing and 20 new). After implementation, run `just check`, `just test`, `just test-integration`, `just test-integration-infra`, both Ginkgo label filters, `just docs-build`, and `just verify`. Use [quickstart.md](./quickstart.md) for a smoke journey with a keyless broker, a provider that requires `none`, document and JWK responses, connect, refresh, and stored session.
+
+### Constitution Check — post-design
+
+| Principle | Design result and implementation gate |
+|---|---|
+| I | The planned `none` path is explicit, uses PKCE S256, sends no credential, and fails closed without method fallback. |
+| II | ADR 044 documents D-A–D-J and the rolling-upgrade limitation. The stakeholder accepted it on 2026-10-22. |
+| IV | Both contract variants, examples, errors, and versions are designed. The stakeholder confirmed D-A–D-D on 2026-10-22. |
+| V | The data model defines independent registration and both public-service terms. `ARCHITECTURE.md` glossary changes remain a Stage 2 precondition. |
+| VI | Domain validation, narrow metadata ports, HTTP parsing, and both storage adapters preserve the existing boundary. |
+| VIII | Layered tests and semantic-red acceptance tests precede their production changes in Stage 2. |
+| IX | Migrations 044/045 separate the fast schema lock from validation. Guarded rollback and real PostgreSQL tests cover persistence. |
+| X | Issue #264 confirms API-013. The stakeholder confirmed D-A–D-D (API-014) in writing before Stage 2. |
+| XII | Builder owns startup identity checks and conditional key creation. Existing routes and handlers remain wired through the Builder. |
+| XIII | Exactly 20 new `It()` blocks cover the 20 new acceptance scenarios, with labels and spec references. |
+| XIV | Six spec journeys cover distinct flows with request/response examples, configuration, and synthetic decoded JWT claims. |
+
+**Complexity tracking**: None. No constitution exception or new architectural component is required.

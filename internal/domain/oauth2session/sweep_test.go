@@ -104,8 +104,8 @@ type sweepFixture struct {
 
 func newSweepFixture(t *testing.T) *sweepFixture {
 	t.Helper()
-	_, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
-	repo := sessions.(*memory.InMemoryUserSessionRepository)
+	_, _, _, _, _, providers := setupServiceWithConfig(t, nil)
+	repo := memory.NewInMemoryUserSessionRepository()
 	f := &sweepFixture{
 		t: t, repo: repo, providers: providers, serviceID: id.NewServiceID(),
 		seedEncryption: newTestEncryption(t), logs: &strings.Builder{},
@@ -132,7 +132,7 @@ func sweepSessionID(n int) id.SessionID {
 	return id.MustParseSessionID(fmt.Sprintf("00000000-0000-4000-8000-%012x", n))
 }
 
-func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRefresh bool) *storage.UserSession {
+func (f *sweepFixture) seed(n int, accessExpiry, refreshRejectedAt *time.Time, hasRefresh bool) *storage.UserSession {
 	f.t.Helper()
 	ctx := context.Background()
 	encryptionContext := domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext()
@@ -146,7 +146,7 @@ func (f *sweepFixture) seed(n int, accessExpiry, refreshExpiry *time.Time, hasRe
 	session := &storage.UserSession{
 		ID: sweepSessionID(n), Principal: id.Principal(fmt.Sprintf("user-%d@example.com", n)), ServiceID: f.serviceID,
 		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
-		AccessTokenExpiresAt: accessExpiry, RefreshTokenExpiresAt: refreshExpiry,
+		AccessTokenExpiresAt: accessExpiry, RefreshRejectedAt: refreshRejectedAt,
 		EncryptionContext: storage.EncryptionContext{ServiceID: f.serviceID}, InitiatedAt: time.Now(), CreatedAt: time.Now(),
 	}
 	require.NoError(f.t, f.repo.Create(ctx, session))
@@ -280,7 +280,7 @@ func TestSessionSweepDryRunClassifiesSnapshotsWithoutSideEffects(t *testing.T) {
 	f.seed(5, nil, nil, true)
 	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: true})
 	require.NoError(t, err)
-	assertSweepCounts(t, result, 1, 0, 2, true)
+	assertSweepCounts(t, result, 1, 0, 1, true)
 	assert.Zero(t, f.refresh.locks, "dry run must not acquire any session locks")
 	assert.Zero(t, upstreamCalls.Load(), "dry run must not contact the upstream provider")
 	assert.NotContains(t, f.logs.String(), "token_refreshed")
@@ -454,6 +454,24 @@ func TestSessionSweepDryRunSkipsMovedCandidateID(t *testing.T) {
 	assert.Equal(t, storage.SessionExpiryCursor{AccessTokenExpiresAt: movedExpiry, ID: first.ID}, f.expiry.calls[2].cursor)
 }
 
+func TestSessionSweepDryRunSkippedCandidateIsNotCounted(t *testing.T) {
+	reader := installMeterReader(t)
+
+	f := newSweepFixture(t)
+	later := time.Now().Add(time.Hour)
+	notDue := f.seed(1, &later, nil, true)
+	f.expiry.list = func(_ context.Context, _ time.Time, _ storage.SessionExpiryCursor, _ int) ([]*storage.UserSession, error) {
+		if len(f.expiry.calls) == 1 {
+			return []*storage.UserSession{notDue}, nil
+		}
+		return nil, nil
+	}
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: true})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 0, 1, 0, true)
+	assert.Empty(t, sweepMetrics(t, reader), "dry run must not emit the skipped counter")
+}
+
 func TestSessionSweepRejectsInvalidExpiryPages(t *testing.T) {
 	for _, name := range []string{"nil expiry", "repeated tuple", "decreasing tuple"} {
 		t.Run(name, func(t *testing.T) {
@@ -552,7 +570,6 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 		wantDependency   oauth2session.Dependency
 	}{
 		{name: "no refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshUnavailable, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
-		{name: "expired refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshTokenExpired, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
 		{name: "deleted after listing", modify: func(f *sweepFixture, s *storage.UserSession) {
 			f.expiry.afterList = func(_ int, _ []*storage.UserSession) { require.NoError(f.t, f.repo.Delete(context.Background(), s.ID)) }
 		}, wantSkip: 1},
@@ -590,16 +607,8 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				}
 				sweepSuccess(w)
 			})
-			soon, past := time.Now().Add(time.Minute), time.Now().Add(-time.Minute)
-			var refreshExpiry *time.Time
-			hasRefresh := true
-			switch tc.name {
-			case "no refresh token":
-				hasRefresh = false
-			case "expired refresh token":
-				refreshExpiry = &past
-			}
-			first := f.seed(1, &soon, refreshExpiry, hasRefresh)
+			soon := time.Now().Add(time.Minute)
+			first := f.seed(1, &soon, nil, tc.name != "no refresh token")
 			f.seed(2, &soon, nil, true)
 			if tc.modify != nil {
 				tc.modify(f, first)
@@ -616,6 +625,7 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 			assert.Equal(t, "new-access", plain)
 			assert.EqualValues(t, 1, sweepMetrics(t, reader)["session_sweep_refreshed_total"])
 			assert.EqualValues(t, tc.wantFail, sweepMetrics(t, reader)["session_sweep_failed_total"])
+			assert.EqualValues(t, tc.wantSkip, sweepMetrics(t, reader)["session_sweep_skipped_total"])
 			if tc.wantFail == 1 {
 				original, err := f.repo.Get(context.Background(), sweepSessionID(1))
 				require.NoError(t, err)
@@ -623,12 +633,41 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				require.NoError(t, err)
 				assert.Equal(t, "old-access-1", plain, "failed candidates never persist partial tokens")
 				assertSweepLogMetadata(t, f.logs.String(), "session.oauth2.refresh_failed", tc.wantLevel, tc.wantDetail, tc.wantKind, tc.wantDependency)
+				assert.Equal(t, map[string]int64{f.serviceID.String() + "/" + string(tc.wantDetail): 1}, sweepFailures(t, reader))
 			}
 		})
 	}
 }
 
+func TestSessionSweepExcludesRejectedSessions(t *testing.T) {
+	f := newSweepFixture(t)
+	var calls atomic.Int32
+	f.provider(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		sweepSuccess(w)
+	})
+	soon, rejectedAt := time.Now().Add(time.Minute), time.Now().Add(-time.Hour)
+	rejected := f.seed(1, &soon, &rejectedAt, true)
+	f.seed(2, &soon, nil, true)
+
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 1, 0, 0, false)
+	assert.EqualValues(t, 1, calls.Load(), "a rejected session is not a sweep candidate")
+	assert.NotContains(t, f.logs.String(), `"event":"session.oauth2.refresh_failed"`)
+	persisted, err := f.repo.Get(context.Background(), rejected.ID)
+	require.NoError(t, err)
+	assert.Equal(t, rejected.EncryptedAccessToken, persisted.EncryptedAccessToken)
+	assert.Equal(t, rejected.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+	assert.Equal(t, &rejectedAt, persisted.RefreshRejectedAt)
+}
+
 func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderLookup(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
 	f := newSweepFixture(t)
 	providerRepo := &countingSweepProviderRepository{
 		ThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
@@ -640,8 +679,8 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
 	failedServiceID := id.NewServiceID()
 	f.serviceID = failedServiceID
-	accessExpiry, refreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	failed := f.seed(1, &accessExpiry, &refreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	failed := f.seed(1, &accessExpiry, nil, false)
 	failedAccess := bytes.Clone(failed.EncryptedAccessToken)
 	failedRefresh := bytes.Clone(failed.EncryptedRefreshToken)
 	f.serviceID = validServiceID
@@ -657,10 +696,46 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 		assert.Equal(t, failedRefresh, persisted.EncryptedRefreshToken)
 		require.NotNil(t, persisted.AccessTokenExpiresAt)
 		assert.True(t, accessExpiry.Equal(*persisted.AccessTokenExpiresAt))
-		assert.Zero(t, providerRepo.gets[failedServiceID], "expired refresh tokens must not load provider credentials")
+		assert.Zero(t, providerRepo.gets[failedServiceID], "sessions without a refresh token must not load provider credentials")
 	}
 	assert.Equal(t, 1, providerRepo.gets[validServiceID])
 	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.refresh_failed"`))
+	refreshed := sweepCounterPoints(t, reader)["session_sweep_refreshed_total"]
+	require.Len(t, refreshed, 1)
+	service, _ := refreshed[0].Attributes.Value("service_id")
+	assert.Equal(t, validServiceID.String(), service.AsString())
+	assert.Equal(t, map[string]int64{failedServiceID.String() + "/" + string(oauth2session.DetailAccessTokenExpired): 2}, sweepFailures(t, reader),
+		"failures without a provider lookup still name their service")
+}
+
+func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
+	f := newSweepFixture(t)
+	refreshedServiceID := f.serviceID
+	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
+	accessExpiry := time.Now().Add(-time.Minute)
+	f.seed(1, &accessExpiry, nil, true)
+	f.serviceID = id.NewServiceID()
+	tickets := createTestService(f.serviceID)
+	tickets.ClientID = "tickets-client-id"
+	canonicalID := "tickets"
+	tickets.CanonicalID = &canonicalID
+	require.NoError(t, f.providers.Create(context.Background(), tickets))
+	f.seed(2, &accessExpiry, nil, false)
+
+	result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
+	require.NoError(t, err)
+	assertSweepCounts(t, result, 1, 0, 1, false)
+	refreshed := sweepCounterPoints(t, reader)["session_sweep_refreshed_total"]
+	require.Len(t, refreshed, 1)
+	service, _ := refreshed[0].Attributes.Value("service_id")
+	assert.Equal(t, refreshedServiceID.String(), service.AsString(), "a service without a canonical ID keeps its UUID")
+	assert.Equal(t, map[string]int64{"tickets/" + string(oauth2session.DetailAccessTokenExpired): 1}, sweepFailures(t, reader),
+		"a failure without a provider lookup still uses the canonical ID")
 }
 
 func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
@@ -672,15 +747,14 @@ func TestSessionSweepReauthorizedAfterListingUsesRefreshPath(t *testing.T) {
 		assert.Equal(t, "reauthorized-refresh", r.Form.Get("refresh_token"))
 		sweepSuccess(w)
 	})
-	accessExpiry, oldRefreshExpiry := time.Now().Add(-time.Minute), time.Now().Add(-time.Hour)
-	current := f.seed(1, &accessExpiry, &oldRefreshExpiry, true)
+	accessExpiry := time.Now().Add(-time.Minute)
+	current := f.seed(1, &accessExpiry, nil, false)
 	refresh, err := f.seedEncryption.Encrypt(context.Background(), []byte("reauthorized-refresh"), domainencryption.NewServiceBranchKeySubject(f.serviceID).EncryptionContext())
 	require.NoError(t, err)
 	f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
-		validUntil := time.Now().Add(time.Hour)
 		_, err := f.repo.WithLockedSession(context.Background(), current.Principal, current.ServiceID, func(_ context.Context, latest *storage.UserSession) (bool, error) {
 			latest.EncryptedRefreshToken = refresh
-			latest.RefreshTokenExpiresAt = &validUntil
+			latest.RefreshRejectedAt = nil
 			return true, nil
 		})
 		require.NoError(t, err)
@@ -934,11 +1008,41 @@ func assertSweepLogMetadata(t *testing.T, logs, event, level string, detail oaut
 	t.Errorf("missing %s log at %s level with classified metadata: %s", event, level, logs)
 }
 
+// sweepMetricKeys lists the only attributes each sweep counter may carry (FR-027 to FR-029).
+var sweepMetricKeys = map[string][]string{
+	"session_sweep_refreshed_total": {"triggered_by", "service_id"},
+	"session_sweep_failed_total":    {"triggered_by", "service_id", "failure_detail"},
+	"session_sweep_skipped_total":   {"triggered_by"},
+}
+
 func sweepMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	counts := make(map[string]int64)
+	for name, points := range sweepCounterPoints(t, reader) {
+		for _, point := range points {
+			counts[name] += point.Value
+		}
+	}
+	return counts
+}
+
+// sweepFailures returns session_sweep_failed_total keyed by "service_id/failure_detail".
+func sweepFailures(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64 {
+	t.Helper()
+	failures := make(map[string]int64)
+	for _, point := range sweepCounterPoints(t, reader)["session_sweep_failed_total"] {
+		service, _ := point.Attributes.Value("service_id")
+		detail, _ := point.Attributes.Value("failure_detail")
+		failures[service.AsString()+"/"+detail.AsString()] += point.Value
+	}
+	return failures
+}
+
+func sweepCounterPoints(t *testing.T, reader *sdkmetric.ManualReader) map[string][]metricdata.DataPoint[int64] {
 	t.Helper()
 	var collected metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(context.Background(), &collected))
-	counts := make(map[string]int64)
+	points := make(map[string][]metricdata.DataPoint[int64])
 	for _, scope := range collected.ScopeMetrics {
 		for _, measurement := range scope.Metrics {
 			if !strings.HasPrefix(measurement.Name, "session_sweep_") {
@@ -947,14 +1051,16 @@ func sweepMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64
 			sum, ok := measurement.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "sweep instruments must be Int64 counters")
 			for _, point := range sum.DataPoints {
-				assert.Len(t, point.Attributes.ToSlice(), 1, "only the bounded trigger label is permitted")
+				var keys []string
 				for _, attr := range point.Attributes.ToSlice() {
-					assert.Equal(t, "triggered_by", string(attr.Key))
-					assert.Equal(t, "sweep", attr.Value.AsString())
+					keys = append(keys, string(attr.Key))
 				}
-				counts[measurement.Name] += point.Value
+				assert.ElementsMatch(t, sweepMetricKeys[measurement.Name], keys, "%s must not carry a principal or session ID", measurement.Name)
+				trigger, _ := point.Attributes.Value("triggered_by")
+				assert.Equal(t, "sweep", trigger.AsString())
+				points[measurement.Name] = append(points[measurement.Name], point)
 			}
 		}
 	}
-	return counts
+	return points
 }

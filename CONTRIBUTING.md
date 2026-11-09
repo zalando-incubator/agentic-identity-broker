@@ -4,28 +4,50 @@ Thank you for contributing! This document provides guidelines for maintaining ou
 
 ## Quick Start
 
-1. **Fork and clone**:
+Install Go for [go.mod](go.mod), Node.js for [web/package.json](web/package.json), npm, and `just`.
+The [justfile](justfile) defines the recipes in this guide and installs the test tools.
+The frontend uses TypeScript 6.0.3 or a compatible 6.0.x release. Keep upgrades within
+the `typescript-eslint` peer range; TypeScript 7 is not yet supported. TypeScript
+path aliases use explicit `./src/` targets without the deprecated `baseUrl` option.
+Infrastructure-backed verification also needs Docker or Podman, as described in the [storage integration guide](tests/integration/storage/README.md).
+
+1. Clone the repository:
    ```bash
    git clone https://github.com/zalando-incubator/agentic-identity-broker.git
    cd agentic-identity-broker
    ```
-
-2. **Setup**:
+2. Install dependencies and tools:
    ```bash
    just deps
    just install-tools
+   just web-install
+   ```
+3. Select the feature specification before implementation. Use the workflow in [Specification-Driven Development](#specification-driven-development).
+4. Start the broker from the repository root:
+   ```bash
+   just run
+   ```
+5. Start Vite in another terminal:
+   ```bash
+   just web-dev
    ```
 
-3. **Create a branch**:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+The [run recipe](justfile) builds the broker and supplies temporary JWE and memory-encryption keys.
+The root [config.yaml](config.yaml) selects local development configuration and an upstream OAuth2 server on port 9001.
+Vite requests port 3000 and proxies backend namespaces to port 8000 through [vite.config.ts](web/vite.config.ts).
+OAuth2 journeys also need the configured providers. The [Compose guide](docs/docker-compose-setup.md) describes the multi-service environment.
+This configuration trusts a proxy header and permits local HTTP providers. It is not a production deployment.
 
-4. **Develop**:
-   ```bash
-   just dev              # Backend with hot-reload
-   just web-dev          # Frontend (optional, separate terminal)
-   ```
+For hot reload, supply both keys to the Air process:
+
+```bash
+export IDENTITY_BROKER_JWE_SIGNING_KEY="$(./scripts/generate-jwe-key.sh)"
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)"
+just dev
+```
+
+The [Air configuration](.air.toml) runs [start-broker.sh](scripts/start-broker.sh), which also attempts to seed development data.
+Do not run `just run` and `just dev` on the same ports.
 
 ## Governance Principles
 
@@ -38,11 +60,13 @@ All contributions must comply with our specification-driven development approach
 - **Design System**: Frontend components use `/web/src/design-system/`
 - **Database**: Schema changes use go-migrate naming conventions
 
-See [Constitution v1.4.0](.specify/memory/constitution.md) for details.
+Read the current [constitution](.specify/memory/constitution.md) for binding rules and its version history.
+The [ADR index](ARCHITECTURE.md#10-architecture-decision-records-adrs) identifies decisions by full filename, status, and partial supersession.
+Proposed ADRs do not become accepted because their implementation exists.
 
 ## Before Committing
 
-Run static checks and the full verification gate:
+Run the gates defined in the [justfile](justfile):
 ```bash
 just check    # Non-mutating format, vet, and lint checks
 just verify   # Security scanning plus test, integration, and E2E checks
@@ -50,23 +74,36 @@ just verify   # Security scanning plus test, integration, and E2E checks
 
 `just check` does not change source files. Use `just fmt` to apply Go formatting fixes.
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
-`just verify` runs security scanning before the existing test, integration, and E2E gate.
+`just verify` includes static checks, security scans, Go and frontend tests, CDK and mock tests, both integration layers, and all E2E suites.
 
-`just install-tools` pins golangci-lint 2.14.0, which supports the Go 1.27.1 export-data format.
-If lint reports an unsupported export-data version, run `just install-tools` with the repository's Go toolchain.
+CI selects Go from `go.mod`. `just fmt` and `just fmt-check` use that toolchain's
+`gofmt`, not a separate formatter found on `PATH`; `go vet` also ships with Go.
+The pre-commit hook delegates formatting validation to `just fmt-check`.
+
+Development tool versions are pinned in `justfile`. Keep the Ginkgo CLI pins in the
+workflows and `justfile` aligned with the library version in `go.mod`.
+`just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
+replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
 Commit the corresponding lockfile when changing an override. Verify both site builds and the
 instrumented frontend build (`VITE_COVERAGE=1 npm run build --prefix web`). The frontend's
 js-yaml 4 override removes the unpatched sprintf-js dependency from coverage tooling.
 
-The root `osv-scanner.toml` temporarily excludes `GHSA-vfj7-8cjw-p6xm` until 2026-11-07.
-No patched braces release exists, and Docusaurus requires Chokidar 3's glob support. Its
-patterns are repository-controlled; the deployed documentation is static. Reassess this
-exception at expiry or if documentation tooling starts accepting untrusted patterns.
+The root `osv-scanner.toml` temporarily excludes three go-jose v3 advisories and one deepmerge
+advisory until 2026-11-30. Neither package has a patched release. go-jose v3 arrives only through
+ory/fosite, whose HTTP request parsers the broker does not call; deepmerge runs only on
+repository-controlled SVGO configuration during the documentation build. Reassess these
+exceptions at expiry, when fosite moves to go-jose v4, or if either path starts accepting
+untrusted input.
 
 Both commands must pass before you open a pull request.
+
+For agentic-workflow changes, run `gh aw compile <workflow>` and commit the generated `.lock.yml`.
+The CI workflow-lint job validates all agentic workflows with `gh aw` and runs `actionlint` and `zizmor`.
+The exceptions in `.github/actionlint.yaml` and `.github/zizmor.yml` apply only to specific workflow paths.
 
 ## Making Changes
 
@@ -76,50 +113,93 @@ Root contains only files that a tool requires there or that GitHub/Zalando OSS r
 
 ### Specification-Driven Development
 
-For new features, follow this workflow using [Speckit](https://speckit.org/):
+For new features, use the [Spec Kit templates](.specify/templates/) and the [constitution](.specify/memory/constitution.md).
+These paths are naming patterns, not literal directories to copy:
 
-1. Create `specs/NNN-feature-name/spec.md` with requirements
-2. Create `specs/NNN-feature-name/plan.md` with design
-3. Create `specs/NNN-feature-name/tasks.md` with tasks
-4. Implement according to the plan
-5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
+1. Create `specs/NNN-feature-name/spec.md` with requirements.
+2. Create `specs/NNN-feature-name/plan.md` with the design.
+3. Create `specs/NNN-feature-name/tasks.md` with ordered tasks.
+4. Obtain the required API and architecture approvals before implementation.
+5. Implement the plan with red-green-refactor tests and acceptance-scenario traceability.
+6. Update [ARCHITECTURE.md](ARCHITECTURE.md) when the design changes.
+
+The [selection script](.specify/scripts/bash/common.sh) checks `SPECIFY_FEATURE_DIRECTORY` before [.specify/feature.json](.specify/feature.json).
+Verify that the selected feature matches the task. Do not infer it only from the branch name.
+
+### Architecture Review
+
+Maintainers can request an automated architectural review of any open pull request from
+this repository by commenting `/architecture-review`, optionally followed by a focus such
+as `/architecture-review session lifecycle`. The workflow in
+`.github/workflows/architecture-review-assisted.yml` checks the commenter's permission,
+then runs `.github/workflows/architecture-review.md`: one lead agent briefs eight
+sub-agents, one per analysis dimension (ubiquitous language, hexagonal compliance, ADR
+compliance, data authority, coupling and cohesion, OTel parity, E2E test quality, and
+maintainability), and consolidates their findings into a single review comment with a
+recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
+edits or pushes code. A new review folds the previous one.
+
+On a Spec Kit draft PR, `/architecture-review` and the automatic review after
+`/speckit-implement` go one step further. Each finding carries a remediation bucket:
+
+- **auto**: the pipeline applies the fix in the same run, with a worker that cannot push
+  changes under `api/`, `adrs/`, `migrations/`, or `specs/`, then reviews the result again.
+- **proposed**: the fix changes a contract, an ADR, persisted data, or a design choice with a
+  real alternative. The pipeline posts a **Spec Kit remediation proposal** comment with one
+  checkbox per item and the recommended change. Tick the items to apply, then tick
+  **Apply the selected items**; the pipeline applies them, pushes, and reviews again. The
+  ticks are the sign-off for exactly those items.
+- **question**: the reviewer needs knowledge only the author or a maintainer has. Answer with
+  `/speckit-plan <decision>`.
+
+The status comment links the latest review and proposal and names the next step. A new
+review replaces the proposal, so items left unticked stay open until the next review.
 
 ### Backend
 
-Follow hexagonal architecture:
-- **Domain** (`internal/domain/`): Pure business logic
-- **Ports** (`internal/ports/`): Interface boundaries
-- **Adapters** (`internal/adapters/`): HTTP, storage, config
+Use the boundaries defined by [Constitution VI](.specify/memory/constitution.md#vi-hexagonal-architecture--clean-boundaries):
+
+- **Domain:** [internal/domain/](internal/domain/) owns business invariants.
+- **Ports:** [internal/ports/](internal/ports/) defines infrastructure contracts.
+- **Adapters:** [internal/adapters/](internal/adapters/) implements HTTP, storage, and external-service boundaries.
+- **Configuration:** [internal/config/](internal/config/) implements the broker loader.
+- **Composition:** [internal/app/builder.go](internal/app/builder.go) wires broker dependencies under Constitution XII.
+
+Follow the coding standards in [`coding-standards/`](coding-standards/), including [structured logging](coding-standards/LOGGING.md) and [OpenTelemetry](coding-standards/OPENTELEMETRY.md).
 
 ### Frontend
 
-All components must use the design system at `/web/src/design-system/`:
-
-```typescript
-import { Button, Card } from '@/components/design-system';
-
-export function MyComponent() {
-  return (
-    <Card>
-      <Button variant="primary">Submit</Button>
-    </Card>
-  );
-}
-```
+Use the [design system](web/src/design-system/docs/INDEX.md), as required by [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency).
+Read its component guidance before choosing an import or variant.
+The [Vite aliases](web/vite.config.ts) and [existing pages](web/src/pages/) show current import paths.
+The constitution requires semantic tokens, self-hosted brand assets, and accessibility evidence in light and dark themes.
 
 ### Tests
 
-- Tests live next to source files (`*_test.go` or `*.test.tsx`)
+The [justfile](justfile) defines the following suite boundaries.
+Go package tests generally live next to their sources. Frontend test locations follow [vitest.config.ts](web/vitest.config.ts).
+
 - Fast Go/package tests: `just test`
 - ExtProc unit tests with race detection: `just extproc-test`. These include checks that
   disabled local tracing neither creates child spans nor modifies inherited spans.
-- Integration suites: `just test-integration`
+- Self-contained integration suites: `just test-integration`
+- Infrastructure-backed integration suites: `just test-integration-infra`
+- Both integration layers: `just test-integration-all`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
 - Full verification gate, including security scanning: `just verify`
 - Coverage for the fast Go/package suite: `just test-coverage`
 - Coverage summary for fast Go/package tests: `just test-coverage-summary`
 - Frontend coverage report: `just web-test-coverage`
+
+Read the [E2E guide](tests/e2e/README.md) and [storage integration guide](tests/integration/storage/README.md) for prerequisites and cleanup limits.
+Browser tests are implemented, not future work. `just test-e2e-frontend` builds and tests the production frontend bundle.
+Use built mode until the development identities match.
+The [Vite proxy](web/vite.config.ts) sends `dev@example.com`, but the consent tests seed sessions for `user@example.com`.
+This mismatch can leave the approval button disabled. A single worker does not fix it.
+Before development-mode tests, stop the broker started with `just run` to free port 8000.
+Development mode also needs one worker because it uses that fixed port, while the recipe defaults to two workers.
+See the [development-mode limitations](tests/e2e/README.md#frontend-e2e-testing).
 
 The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
 
@@ -156,6 +236,24 @@ The last command writes the combined browser and Vitest report to `web/coverage/
 - ✅ Static quality checks passing (`just check`)
 - ✅ Full verification gate passing (`just verify`)
 - ✅ Architecture changes require both maintainers
+
+### Opt-in conflict resolution
+
+Maintainers can add `auto-resolve-conflicts` to an open PR from this repository.
+The latest person to apply the label must have write, maintain, or admin access.
+The workflow does not run on fork PRs or PRs without merge conflicts.
+
+For PRs targeting `main`, the workflow starts on a label or PR update, or when `main` moves.
+For stacked PRs, a scheduled scan runs every ten minutes and merges the current parent branch into the child branch.
+The workflow pushes one merge commit to the same PR only after its checks pass. It never merges the PR itself.
+Changes to protected files, including workflow sources and dependencies, require a human review.
+Remove the label to stop later runs. A blocked resolution leaves the remote branch unchanged and adds a PR comment.
+
+Before enabling the label, make sure the App with the private key in the existing Actions secret
+`AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
+Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
+The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines
 
@@ -197,7 +295,7 @@ Disclose responsibly:
 
 - [README](README.md) - Overview and quick start
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design
-- [Constitution v1.4.0](.specify/memory/constitution.md) - Governance
+- [Constitution](.specify/memory/constitution.md) - Binding governance and version history
 - [MAINTAINERS](MAINTAINERS) - Maintainer information
 - [Speckit](https://speckit.org/) - Specification-driven development
 

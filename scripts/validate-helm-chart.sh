@@ -22,6 +22,7 @@ TIMEOUT="5m"
 cleanup() {
     echo -e "${YELLOW}Cleaning up Kind cluster...${NC}"
     kind delete cluster --name "${CLUSTER_NAME}" 2>/dev/null || true
+    rm -f "${BROKER_VALUES:-}" "${EXTRA_OBJECTS_VALUES:-}"
 }
 
 # Trap cleanup on exit
@@ -102,8 +103,48 @@ else
 fi
 print_success "Migrate image loaded into Kind cluster"
 
-# Generate JWE signing key for testing
-JWE_SIGNING_KEY=$(openssl rand -base64 32)
+# Minimal broker configuration that passes startup validation. Token exchange is disabled because
+# its chart defaults require a reachable client-assertion issuer at startup.
+BROKER_VALUES=$(mktemp)
+cat > "${BROKER_VALUES}" <<EOF
+broker:
+  thirdPartyOauth2:
+    jweSigningKeyBase64: "$(openssl rand -base64 32)"
+  encryption:
+    memory:
+      rawKey: "$(openssl rand -base64 32)"
+  server:
+    enduser:
+      authentication:
+        preauth:
+          principalHeaderName: X-Remote-User
+    admin:
+      authentication:
+        preauth:
+          principalHeaderName: X-Remote-User
+  tokenExchange: null
+EOF
+
+# extraObjects in map and string form, each using chart helpers and an escaped literal placeholder
+EXTRA_OBJECTS_VALUES=$(mktemp)
+cat > "${EXTRA_OBJECTS_VALUES}" <<'EOF'
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: '{{ include "agentic-identity-broker.fullname" . }}-extra-map'
+    data:
+      build: '{{ "{{{BUILD_VERSION}}}" }}'
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ include "agentic-identity-broker.fullname" . }}-extra-string
+      labels:
+        {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+    data:
+      enduserPort: {{ .Values.service.ports.enduser | quote }}
+EOF
 
 # Test 1: Deploy with default values (in-memory storage)
 print_header "Test 1: Deploy with In-Memory Storage (Default)"
@@ -115,7 +156,8 @@ helm install "${RELEASE_NAME}" "${CHART_PATH}" \
     --set migration.image.pullPolicy=Never \
     --set migration.image.repository=localhost/agentic-identity-broker-migrate \
     --set migration.image.tag=0.1.0 \
-    --set broker.thirdPartyOauth2.jweSigningKey="${JWE_SIGNING_KEY}" \
+    --values "${BROKER_VALUES}" \
+    --values "${EXTRA_OBJECTS_VALUES}" \
     --wait \
     --timeout "${TIMEOUT}" || print_error "Helm install failed (in-memory mode)"
 print_success "Chart installed successfully"
@@ -128,6 +170,15 @@ print_success "Deployment is available"
 # Verify service
 kubectl get service "${RELEASE_NAME}-agentic-identity-broker" -n "${NAMESPACE}" || print_error "Service not found"
 print_success "Service created"
+
+# Verify extra objects
+EXTRA_BUILD=$(kubectl get configmap "${RELEASE_NAME}-agentic-identity-broker-extra-map" -n "${NAMESPACE}" -o jsonpath='{.data.build}') || print_error "Map-form extra object not found"
+[ "${EXTRA_BUILD}" = "{{{BUILD_VERSION}}}" ] || print_error "Escaped placeholder rendered as '${EXTRA_BUILD}', expected '{{{BUILD_VERSION}}}'"
+EXTRA_PORT=$(kubectl get configmap "${RELEASE_NAME}-agentic-identity-broker-extra-string" -n "${NAMESPACE}" -o jsonpath='{.data.enduserPort}') || print_error "String-form extra object not found"
+[ "${EXTRA_PORT}" = "8000" ] || print_error "String-form extra object rendered enduserPort '${EXTRA_PORT}', expected '8000'"
+EXTRA_INSTANCE=$(kubectl get configmap "${RELEASE_NAME}-agentic-identity-broker-extra-string" -n "${NAMESPACE}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/instance}')
+[ "${EXTRA_INSTANCE}" = "${RELEASE_NAME}" ] || print_error "String-form extra object is missing chart labels"
+print_success "Extra objects deployed with Helm templating and literal placeholders"
 
 # Run Helm tests
 print_header "Running Helm Tests"
@@ -278,7 +329,7 @@ helm install "${RELEASE_NAME}-postgres" "${CHART_PATH}" \
     --set postgresql.operator.teamId=test-team \
     --set postgresql.operator.volume.size=1Gi \
     --set postgresql.operator.numberOfInstances=1 \
-    --set broker.thirdPartyOauth2.jweSigningKey="${JWE_SIGNING_KEY}" \
+    --values "${BROKER_VALUES}" \
     --wait \
     --timeout "${TIMEOUT}" || print_error "Helm install failed (Zalando operator mode)"
 print_success "Chart installed with Zalando operator"
@@ -345,6 +396,7 @@ echo "  ✓ Template rendering (helm template)"
 echo "  ✓ Kind cluster deployment (in-memory)"
 echo "  ✓ Deployment availability"
 echo "  ✓ Service creation"
+echo "  ✓ Extra objects (map and string form)"
 echo "  ✓ Helm tests"
 echo "  ✓ Health endpoint (in-memory)"
 echo "  ✓ External PostgreSQL configuration (template only)"

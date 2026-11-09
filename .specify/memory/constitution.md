@@ -19,7 +19,8 @@ Security is NON-NEGOTIABLE and MUST NOT be bypassed or made optional in this cod
   evaluation and extraction; and credential-free structured audit events.
 - Encryption MUST NOT have accidental fallbacks to plaintext or weaker modes
 - Security controls MUST fail closed: if verification fails, the operation MUST abort
-- All security-critical operations MUST be auditable via structured logging
+- All security-critical operations MUST be auditable via structured logging that follows
+  [coding-standards/LOGGING.md](../../coding-standards/LOGGING.md) (Principle XV)
 
 **Rationale**: This project guarantees security for agentic platforms. A single bypass or default-off security control undermines the entire trust model and exposes downstream systems to compromise.
 
@@ -167,6 +168,9 @@ Code quality and correctness MUST be ensured through Test-Driven Development (TD
   - **Tests MUST NOT contain comments marking them as "in the red phase"** (e.g., `// TODO: implement`,
     `// red phase`, `// will pass after implementation`). Tests are written once, turn green naturally
     as implementation progresses, and MUST NOT require cleanup of red-phase annotations later
+- Red and green evidence is recorded per test suite. A suite that needs infrastructure the development
+  environment lacks, such as containers, MAY take its evidence from CI on the pushed commit; work whose
+  tests run locally MUST NOT wait for that evidence
 - **Skipping tests or checking for "not implemented" errors is NOT TDD**: tests must verify actual functionality, not error handling
 - Tests MUST drive design: implementation decisions emerge from test requirements, not vice versa
 - Tests MUST change as little as possible during implementation: major test changes indicate poorly derived tests
@@ -479,6 +483,69 @@ abstract requirements or Given/When/Then acceptance scenarios.
 interactions and visible results. They expose gaps between requirements, API contracts, UI
 states, and security claims before implementation without replacing testable acceptance scenarios.
 
+### XV. Binding Coding Standards
+
+The coding standards in [coding-standards/](../../coding-standards/) are BINDING for all code
+within each standard's declared scope.
+
+**Rules**:
+- Every Markdown document in `coding-standards/` is a binding coding standard. The current
+  standards are:
+  - [LOGGING.md](../../coding-standards/LOGGING.md): structured log records
+  - [OPENTELEMETRY.md](../../coding-standards/OPENTELEMETRY.md): OpenTelemetry traces and metrics
+- Each standard MUST declare its scope and the binding sources it derives from. A standard binds
+  only code within its declared scope.
+- Imperative rules in a standard ("Use", "Do not", "must") carry MUST and MUST NOT force. Its
+  review checklist is a set of mandatory conditions, not suggestions.
+- Before adding or changing code within a standard's scope, implementers MUST read that standard.
+- Every construct that a change adds or modifies within a standard's scope (for example, a log
+  call, span, span attribute, or metric instrument) MUST follow every applicable rule of that
+  standard and MUST satisfy its review checklist.
+- Tests, contracts, and registry entries that a standard requires for the changed code are part
+  of the change's required work. Examples: assertions that credentials are absent from logs and
+  spans, assertions on a new metric's attribute set, and an observability contract entry for each
+  new instrument.
+- A change is not required to bring unmodified pre-existing code into compliance. Non-compliance
+  found outside the change is an out-of-scope finding, handled under
+  [Feature Scope & Deferred Findings](#feature-scope--deferred-findings).
+- This constitution and Accepted ADRs take precedence over a coding standard. A standard MUST NOT
+  contradict them. When a conflict is found, implementers MUST STOP and escalate. Before code that
+  depends on the conflicting rule merges, the conflict MUST be resolved by correcting the standard
+  or by an accepted superseding ADR (Principle II).
+- Code MUST NOT deviate from a standard through a per-call-site exception, an inline
+  justification, or a linter suppression. A required deviation MUST be made by amending the
+  standard, in the same PR or an earlier one, with a scoped rule or exception and its rationale.
+- Automated checks that enforce a standard MUST NOT be disabled, narrowed, or suppressed unless
+  the standard is amended to document the change. Examples of such checks are the `forbidigo`
+  rule in `.golangci.yml` and `TestLoggedPrincipalsAreTyped`. LOGGING.md section 7 documents the
+  CodeQL `go/log-injection` exclusion this way.
+- A coding standard MAY be amended in place by a PR; it does not need a superseding document.
+  The PR description MUST state each change to the standard and its rationale. Code changed in
+  that PR MUST follow the amended standard.
+- When a standard requires a registry entry before use, such as a span attribute namespace in
+  OPENTELEMETRY.md section 4.1, the PR that first uses the entry MUST add it.
+- When a standard defines a rename as a breaking change (event identifiers, span names, metric
+  names), the rename MUST follow that standard's changelog and compatibility rules.
+- A new standard becomes binding when it merges into `coding-standards/`. It MUST declare its scope
+  and related binding sources, include a review checklist, and be listed in the Coding Standards
+  index of the root [AGENTS.md](../../AGENTS.md).
+
+**Rationale**: Logs, traces, and metrics leave the broker's trust boundary and are retained by
+external systems. One unsafe call site can leak a credential or a principal. Controls such as the
+central principal policy protect data only if every call site uses them. The coding standards
+specify how Principles I, VII, and XII apply to everyday code. If they are advisory, deadline
+pressure erodes them. Binding force makes them enforceable in review. In-place amendment keeps
+them current. Limiting compliance to changed code keeps feature scope intact.
+
+**Example**: When a change adds a log record for a failed session refresh, the implementer must:
+1. Read [LOGGING.md](../../coding-standards/LOGGING.md) before writing the call
+2. Use `WarnContext` with the request `ctx`, a constant lowercase message, and an `event`
+   attribute such as `session.oauth2.refresh_failed`
+3. Log typed failure metadata, not the wrapped cause, because this is a credential boundary
+4. Log the owner as `id.Principal` under the reserved `principal` key
+5. Add a test that injects a buffer logger through the production constructor and asserts that
+   the refresh token under test is absent from the output
+
 ## Development Requirements
 
 ### Feature Scope & Deferred Findings
@@ -526,6 +593,9 @@ unrelated findings without silently enlarging the feature.
 - [ ] Database schema designed (migration files and SQL documented, or confirm no DB changes)
 - [ ] Frontend components designed: review [web/src/design-system/docs/INDEX.md](../web/src/design-system/docs/INDEX.md) and ensure design system can be used
 - [ ] Universal components identified: plan to add them to design system in `web/src/design-system/components/` (if applicable)
+- [ ] [IF TELEMETRY] New log events, spans, and metric instruments identified per the applicable
+      standards in `coding-standards/`. Each new instrument is listed in the feature's
+      `contracts/observability.md` (Principle XV)
 - [ ] Spec contains linked example user journeys alongside Given/When/Then scenarios, with
       applicable configuration, HTTP exchanges, Wireloom UI sequences, and visible JWT claims
       (Principle XIV)
@@ -549,7 +619,14 @@ unrelated findings without silently enlarging the feature.
 - [ ] **Helm chart updated for configuration changes to chart-managed workloads, or the standalone deployment boundary verified and documented (Principle VII)**
 - [ ] Domain logic uses ports (interfaces) and adapters are separated
 - [ ] No custom cryptography; security features use vetted libraries
-- [ ] Structured logging present for security-critical operations
+- [ ] Structured logging present for security-critical operations, following
+      `coding-standards/LOGGING.md` (Principles I, XV)
+- [ ] Added or modified code follows every applicable standard in `coding-standards/` and
+      satisfies its review checklist (Principle XV)
+- [ ] Tests, contracts, and registry entries required by the applicable coding standards are
+      present (Principle XV)
+- [ ] No automated standard check is disabled or suppressed. Each deviation is covered by a scoped
+      rule or exception in an amendment to the standard, with rationale (Principle XV)
 - [ ] **Unit tests written FIRST, compile successfully, and fail semantically before implementation (red phase - Principle VIII)**
 - [ ] **Unit tests drive design: implementation emerges from test requirements (Principle VIII)**
 - [ ] **Unit tests change minimally during implementation (Principle VIII)**
@@ -652,6 +729,14 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 4. Escalate to project maintainers for exception approval
 5. Do NOT implement features without E2E acceptance tests mapped to spec scenarios without explicit approval
 
+If Principle XV (Binding Coding Standards) cannot be satisfied:
+
+1. STOP implementation of the non-compliant code
+2. Document the rule that cannot be followed and why
+3. If the conflict is with this constitution or an Accepted ADR, escalate per Principle II.
+   Otherwise, propose an amendment to the standard: a scoped rule or exception with rationale
+4. Do NOT merge non-compliant code unless the standard is amended in the same PR or an earlier one
+
 ## Governance
 
 ### Amendment Procedure
@@ -688,6 +773,10 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 - Reviewers MUST follow the spec's example journeys and verify that applicable configuration,
   HTTP exchanges, Wireloom UI states, and output JWT claims match requirements and contracts
   without exposing real secrets (Principle XIV)
+- Reviewers MUST verify that added or modified code follows each applicable standard in
+  `coding-standards/` and satisfies its review checklist. Reviewers MUST also verify that the
+  tests the standard requires exist and that each deviation is covered by a scoped rule or
+  exception in an amendment to the standard, with rationale (Principle XV)
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
 - Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
   failing, not trivial always-fail placeholders (Principle XIII)
@@ -709,6 +798,8 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
    - Phase 2e: Frontend/Design System Review (Principle XI, if applicable)
    - Phase 2f: E2E Acceptance Test Design (Principles XIII, XIV) — includes review of concrete
      spec journeys and frontend Playwright tasks if UI changes
+   - Phase 2g: Observability Design (Principle XV, if the feature adds or changes log events,
+     spans, or metric instruments) — includes the observability contract for new instruments
 
 2. **Phase N: Constitution Compliance Verification** - Constitution Implementation Phase checklist
    - Design Phase Verification tasks
@@ -718,7 +809,9 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 **OPTIONAL PHASES** (include when applicable — omit when not needed):
 - **Phase 0: Pre-implementation Refactoring** — include only when the approved feature requires
   significant changes to existing code (rename, restructure, extract interfaces, split files).
-  MUST be submitted as a separate PR from feature work. All existing tests MUST pass afterward.
+  MUST be committed separately from feature work: its own commit(s) with no behavior change,
+  ahead of the feature commits in the same PR. A separate PR is not required. All existing tests
+  MUST pass afterward.
 - **Phase 2.7: Entity Boilerplate** — include when the feature introduces new domain entities
   requiring new ports, storage adapters, and HTTP handlers. Creates empty-but-compiling CRUD
   scaffolding (handlers returning 501, empty repository methods) as a separate PR before business
@@ -737,4 +830,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
+**Version**: 4.5.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-05

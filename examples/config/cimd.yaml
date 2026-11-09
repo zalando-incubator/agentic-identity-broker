@@ -6,7 +6,7 @@ oauth2_authorization_server:
   # Enables AI agents to use HTTPS URLs as client_id values.
   # The broker fetches, validates, and caches the metadata document at the URL.
   # CIMD is disabled by default; enable explicitly when URL-based client_id is required.
-  # Reference: draft-ietf-oauth-client-id-metadata-document-01
+  # Reference: draft-ietf-oauth-client-id-metadata-document-02
   cimd:
     # -- Enable URL-based client_id support. Default: false.
     # When false, URL-format client_id values are rejected with invalid_client.
@@ -28,6 +28,14 @@ oauth2_authorization_server:
       # -- Minimum TTL for cached CIMD documents. Default: 60s.
       # Prevents stampeding on documents with very short or absent cache headers.
       min_ttl: 60s
+
+    # Settings for inbound private_key_jwt client authentication.
+    # These network limits can be tuned; assertion lifetime, clock skew, and algorithms are fixed.
+    client_authentication:
+      key_set_cache_ttl: 1h
+      key_set_min_refetch_interval: 5m
+      key_set_max_bytes: 65536
+      key_set_fetch_timeout: 5s
 
     ssrf:
       # -- Additional CIDR ranges blocked for CIMD fetches (in addition to RFC 6890 defaults).

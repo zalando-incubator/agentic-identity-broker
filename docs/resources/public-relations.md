@@ -7,6 +7,24 @@ description: Presentations, external articles, and other public material about A
 This page lists presentations, external articles, and other public material about
 the Agentic Identity Broker.
 
+## Articles
+
+### 2026-09-27 Agentic Security & Identity: Who Are You, Who's Your Agent, And What Should They Be Allowed To Do? (Part 1)
+
+By Alejandro Saucedo, ethical.institute.
+
+[Read the article](https://ethical.institute/blog/agentic-security-and-identity-part-1/)
+for an introduction to agent identity, delegation standards, and adopting the
+Agentic Identity Broker in the Kubernetes Agent Orchestration System (KAOS).
+
+### 2026-09-24 What I Learned Building an Identity Broker With Coding Agents
+
+By Jan Brennenstuhl.
+
+[Read the article](https://www.janbrennenstuhl.eu/agentic-identity-broker/)
+for lessons from building the Agentic Identity Broker with coding agents,
+including specifications, testing, and code review.
+
 ## Presentations
 
 ### 2026-09-18 AGNTCon+MCPCon Europe 2026

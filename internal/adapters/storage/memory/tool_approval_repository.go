@@ -109,6 +109,9 @@ func (r *ToolApprovalRepository) Deny(_ context.Context, approvalID id.ApprovalI
 	a.Status = storage.ApprovalStatusDenied
 	a.Persistence = persistence
 	a.DeniedAt = &deniedAt
+	if persistence != nil && *persistence == storage.ApprovalPersistencePermanent {
+		a.ParamsPattern = map[string]string{}
+	}
 	return copyApproval(a), nil
 }
 

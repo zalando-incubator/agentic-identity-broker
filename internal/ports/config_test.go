@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 )
 
 // validBaseOAuth2Config returns a minimally valid OAuth2AuthServerConfig for test setup.
@@ -361,10 +363,9 @@ func TestOAuth2AuthServerConfig_Validate_CIMDGating(t *testing.T) {
 
 	t.Run("CIMD enabled in local mode — no error", func(t *testing.T) {
 		cfg := validLocalOAuth2Config()
-		cfg.CIMD = CIMDConfig{
-			Enabled: true,
-			Cache:   CIMDCacheConfig{MinTTL: time.Minute, MaxTTL: time.Hour},
-		}
+		cfg.CIMD = DefaultCIMDConfig()
+		cfg.CIMD.Enabled = true
+		cfg.CIMD.Cache = CIMDCacheConfig{MinTTL: time.Minute, MaxTTL: time.Hour}
 		err := cfg.Validate()
 		assert.NoError(t, err)
 	})
@@ -378,11 +379,10 @@ func TestOAuth2AuthServerConfig_Validate_CIMDGating(t *testing.T) {
 				UpstreamTokenEndpoint:     "https://issuer.example.com/token",
 			},
 			Local: LocalModeConfig{TokenTTL: time.Hour},
-			CIMD: CIMDConfig{
-				Enabled: true,
-				Cache:   CIMDCacheConfig{MinTTL: time.Minute, MaxTTL: time.Hour},
-			},
+			CIMD:  DefaultCIMDConfig(),
 		}
+		cfg.CIMD.Enabled = true
+		cfg.CIMD.Cache = CIMDCacheConfig{MinTTL: time.Minute, MaxTTL: time.Hour}
 		err := cfg.Validate()
 		assert.NoError(t, err)
 	})
@@ -408,6 +408,41 @@ func TestOAuth2AuthServerConfig_Validate_CIMDGating(t *testing.T) {
 	})
 }
 
+func TestCIMDClientAuthenticationConfig(t *testing.T) {
+	t.Run("defaults are bounded and non-zero", func(t *testing.T) {
+		cfg := DefaultCIMDConfig().ClientAuthentication
+		assert.Equal(t, time.Hour, cfg.KeySetCacheTTL)
+		assert.Equal(t, 5*time.Minute, cfg.KeySetMinRefetchInterval)
+		assert.Equal(t, 65536, cfg.KeySetMaxBytes)
+		assert.Equal(t, 5*time.Second, cfg.KeySetFetchTimeout)
+	})
+
+	tests := []struct {
+		name   string
+		mutate func(*CIMDClientAuthenticationConfig)
+	}{
+		{"zero cache TTL", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetCacheTTL = 0 }},
+		{"negative cache TTL", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetCacheTTL = -time.Second }},
+		{"cache TTL above 24 hours", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetCacheTTL = 25 * time.Hour }},
+		{"zero refetch interval", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetMinRefetchInterval = 0 }},
+		{"negative refetch interval", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetMinRefetchInterval = -time.Second }},
+		{"zero maximum bytes", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetMaxBytes = 0 }},
+		{"negative maximum bytes", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetMaxBytes = -1 }},
+		{"zero fetch timeout", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetFetchTimeout = 0 }},
+		{"negative fetch timeout", func(cfg *CIMDClientAuthenticationConfig) { cfg.KeySetFetchTimeout = -time.Second }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validLocalOAuth2Config()
+			cfg.CIMD = DefaultCIMDConfig()
+			cfg.CIMD.Enabled = true
+			tt.mutate(&cfg.CIMD.ClientAuthentication)
+			require.Error(t, cfg.Validate())
+		})
+	}
+}
+
 // TestOAuth2AuthServerConfig_Resolve verifies that Resolve() propagates all config
 // fields into the correct mode-specific struct for all three modes. Non-default values
 // are used throughout to catch zero-value masking bugs.
@@ -427,10 +462,9 @@ func TestOAuth2AuthServerConfig_Resolve(t *testing.T) {
 			BootstrapTimeout: 45 * time.Second,
 		},
 	}
-	cimd := CIMDConfig{
-		Enabled: true,
-		Cache:   CIMDCacheConfig{MinTTL: 30 * time.Second, MaxTTL: 2 * time.Hour},
-	}
+	cimd := DefaultCIMDConfig()
+	cimd.Enabled = true
+	cimd.Cache = CIMDCacheConfig{MinTTL: 30 * time.Second, MaxTTL: 2 * time.Hour}
 	mac := MultiAgentClientConfig{
 		Enabled:          true,
 		AgentIDParamName: "x_agent_id",
@@ -620,4 +654,50 @@ func TestOAuth2AuthServerConfig_ImpersonationIsOptional(t *testing.T) {
 	require.Len(t, withImp.Impersonation.Rules, 1)
 	assert.Len(t, withImp.Impersonation.Rules[0].Roles, 3)
 	assert.Equal(t, CredentialRoleSubject, CredentialRole("subject"))
+}
+
+func TestOAuth2AuthServerConfig_ClientSecretHashing(t *testing.T) {
+	maxConcurrent := func(n int) LocalModeConfig {
+		return LocalModeConfig{ClientSecretHashing: ClientSecretHashingConfig{MaxConcurrent: n}}
+	}
+	withMode := func(mode string, local LocalModeConfig) OAuth2AuthServerConfig {
+		cfg := validBaseOAuth2Config()
+		cfg.Mode = servermode.Mode(mode)
+		cfg.Local = local
+		return cfg
+	}
+
+	tests := []struct {
+		name    string
+		cfg     OAuth2AuthServerConfig
+		want    int
+		wantErr string
+	}{
+		{name: "local mode defaults max_concurrent to 2", cfg: OAuth2AuthServerConfig{Mode: "local"}, want: 2},
+		{name: "local mode keeps an explicit max_concurrent", cfg: OAuth2AuthServerConfig{Mode: "local", Local: maxConcurrent(4)}, want: 4},
+		{name: "local mode rejects a negative max_concurrent", cfg: OAuth2AuthServerConfig{Mode: "local", Local: maxConcurrent(-1)}, wantErr: "client_secret_hashing.max_concurrent"},
+		{name: "hybrid mode defaults max_concurrent to 2", cfg: withMode("hybrid", LocalModeConfig{}), want: 2},
+		{name: "hybrid mode keeps an explicit max_concurrent", cfg: withMode("hybrid", maxConcurrent(4)), want: 4},
+		{name: "proxy mode rejects max_concurrent", cfg: withMode("proxy", maxConcurrent(2)), wantErr: "local must be empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.cfg.Resolve()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+
+			var got ClientSecretHashingConfig
+			switch r := result.(type) {
+			case *LocalOAuth2Config:
+				got = r.ClientSecretHashing
+			case *HybridOAuth2Config:
+				got = r.Local.ClientSecretHashing
+			}
+			assert.Equal(t, tt.want, got.MaxConcurrent)
+		})
+	}
 }

@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	otelslog "go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 
@@ -113,7 +113,8 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 2. Initialize logger.
-	logger := initLogger(cfg)
+	stdoutHandler := newStdoutLogHandler(cfg)
+	logger := slog.New(telemetry.NewPrincipalPolicyHandler(stdoutHandler))
 	logger.Info("ExtProc Token Exchange Service starting",
 		"grpc_bind", cfg.GRPC.Bind,
 		"grpc_port", cfg.GRPC.Port)
@@ -160,8 +161,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		// entire service lifetime.
 		if cfg.Telemetry.Logs.Enabled {
 			otelHandler := otelslog.NewHandler(cfg.Telemetry.ServiceName,
-				otelslog.WithLoggerProvider(global.GetLoggerProvider()))
-			logger = slog.New(telemetry.NewMultiHandler(logger.Handler(), otelHandler))
+				otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
+			logger = slog.New(telemetry.NewPrincipalPolicyHandler(telemetry.NewMultiHandler(stdoutHandler, otelHandler)))
 			slog.SetDefault(logger)
 		}
 	}
@@ -219,12 +220,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer stopApprovalSyncer()
 	}
 
-	// 9. Create gRPC server with max_concurrent_streams.
-	grpcOpts := []grpc.ServerOption{
-		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- Validate rejects values outside the uint32 range.
-		grpc.KeepaliveParams(keepalive.ServerParameters{}),
-	}
-	grpcSrv := grpc.NewServer(grpcOpts...)
+	// 9. Create gRPC server.
+	grpcSrv := grpc.NewServer(grpcServerOptions(cfg)...)
 	extprocv3.RegisterExternalProcessorServer(grpcSrv, svc)
 
 	// 10. Listen on configured bind:port.
@@ -262,8 +259,26 @@ func run(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// initLogger creates a structured slog.Logger from the service configuration.
-func initLogger(cfg *extprocconfig.Config) *slog.Logger {
+const (
+	// grpcDefaultMaxRecvMsgSize is grpc-go's default server receive limit.
+	grpcDefaultMaxRecvMsgSize = 4 << 20
+	// grpcRecvMsgOverhead leaves room for the metadata the proxy sends with each body message.
+	grpcRecvMsgOverhead = 64 << 10
+)
+
+// grpcServerOptions builds the ExtProc gRPC server options. A BUFFERED request body
+// arrives as one ProcessingRequest, so the receive limit covers authorization.max_body_size
+// and never drops below grpc-go's default.
+func grpcServerOptions(cfg *extprocconfig.Config) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- Validate rejects values outside the uint32 range.
+		grpc.KeepaliveParams(keepalive.ServerParameters{}),
+		grpc.MaxRecvMsgSize(max(cfg.Authorization.MaxBodySize+grpcRecvMsgOverhead, grpcDefaultMaxRecvMsgSize)),
+	}
+}
+
+// newStdoutLogHandler creates the structured stdout slog.Handler from the service configuration.
+func newStdoutLogHandler(cfg *extprocconfig.Config) slog.Handler {
 	level := slog.LevelInfo
 	switch cfg.Log.Level {
 	case "debug":
@@ -274,13 +289,10 @@ func initLogger(cfg *extprocconfig.Config) *slog.Logger {
 		level = slog.LevelError
 	}
 
-	var handler slog.Handler
 	if cfg.Log.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
-	return slog.New(handler)
+	return slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 }
 
 // isSignalCancellation returns true when err is context.Canceled and the signal

@@ -2,9 +2,12 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -281,6 +284,41 @@ func TestOAuth2TokenEndpoint_StatusCodePreserved(t *testing.T) {
 			// Verify status code preserved
 			assert.Equal(t, tt.upstreamStatus, w.Code)
 			assert.Equal(t, tt.wwwAuthenticate, w.Header().Get("WWW-Authenticate"))
+		})
+	}
+}
+
+func TestOAuth2TokenEndpoint_CIMDFetchFailuresAreDirect(t *testing.T) {
+	const clientURL = "https://client.example/metadata"
+	for _, test := range []struct {
+		name       string
+		fetcher    ports.CIMDFetcher
+		wantStatus int
+		wantError  string
+	}{
+		{name: "temporarily unavailable", fetcher: integrationCIMDFetcher{err: &ports.CIMDUnavailableError{Cause: context.DeadlineExceeded}}, wantStatus: http.StatusInternalServerError, wantError: "server_error"},
+		{name: "SSRF blocked", fetcher: integrationCIMDFetcher{err: &ports.SSRFBlockedError{IP: "127.0.0.1"}}, wantStatus: http.StatusUnauthorized, wantError: "invalid_client"},
+		{name: "malformed document", fetcher: integrationCIMDFetcher{result: &ports.CIMDFetchResult{Body: []byte("{")}}, wantStatus: http.StatusUnauthorized, wantError: "invalid_client"},
+		{name: "policy violation", fetcher: integrationCIMDFetcher{result: &ports.CIMDFetchResult{Body: []byte(`{"client_id":"https://other.example/client","redirect_uris":["https://client.example/callback"]}`)}}, wantStatus: http.StatusUnauthorized, wantError: "invalid_client"},
+		{name: "client error response", fetcher: integrationCIMDFetcher{err: errors.New("CIMD endpoint returned status 404")}, wantStatus: http.StatusUnauthorized, wantError: "invalid_client"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, agents := newCIMDIntegrationOAuth2Service(t, test.fetcher)
+			agent := &domainstorage.Agent{ID: id.NewAgentID(), ClientURIs: []string{clientURL}, DisplayName: "CIMD Integration Agent"}
+			require.NoError(t, agents.Create(context.Background(), agent))
+			handler := &enduser.OAuth2TokenHandler{
+				OAuth2Service: service,
+				GrantHandler:  enduser.NewLocalGrantStrategy(nil, nil),
+			}
+			form := url.Values{"grant_type": {"authorization_code"}, "client_id": {clientURL}, "code": {"unused-code"}}
+			request := httptest.NewRequest(http.MethodPost, "https://broker.example.com/oauth2/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assert.Equal(t, test.wantStatus, response.Code)
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, test.wantError, body["error"])
 		})
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -303,6 +304,22 @@ func TestStandaloneBrokerExamplesLoadWithBrokerLoader(t *testing.T) {
 		envVars      map[string]string
 		assertConfig func(*testing.T, *ports.Config)
 	}{
+		{
+			name:         "trust-anchor-local-jwks.yaml",
+			relativePath: "examples/config/trust-anchor-local-jwks.yaml",
+			assertConfig: func(t *testing.T, cfg *ports.Config) {
+				t.Helper()
+				assert.Equal(t, "/etc/agentic-identity-broker/trust", cfg.Security.TrustMaterialDir)
+				set, err := trustanchor.ParseLocalKeySet([]byte(cfg.TokenExchange.ClientAssertion.JWKS))
+				require.NoError(t, err, "the example inline key set must be a valid public key set")
+				assert.Equal(t, []string{"agentgateway-2026-10"}, set.KeyIDs)
+				require.NotNil(t, cfg.Server.EndUser.Authentication.JWT)
+				assert.Equal(t, "/etc/agentic-identity-broker/trust/mesh-jwks.json", cfg.Server.EndUser.Authentication.JWT.JWKSFile)
+				require.NotNil(t, cfg.OAuth2AuthServer.Impersonation)
+				assert.Equal(t, "/etc/agentic-identity-broker/trust/agentgateway-jwks.json",
+					cfg.OAuth2AuthServer.Impersonation.Rules[0].TrustedIssuers[0].JWKSFile)
+			},
+		},
 		{
 			name:         "config.development.yaml",
 			relativePath: "examples/config/config.development.yaml",

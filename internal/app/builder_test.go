@@ -324,13 +324,13 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		authenticated, err := app.AdminJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		require.NoError(t, err)
 		require.NotNil(t, authenticated)
-		assert.Equal(t, "operator@example.com", authenticated.Principal)
+		assert.Equal(t, id.Principal("operator@example.com"), authenticated.Principal)
 
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
 		require.NotNil(t, enduser)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 		_, err = app.EnduserJWTAuthenticator.Authenticate(context.Background(), adminToken)
 		assert.Error(t, err, "end-user authenticator must not trust the admin issuer")
 		_, err = app.AdminJWTAuthenticator.Authenticate(context.Background(), enduserToken)
@@ -343,7 +343,7 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 		require.NotNil(t, app.EnduserJWTAuthenticator)
 		enduser, err := app.EnduserJWTAuthenticator.Authenticate(context.Background(), enduserToken)
 		require.NoError(t, err)
-		assert.Equal(t, "user@example.com", enduser.Principal)
+		assert.Equal(t, id.Principal("user@example.com"), enduser.Principal)
 	})
 
 }
@@ -429,7 +429,7 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken)
+				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken, nil)
 				results <- err
 			}()
 		}
@@ -847,6 +847,17 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("detector-only configuration requires an external trust anchor", func(t *testing.T) {
+		cfg := baseConfig(jweKey)
+		cfg.OAuth2AuthServer = ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}}
+		cfg.TokenExchange.ClaimExtraction.AgentSubjectExpression = "subject_token.sub"
+		built, err := NewBuilder().WithConfig(cfg).WithStorage(newStorage(t)).WithLogger(logger).Build()
+		if built != nil {
+			t.Cleanup(func() { assert.NoError(t, built.Shutdown(context.Background())) })
+		}
+		require.ErrorContains(t, err, "no client-assertion trust anchor is set")
+	})
+
 	t.Run("local mode with token exchange requires an external trust anchor", func(t *testing.T) {
 		cfg := baseConfig(jweKey)
 		cfg.OAuth2AuthServer = ports.OAuth2AuthServerConfig{
@@ -894,7 +905,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 
 func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 	newService := func(repo ports.AgentRepository) *agentsservice.Service {
-		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false)
+		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false, nil)
 	}
 
 	t.Run("resolves upstream client ID before any UUID fallback", func(t *testing.T) {
@@ -982,7 +993,7 @@ func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false)
+			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false, nil)
 			resolve := newTokenExchangeAgentIDResolver(svc, time.Second)
 			assertFailure := func(err error) {
 				t.Helper()
@@ -1425,7 +1436,7 @@ func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
 
 	baseline := countHTTPRCGoroutines(t)
 	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if built != nil {
@@ -1936,12 +1947,10 @@ func TestProxyOAuth2ConfigUpstreamTimeout(t *testing.T) {
 	}
 }
 
-// TestBuilder_CIMDKeyStartupReadiness specifies the mode-independent outbound-CIMD
-// key startup contract. It deliberately uses the production Builder and memory adapter:
-// the only test data written directly is the persisted service state that a later
-// service-registration implementation will create.
+// TestBuilder_CIMDKeyStartupReadiness checks key bootstrap and hosted identity
+// validation for persisted CIMD services in each OAuth server mode.
 func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
-	const cimdAuthMethod = model.TokenEndpointAuthMethod("private_key_jwt")
+	const cimdAuthMethod = model.TokenEndpointAuthMethodPrivateKeyJWT
 
 	type modeCase struct {
 		name string
@@ -2046,7 +2055,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		return count
 	}
 
-	persistCIMDService := func(t *testing.T, adapter *storage.Adapter) id.ServiceID {
+	persistCIMDService := func(t *testing.T, adapter *storage.Adapter, method model.TokenEndpointAuthMethod) id.ServiceID {
 		t.Helper()
 		serviceID := id.NewServiceID()
 		service := &model.ThirdpartyOAuth2ProviderEntity{
@@ -2054,7 +2063,8 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			DisplayName:             "CIMD upstream",
 			ClientID:                id.ClientID("https://broker.example.com/.well-known/oauth-client/" + serviceID.String()),
 			Secret:                  model.NewAbsentSecret(),
-			TokenEndpointAuthMethod: cimdAuthMethod,
+			TokenEndpointAuthMethod: method,
+			ClientRegistration:      model.ClientRegistrationCIMD,
 			IssuerURI:               "https://issuer.example.com",
 		}
 		require.NoError(t, adapter.Services().Create(context.Background(), service))
@@ -2076,9 +2086,37 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			}
 		})
 
+		t.Run(mode.name+" starts with only CIMD public services and no CIMD key", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter, model.TokenEndpointAuthMethodNone)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			require.NotNil(t, app)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+			require.NotNil(t, app.CIMDKeyReadiness)
+			assert.ErrorIs(t, app.CIMDKeyReadiness.RequireUsablePublishedKey(context.Background()), ports.ErrCIMDPublicKeyUnavailable)
+			require.NotNil(t, app.CIMDMetadataProvider)
+			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, "https://broker.example.com/.well-known/oauth-client/"+serviceID.String(), metadata.ClientID)
+			assert.Equal(t, "none", metadata.TokenEndpointAuthMethod)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+		})
+
+		t.Run(mode.name+" rejects a mismatched CIMD public identity without creating a key", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter, model.TokenEndpointAuthMethodNone)
+			_, err := build(t, mode.mode, adapter, "https://broker.changed.example")
+			require.ErrorContains(t, err, "server.enduser.public_url")
+			persisted, getErr := adapter.Services().Get(context.Background(), serviceID)
+			require.NoError(t, getErr)
+			assert.Equal(t, id.ClientID("https://broker.example.com/.well-known/oauth-client/"+serviceID.String()), persisted.ClientID)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+		})
+
 		t.Run(mode.name+" bootstraps a persisted CIMD service with an immediately usable published key", func(t *testing.T) {
 			adapter := newStorage(t)
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 
 			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
@@ -2099,7 +2137,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 
 		t.Run(mode.name+" fails closed when persisted CIMD key publication is unavailable", func(t *testing.T) {
 			adapter := newStorage(t)
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 			require.NoError(t, adapter.SigningKeys().Create(context.Background(), &domstorage.SigningKey{
 				ID:                  id.NewSigningKeyID(),
 				KID:                 id.NewKeyID("cimd-unpublishable-" + mode.mode),
@@ -2123,13 +2161,13 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			require.NotNil(t, app)
 			assert.NotNil(t, app.CIMDKeyReadiness)
 
-			persistCIMDService(t, adapter)
+			persistCIMDService(t, adapter, cimdAuthMethod)
 			assert.Zero(t, countCIMDKeys(t, adapter), "service registration must not provision a CIMD key")
 		})
 
 		t.Run(mode.name+" rejects changed public origin without rewriting the CIMD identity", func(t *testing.T) {
 			adapter := newStorage(t)
-			serviceID := persistCIMDService(t, adapter)
+			serviceID := persistCIMDService(t, adapter, cimdAuthMethod)
 			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
 			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)

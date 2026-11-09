@@ -178,12 +178,12 @@ func (a *Adapter) verifySchema(ctx context.Context, db *sqlx.DB) error {
 
 	if err := db.GetContext(schemaCtx, &exists, query); err != nil {
 		// Log warning but don't fail - users table may not be created yet
-		slog.Warn("failed to query users table existence",
+		slog.WarnContext(ctx, "failed to query users table existence",
 			"error", err,
 			"note", "users table may not exist yet, continuing initialization")
 	} else if !exists {
 		// Users table doesn't exist, log warning but continue
-		slog.Warn("users table not found",
+		slog.WarnContext(ctx, "users table not found",
 			"note", "users table from previous feature may not be migrated yet")
 	}
 

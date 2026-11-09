@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
+	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -51,7 +53,7 @@ func TestOAuth2AuthorizeEndpoint_NonUUIDClientIDError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -81,7 +83,7 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -109,12 +111,68 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 	assert.NotEmpty(t, errResp["error_description"])
 }
 
+type integrationCIMDFetcher struct {
+	result *ports.CIMDFetchResult
+	err    error
+}
+
+func (f integrationCIMDFetcher) Fetch(context.Context, string) (*ports.CIMDFetchResult, error) {
+	return f.result, f.err
+}
+
+func newCIMDIntegrationOAuth2Service(t *testing.T, fetcher ports.CIMDFetcher) (*oauth2.AuthorizationService, *inMemoryAgentRepo) {
+	t.Helper()
+	agents := newInMemoryAgentRepo()
+	cache, err := domaincimd.NewCIMDCache(time.Minute, time.Hour, 100)
+	require.NoError(t, err)
+	resolver := oauth2.NewAgentClientResolverWithCIMD(agents, domaincimd.NewService(fetcher, cache, nil, slog.Default()), slog.Default())
+	service := oauth2.NewAuthorizationService(newInMemoryGrantRepo(), memory.NewInMemoryUserSessionRepository(), resolver, &oauth2.OAuth2Config{
+		PublicURL:              "https://broker.example.com",
+		SupportedResponseTypes: []string{"code"},
+		SupportedGrantTypes:    []string{"authorization_code", "refresh_token"},
+		ModeStrategy:           oauth2.NewLocalModeStrategy(),
+	}, nil, newIntegrationSessionTokenSvc())
+	return service, agents
+}
+
+func TestOAuth2AuthorizeEndpoint_CIMDFetchFailuresAreDirect(t *testing.T) {
+	const clientURL = "https://client.example/metadata"
+	for _, test := range []struct {
+		name       string
+		fetcher    ports.CIMDFetcher
+		wantStatus int
+		wantError  string
+	}{
+		{name: "temporarily unavailable", fetcher: integrationCIMDFetcher{err: &ports.CIMDUnavailableError{Cause: context.DeadlineExceeded}}, wantStatus: http.StatusInternalServerError, wantError: "server_error"},
+		{name: "SSRF blocked", fetcher: integrationCIMDFetcher{err: &ports.SSRFBlockedError{IP: "127.0.0.1"}}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+		{name: "malformed document", fetcher: integrationCIMDFetcher{result: &ports.CIMDFetchResult{Body: []byte("{")}}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+		{name: "client error response", fetcher: integrationCIMDFetcher{err: errors.New("CIMD endpoint returned status 404")}, wantStatus: http.StatusBadRequest, wantError: "invalid_client"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, agents := newCIMDIntegrationOAuth2Service(t, test.fetcher)
+			agent := &storage.Agent{ID: id.NewAgentID(), ClientURIs: []string{clientURL}, DisplayName: "CIMD Integration Agent"}
+			require.NoError(t, agents.Create(context.Background(), agent))
+			handler := &enduser.OAuth2AuthorizeHandler{Service: service}
+			query := url.Values{"client_id": {clientURL}, "redirect_uri": {"https://client.example/callback"}, "response_type": {"code"}, "state": {"test-state"}}
+			request := httptest.NewRequest(http.MethodGet, "https://broker.example.com/oauth2/authorize?"+query.Encode(), nil)
+			request = request.WithContext(principal.WithPrincipal(request.Context(), "user@example.com"))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assert.Equal(t, test.wantStatus, response.Code)
+			assert.Empty(t, response.Header().Get("Location"), "resolution failures must not redirect to an unverified URI")
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, test.wantError, body["error"])
+		})
+	}
+}
+
 // TestOAuth2AuthorizeEndpoint_MissingParameterError tests validation of required parameters
 func TestOAuth2AuthorizeEndpoint_MissingParameterError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -169,7 +227,7 @@ func TestOAuth2AuthorizeEndpoint_NoGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -223,7 +281,7 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -286,7 +344,7 @@ func TestOAuth2AuthorizeEndpoint_ExpiredGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -342,7 +400,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -354,7 +412,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 
 	// Wrap with audit middleware
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	auditMiddleware := middleware.OAuth2AuditMiddleware(logger)
 	wrappedHandler := auditMiddleware(handler)
 
@@ -401,7 +459,7 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -492,6 +550,16 @@ func (r *inMemoryAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) 
 	return agents, nil
 }
 
+func (r *inMemoryAgentRepo) GetByExternalID(_ context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+
+	for _, agent := range r.agents {
+		if agent.ExternalID != nil && *agent.ExternalID == externalID {
+			return agent.Copy(), nil
+		}
+	}
+	return nil, storage.NewStorageError("GetByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+}
+
 func (r *inMemoryAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
 	for _, agent := range r.agents {
 		if agent.ClientID != nil && *agent.ClientID == clientID {
@@ -507,6 +575,13 @@ func (r *inMemoryAgentRepo) GetByClientID(ctx context.Context, clientID id.Clien
 }
 
 func (r *inMemoryAgentRepo) GetByClientURI(ctx context.Context, uri string) (*storage.Agent, error) {
+	for _, agent := range r.agents {
+		for _, registeredURI := range agent.ClientURIs {
+			if registeredURI == uri {
+				return agent, nil
+			}
+		}
+	}
 	return nil, storage.NewStorageError(
 		"GetAgentByClientURI",
 		storage.ErrorKindNotFound,
@@ -673,4 +748,24 @@ func (r *inMemoryGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, pri
 
 func (r *inMemoryGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
 	return 0, nil
+}
+
+// newConnectedSessionRepo stores a usable session for every service the grant includes,
+// as consent requires (FR-020 of specs/019-permission-sets/spec.md).
+func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserSessionRepository {
+	t.Helper()
+	repo := memory.NewInMemoryUserSessionRepository()
+	for _, entry := range grant.GrantedPermissionSets {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			require.NoError(t, repo.Create(context.Background(), &storage.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            grant.Principal,
+				ServiceID:            serviceID,
+				EncryptedAccessToken: []byte("opaque-test-token"),
+				TokenType:            "Bearer",
+				EncryptionContext:    storage.EncryptionContext{ServiceID: serviceID},
+			}))
+		}
+	}
+	return repo
 }

@@ -29,7 +29,7 @@ func TestExchangeCodeWithRetry_UsesConfiguredClientTimeout(t *testing.T) {
 	service := &OAuth2SessionService{
 		httpClient: &http.Client{Timeout: 20 * time.Millisecond},
 		config:     Config{MaxRetries: 1},
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:     slog.New(slog.DiscardHandler),
 	}
 	cfg := &oauth2.Config{
 		ClientID: "client",
@@ -39,7 +39,7 @@ func TestExchangeCodeWithRetry_UsesConfiguredClientTimeout(t *testing.T) {
 		},
 	}
 
-	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, "code", "verifier", nil)
+	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
 	require.Nil(t, token)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -68,7 +68,7 @@ func TestExchangeCodeWithRetry_DoesNotRetryNonTransientResponses(t *testing.T) {
 			service := &OAuth2SessionService{
 				httpClient: server.Client(),
 				config:     Config{MaxRetries: 3, RetryBaseDelay: time.Millisecond},
-				logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+				logger:     slog.New(slog.DiscardHandler),
 			}
 			cfg := &oauth2.Config{
 				ClientID: "client",
@@ -78,7 +78,7 @@ func TestExchangeCodeWithRetry_DoesNotRetryNonTransientResponses(t *testing.T) {
 				},
 			}
 
-			token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, "code", "verifier", nil)
+			token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
 			require.Nil(t, token)
 			require.ErrorIs(t, err, ErrTokenExchange)
 			require.Equal(t, int32(1), requests.Load())
@@ -106,7 +106,7 @@ func TestExchangeCodeWithRetry_RetriesNetworkFailure(t *testing.T) {
 	service := &OAuth2SessionService{
 		httpClient: server.Client(),
 		config:     Config{MaxRetries: 2, RetryBaseDelay: time.Millisecond},
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger:     slog.New(slog.DiscardHandler),
 	}
 	cfg := &oauth2.Config{
 		ClientID: "client",
@@ -116,7 +116,7 @@ func TestExchangeCodeWithRetry_RetriesNetworkFailure(t *testing.T) {
 		},
 	}
 
-	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, "code", "verifier", nil)
+	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
 	require.NoError(t, err)
 	require.Equal(t, "retried", token.AccessToken)
 	require.Equal(t, int32(2), requests.Load())

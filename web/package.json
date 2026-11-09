@@ -32,6 +32,8 @@
   },
   "overrides": {
     "minimatch@>=3.0.0 <3.1.4": "3.1.5",
+    "minimatch@>=10.0.0 <11.0.0": "11.0.1",
+    "glob@>=13.0.0 <14.0.2": "14.0.2",
     "esbuild": "0.28.1",
     "source-map-js": "1.2.2",
     "js-yaml@<4": "4.3.2"
@@ -50,7 +52,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "autoprefixer": "^10.4.24",
     "eslint": "^9.0.0",
     "eslint-plugin-jsx-a11y": "^6.10.0",
@@ -62,15 +64,15 @@
     "istanbul-lib-source-maps": "^5.0.6",
     "istanbul-reports": "^3.2.0",
     "jsdom": "^27.4.0",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.29",
     "prettier": "^3.9.9",
-    "storybook": "10.3.5",
+    "storybook": "10.6.3",
     "tailwindcss": "^4.0.0",
     "terser": "^5.46.0",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.0.0",
-    "vite": "^7.3.6",
+    "vite": "^7.3.7",
     "vite-plugin-istanbul": "^9.0.1",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }

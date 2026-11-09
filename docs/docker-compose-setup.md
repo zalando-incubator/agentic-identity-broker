@@ -8,7 +8,11 @@ Compose. It includes hot reload for the backend and frontend.
 ### Prerequisites
 
 - Docker installed and running, with Docker Compose v2 (`docker compose`)
-- `justfile` (included in repo)
+- OpenSSL for host-side key generation
+- [just](https://github.com/casey/just), installed with `brew install just` or `cargo install just`
+
+For plain Docker Compose commands and a complete consent-to-tool journey,
+see [Get started](get-started/index.md).
 
 ### Step 1: Start All Services
 
@@ -25,6 +29,9 @@ This command does the following:
 
 The command shows service startup messages and container logs. Seed-data scripts finish after
 the broker health check.
+
+The sample-agent health check allows a 60-second startup grace period.
+Slow or stalled seeding can still cause startup to fail.
 
 ### Step 2: Access Services
 
@@ -142,6 +149,9 @@ just compose-restart-backend
 ```
 
 ### Frontend (React with Vite HMR)
+
+The frontend runs `npm ci` at startup to synchronize its dependency volume with `web/package-lock.json`.
+This prevents stale dependencies after an image rebuild or branch change.
 
 When you change a file in `./web/src`, Vite responds:
 

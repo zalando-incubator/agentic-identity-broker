@@ -35,14 +35,14 @@ type JWKSProvider interface {
 type JWTValidator struct {
 	subjectTokenPolicy    JWTValidationPolicy
 	clientAssertionPolicy JWTValidationPolicy
-	brokerAudience        string
 	clockSkewSeconds      int64
 }
 
-// JWTValidationPolicy defines the key source and accepted issuer set for one JWT role.
+// JWTValidationPolicy defines the key source and accepted claims for one JWT role.
 type JWTValidationPolicy struct {
-	JWKSProvider    JWKSProvider
-	ExpectedIssuers []string
+	JWKSProvider     JWKSProvider
+	ExpectedIssuers  []string
+	ExpectedAudience string
 }
 
 // NewJWTValidator creates a new JWT validator.
@@ -91,6 +91,12 @@ func NewJWTValidatorWithPolicies(
 		return nil, NewServerError("JWT validation audience is not configured").
 			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
 	}
+	if normalizedSubjectPolicy.ExpectedAudience == "" {
+		normalizedSubjectPolicy.ExpectedAudience = brokerAudience
+	}
+	if normalizedClientAssertionPolicy.ExpectedAudience == "" {
+		normalizedClientAssertionPolicy.ExpectedAudience = brokerAudience
+	}
 	if clockSkewSeconds < 0 {
 		return nil, NewServerError("JWT validation clock skew cannot be negative").
 			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
@@ -103,7 +109,6 @@ func NewJWTValidatorWithPolicies(
 	return &JWTValidator{
 		subjectTokenPolicy:    normalizedSubjectPolicy,
 		clientAssertionPolicy: normalizedClientAssertionPolicy,
-		brokerAudience:        brokerAudience,
 		clockSkewSeconds:      clockSkewSeconds,
 	}, nil
 }
@@ -246,7 +251,7 @@ func (v *JWTValidator) parseWithPolicy(tokenString string, keyset jwk.Set, polic
 		err := jwt.Validate(
 			token,
 			jwt.WithIssuer(issuer),
-			jwt.WithAudience(v.brokerAudience),
+			jwt.WithAudience(policy.ExpectedAudience),
 			jwt.WithAcceptableSkew(clockSkew),
 		)
 		if err == nil {
@@ -285,7 +290,8 @@ func normalizeValidationPolicy(name string, policy JWTValidationPolicy) (JWTVali
 	}
 
 	return JWTValidationPolicy{
-		JWKSProvider:    policy.JWKSProvider,
-		ExpectedIssuers: issuers,
+		JWKSProvider:     policy.JWKSProvider,
+		ExpectedIssuers:  issuers,
+		ExpectedAudience: policy.ExpectedAudience,
 	}, nil
 }

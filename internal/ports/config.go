@@ -51,13 +51,20 @@ type Config struct {
 
 // TokenRefreshConfig declares the proactive refresh settings for production configuration.
 type TokenRefreshConfig struct {
-	LookaheadDuration time.Duration           `mapstructure:"lookahead_duration"`
-	BackgroundWorkers int                     `mapstructure:"background_workers"`
-	Sweep             TokenRefreshSweepConfig `mapstructure:"sweep"`
+	LookaheadDuration time.Duration                   `mapstructure:"lookahead_duration"`
+	BackgroundWorkers int                             `mapstructure:"background_workers"`
+	Sweep             TokenRefreshSweepConfig         `mapstructure:"sweep"`
+	HealthMetrics     TokenRefreshHealthMetricsConfig `mapstructure:"health_metrics"`
 }
 
 type TokenRefreshSweepConfig struct {
 	DefaultPageSize int `mapstructure:"default_page_size"`
+}
+
+// TokenRefreshHealthMetricsConfig controls the oauth2_sessions gauge.
+type TokenRefreshHealthMetricsConfig struct {
+	Enabled      bool          `mapstructure:"enabled"`
+	QueryTimeout time.Duration `mapstructure:"query_timeout"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.
@@ -136,17 +143,25 @@ type JWTConfig struct {
 	HeaderName string `mapstructure:"header_name"`
 
 	// Verification controls JWT signature verification behavior.
-	// "jwks" (default): Signature verified against JWKS endpoint (requires JWKSURI).
+	// "jwks" (default): Signature verified with one of JWKSURI, JWKS, or JWKSFile.
 	// "none": Unsigned JWTs accepted (for trusted upstream/service mesh environments).
-	// Mutually exclusive with JWKSURI when set to "none".
+	// "none" is mutually exclusive with every explicit key source.
 	// Default: "jwks"
 	Verification string `mapstructure:"verification"`
 
-	// JWKSURI is the URL of the JWKS endpoint for signature verification.
-	// Required when Verification is "jwks" (or omitted). Must be HTTPS unless
-	// Security.SkipThirdpartyHTTPSValidation is true.
-	// MUST NOT be set when Verification is "none".
+	// JWKSURI is the URL of a remote JWKS endpoint for signature verification.
+	// It is one alternative when Verification is "jwks" (or omitted). It must be HTTPS
+	// unless Security.SkipThirdpartyHTTPSValidation is true, and cannot be set with
+	// JWKS, JWKSFile, or Verification "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
+
+	// JWKS is an inline JWK Set for signature verification on either server.
+	// It is mutually exclusive with JWKSURI, JWKSFile, and Verification "none".
+	JWKS string `mapstructure:"jwks"`
+
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir
+	// for either server. It is mutually exclusive with JWKSURI, JWKS, and Verification "none".
+	JWKSFile string `mapstructure:"jwks_file"`
 
 	// ExpectedAudience is the expected value in the JWT aud claim.
 	// If set, JWTs without this audience are rejected with 401.
@@ -311,6 +326,10 @@ type ThirdPartyOAuth2Config struct {
 	// Store in environment variable: IDENTITY_BROKER_JWE_SIGNING_KEY
 	JWESigningKey string `mapstructure:"jwe_signing_key"`
 
+	// ClientName identifies this broker or platform in DCR requests. It is optional
+	// for startup, manual services, and hosted CIMD; DCR requires a non-blank value.
+	ClientName string `mapstructure:"client_name"`
+
 	// StateTokenTTL is the time-to-live for OAuth2 state tokens.
 	// Maximum allowed: 15 minutes per security requirements (SR-008).
 	// Shorter TTL reduces exposure window for state token leakage.
@@ -320,7 +339,13 @@ type ThirdPartyOAuth2Config struct {
 	// PKCEVerifierLength is the length of PKCE code verifier in bytes.
 	// Must be 32-128 bytes per RFC 7636.
 	// Default: 32 bytes (256 bits of entropy)
-	PKCEVerifierLength int `mapstructure:"pkce_verifier_length"`
+	PKCEVerifierLength int                              `mapstructure:"pkce_verifier_length"`
+	CredentialFiles    map[string]CredentialFileBinding `mapstructure:"-"`
+}
+
+type CredentialFileBinding struct {
+	ClientIDFile     string `mapstructure:"client_id_file" json:"client_id_file" yaml:"client_id_file"`
+	ClientSecretFile string `mapstructure:"client_secret_file" json:"client_secret_file" yaml:"client_secret_file"`
 }
 
 // MultiAgentClientConfig holds configuration for multi-agent OAuth2 client sharing.
@@ -345,12 +370,20 @@ type MultiAgentClientConfig struct {
 // CIMDConfig holds Client ID Metadata Document fetch and validation settings.
 // CIMD is disabled by default (Enabled: false); SSRF protection is always active.
 type CIMDConfig struct {
-	Enabled             bool            `mapstructure:"enabled"`
-	FetchTimeout        time.Duration   `mapstructure:"fetch_timeout"`
-	MaxResponseBytes    int             `mapstructure:"max_response_bytes"`
-	Cache               CIMDCacheConfig `mapstructure:"cache"`
-	SSRF                CIMDSSRFConfig  `mapstructure:"ssrf"`
-	ClientNameBlocklist []string        `mapstructure:"client_name_blocklist"`
+	Enabled              bool                           `mapstructure:"enabled"`
+	FetchTimeout         time.Duration                  `mapstructure:"fetch_timeout"`
+	MaxResponseBytes     int                            `mapstructure:"max_response_bytes"`
+	Cache                CIMDCacheConfig                `mapstructure:"cache"`
+	SSRF                 CIMDSSRFConfig                 `mapstructure:"ssrf"`
+	ClientNameBlocklist  []string                       `mapstructure:"client_name_blocklist"`
+	ClientAuthentication CIMDClientAuthenticationConfig `mapstructure:"client_authentication"`
+}
+
+type CIMDClientAuthenticationConfig struct {
+	KeySetCacheTTL           time.Duration `mapstructure:"key_set_cache_ttl"`
+	KeySetMinRefetchInterval time.Duration `mapstructure:"key_set_min_refetch_interval"`
+	KeySetMaxBytes           int           `mapstructure:"key_set_max_bytes"`
+	KeySetFetchTimeout       time.Duration `mapstructure:"key_set_fetch_timeout"`
 }
 
 // CIMDCacheConfig holds operator TTL bounds and entry cap for CIMD response caching.
@@ -376,6 +409,12 @@ func DefaultCIMDConfig() CIMDConfig {
 			MinTTL:     60 * time.Second,
 			MaxEntries: 1000,
 		},
+		ClientAuthentication: CIMDClientAuthenticationConfig{
+			KeySetCacheTTL:           time.Hour,
+			KeySetMinRefetchInterval: 5 * time.Minute,
+			KeySetMaxBytes:           65536,
+			KeySetFetchTimeout:       5 * time.Second,
+		},
 	}
 }
 
@@ -391,20 +430,32 @@ type ProxyModeConfig struct {
 
 const DefaultSigningKeyBootstrapTimeout = 90 * time.Second
 
+// DefaultClientSecretHashingMaxConcurrent is the default number of client secret hashes that
+// may run at once. Each Argon2id hash allocates 64 MiB and already spreads its four lanes
+// across CPUs, so a higher value adds memory, not throughput.
+const DefaultClientSecretHashingMaxConcurrent = 2
+
 // LocalModeConfig holds local token issuance configuration for local/hybrid mode.
 type LocalModeConfig struct {
 	// IssuerURI is the JWT iss claim for locally-minted tokens. Optional — defaults to
 	// server.enduser.public_url when empty, allowing independent control behind CDNs or proxies.
-	IssuerURI             string                 `mapstructure:"issuer_uri"`
-	TokenTTL              time.Duration          `mapstructure:"token_ttl"`
-	RefreshTokenTTL       time.Duration          `mapstructure:"refresh_token_ttl"`
-	TokenClaimsExpression string                 `mapstructure:"token_claims_expression"`
-	SigningKeys           LocalSigningKeysConfig `mapstructure:"signing_keys"`
+	IssuerURI             string                    `mapstructure:"issuer_uri"`
+	TokenTTL              time.Duration             `mapstructure:"token_ttl"`
+	RefreshTokenTTL       time.Duration             `mapstructure:"refresh_token_ttl"`
+	TokenClaimsExpression string                    `mapstructure:"token_claims_expression"`
+	SigningKeys           LocalSigningKeysConfig    `mapstructure:"signing_keys"`
+	ClientSecretHashing   ClientSecretHashingConfig `mapstructure:"client_secret_hashing"`
 }
 
 // LocalSigningKeysConfig holds local signing-key startup settings.
 type LocalSigningKeysConfig struct {
 	BootstrapTimeout time.Duration `mapstructure:"bootstrap_timeout"`
+}
+
+// ClientSecretHashingConfig bounds broker client secret hashing in local/hybrid mode.
+type ClientSecretHashingConfig struct {
+	// MaxConcurrent is the number of hashes that may run at once. Further requests wait.
+	MaxConcurrent int `mapstructure:"max_concurrent"`
 }
 
 // OAuth2AuthServerConfig represents configuration for OAuth2 authorization server functionality.
@@ -459,7 +510,7 @@ func (c *OAuth2AuthServerConfig) validateProxyMode() error {
 		return c.newValidationError("oauth2_authorization_server.cimd.enabled requires mode 'local' or 'hybrid'; CIMD is incompatible with proxy mode")
 	}
 
-	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
+	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 || c.Local.ClientSecretHashing.MaxConcurrent != 0 {
 		return c.newValidationError("oauth2_authorization_server.local must be empty in proxy mode")
 	}
 
@@ -500,6 +551,9 @@ func (c *OAuth2AuthServerConfig) validateLocalMode() error {
 	if err := c.validateLocalSigningKeys(); err != nil {
 		return err
 	}
+	if err := c.validateClientSecretHashing(); err != nil {
+		return err
+	}
 
 	if err := c.validateCIMDCache(); err != nil {
 		return err
@@ -526,6 +580,9 @@ func (c *OAuth2AuthServerConfig) validateHybridMode() error {
 	}
 	c.applySharedDefaults([]string{"authorization_code", "client_credentials", "refresh_token"})
 	if err := c.validateLocalSigningKeys(); err != nil {
+		return err
+	}
+	if err := c.validateClientSecretHashing(); err != nil {
 		return err
 	}
 	if err := c.validateCIMDCache(); err != nil {
@@ -568,6 +625,9 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	if c.Local.SigningKeys.BootstrapTimeout == 0 {
 		c.Local.SigningKeys.BootstrapTimeout = DefaultSigningKeyBootstrapTimeout
 	}
+	if c.Local.ClientSecretHashing.MaxConcurrent == 0 {
+		c.Local.ClientSecretHashing.MaxConcurrent = DefaultClientSecretHashingMaxConcurrent
+	}
 }
 
 func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
@@ -580,6 +640,13 @@ func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
 func (c *OAuth2AuthServerConfig) validateLocalSigningKeys() error {
 	if c.Local.SigningKeys.BootstrapTimeout <= 0 {
 		return c.newValidationError("oauth2_authorization_server.local.signing_keys.bootstrap_timeout must be a positive duration")
+	}
+	return nil
+}
+
+func (c *OAuth2AuthServerConfig) validateClientSecretHashing() error {
+	if c.Local.ClientSecretHashing.MaxConcurrent <= 0 {
+		return c.newValidationError("oauth2_authorization_server.local.client_secret_hashing.max_concurrent must be a positive integer")
 	}
 	return nil
 }
@@ -598,6 +665,22 @@ func (c *OAuth2AuthServerConfig) applySharedDefaults(defaultGrantTypes []string)
 func (c *OAuth2AuthServerConfig) validateCIMDCache() error {
 	if c.CIMD.Enabled && c.CIMD.Cache.MinTTL > c.CIMD.Cache.MaxTTL {
 		return c.newValidationError("oauth2_authorization_server.cimd.cache.min_ttl must not exceed max_ttl")
+	}
+	if !c.CIMD.Enabled {
+		return nil
+	}
+	auth := c.CIMD.ClientAuthentication
+	if auth.KeySetCacheTTL <= 0 || auth.KeySetCacheTTL > 24*time.Hour {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_cache_ttl must be positive and not exceed 24h")
+	}
+	if auth.KeySetMinRefetchInterval <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_min_refetch_interval must be positive")
+	}
+	if auth.KeySetMaxBytes <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_max_bytes must be positive")
+	}
+	if auth.KeySetFetchTimeout <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_fetch_timeout must be positive")
 	}
 	return nil
 }
@@ -631,6 +714,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 			RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 			TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 			SigningKeys:            c.Local.SigningKeys,
+			ClientSecretHashing:    c.Local.ClientSecretHashing,
 			SupportedResponseTypes: c.SupportedResponseTypes,
 			SupportedGrantTypes:    c.SupportedGrantTypes,
 			SupportedScopes:        c.SupportedScopes,
@@ -656,6 +740,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 				RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 				TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 				SigningKeys:            c.Local.SigningKeys,
+				ClientSecretHashing:    c.Local.ClientSecretHashing,
 				SupportedResponseTypes: c.SupportedResponseTypes,
 				SupportedGrantTypes:    c.SupportedGrantTypes,
 				SupportedScopes:        c.SupportedScopes,
@@ -717,6 +802,10 @@ const (
 	ImpersonationAudienceRequirementAbsent = "absent"
 )
 
+// SubjectCategoryList is a named type so the loader can reject non-sequence YAML values before
+// weak decoding would coerce them (for example "agent" into ["agent"]).
+type SubjectCategoryList []string
+
 // ImpersonationConfig is the optional oauth2_authorization_server.impersonation subtree.
 // It activates an RFC 8693 user-impersonation flow in local mode (data-model §1).
 type ImpersonationConfig struct {
@@ -728,6 +817,8 @@ type ImpersonationConfig struct {
 
 // ImpersonationRuleConfig is a self-contained, atomically reviewable impersonation rule (CR-002/CR-003).
 type ImpersonationRuleConfig struct {
+	// AllowedSubjectCategories defaults to human only when omitted.
+	AllowedSubjectCategories SubjectCategoryList `mapstructure:"allowed_subject_categories"`
 	// Name is a unique, operator-facing rule name; appears in audit (CR-003).
 	Name string `mapstructure:"name"`
 	// Roles declares per-role semantics keyed by role name (client_assertion|actor|subject) (CR-003).
@@ -762,9 +853,15 @@ type TrustedTokenIssuerConfig struct {
 	IssuerURI string `mapstructure:"issuer_uri"`
 	// JWKSURI is the explicit key-set location; discovered from issuer metadata when empty.
 	JWKSURI string `mapstructure:"jwks_uri"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile string `mapstructure:"jwks_file"`
 	// JWKSMinRefresh bounds the minimum JWKS refresh cadence (default 15m).
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
-	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence (default max(min, 1h)).
+	// JWKSMaxRefresh bounds the maximum JWKS refresh cadence. For JWKSFile, unset or
+	// below-minimum values default to max(3 × JWKSMinRefresh, 1h); remote sources
+	// default to max(JWKSMinRefresh, 1h).
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 	// AllowedAlgorithms is a non-empty subset of the broker-approved asymmetric set (CR-007).
 	AllowedAlgorithms []string `mapstructure:"allowed_algorithms"`
@@ -779,8 +876,15 @@ type TrustedTokenIssuerConfig struct {
 // in proxy and hybrid modes. In local mode it must be set explicitly and must identify an external
 // identity provider; broker-minted tokens must never be accepted as client assertions.
 type ClientAssertionTrustConfig struct {
-	IssuerURI      string        `mapstructure:"issuer_uri"`
-	JWKSURI        string        `mapstructure:"jwks_uri"`
+	IssuerURI string `mapstructure:"issuer_uri"`
+	JWKSURI   string `mapstructure:"jwks_uri"`
+	// ExpectedAudience is the aud claim required for client assertions. When empty,
+	// TokenExchangeConfig.ExpectedAudience is used for backward compatibility.
+	ExpectedAudience string `mapstructure:"expected_audience"`
+	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
+	JWKS string `mapstructure:"jwks"`
+	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
+	JWKSFile       string        `mapstructure:"jwks_file"`
 	JWKSMinRefresh time.Duration `mapstructure:"jwks_min_refresh"`
 	JWKSMaxRefresh time.Duration `mapstructure:"jwks_max_refresh"`
 }
@@ -790,7 +894,8 @@ type ClientAssertionTrustConfig struct {
 // for third-party OAuth2 tokens stored in the token vault.
 type TokenExchangeConfig struct {
 	// ExpectedAudience is the broker's own identifier that must appear in the audience (aud) claim
-	// of both subject_token and client_assertion JWTs submitted for token exchange.
+	// of subject_token JWTs. It is also the client_assertion fallback when no role-specific
+	// audience is configured.
 	// If empty, defaults to "token-exchange-broker".
 	// Configurable to support deployments where the broker is known under a different identifier.
 	// Environment variable: IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE
@@ -812,6 +917,8 @@ type TokenExchangeConfig struct {
 // ClaimExtractionConfig defines CEL expressions for extracting claims from subject_token JWT.
 // These expressions are evaluated to extract the user principal and agent identifier.
 type ClaimExtractionConfig struct {
+	// AgentSubjectExpression is optional CEL boolean detection; empty uses the guarded equality default.
+	AgentSubjectExpression string `mapstructure:"agent_subject_expression"`
 	// PrincipalExpression is a CEL expression that extracts the user principal from subject_token.
 	// The expression receives the validated subject_token JWT as input.
 	// Default: "subject_token.sub"
@@ -900,6 +1007,10 @@ type SecurityConfig struct {
 	// for CIMD document fetches.
 	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
+
+	// TrustMaterialDir is the only directory from which key-set files (jwks_file) are read.
+	// Absolute, resolves to an existing directory other than "/". Unset disables jwks_file.
+	TrustMaterialDir string `mapstructure:"trust_material_dir"`
 }
 
 // EncryptionConfig contains configuration for encryption operations.

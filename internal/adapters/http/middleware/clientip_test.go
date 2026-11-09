@@ -1,7 +1,6 @@
 package middleware_test
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -74,7 +73,7 @@ func TestNewHandler_ResolvesClientIP(t *testing.T) {
 					observed.sc, observed.ok = security.FromContext(r.Context())
 					w.WriteHeader(http.StatusNoContent)
 				})
-			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			}, slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/ip", nil)
 			req.RemoteAddr = tt.remoteAddr

@@ -27,6 +27,7 @@ func TestGenerateMetadata_ProxyMode(t *testing.T) {
 	assert.Empty(t, metadata.CodeChallengeMethodsSupported, "code challenge methods should be empty in proxy mode")
 	assert.ElementsMatch(t, []string{"client_secret_post", "client_secret_basic"}, metadata.TokenEndpointAuthMethodsSupported,
 		"proxy mode must advertise both client_secret_post and client_secret_basic")
+	assert.Empty(t, metadata.TokenEndpointAuthSigningAlgValuesSupported)
 	assert.Empty(t, metadata.ScopesSupported)
 }
 
@@ -48,6 +49,7 @@ func TestGenerateMetadata_LocalMode(t *testing.T) {
 	assert.Equal(t, "https://broker.example.com/oauth2/jwks.json", metadata.JWKSURI)
 	assert.Equal(t, []string{"S256"}, metadata.CodeChallengeMethodsSupported)
 	assert.Equal(t, []string{"client_secret_post"}, metadata.TokenEndpointAuthMethodsSupported)
+	assert.Empty(t, metadata.TokenEndpointAuthSigningAlgValuesSupported)
 	assert.Equal(t, []string{"offline_access"}, metadata.ScopesSupported)
 }
 
@@ -68,6 +70,8 @@ func TestGenerateMetadata_HybridMode(t *testing.T) {
 	assert.Equal(t, "https://broker.example.com/oauth2/jwks.json", metadata.JWKSURI, "hybrid mode must include JWKS URI")
 	assert.Equal(t, []string{"S256"}, metadata.CodeChallengeMethodsSupported, "hybrid mode must include PKCE methods")
 	assert.Contains(t, metadata.TokenEndpointAuthMethodsSupported, "client_secret_post")
+	assert.NotContains(t, metadata.TokenEndpointAuthMethodsSupported, "private_key_jwt")
+	assert.Empty(t, metadata.TokenEndpointAuthSigningAlgValuesSupported)
 	assert.Equal(t, []string{"offline_access"}, metadata.ScopesSupported)
 }
 
@@ -84,7 +88,8 @@ func TestGenerateMetadata_LocalModeWithCIMD(t *testing.T) {
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"none", "client_secret_post"}, metadata.TokenEndpointAuthMethodsSupported)
+	assert.Equal(t, []string{"none", "client_secret_post", "private_key_jwt"}, metadata.TokenEndpointAuthMethodsSupported)
+	assert.Equal(t, []string{"RS256", "ES256"}, metadata.TokenEndpointAuthSigningAlgValuesSupported)
 	cimdEnabled := metadata.ClientIDMetadataDocumentSupported
 	require.NotNil(t, cimdEnabled)
 	assert.True(t, *cimdEnabled)

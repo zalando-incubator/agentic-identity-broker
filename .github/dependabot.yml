@@ -1,5 +1,7 @@
 # Dependabot Configuration for Agentic Identity Broker
 # Documentation: https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+# Version updates run monthly; minor and patch updates are grouped, majors stay separate.
+# These schedules and groups do not control security updates.
 
 version: 2
 updates:
@@ -20,6 +22,10 @@ updates:
       - "minor"
     groups:
       go-dependencies:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
     allow:
@@ -43,9 +49,10 @@ updates:
       default-days: 7
     open-pull-requests-limit: 2
     groups:
-      web-patch-updates:
+      web-dependencies:
         applies-to: "version-updates"
         update-types:
+          - "minor"
           - "patch"
         patterns:
           - "*"
@@ -62,9 +69,10 @@ updates:
       - "minor"
     open-pull-requests-limit: 2
     groups:
-      documentation-patch-updates:
+      documentation-dependencies:
         applies-to: "version-updates"
         update-types:
+          - "minor"
           - "patch"
         patterns:
           - "*"
@@ -80,22 +88,34 @@ updates:
       - "dependabot"
       - "minor"
     open-pull-requests-limit: 1
+    groups:
+      wireloom-dependencies:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
 
   # GitHub Actions — every `uses:` is pinned to a commit SHA, so this is the
-  # only way those pins ever move. Grouped into one PR per week.
+  # only way those pins ever move. Minor and patch updates are grouped monthly.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
       day: "monday"
       time: "06:00"
     cooldown:
-      default-days: 3
+      default-days: 7
     labels:
       - "dependabot"
       - "minor"
     groups:
       github-actions:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
     commit-message:
@@ -113,6 +133,10 @@ updates:
       - "minor"
     groups:
       base-images:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
     commit-message:

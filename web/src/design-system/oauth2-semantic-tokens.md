@@ -24,8 +24,8 @@ OAuth2 sessions have the following status states:
 | Status            | Meaning                                 | Visual Treatment           |
 | ----------------- | --------------------------------------- | -------------------------- |
 | **Active**        | Valid session with unexpired tokens     | Success colors (green)     |
-| **Expiring Soon** | Session expires within 7 days           | Warning colors (amber)     |
-| **Expired**       | Session tokens have expired             | Error colors (red)         |
+| **Access Token Expired** | Access token expired, refresh token stored | Warning colors (amber) |
+| **Login required** | Provider rejected the refresh token, or no refresh token after expiry | Error colors (red) |
 | **No Session**    | User has not established a session      | Neutral colors (warm gray) |
 | **Encrypted**     | Tokens are encrypted at rest (metadata) | Default colors (neutral)   |
 
@@ -73,9 +73,9 @@ OAuth2 sessions have the following status states:
 
 ---
 
-### 2. Expiring Soon Status
+### 2. Access Token Expired Status
 
-**Use Case**: Session expires within 7 days (requires user attention).
+**Use Case**: The access token expired, but a stored refresh token allows a refresh attempt.
 
 **Token**: `warning-primary` (alias: `cta`)
 **Hex Value**: `#D97706` (Amber 600)
@@ -86,20 +86,20 @@ OAuth2 sessions have the following status states:
 ```tsx
 // Badge component with dot indicator
 <Badge variant="warning" size="sm" shape="pill" showDot>
-  Expiring Soon
+  Access Token Expired
 </Badge>
 
 // StatusIndicator component
 <StatusIndicator
   icon={<AlertTriangleIcon />}
-  label="Expires in 3 days"
+  label="Access token expired"
   variant="warning"
 />
 
 // Custom element
-<div className="text-warning-primary">Expiring Soon</div>
+<div className="text-warning-primary">Access Token Expired</div>
 <div className="bg-warning-light border border-warning-primary">
-  Session expires in 3 days
+  The next request refreshes the access token
 </div>
 ```
 
@@ -248,8 +248,8 @@ Badge component automatically applies correct semantic tokens based on `variant`
 <Badge variant="success">Active</Badge>
 // → bg-success-primary text-white border-success-primary
 
-// Expiring soon
-<Badge variant="warning">Expiring Soon</Badge>
+// Access token expired
+<Badge variant="warning">Access Token Expired</Badge>
 // → bg-warning-primary text-trust-deep border-warning-primary
 
 // Expired
@@ -334,7 +334,7 @@ StatusIndicator component applies text colors only (no backgrounds):
     <Stack direction="row" align="center" justify="between">
       <h3>Google Drive</h3>
       <Badge variant="warning" showDot>
-        Expiring Soon
+        Access Token Expired
       </Badge>
     </Stack>
   }
@@ -405,7 +405,7 @@ StatusIndicator component applies text colors only (no backgrounds):
 
 Never rely on color alone. Always combine color with:
 
-1. **Text labels**: "Active", "Expired", "Expiring Soon"
+1. **Text labels**: "Active", "Access Token Expired", "Login required"
 2. **Icons**: CheckCircle, XCircle, AlertTriangle
 3. **Dot indicators**: `showDot` prop on Badge for additional visual signal
 
@@ -490,18 +490,18 @@ function getSessionStatusBadge(session) {
     );
   }
 
-  if (session.is_expired) {
+  if (session.requires_reauthentication) {
     return (
       <Badge variant="error" size="sm" shape="pill">
-        Expired
+        Login required
       </Badge>
     );
   }
 
-  if (session.expires_within_days <= 7) {
+  if (session.access_token_expired) {
     return (
       <Badge variant="warning" size="sm" shape="pill" showDot>
-        Expiring Soon
+        Access Token Expired
       </Badge>
     );
   }

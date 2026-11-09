@@ -3,6 +3,7 @@ package oauth2session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -219,6 +220,50 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 	}
 }
 
+func TestRefreshRejectionMarkerPersistence(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		for _, commitFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("force=%t/commitFails=%t", force, commitFails), func(t *testing.T) {
+				service, provider, session := newOperationTestService(t, io.Discard)
+				cause := errors.New("expiry marker commit failed")
+				service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+					return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+				})
+				service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+					current := *session
+					changed, err := refresh(ctx, &current)
+					require.NoError(t, err)
+					require.True(t, changed)
+					require.NotNil(t, current.RefreshRejectedAt)
+					assert.False(t, current.CanRefresh())
+					if commitFails {
+						return nil, cause
+					}
+					*session = current
+					return &current, nil
+				})
+				var err error
+				if force {
+					_, err = service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
+				} else {
+					_, _, err = service.GetValidAccessToken(context.Background(), session.Principal, provider.ID)
+				}
+				if commitFails {
+					metadata := requireOperationError(t, err, OperationRefresh, DetailPersistenceFailed)
+					assert.Equal(t, DependencySessionRepository, metadata.Dependency())
+					assert.ErrorIs(t, err, cause)
+					assert.NotErrorIs(t, err, ErrRefreshRejected)
+					assert.Nil(t, session.RefreshRejectedAt)
+				} else {
+					requireOperationError(t, err, OperationRefresh, DetailRefreshRejected)
+					assert.ErrorIs(t, err, ErrRefreshRejected)
+					assert.False(t, session.CanRefresh())
+				}
+			})
+		}
+	}
+}
+
 func TestGetValidAccessTokenPreservesMissingSessionCause(t *testing.T) {
 	for _, locked := range []bool{false, true} {
 		service, provider, session := newOperationTestService(t, io.Discard)
@@ -263,7 +308,7 @@ func TestRefreshAccessTokenClassifiesDirectFailures(t *testing.T) {
 			service, provider, _ := newOperationTestService(t, io.Discard)
 			token := "refresh"
 			tc.configure(service, &provider, &token)
-			_, err := service.RefreshAccessToken(context.Background(), provider, token)
+			_, err := service.RefreshAccessToken(context.Background(), provider, token, nil)
 			requireOperationError(t, err, OperationRefresh, tc.detail)
 		})
 	}
@@ -276,7 +321,7 @@ func TestRefreshDeadlineClassificationRequiresCallerEvidence(t *testing.T) {
 		if shared {
 			ctx = context.WithValue(ctx, sharedRefreshContextKey{}, true)
 		}
-		_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+		_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 		cancel()
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		detail := DetailCallerCanceled
@@ -333,10 +378,12 @@ func TestExchangeAndRefreshLogsOmitURLAndCredentialMaterial(t *testing.T) {
 				}
 			})
 			if mode == "exchange network" {
+				provider, err := service.providerService.GetForTokenAcquisition(context.Background(), provider.ID)
+				require.NoError(t, err)
 				service.config.MaxRetries = 2
 				service.config.RetryBaseDelay = time.Nanosecond
 				cfg := &oauth2.Config{ClientID: provider.ClientID.String(), Endpoint: oauth2.Endpoint{TokenURL: endpoint, AuthStyle: oauth2.AuthStyleInParams}}
-				_, err := service.exchangeCodeWithRetry(context.Background(), cfg, provider, "sentinel-code", "sentinel-verifier", nil)
+				_, err = service.exchangeCodeWithRetry(context.Background(), cfg, provider, nil, "sentinel-code", "sentinel-verifier", nil)
 				assert.ErrorIs(t, err, cause)
 				assert.NotContains(t, err.Error(), "sentinel-")
 			} else {
@@ -364,8 +411,8 @@ func TestForceRefreshValidAccessWithoutRefreshIsUnavailableNotExpired(t *testing
 	_, err := service.ForceRefreshSession(context.Background(), session.Principal, provider.ID)
 	requireOperationError(t, err, OperationRefresh, DetailRefreshUnavailable)
 	assert.ErrorIs(t, err, ErrRefreshNotAvailable)
-	assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
-	assert.NotErrorIs(t, err, ErrSessionExpired)
+	assert.NotErrorIs(t, err, ErrRefreshRejected)
+	assert.NotErrorIs(t, err, ErrReauthenticationRequired)
 }
 
 type operationFailingReader struct{ cause error }
@@ -378,7 +425,7 @@ func TestRefreshRejectionBodyReadPreservesDependencyCause(t *testing.T) {
 	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(operationFailingReader{cause: cause})}, nil
 	})
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 	metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 	assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
 	assert.ErrorIs(t, err, cause)

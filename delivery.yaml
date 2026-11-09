@@ -261,6 +261,10 @@ pipeline:
           fi
 
           IMAGE_NAME="${CDP_REGISTRY}/infosec/agentic-identity-broker"
+          # A partial push leaves an immutable image tag with no git tag, so never reuse that version.
+          while docker manifest inspect "${IMAGE_NAME}:${RELEASE_VERSION}" >/dev/null 2>&1; do
+            RELEASE_VERSION="${VERSION_PART}.$(( ${RELEASE_VERSION##*.} + 1 ))"
+          done
           export BASE_IMAGE="container-registry.zalando.net/library/alpine-3:latest"
           if [ -z "${CDP_PULL_REQUEST_NUMBER:-}" ]; then
             VERSION="${RELEASE_VERSION}" IMAGE_NAME="${IMAGE_NAME}" \

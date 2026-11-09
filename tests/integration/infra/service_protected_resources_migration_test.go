@@ -16,35 +16,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
-var protectedResourcesMigrations = []bootstrap.SQLMigration{
-	{File: "001_create_agents.up.sql", Version: 1},
-	{File: "002_create_thirdparty_services.up.sql", Version: 2},
-	{File: "003_create_user_grants.up.sql", Version: 3},
-	{File: "004_create_user_sessions.up.sql", Version: 4},
-	{File: "005_add_agent_service_requirements.up.sql", Version: 5},
-	{File: "006_add_service_protected_resources.up.sql", Version: 6},
-	{File: "007_add_oauth2_flavor.up.sql", Version: 7},
-	{File: "008_drop_agent_client_id_unique.up.sql", Version: 8},
-	{File: "009_add_agent_redirect_uris.up.sql", Version: 9},
-	{File: "010_create_client_credentials.up.sql", Version: 10},
-	{File: "011_create_signing_keys.up.sql", Version: 11},
-	{File: "012_create_authorization_codes.up.sql", Version: 12},
-	{File: "013_add_client_id_to_auth_codes.up.sql", Version: 13},
-	{File: "014_create_pkce_sessions.up.sql", Version: 14},
-	{File: "015_add_cimd_support.up.sql", Version: 15},
-	{File: "016_nullable_agent_client_id.up.sql", Version: 16},
-	{File: "017_add_permission_sets.up.sql", Version: 17},
-	{File: "018_add_agent_permission_sets.up.sql", Version: 18},
-	{File: "019_migrate_user_grants_to_permission_sets.up.sql", Version: 19},
-	{File: "020_add_service_scope_requirement_type.up.sql", Version: 20},
-	{File: "021_enforce_single_current_signing_key.up.sql", Version: 21},
-	{File: "022_add_service_authorization_params.up.sql", Version: 22},
-	{File: "023_create_refresh_token_sessions.up.sql", Version: 23},
-	{File: "024_create_tool_approvals.up.sql", Version: 24},
-	{File: "025_create_approval_sync_state.up.sql", Version: 25},
-	{File: "026_sync_approval_mutations.up.sql", Version: 26},
-}
-
 func TestServiceProtectedResourcesMigrationCleanApply(t *testing.T) {
 	postgres, dbName, cleanup := setupProtectedResourcesMigrationDatabase(t, "protected_resources_clean_apply")
 	defer cleanup()
@@ -132,7 +103,7 @@ func setupProtectedResourcesMigrationDatabase(t *testing.T, templateKey string) 
 
 	postgres := bootstrap.RequireSharedPostgres(t)
 	dbName, _, cleanup := postgres.SetupDatabaseFromTemplate(t, templateKey, func(t *testing.T, dbName string) {
-		postgres.ApplyMigrationsUpTo(t, dbName, protectedResourcesMigrations, 26)
+		postgres.ApplyMigrationsUpTo(t, dbName, 26)
 	})
 	return postgres, dbName, cleanup
 }

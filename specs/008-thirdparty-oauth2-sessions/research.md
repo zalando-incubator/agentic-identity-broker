@@ -331,7 +331,7 @@ encryptedAccessToken, err := encryption.Encrypt(
 | `encrypted_refresh_token` | bytea (nullable) | AES-GCM encrypted refresh token |
 | `token_type` | string | Token type (usually "Bearer") |
 | `access_token_expires_at` | timestamp (nullable) | Access token expiration |
-| `refresh_token_expires_at` | timestamp (nullable) | Refresh token expiration |
+| `refresh_token_expires_at` | timestamp (nullable) | Observed provider refresh rejection (never a predicted expiry, ADR 046) |
 | `encryption_context` | jsonb | AAD context for decryption validation |
 
 ---

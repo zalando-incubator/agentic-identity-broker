@@ -1,0 +1,19 @@
+# actionlint v1.7.12 predates gh-aw's concurrency queue, job.workflow_ref, and newer permissions.
+# Only these generated syntax errors are ignored; all other checks remain enabled.
+paths:
+  .github/workflows/speckit-assisted.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/architecture-review-assisted.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/pr-conflict-assist.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+  .github/workflows/*.lock.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\.'
+      - '^property "workflow_(repository|sha|ref|file_path)" is not defined in object type'
+  .github/workflows/repo-assist.lock.yml:
+    ignore:
+      - '^unknown permission scope "(code-quality|copilot-requests|vulnerability-alerts)"\.'

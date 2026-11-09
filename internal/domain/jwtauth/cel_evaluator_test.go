@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,7 +90,7 @@ func TestCELEvaluator_ExtractClaims_StringExtraction(t *testing.T) {
 		name              string
 		config            CELEvaluatorConfig
 		claims            map[string]interface{}
-		expectedPrincipal string
+		expectedPrincipal id.Principal
 		expectedDisplay   *string
 		expectedEmail     *string
 		expectedPicture   *string
@@ -212,7 +213,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 		result, err := evaluator.ExtractClaims(claims)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "user123", result.Principal)
+		assert.Equal(t, id.Principal("user123"), result.Principal)
 		assert.Nil(t, result.DisplayName) // non-string → treated as absent
 	})
 
@@ -282,7 +283,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 		result, err := evaluator.ExtractClaims(claims)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "user123", result.Principal)
+		assert.Equal(t, id.Principal("user123"), result.Principal)
 		assert.Nil(t, result.DisplayName)
 		assert.Nil(t, result.Email)
 	})
@@ -303,7 +304,7 @@ func TestCELEvaluator_ExtractClaims_Timeout(t *testing.T) {
 		}
 		result, err := evaluator.ExtractClaims(claims)
 		require.NoError(t, err)
-		assert.Equal(t, "fast-user", result.Principal)
+		assert.Equal(t, id.Principal("fast-user"), result.Principal)
 	})
 
 	t.Run("default timeout is 100ms", func(t *testing.T) {
@@ -332,7 +333,7 @@ func TestCELEvaluator_PrincipalRequired(t *testing.T) {
 		}
 		result, err := evaluator.ExtractClaims(claims)
 		require.NoError(t, err)
-		assert.Equal(t, "default-principal", result.Principal)
+		assert.Equal(t, id.Principal("default-principal"), result.Principal)
 	})
 
 	t.Run("principal must be non-empty string", func(t *testing.T) {

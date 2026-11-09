@@ -61,10 +61,11 @@ func (s *Syncer) Run(ctx context.Context) {
 		pairs, etag, unchanged, err := s.client.Poll(pollCtx, s.cache.ActiveSessions(), s.cache.ETag(), s.longPollTimeout)
 		cancel()
 		if err == nil {
-			if !unchanged {
+			if unchanged {
+				s.cache.MarkSynced()
+			} else {
 				s.cache.Replace(pairs, etag)
 			}
-			s.cache.MarkSynced()
 			backoff = time.Second
 		} else {
 			s.logger.WarnContext(ctx, "approval cache sync failed", "error", err, "retry_after", backoff)

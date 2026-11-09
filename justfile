@@ -14,13 +14,13 @@ LDFLAGS := env_var_or_default("LDFLAGS", "-s -w")
 # internally-mirrored/allowed base image (see delivery.yaml).
 BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60")
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
-INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
+INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/bootstrap/... ./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
+INTEGRATION_INFRA_GO_TEST_ARGS := "-count=1 -tags=integration -p " + INTEGRATION_INFRA_PACKAGE_PROCS + " " + INTEGRATION_INFRA_TEST_PACKAGES
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
 
-# Use Docker Compose v1 when installed, otherwise Docker Compose v2.
-COMPOSE_CMD := `if command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
+COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
 
 
@@ -96,7 +96,11 @@ test-coverage-summary:
 # Run the backend E2E acceptance suite with Ginkgo
 test-e2e-backend: web-build
     @echo "Running backend E2E suite..."
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+
+# Run E2E scenarios that require Docker or Podman
+test-e2e-docker:
+    @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Run the SC-001 backend performance measurement separately from functional E2E tests
 test-e2e-performance:
@@ -107,12 +111,12 @@ test-e2e-performance:
 test-e2e-backend-coverage: web-build
     @echo "Running backend E2E suite with coverage..."
     @mkdir -p coverage
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Watch the backend E2E acceptance suite during development
 test-e2e-backend-watch: web-build
     @echo "Watching backend E2E suite..."
-    @if command -v ginkgo > /dev/null; then ginkgo watch -v --label-filter="!performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo watch -v --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Run the ExtProc E2E acceptance suite with Ginkgo
 test-e2e-extproc:
@@ -160,7 +164,7 @@ test-e2e-frontend-coverage: web-build
     echo "Frontend E2E coverage report generated at coverage/e2e-frontend.html"
 
 # Run all backend, ExtProc, and frontend E2E acceptance suites
-test-e2e: test-e2e-backend test-e2e-extproc test-e2e-frontend
+test-e2e: test-e2e-backend test-e2e-docker test-e2e-extproc test-e2e-frontend
     @echo "All E2E suites completed"
 
 # Run coverage for all backend, ExtProc, and frontend E2E acceptance suites
@@ -170,7 +174,7 @@ test-e2e-coverage: test-e2e-backend-coverage test-e2e-extproc-coverage test-e2e-
 # Watch all E2E acceptance suites during development
 test-e2e-watch:
     @echo "Watching backend, ExtProc, and frontend E2E suites..."
-    @if command -v ginkgo > /dev/null; then E2E_FRONTEND_MODE=built ginkgo watch -v --label-filter="!performance" ./tests/e2e/ ./tests/e2e/extproc/ ./tests/e2e/frontend/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then E2E_FRONTEND_MODE=built ginkgo watch -v --label-filter="!performance && !docker" ./tests/e2e/ ./tests/e2e/extproc/ ./tests/e2e/frontend/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 
 # Build and run the application
@@ -222,7 +226,7 @@ lint:
 # Format Go code with gofmt
 fmt:
     @echo "Formatting Go code..."
-    gofmt -s -w .
+    "$(go env GOROOT)/bin/gofmt" -s -w .
     @echo "Format complete"
 
 # Run go vet for static analysis
@@ -233,10 +237,10 @@ vet:
 # Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
 install-tools:
     @echo "Installing development tools..."
-    @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
-    @golangci-lint --version 2>/dev/null | grep -q "version 2.14.0" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+    @air -v 2>/dev/null | grep -q 'v1\.67\.4' || go install github.com/air-verse/air@v1.67.4
+    @GOTOOLCHAIN="$(go env GOVERSION)" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
-    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
+    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.34.0
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
         echo "Playwright driver and browsers already installed, skipping download"; \
     else \
@@ -365,43 +369,18 @@ verify-integration-junit:
 
     echo "Running integration suites with JUnit output..."
     mkdir -p test-results
-    rm -f test-results/{integration-junit.xml,integration-self-contained-junit.xml,integration-infra-junit.xml,integration-self-contained-output.json,integration-infra-output.json,integration-self-contained-stderr.log,integration-infra-stderr.log}
-
-    go test -json ./tests/integration/... \
-        > test-results/integration-self-contained-output.json 2> test-results/integration-self-contained-stderr.log
-    SELF_CONTAINED_EXIT=$?
-
-    go test -json -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} \
-        {{INTEGRATION_INFRA_TEST_PACKAGES}} \
-        > test-results/integration-infra-output.json 2> test-results/integration-infra-stderr.log
-    INFRA_EXIT=$?
-
-    if [ "$SELF_CONTAINED_EXIT" -ne 0 ]; then
-        echo "--- Self-contained integration output (FAILED) ---"
-        cat test-results/integration-self-contained-output.json test-results/integration-self-contained-stderr.log
-    fi
-    if [ "$INFRA_EXIT" -ne 0 ]; then
-        echo "--- Infra-backed integration output (FAILED) ---"
-        cat test-results/integration-infra-output.json test-results/integration-infra-stderr.log
-    fi
+    rm -f test-results/integration-junit.xml
+    SELF_CONTAINED_EXIT=0
+    INFRA_EXIT=0
+    just verify-integration-self-contained-junit || SELF_CONTAINED_EXIT=$?
+    just verify-integration-infra-junit || INFRA_EXIT=$?
 
     REPORT_FAILED=0
-    inputs=(integration-self-contained-output.json integration-infra-output.json)
-    leaves=(integration-self-contained-junit.xml integration-infra-junit.xml)
     reports=()
-    for index in "${!inputs[@]}"; do
-        input="test-results/${inputs[$index]}"
-        report="test-results/${leaves[$index]}"
-        if [ -s "$input" ]; then
-            go-junit-report -parser gojson < "$input" > "$report" || REPORT_FAILED=1
-        else
-            echo "Missing Go test output: $input" >&2
-            REPORT_FAILED=1
-        fi
+    for report in test-results/integration-self-contained-junit.xml test-results/integration-infra-junit.xml; do
         if [ -s "$report" ]; then
             reports+=("$report")
         else
-            echo "Missing JUnit report: $report" >&2
             REPORT_FAILED=1
         fi
     done
@@ -422,14 +401,52 @@ verify-integration-junit:
     fi
     echo "Integration JUnit report generated at test-results/integration-junit.xml"
 
+# Run the self-contained integration suites and generate a JUnit XML report
+verify-integration-self-contained-junit: (_integration-tier-junit "self-contained" "./tests/integration/...")
+
+# Run the container-backed integration suites and generate a JUnit XML report
+verify-integration-infra-junit: (_integration-tier-junit "infra" INTEGRATION_INFRA_GO_TEST_ARGS)
+
+_integration-tier-junit tier args:
+    #!/usr/bin/env bash
+    set -u
+    mkdir -p test-results
+    output="test-results/integration-{{tier}}-output.json"
+    stderr="test-results/integration-{{tier}}-stderr.log"
+    report="test-results/integration-{{tier}}-junit.xml"
+    rm -f "$output" "$stderr" "$report"
+
+    TEST_EXIT=0
+    go test -json {{args}} > "$output" 2> "$stderr" || TEST_EXIT=$?
+    if [ "$TEST_EXIT" -ne 0 ]; then
+        echo "--- {{tier}} integration output (FAILED) ---"
+        cat "$output" "$stderr"
+    fi
+
+    REPORT_FAILED=0
+    if [ -s "$output" ]; then
+        go-junit-report -parser gojson < "$output" > "$report" || REPORT_FAILED=1
+    else
+        echo "Missing Go test output: $output" >&2
+        REPORT_FAILED=1
+    fi
+    if [ ! -s "$report" ]; then
+        echo "Missing JUnit report: $report" >&2
+        REPORT_FAILED=1
+    fi
+    if [ "$TEST_EXIT" -ne 0 ] || [ "$REPORT_FAILED" -ne 0 ]; then
+        exit 1
+    fi
+
 # Run the backend E2E acceptance suite and publish its reports
-verify-e2e-backend-junit:
+verify-e2e-backend-junit: verify-e2e-backend-default-junit verify-e2e-docker-junit
+
+# Run the backend E2E suite without container-backed scenarios and publish its reports
+verify-e2e-backend-default-junit: _e2e-backend-web-build
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p test-results
-    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log,e2e-backend-web-build.log}
-    just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
-    ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" \
+    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log}
+    ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" \
         --timeout=20m --poll-progress-after=30s --show-node-events \
         --junit-report=test-results/e2e-backend-junit.xml --json-report=test-results/e2e-backend.json \
         ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log
@@ -439,6 +456,28 @@ verify-e2e-backend-junit:
             exit 1
         fi
     done
+
+# Run the container-backed backend E2E scenarios and publish their reports
+verify-e2e-docker-junit: _e2e-backend-web-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -f test-results/{e2e-backend-docker-junit.xml,e2e-backend-docker.json,e2e-backend-docker.log}
+    ginkgo run --procs=1 --label-filter="docker" \
+        --timeout=20m --poll-progress-after=30s --show-node-events \
+        --junit-report=test-results/e2e-backend-docker-junit.xml --json-report=test-results/e2e-backend-docker.json \
+        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend-docker.log
+    for report in test-results/e2e-backend-docker-junit.xml test-results/e2e-backend-docker.json; do
+        if [ ! -s "$report" ]; then
+            echo "Missing E2E report: $report" >&2
+            exit 1
+        fi
+    done
+
+_e2e-backend-web-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-results
+    just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
 
 # Run the ExtProc E2E acceptance suite and publish its reports
 verify-e2e-extproc-junit:
@@ -552,7 +591,7 @@ verify: check security test web-test cdk-test mock-sample-agent-test mock-upstre
 fmt-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi; done | xargs -0 gofmt -s -l)"
+    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi; done | xargs -0 "$(go env GOROOT)/bin/gofmt" -s -l)"
     if [ -n "$unformatted" ]; then
         echo "Files need gofmt -s:"
         printf '%s\n' "$unformatted"
@@ -700,8 +739,7 @@ compose-up: compose-env
 compose-up-detached: compose-env
     @echo "Generating JWE signing key..."
     @echo "Starting docker-compose services in background..."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build
-    @sleep 2
+    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600
     @just compose-health
     @echo ""
     @echo "Service URLs:"
@@ -709,7 +747,8 @@ compose-up-detached: compose-env
     @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
     @echo "  - Admin API: http://localhost:14000/api/agents"
     @echo "  - Admin health: http://localhost:14000/health"
-    @echo "  - Sample OAuth2 client: http://localhost:9002/oauth2/authorize"
+    @echo "  - Sample OAuth2 client: http://localhost:9002/"
+    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
     @echo ""
     @echo "View logs: just compose-logs"
     @echo "Stop services: just compose-down"
@@ -740,7 +779,7 @@ compose-logs-frontend:
 compose-logs-service SERVICE:
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f {{SERVICE}}
 
-# Restart backend service (after code changes)
+# Restart backend and its namespace-sharing sample agent (after code changes)
 compose-restart-backend:
     @echo "Restarting identity-broker service..."
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} restart identity-broker
