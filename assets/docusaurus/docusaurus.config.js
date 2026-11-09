@@ -85,7 +85,12 @@ const config = {
           },
         ],
         theme: {
-          primaryColor: '#2563eb',
+          primaryColor: '#0a7a66',
+          typography: {
+            fontFamily: "'Geist Variable', ui-sans-serif, system-ui, sans-serif",
+            headings: {fontFamily: "'Geist Variable', ui-sans-serif, system-ui, sans-serif", fontWeight: '500'},
+            code: {fontFamily: "'Geist Mono Variable', ui-monospace, monospace"},
+          },
         },
       },
     ],
@@ -200,9 +205,12 @@ const config = {
         ],
         copyright: `Copyright © ${new Date().getFullYear()} Agentic Identity Broker contributors. Built with Docusaurus.`,
       },
+      mermaid: {
+        theme: {light: 'neutral', dark: 'dark'},
+      },
       prism: {
         theme: prismThemes.github,
-        darkTheme: prismThemes.dracula,
+        darkTheme: prismThemes.vsDark,
         additionalLanguages: ['bash', 'json', 'yaml', 'go', 'hcl'],
       },
     }),

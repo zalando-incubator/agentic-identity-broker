@@ -1,61 +1,204 @@
 /**
- * Global styles. The classic template bundles Infima. Override its palette here
- * to match the Agentic Identity Broker brand (a professional blue).
+ * Agentic Identity Broker design language.
+ *
+ * Direction: exact, sober, accountable. The world is the grant register:
+ * principals, agents, permission sets, expiry dates. Surfaces are a cool ink
+ * ramp, type is Geist with Geist Mono for identifiers, and one jade accent
+ * marks actions, links and the "granted" state. Nothing glows.
  */
 
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
 :root {
-  --ifm-color-primary: #2563eb;
-  --ifm-color-primary-dark: #1d4ed8;
-  --ifm-color-primary-darker: #1b46c6;
-  --ifm-color-primary-darkest: #1739a3;
-  --ifm-color-primary-light: #3b76ee;
-  --ifm-color-primary-lighter: #5088f0;
-  --ifm-color-primary-lightest: #7ba6f4;
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(37, 99, 235, 0.1);
+  /* Ink ramp, light */
+  --aib-bg: #fbfcfd;
+  --aib-surface: #ffffff;
+  --aib-raised: #f0f2f6;
+  --aib-text: #111827;
+  --aib-text-2: #4b5565;
+  --aib-text-3: #6b7487;
+  --aib-line: rgba(17, 24, 39, 0.08);
+  --aib-line-strong: rgba(17, 24, 39, 0.14);
+
+  /* Jade accent: actions, links, the granted state */
+  --aib-accent: #0a7a66;
+  --aib-accent-hover: #086a59;
+  --aib-accent-ink: #ffffff;
+  --aib-accent-soft: rgba(10, 122, 102, 0.08);
+
+  --aib-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --aib-shadow-float: 0 1px 2px rgba(17, 24, 39, 0.04), 0 12px 32px rgba(17, 24, 39, 0.08);
+
+  --ifm-color-primary: var(--aib-accent);
+  --ifm-color-primary-dark: #096e5c;
+  --ifm-color-primary-darker: #086a59;
+  --ifm-color-primary-darkest: #07574a;
+  --ifm-color-primary-light: #0b8670;
+  --ifm-color-primary-lighter: #0c8d76;
+  --ifm-color-primary-lightest: #0e9e85;
+
+  --ifm-background-color: var(--aib-bg);
+  --ifm-background-surface-color: var(--aib-surface);
+  --ifm-font-color-base: var(--aib-text);
+  --ifm-font-color-secondary: var(--aib-text-2);
+  --ifm-heading-color: var(--aib-text);
+
+  --ifm-font-family-base: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ifm-heading-font-family: var(--ifm-font-family-base);
+  --ifm-font-family-monospace: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ifm-font-size-base: 100%;
+  --ifm-line-height-base: 1.65;
+  --ifm-heading-font-weight: 500;
+  --ifm-font-weight-bold: 600;
+  --ifm-h1-font-size: 2.25rem;
+  --ifm-h2-font-size: 1.625rem;
+  --ifm-h3-font-size: 1.25rem;
+
+  --ifm-global-radius: 8px;
+  --ifm-button-border-radius: 8px;
+  --ifm-code-border-radius: 6px;
+  --ifm-code-font-size: 90%;
+  --ifm-code-background: var(--aib-raised);
+  --ifm-pre-background: var(--aib-raised);
+
+  --ifm-hr-border-color: var(--aib-line);
+  --ifm-toc-border-color: var(--aib-line);
+  --ifm-table-border-color: var(--aib-line-strong);
+  --ifm-table-head-background: var(--aib-raised);
+  --ifm-table-stripe-background: transparent;
+
+  --ifm-navbar-background-color: var(--aib-bg);
+  --ifm-navbar-shadow: none;
+  --ifm-navbar-link-color: var(--aib-text-2);
+  --ifm-navbar-link-hover-color: var(--aib-text);
+  --ifm-dropdown-background-color: var(--aib-surface);
+
+  --ifm-menu-color: var(--aib-text-2);
+  --ifm-menu-color-active: var(--aib-text);
+  --ifm-menu-color-background-active: var(--aib-raised);
+  --ifm-menu-color-background-hover: var(--aib-raised);
+
+  --ifm-breadcrumb-item-background-active: transparent;
+  --ifm-breadcrumb-color-active: var(--aib-text);
+
+  --ifm-footer-background-color: var(--aib-bg);
+  --ifm-footer-color: var(--aib-text-2);
+  --ifm-footer-link-color: var(--aib-text-2);
+  --ifm-footer-title-color: var(--aib-text);
+
+  --ifm-link-hover-decoration: underline;
+  --ifm-transition-fast: 150ms;
+  --ifm-transition-timing-default: var(--aib-ease);
+
+  --docusaurus-highlighted-code-line-bg: rgba(10, 122, 102, 0.1);
 }
 
-/* Lighter palette in dark mode for readability. */
 [data-theme='dark'] {
-  --ifm-color-primary: #60a5fa;
-  --ifm-color-primary-dark: #3b8cf8;
-  --ifm-color-primary-darker: #2a80f7;
-  --ifm-color-primary-darkest: #0a63e4;
-  --ifm-color-primary-light: #85bcfc;
-  --ifm-color-primary-lighter: #98c7fc;
-  --ifm-color-primary-lightest: #cfe4fe;
-  --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.15);
+  /* Ink ramp, dark */
+  --aib-bg: #0b0d14;
+  --aib-surface: #11141c;
+  --aib-raised: #1a1e28;
+  --aib-text: #eef0f5;
+  --aib-text-2: #a3a9b8;
+  --aib-text-3: #7a8296;
+  --aib-line: rgba(238, 240, 245, 0.08);
+  --aib-line-strong: rgba(238, 240, 245, 0.14);
+
+  --aib-accent: #4fd1b5;
+  --aib-accent-hover: #6fdcc4;
+  --aib-accent-ink: #06231d;
+  --aib-accent-soft: rgba(79, 209, 181, 0.1);
+  --aib-shadow-float: 0 0 0 1px rgba(238, 240, 245, 0.06), 0 16px 40px rgba(0, 0, 0, 0.4);
+
+  --ifm-color-primary: var(--aib-accent);
+  --ifm-color-primary-dark: #3ccaab;
+  --ifm-color-primary-darker: #33c3a4;
+  --ifm-color-primary-darkest: #2aa98e;
+  --ifm-color-primary-light: #62d7be;
+  --ifm-color-primary-lighter: #6fdcc4;
+  --ifm-color-primary-lightest: #93e5d3;
+
+  --ifm-color-emphasis-100: #151923;
+  --ifm-color-emphasis-200: #1f2430;
+
+  --docusaurus-highlighted-code-line-bg: rgba(79, 209, 181, 0.12);
+}
+
+body {
+  background: var(--aib-bg);
+  font-feature-settings: 'ss01' on;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+}
+
+h1 {
+  letter-spacing: -0.025em;
+}
+
+h4,
+h5,
+h6,
+small {
+  letter-spacing: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--aib-accent);
+  outline-offset: 2px;
+}
+
+/* Navbar: quiet bar with a hairline, no shadow */
+
+.navbar {
+  border-bottom: 1px solid var(--aib-line);
 }
 
 .navbar__logo {
-  height: 1.5rem;
-  margin-right: 0;
+  height: 1.25rem;
+  margin-right: 8px;
 }
 
 .navbar__logo img {
   height: 100%;
-  width: 12.5rem;
+  width: 10.4167rem;
+}
+
+.navbar__link {
+  font-size: 0.9375rem;
+  font-weight: 450;
+  transition: color 150ms var(--aib-ease);
+}
+
+.navbar__link--active {
+  color: var(--aib-text);
 }
 
 .navbar__github-link {
   -webkit-tap-highlight-color: transparent;
   align-items: center;
-  border-radius: 50%;
+  border-radius: 8px;
   display: flex;
-  height: 2rem;
+  height: 32px;
   justify-content: center;
   padding: 0;
-  transition: background var(--ifm-transition-fast);
-  width: 2rem;
+  transition: background-color 150ms var(--aib-ease);
+  width: 32px;
 }
 
 .navbar__github-link:hover {
-  background: var(--ifm-color-emphasis-200);
+  background: var(--aib-raised);
 }
 
 .navbar__github-icon {
-  height: 1.25rem;
-  width: 1.25rem;
+  height: 18px;
+  opacity: 0.8;
+  width: 18px;
 }
 
 .navbar__github-icon--dark {
@@ -70,12 +213,233 @@
   display: block;
 }
 
+.navbar .navbar__search-input,
+.navbar input[type='search'] {
+  background-color: var(--aib-raised);
+  border: 1px solid var(--aib-line);
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.dropdown__menu {
+  border: 1px solid var(--aib-line-strong);
+  border-radius: 12px;
+  box-shadow: var(--aib-shadow-float);
+  padding: 4px;
+}
+
+.dropdown__link {
+  border-radius: 8px;
+}
+
+/* Buttons */
+
+.button {
+  font-weight: 500;
+  transition:
+    background-color 150ms var(--aib-ease),
+    border-color 150ms var(--aib-ease),
+    color 150ms var(--aib-ease),
+    transform 120ms var(--aib-ease);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.button--primary {
+  --ifm-button-background-color: var(--aib-accent);
+  --ifm-button-border-color: var(--aib-accent);
+  color: var(--aib-accent-ink);
+}
+
+.button--primary:hover {
+  --ifm-button-background-color: var(--aib-accent-hover);
+  --ifm-button-border-color: var(--aib-accent-hover);
+  color: var(--aib-accent-ink);
+}
+
+.button--lg {
+  font-size: 1rem;
+  height: 44px;
+  line-height: 42px;
+  padding: 0 20px;
+}
+
+/* Docs: sidebar, breadcrumbs, TOC */
+
+.theme-doc-sidebar-container {
+  border-right-color: var(--aib-line) !important;
+}
+
+.menu {
+  padding: 16px 12px !important;
+}
+
+.menu__link {
+  border-radius: 6px;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  padding: 6px 10px;
+  transition: background-color 150ms var(--aib-ease), color 150ms var(--aib-ease);
+}
+
+.menu__list-item:not(:first-child) {
+  margin-top: 2px;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: var(--aib-raised);
+  box-shadow: inset 2px 0 0 var(--aib-accent);
+  color: var(--aib-text);
+  font-weight: 500;
+}
+
+.menu__link--sublist.menu__link--active,
+.menu__link--sublist.menu__link--active:hover {
+  color: var(--aib-text);
+  font-weight: 500;
+}
+
+.menu__caret::before,
+.menu__link--sublist-caret::after {
+  opacity: 0.5;
+}
+
+.breadcrumbs__link {
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  padding: 2px 6px;
+}
+
+.breadcrumbs__item--active .breadcrumbs__link {
+  color: var(--aib-text);
+  font-weight: 500;
+}
+
+.table-of-contents__link {
+  color: var(--aib-text-3);
+  font-size: 0.8125rem;
+}
+
+.table-of-contents__link:hover,
+.table-of-contents__link--active {
+  color: var(--aib-text);
+}
+
+.theme-doc-markdown {
+  font-size: 1rem;
+}
+
+.theme-doc-markdown table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--aib-line-strong);
+  border-radius: 12px;
+  font-size: 0.9375rem;
+  overflow: hidden;
+}
+
+.theme-doc-markdown table th,
+.theme-doc-markdown table td {
+  border: 0;
+  border-top: 1px solid var(--aib-line);
+}
+
+.theme-doc-markdown table thead th {
+  border-top: 0;
+  font-weight: 500;
+  text-align: left;
+}
+
+.theme-doc-markdown table tr {
+  background: transparent;
+}
+
+code {
+  border: 1px solid var(--aib-line);
+}
+
+pre code,
+.prism-code code {
+  border: 0;
+}
+
+.theme-code-block {
+  border: 1px solid var(--aib-line);
+  box-shadow: none !important;
+}
+
+.pagination-nav__link {
+  border-color: var(--aib-line-strong);
+  border-radius: 12px;
+  transition: border-color 150ms var(--aib-ease);
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--aib-accent);
+}
+
+.pagination-nav__sublabel {
+  color: var(--aib-text-3);
+  font-size: 0.8125rem;
+}
+
+.pagination-nav__label {
+  font-weight: 500;
+}
+
+/* Mermaid diagrams sit on the page, not on a lavender fill */
+
+.docusaurus-mermaid-container {
+  border: 1px solid var(--aib-line);
+  border-radius: 12px;
+  margin-bottom: var(--ifm-leading);
+  padding: 24px;
+}
+
+/* Footer */
+
+.footer {
+  border-top: 1px solid var(--aib-line);
+  padding: 48px var(--ifm-navbar-padding-horizontal) 40px;
+}
+
+.footer__title {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.footer__item {
+  font-size: 0.875rem;
+  margin-top: 4px;
+}
+
+.footer__link-item {
+  transition: color 150ms var(--aib-ease);
+}
+
+.footer__link-item:hover {
+  color: var(--aib-text);
+  text-decoration: none;
+}
+
+.footer__logo {
+  max-width: 120px;
+  opacity: 0.7;
+}
+
+.footer__copyright {
+  color: var(--aib-text-3);
+  font-size: 0.8125rem;
+}
+
 @media screen and (max-width: 576px) {
   .navbar__logo {
-    height: 1.25rem;
+    height: 1.125rem;
   }
 
   .navbar__logo img {
-    width: 10.4167rem;
+    width: 9.375rem;
   }
 }

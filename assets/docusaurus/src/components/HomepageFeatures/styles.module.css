@@ -1,158 +1,148 @@
-.overviewSection {
-  padding: 4rem 0 6rem;
+.section {
+  padding: 96px 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--aib-line);
 }
 
 .sectionHeader {
-  margin: 0 0 2.5rem;
-  max-width: 42rem;
+  margin-bottom: 48px;
+  max-width: 40rem;
 }
 
-.sectionEyebrow {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 999px;
-  background: var(--ifm-background-surface-color);
-  color: var(--ifm-color-emphasis-800);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  margin-bottom: 1rem;
-  padding: 0.35rem 0.8rem;
+.sectionLabel {
+  color: var(--aib-text-3);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8125rem;
+  margin: 0 0 16px;
 }
 
 .sectionTitle {
-  font-size: clamp(2rem, 4vw, 3rem);
-  letter-spacing: -0.03em;
-  margin-bottom: 0.75rem;
-}
-
-.sectionDescription {
-  color: var(--ifm-color-emphasis-700);
-  font-size: 1.05rem;
-  line-height: 1.65;
-}
-
-.capabilityGrid {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.card {
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 1.5rem;
-  background: var(--ifm-background-surface-color);
-  min-height: 17rem;
-  overflow: hidden;
-  padding: 1.75rem;
-  position: relative;
-}
-
-.card::before {
-  background: radial-gradient(ellipse at 50% 100%, var(--feature-glow), transparent 68%);
-  content: '';
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-.card:nth-child(1) {
-  --feature-glow: rgba(37, 99, 235, 0.16);
-}
-
-.card:nth-child(2) {
-  --feature-glow: rgba(20, 184, 166, 0.16);
-}
-
-.card:nth-child(3) {
-  --feature-glow: rgba(225, 29, 72, 0.14);
-}
-
-.cardTitle,
-.cardDescription {
-  position: relative;
-}
-
-.cardTitle {
-  font-size: 1.35rem;
-  margin-bottom: 0.75rem;
-}
-
-.cardDescription {
-  color: var(--ifm-color-emphasis-700);
-  line-height: 1.6;
+  font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
   margin: 0;
 }
 
-.pathSection {
-  border-top: 1px solid var(--ifm-color-emphasis-200);
-  margin-top: 5rem;
-  padding-top: 4rem;
+.sectionDescription {
+  color: var(--aib-text-2);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  margin: 16px 0 0;
 }
 
-.pathGrid {
+/* Capabilities: three columns ruled by hairlines, not three glowing boxes */
+
+.capabilities {
+  border-top: 1px solid var(--aib-line-strong);
   display: grid;
-  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.capability {
+  display: flex;
+  flex-direction: column;
+  padding: 24px 32px 0 0;
+}
+
+.capability + .capability {
+  border-left: 1px solid var(--aib-line);
+  padding-left: 32px;
+}
+
+.capabilityTitle {
+  font-size: 1.125rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+
+.capabilityDescription {
+  color: var(--aib-text-2);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  margin: 0 0 20px;
+}
+
+.grantLine {
+  color: var(--aib-accent);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  margin: auto 0 0;
+}
+
+/* Reading paths: an index, two columns, hairline rows */
+
+.paths {
+  display: grid;
+  gap: 0 32px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.pathCard {
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 1rem;
-  background: var(--ifm-background-surface-color);
+.path {
+  border-top: 1px solid var(--aib-line-strong);
   color: inherit;
-  display: block;
-  padding: 1.5rem;
-  text-decoration: none;
-  transition: border-color 150ms ease, background-color 150ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 0 24px;
+  transition: border-color 150ms var(--aib-ease);
 }
 
-.pathCard:hover {
-  border-color: var(--ifm-color-primary);
-  background: var(--ifm-color-emphasis-100);
+.path:hover {
+  border-top-color: var(--aib-accent);
+  color: inherit;
   text-decoration: none;
 }
 
 .pathTitle {
-  display: inline-block;
-  font-size: 1.15rem;
-  font-weight: 700;
-  margin-bottom: 0.5rem;
+  align-items: center;
+  display: flex;
+  font-size: 1.0625rem;
+  font-weight: 500;
+  justify-content: space-between;
+}
+
+.pathArrow {
+  color: var(--aib-text-3);
+  transition: color 150ms var(--aib-ease), transform 150ms var(--aib-ease);
+}
+
+.path:hover .pathArrow {
+  color: var(--aib-accent);
+  transform: translateX(2px);
 }
 
 .pathDescription {
-  color: var(--ifm-color-emphasis-700);
-  margin: 0 0 1rem;
-}
-
-.pathAction {
-  align-items: center;
-  color: var(--ifm-color-primary);
-  display: inline-flex;
-  font-size: 0.95rem;
-  font-weight: 700;
-  gap: 0.4rem;
-}
-
-.pathAction::after {
-  content: '→';
-  transition: transform 150ms ease;
-}
-
-.pathCard:hover .pathAction::after {
-  transform: translateX(0.2rem);
+  color: var(--aib-text-2);
+  font-size: 0.9375rem;
+  line-height: 1.5;
 }
 
 @media screen and (max-width: 996px) {
-  .capabilityGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .section {
+    padding: 64px 0;
+  }
+
+  .capabilities {
+    grid-template-columns: 1fr;
+  }
+
+  .capability,
+  .capability + .capability {
+    border-left: 0;
+    padding: 20px 0 24px;
+  }
+
+  .capability + .capability {
+    border-top: 1px solid var(--aib-line);
   }
 }
 
 @media screen and (max-width: 640px) {
-  .capabilityGrid,
-  .pathGrid {
+  .paths {
     grid-template-columns: 1fr;
   }
 }
