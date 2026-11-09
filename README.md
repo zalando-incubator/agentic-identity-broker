@@ -34,21 +34,9 @@
 
 ---
 
-AI agents now read tickets, review code, and send email for the people they work for. Each of those actions uses somebody's access to a third-party service. **Agentic Identity Broker** decides which agent can use which part of that access, for which person, and for how long. It keeps the provider tokens out of the agents and gives every user one place to approve and revoke access.
+**Agentic Identity Broker** manages delegation chains for on-behalf-of flows in Agentic AI, bridges distinct OAuth2 infrastructures, and provides a secure token vault. Deployed within the call path via gateways like [Agentgateway](https://agentgateway.dev), it offloads auth burdens from both agent and MCP server creators.
 
-## Why does this exist?
-
-A normal Monday: Lena asks the company assistant in Slack to *"summarize my team's open Linear tickets, check which GitHub pull requests are blocked, and email a status update to the launch stakeholders."* IT approved the assistant. The company runs MCP servers for Linear, GitHub, and Gmail. Plain OAuth still leaves these questions open:
-
-- **Which agent is this?** GitHub sees one OAuth app. It cannot tell the assistant from the coding agent that uses the same app.
-- **How much access?** When one OAuth app serves several agents, it asks for the union of their scopes. The summarizing assistant ends up with GitHub's `repo` scope, which can merge and delete.
-- **Is this email acceptable?** Lena approved "Gmail access" once. Nobody asks her about *this* email to external people, even if a prompt injection in a ticket wrote it.
-- **Who is asking?** The request starts in Slack. Nobody is at a browser to click an OAuth consent screen.
-- **How does she take it back?** Next month Lena changes teams. She wants to remove the assistant's GitHub access and keep the coding agent's access. Today, every MCP server has its own consent flow and its own token store.
-
-IT approval answers *which agents may exist in the company*. The broker answers *what each agent can do for each person, right now*: per-agent grants in business terms, expiry and revocation in one consent interface, approvals for sensitive tool calls (with an OPA policy at the gateway), and token exchange at the gateway so that MCP servers only implement tools.
-
-Read [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/why) for the full answers to *"Why is OAuth delegation not enough?"*, *"What is left after IT approves an agent?"*, and *"Is this only for enterprises?"*
+For users, it provides a simple way to manage consent, granting agents granular permissions across services such as Google, GitHub, Databricks, and Linear without compromising control.
 
 ## Key Features
 
@@ -71,23 +59,23 @@ Read [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/
 
 ### Internal MCP Servers
 
-**The problem:** An MCP server that calls GitHub or Google must get, store, encrypt, and refresh a token for every user. With twenty internal MCP servers, you run twenty authorization flows and twenty token stores, and users consent again for every server. **With the broker:** a gateway such as [Agentgateway](https://agentgateway.dev) exchanges the agent's token for the correct provider token and passes it to the MCP server. The gateway can cache that token briefly, so a revocation takes effect when the cache entry ends. MCP servers only implement tools, and agents reach hundreds of MCP servers through one channel.
+Frameworks like FastMCP can implement the whole OAuth2.1 ceremonies as mandated by the MCP spec but this means that you have to configure it for every MCP Server you deploy and maintain it. You also have to configure secure storage and basically run a multitude of OAuth2 authorization servers. With the identity broker and a gateway you can dumb down MCP server development to only provide tools on the target technology you want. OAuth2 ceremonies, token vaulting and token translation are done transparently. Because token exchange is done centrally via a gateway, this allows agents to interact with hundreds of MCP servers via one channel.
 
 ### MCP Servers for SaaS
 
-**The problem:** You offer an MCP server to your customers. They connect any agent they like, and you cannot see which agent acted or prove that the customer approved a sensitive action. **With the broker:** you get your own consent surface that records which agents were used, and an audit trail of tool approvals on your side, whatever agent the customer runs.
+If you want to offer an MCP server to your customers as part of your SaaS, the identity broker can provide an additional consent surface that records which agents were actually used. With centralized tool authorization, you can keep an audit trail of approvals on your side regardless of which agent the customer runs.
 
 ### Hosted Agents
 
-**The problem:** A hosted agent must collect and protect a separate provider token for every MCP server it calls. **With the broker:** the agent holds one user token. A portal can collect consent up front, and the gateway exchanges that one token for each upstream MCP server.
+The agentic identity broker can simplify agents by requiring only a single user token that can be used with an arbitrary number of MCP servers. When paired with a portal for user interactions, token procurement can be front-loaded in the portal, and the agent's responsibility is to forward this token to upstream MCP servers via a gateway.
 
 ### Delegation Chains Without User Presence
 
-**The problem:** A user asks for something in Slack or Google Chat. There is no browser and no OAuth redirect, but the work still needs that user's permissions in another system. **With the broker:** in `local` server mode, a trusted chat bridge requests a token for the user with impersonation. The broker issues it only when the user has already delegated access to that agent. Otherwise the bridge gets a link to the consent page.
+The impersonation feature allows to start delegation chains via privileged clients, like a Google Chat or Slack bridge. The broker can be instructed to trust for two independent machine identities to assume the session for a particular user. This allows to use the permissions of a user on the company chat in another third-party system. 
 
 ### Central Authorization Prompts
 
-**The problem:** An agent is about to send an email to an external address or share a document. Some agent products ask the user first, others do not, and you cannot enforce it across products. **With the broker:** when an OPA policy at the gateway marks the call as `approval_required`, the gateway holds it until the user approves it once, for the session, or permanently. This works for every agent that goes through the gateway and leaves a central audit trail.
+The tool approval support in the broker allows to enforce tool calls independent of the agent interface in use. This allows a last resort check before emails get sent or documents shared with a central audit trail. 
 
 ## Documentation
 
