@@ -1764,6 +1764,7 @@ func TestAdminJSONBodyRejections(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	agents := newAgentsHandlerForTest(new(MockAgentRepository), new(MockProviderRepository), logger)
 	services := setupHandler(t, new(MockProviderRepository))
+	services = NewServicesHandler(services.providerService, services.config, logger)
 	permissionSets := newPermissionSetsHandlerForTest(new(MockPermissionSetRepository), logger)
 	resources := newProtectedResourcesHandler(new(MockProviderRepository), logger)
 	signingKeys := NewSigningKeysHandler(new(MockSigningKeyManager), logger)
@@ -1800,7 +1801,7 @@ func TestAdminJSONBodyRejections(t *testing.T) {
 				status     int
 				chunked    bool
 			}{
-				{"unknown field", `{"unexpected":true}`, http.StatusBadRequest, false},
+				{"unknown field", `{"sensitive-payload@example.test":true}`, http.StatusBadRequest, false},
 				{"second document", `{} {}`, http.StatusBadRequest, false},
 				{"trailing garbage", `{} trailing`, http.StatusBadRequest, false},
 				{"oversized whitespace", `{}` + strings.Repeat(" ", route.limit-1), http.StatusRequestEntityTooLarge, false},
@@ -1812,7 +1813,7 @@ func TestAdminJSONBodyRejections(t *testing.T) {
 					name, body string
 					status     int
 					chunked    bool
-				}{"nested unknown field", route.nested, http.StatusBadRequest, false})
+				}{"nested unknown field", strings.ReplaceAll(route.nested, "unexpected", "sensitive-payload@example.test"), http.StatusBadRequest, false})
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -1836,6 +1837,7 @@ func TestAdminJSONBodyRejections(t *testing.T) {
 					var response ErrorResponse
 					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 					assert.Equal(t, "invalid request body", response.Error)
+					assert.NotContains(t, logs.String(), "sensitive-payload@example.test")
 					if route.audit {
 						assert.Contains(t, logs.String(), fmt.Sprintf(`"status":%d`, tc.status))
 						assert.Contains(t, logs.String(), `"outcome":"rejected"`)

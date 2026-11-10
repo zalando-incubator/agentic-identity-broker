@@ -1,6 +1,7 @@
 package consent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -24,7 +25,7 @@ func TestCreateGrantRejectsInvalidBodiesBeforeService(t *testing.T) {
 		body   string
 		status int
 	}{
-		{"unknown field", `{"granted_permission_sets":{},"unexpected":true}`, http.StatusBadRequest},
+		{"unknown field", `{"sensitive-payload@example.test":true}`, http.StatusBadRequest},
 		{"trailing value", `{"granted_permission_sets":{}} {}`, http.StatusBadRequest},
 		{"trailing junk", `{"granted_permission_sets":{}} x`, http.StatusBadRequest},
 		{"oversize whitespace", `{"granted_permission_sets":{}}` + strings.Repeat(" ", 64<<10), http.StatusRequestEntityTooLarge},
@@ -32,7 +33,8 @@ func TestCreateGrantRejectsInvalidBodiesBeforeService(t *testing.T) {
 		{"read failure", "", http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handler := NewGrantsHandler(nil, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
+			var logs bytes.Buffer
+			handler := NewGrantsHandler(nil, slog.New(slog.NewJSONHandler(&logs, nil)), newTestSessionTokenValidator())
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
 			req.ContentLength = -1
 			if test.name == "read failure" {
@@ -45,6 +47,7 @@ func TestCreateGrantRejectsInvalidBodiesBeforeService(t *testing.T) {
 			rec := httptest.NewRecorder()
 			handler.CreateGrant(rec, req)
 			require.Equal(t, test.status, rec.Code, rec.Body.String())
+			require.NotContains(t, logs.String(), "sensitive-payload@example.test")
 		})
 	}
 }
