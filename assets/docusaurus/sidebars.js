@@ -12,6 +12,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'introduction/index',
+        'introduction/why',
         'introduction/use-cases',
         'introduction/why-not-idp',
       ],

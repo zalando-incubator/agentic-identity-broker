@@ -21,18 +21,19 @@ function HomepageHeader() {
             <span className={styles.eyebrow}>Free & Open Source</span>
             <p className={styles.heroTagline}>Governed delegated access for AI agents</p>
             <p className={styles.heroDescription}>
-              The Agentic Identity Broker is a governed trust boundary between your
-              users, the AI agents acting for them, and the third-party services
-              those agents call. Users consent once per agent and service; the
-              broker holds the third-party tokens encrypted and hands agents only
-              narrowly-scoped, exchangeable, auditable access.
+              Your assistant reads tickets, reviews pull requests, and sends email
+              for your people. OAuth lets it connect, but it cannot tell one agent
+              from another, ask about one specific email, or take back one agent&apos;s
+              access. The broker decides what each agent can do for each person,
+              keeps the provider tokens out of the agents, and gives every user one
+              place to approve and revoke access.
             </p>
             <div className={styles.buttons}>
               <Link className="button button--primary button--lg" to="/docs/get-started">
                 Get started
               </Link>
-              <Link className={styles.heroSecondaryAction} to="/docs/introduction">
-                Read the introduction <span aria-hidden="true">→</span>
+              <Link className={styles.heroSecondaryAction} to="/docs/introduction/why">
+                Why does this exist? <span aria-hidden="true">→</span>
               </Link>
             </div>
           </div>
