@@ -81,7 +81,7 @@ var _ = Describe("CIMD public third-party authentication", func() {
 		j.service.Endpoints.AuthorizeEndpoint = j.provider.AuthorizationEndpoint()
 		j.service.Endpoints.TokenEndpoint = j.provider.TokenEndpoint()
 		if seededAtStartup {
-			Expect(j.storage.Services().Update(context.Background(), j.service, nil)).To(Succeed())
+			Expect(providerUpdateError(j.storage.Services().Update(context.Background(), j.service, nil))).To(Succeed())
 		} else {
 			Expect(j.storage.Services().Create(context.Background(), j.service)).To(Succeed())
 		}

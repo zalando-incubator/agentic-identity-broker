@@ -717,7 +717,7 @@ func TestConfidentialToPublicUpdateClearsCiphertext(t *testing.T) {
 	public := createTestService(confidential.ID.String(), "Public Service", nil)
 	public.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
 	public.Secret = model.NewAbsentSecret()
-	require.NoError(t, repo.Update(ctx, public, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, public, nil)))
 
 	assert.Equal(t, string(model.TokenEndpointAuthMethodNone), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
 		SELECT token_endpoint_auth_method
@@ -771,7 +771,7 @@ func TestStaticToCIMDUpdateClearsCiphertext(t *testing.T) {
 	cimdService.ClientID = cimdClientIDForService(staticService.ID)
 	cimdService.TokenEndpointAuthMethod = cimdPrivateKeyJWTAuthMethod
 	cimdService.Secret = model.NewAbsentSecret()
-	require.NoError(t, repo.Update(ctx, cimdService, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, cimdService, nil)))
 
 	assert.Equal(t, string(cimdPrivateKeyJWTAuthMethod), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
 		SELECT token_endpoint_auth_method
@@ -855,7 +855,7 @@ func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
 	completedAt := *first.DiscoveryStatus.LastAttemptAt
 	completedAt = completedAt.Add(time.Minute)
 	replacement.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	err = repo.Update(ctx, replacement, nil)
+	err = providerUpdateError(repo.Update(ctx, replacement, nil))
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	require.ErrorIs(t, err, storage.ErrDuplicateDCRClientIdentity)
@@ -1101,7 +1101,7 @@ func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T
 	staleSuccess := stored.Copy()
 	staleSuccess.Endpoints.TokenEndpoint = "https://login.example.test/stale-token"
 	staleSuccess.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &staleAt, LastSuccessAt: &staleAt}
-	err = freshRepo.Update(ctx, staleSuccess, &before.Version)
+	err = providerUpdateError(freshRepo.Update(ctx, staleSuccess, &before.Version))
 	var staleError *storage.StorageError
 	require.ErrorAs(t, err, &staleError)
 	assert.Equal(t, storage.ErrorKindConflict, staleError.Kind)
@@ -1114,7 +1114,7 @@ func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T
 	stored.Endpoints.TokenEndpoint = "https://login.example.test/new-token"
 	stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &refreshedAt, LastSuccessAt: &refreshedAt}
 	stored.UpdatedAt = refreshedAt
-	require.NoError(t, freshRepo.Update(ctx, stored, &before.Version))
+	require.NoError(t, providerUpdateError(freshRepo.Update(ctx, stored, &before.Version)))
 	recovered, err := freshService.GetDiscoveryStatus(ctx, entity.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "ready", recovered.Status)
@@ -1208,7 +1208,7 @@ func TestDCRIssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 	committedAt := discovered.DiscoveryStatus.LastSuccessAt.Add(time.Minute)
 	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
 	changed.UpdatedAt = committedAt
-	require.NoError(t, repo.Update(ctx, changed, &discovered.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, changed, &discovered.Version)))
 
 	session := &storage.UserSession{
 		ID: id.NewSessionID(), Principal: id.Principal("issuer-race@example.test"), ServiceID: discovered.ID,
@@ -1233,7 +1233,7 @@ func TestDCRIssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 	withSessions.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: withSessions.IssuerURI + "/authorize", TokenEndpoint: withSessions.IssuerURI + "/token"}
 	nextAt := committedAt.Add(time.Minute)
 	withSessions.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &nextAt, LastSuccessAt: &nextAt}
-	err = repo.Update(ctx, withSessions, &changed.Version)
+	err = providerUpdateError(repo.Update(ctx, withSessions, &changed.Version))
 	require.ErrorAs(t, err, &storageErr, "the issuer update must recheck sessions at commit")
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	stored, err := repo.Get(ctx, discovered.ID)

@@ -150,7 +150,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_OwnershipConflictsAreTypedAn
 	replacement := before.Copy()
 	replacement.DisplayName = "Must not commit"
 	replacement.ProtectedResources = []string{"https://api.example.com/owned"}
-	err = repo.Update(ctx, replacement, &before.Version)
+	err = providerUpdateError(repo.Update(ctx, replacement, &before.Version))
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	require.ErrorIs(t, err, storage.ErrProtectedResourceOwned)
@@ -181,7 +181,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_UpdateCAS(t *testing.T) {
 	expectedVersion := provider.Version
 	provider.DisplayName = "Updated Provider"
 	provider.ProtectedResources = []string{"https://api.example.com/replaced"}
-	require.NoError(t, repo.Update(ctx, provider, &expectedVersion))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, provider, &expectedVersion)))
 	assert.Equal(t, int64(2), provider.Version)
 
 	resources, version, err := repo.ListProtectedResources(ctx, provider.ID)
@@ -191,14 +191,14 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_UpdateCAS(t *testing.T) {
 
 	staleVersion := expectedVersion
 	provider.ProtectedResources = []string{"https://api.example.com/stale"}
-	err = repo.Update(ctx, provider, &staleVersion)
+	err = providerUpdateError(repo.Update(ctx, provider, &staleVersion))
 	require.Error(t, err)
 	var storageErr *storage.StorageError
 	require.True(t, errors.As(err, &storageErr))
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 
 	provider.ProtectedResources = []string{"https://api.example.com/ignored"}
-	require.NoError(t, repo.Update(ctx, provider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, provider, nil)))
 	resources, version, err = repo.ListProtectedResources(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"https://api.example.com/replaced"}, resources)
@@ -266,7 +266,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_UpdatePreservesCanonicalID(t
 	updated.CanonicalID = nil
 	updated.DisplayName = "Updated Provider"
 	updated.UpdatedAt = time.Now().UTC()
-	require.NoError(t, repo.Update(ctx, &updated, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, &updated, nil)))
 	require.NotNil(t, updated.CanonicalID)
 	assert.Equal(t, canonicalID, *updated.CanonicalID)
 
@@ -469,7 +469,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSe
 	require.NoError(t, repo.Create(ctx, staticProvider))
 
 	cimdProvider := testCIMDProvider(staticProvider.ID)
-	require.NoError(t, repo.Update(ctx, cimdProvider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, cimdProvider, nil)))
 
 	stored, err := repo.Get(ctx, staticProvider.ID)
 	require.NoError(t, err)
@@ -540,7 +540,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_ClientRegistrationRoundTrip(
 	}
 
 	publicProvider.DisplayName = "Updated CIMD public provider"
-	require.NoError(t, repo.Update(ctx, publicProvider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, publicProvider, nil)))
 	stored, err = repo.Get(ctx, publicProvider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
@@ -694,7 +694,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DiscoveryCreateAndRefreshAre
 	stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &refreshedAt, LastSuccessAt: &refreshedAt}
 	stored.UpdatedAt = refreshedAt
 	expectedVersion := stored.Version
-	require.NoError(t, restartedRepo.Update(ctx, stored, &expectedVersion))
+	require.NoError(t, providerUpdateError(restartedRepo.Update(ctx, stored, &expectedVersion)))
 
 	refreshed := readDiscoveryProviderRow(t, adapter, provider.ID)
 	assert.Equal(t, nextResource, refreshed.ResourceURL)
@@ -763,7 +763,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DiscoverySuccessReplacesManu
 	discovered := discoveredCIMDProvider(manual.ID, resource, completedAt)
 	discovered.UpdatedAt = completedAt
 	expectedVersion := manual.Version
-	require.NoError(t, repo.Update(ctx, discovered, &expectedVersion))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, discovered, &expectedVersion)))
 
 	row := readDiscoveryProviderRow(t, adapter, manual.ID)
 	assert.Equal(t, resource, row.ResourceURL)
@@ -821,7 +821,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_RecordDiscoveryFailureGuards
 	stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &newSuccess, LastSuccessAt: &newSuccess}
 	stored.UpdatedAt = newSuccess
 	expectedVersion := stored.Version
-	require.NoError(t, repo.Update(ctx, stored, &expectedVersion))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, stored, &expectedVersion)))
 	refreshed := readDiscoveryProviderRow(t, adapter, provider.ID)
 	assert.Equal(t, int64(2), refreshed.Version)
 	assert.Equal(t, "https://example.com/refreshed-token", refreshed.TokenEndpoint)
@@ -907,7 +907,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 				completedAt := initialAt.Add(time.Minute)
 				updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 			}
-			err = repo.Update(ctx, updated, &before.Version)
+			err = providerUpdateError(repo.Update(ctx, updated, &before.Version))
 			var storageErr *storage.StorageError
 			require.ErrorAs(t, err, &storageErr)
 			assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
@@ -952,7 +952,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_PinnedAudienceSurvivesDiscov
 	updated.AuthorizationParams = nil
 	completedAt := initialAt.Add(time.Minute)
 	updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	require.NoError(t, repo.Update(ctx, updated, &provider.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, updated, &provider.Version)))
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, resourceURL, *stored.Discovery.ResourceURL)
@@ -982,7 +982,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_EqualStoredMicrosecondKeepsF
 	stale.Endpoints.TokenEndpoint = "https://example.com/replacement-token"
 	stale.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &failedAt, LastSuccessAt: &failedAt}
 	stale.UpdatedAt = failedAt
-	err = repo.Update(ctx, stale, &before.Version)
+	err = providerUpdateError(repo.Update(ctx, stale, &before.Version))
 	var storageErr *storage.StorageError
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
@@ -1018,7 +1018,7 @@ func TestPostgresUserSessionRepository_StaleAudienceCannotInsertOrReplaceSession
 	changed.AuthorizationParams["resource"] = audienceB
 	committedAt := initialAt.Add(time.Minute)
 	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
-	require.NoError(t, repo.Update(ctx, changed, &provider.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, changed, &provider.Version)))
 
 	err := sessions.Create(ctx, stale)
 	var storageErr *storage.StorageError

@@ -131,7 +131,7 @@ func (r *observingThirdpartyOAuth2ProviderRepository) GetByIDs(ctx context.Conte
 	return r.next.GetByIDs(ctx, ids)
 }
 
-func (r *observingThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (r *observingThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	recordObservedSecurityContext(r.observer, r.layer, ctx)
 	return r.next.Update(ctx, entity, expectedVersion)
 }

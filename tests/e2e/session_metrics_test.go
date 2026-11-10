@@ -404,7 +404,7 @@ var _ = Describe("Session Metrics", func() {
 				Expect(err).NotTo(HaveOccurred())
 				canonicalID := "calendar"
 				service.CanonicalID = &canonicalID
-				Expect(store.Services().Update(ctx, service, nil)).To(Succeed())
+				Expect(providerUpdateError(store.Services().Update(ctx, service, nil))).To(Succeed())
 				now := time.Now()
 				due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
 				soon := now.Add(2 * time.Minute)

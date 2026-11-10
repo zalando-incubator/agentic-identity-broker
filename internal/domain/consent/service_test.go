@@ -213,15 +213,15 @@ func (m *mockServiceRepo) GetByIDs(_ context.Context, ids []id.ServiceID) ([]*mo
 	return services, nil
 }
 
-func (m *mockServiceRepo) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *mockServiceRepo) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	if m.err != nil {
-		return m.err
+		return false, m.err
 	}
 	if _, exists := m.services[entity.ID]; !exists {
-		return ports.ErrNotFound
+		return false, ports.ErrNotFound
 	}
 	m.services[entity.ID] = entity.Copy()
-	return nil
+	return false, nil
 }
 
 func (m *mockServiceRepo) Delete(ctx context.Context, serviceID id.ServiceID) error {

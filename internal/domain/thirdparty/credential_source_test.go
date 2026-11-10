@@ -42,7 +42,7 @@ func (r *credentialSourceRepository) Get(ctx context.Context, serviceID id.Servi
 	return entity, err
 }
 
-func (r *credentialSourceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (r *credentialSourceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	r.updates++
 	return r.InMemoryThirdpartyOAuth2ProviderRepository.Update(ctx, entity, expectedVersion)
 }

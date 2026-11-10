@@ -274,8 +274,8 @@ func (m *MockServiceRepository) Get(ctx context.Context, serviceID id.ServiceID)
 	return nil, nil
 }
 
-func (m *MockServiceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
-	return nil
+func (m *MockServiceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
+	return false, nil
 }
 
 func (m *MockServiceRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {

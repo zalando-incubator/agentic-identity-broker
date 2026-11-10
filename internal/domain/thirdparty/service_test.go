@@ -65,9 +65,9 @@ func (m *MockRepository) GetCanonicalIDs(ctx context.Context, ids []id.ServiceID
 	return args.Get(0).(map[id.ServiceID]string), args.Error(1)
 }
 
-func (m *MockRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *MockRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	args := m.Called(ctx, entity, expectedVersion)
-	return args.Error(0)
+	return false, args.Error(0)
 }
 
 func (m *MockRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
@@ -178,11 +178,11 @@ func (m *functionFieldProviderRepository) Get(ctx context.Context, serviceID id.
 	return m.getFn(ctx, serviceID)
 }
 
-func (m *functionFieldProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *functionFieldProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	if m.updateFn == nil {
-		return errors.New("unexpected repository Update call")
+		return false, errors.New("unexpected repository Update call")
 	}
-	return m.updateFn(ctx, entity, expectedVersion)
+	return false, m.updateFn(ctx, entity, expectedVersion)
 }
 
 func (m *functionFieldProviderRepository) List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {

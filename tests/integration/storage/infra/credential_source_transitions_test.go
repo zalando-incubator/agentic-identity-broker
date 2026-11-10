@@ -43,7 +43,7 @@ func transitionCredentialSourcePostgres(t *testing.T, h *credentialSourcePostgre
 		candidate.Secret = model.NewEncryptedSecret(ciphertext)
 	}
 	version := candidate.Version
-	require.NoError(t, h.providers.Update(h.ctx, candidate, &version))
+	require.NoError(t, providerUpdateError(h.providers.Update(h.ctx, candidate, &version)))
 	return candidate
 }
 
@@ -158,7 +158,7 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 							candidate.DisplayName = "metadata-only rename"
 						}
 						candidate.ProtectedResources = []string{"https://ignored.example.test"}
-						require.NoError(t, h.providers.Update(h.ctx, candidate, nil))
+						require.NoError(t, providerUpdateError(h.providers.Update(h.ctx, candidate, nil)))
 						stored, err := h.providers.Get(h.ctx, provider.ID)
 						require.NoError(t, err)
 						assert.Equal(t, source, stored.CredentialSource)
@@ -186,7 +186,7 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 						candidate.CredentialSource, candidate.ClientID, candidate.Secret = model.CredentialSourceStored, "explicit-client", model.NewEncryptedSecret([]byte("explicit-ciphertext"))
 					}
 					staleVersion := before.Version - 1
-					requireCredentialSourcePostgresKind(t, h.providers.Update(h.ctx, candidate, &staleVersion), storage.ErrorKindConflict)
+					requireCredentialSourcePostgresKind(t, providerUpdateError(h.providers.Update(h.ctx, candidate, &staleVersion)), storage.ErrorKindConflict)
 					assert.Equal(t, snapshot, credentialSourcePostgresSnapshot(t, h, provider.ID))
 				})
 			}
@@ -228,7 +228,7 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 						candidate.Secret = model.NewPlaintextSecret("must-not-persist")
 						kind = storage.ErrorKindValidation
 					}
-					requireCredentialSourcePostgresKind(t, h.providers.Update(h.ctx, candidate, &version), kind)
+					requireCredentialSourcePostgresKind(t, providerUpdateError(h.providers.Update(h.ctx, candidate, &version)), kind)
 					assert.Equal(t, rowBefore, credentialSourcePostgresSnapshot(t, h, provider.ID))
 					assert.Equal(t, ownerBefore, credentialSourcePostgresSnapshot(t, h, owner.ID))
 					after, err := h.providers.Get(h.ctx, provider.ID)
@@ -265,7 +265,7 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 				defer workers.Done()
 				<-start
 				version := before.Version
-				errorsByCandidate[index] = h.providers.Update(h.ctx, candidate, &version)
+				errorsByCandidate[index] = providerUpdateError(h.providers.Update(h.ctx, candidate, &version))
 			}(index, candidate)
 		}
 		close(start)
@@ -408,7 +408,7 @@ func TestCredentialSourcePostgresTransitionsAndSessionIdentity(t *testing.T) {
 				candidate.DisplayName = "must-not-commit"
 				tc.mutate(candidate)
 				version := before.Version
-				requireCredentialSourcePostgresKind(t, h.providers.Update(h.ctx, candidate, &version), storage.ErrorKindValidation)
+				requireCredentialSourcePostgresKind(t, providerUpdateError(h.providers.Update(h.ctx, candidate, &version)), storage.ErrorKindValidation)
 				assert.Equal(t, snapshot, credentialSourcePostgresSnapshot(t, h, provider.ID))
 				canonical, err := h.providers.GetByCanonicalID(h.ctx, *before.CanonicalID)
 				require.NoError(t, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -26,7 +27,7 @@ const providerColumns = `
 	s.token_endpoint, s.authorize_endpoint, s.scopes,
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
-	s.authorization_params, s.created_at, s.updated_at, s.version, s.credential_source, s.credential_source_transitioned, s.client_registration`
+	s.authorization_params, s.created_at, s.updated_at, s.version, s.credential_source, s.credential_source_transitioned, s.client_registration, s.client_identity, s.client_identity_revision`
 
 type PostgresThirdpartyOAuth2ProviderRepository struct{ adapter *Adapter }
 
@@ -57,8 +58,8 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 		enable_discovery, metadata_url, resource_url, client_method, resource_explicit,
 		discovery_last_attempt_at, discovery_last_success_at, discovery_failure_reason,
 		token_endpoint, authorize_endpoint, scopes, authorization_params, created_at, updated_at,
-		credential_source, credential_source_transitioned, client_registration, version
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,FALSE,$24,1)`,
+		credential_source, credential_source_transitioned, client_registration, version, client_identity, client_identity_revision
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,FALSE,$24,1,$4,0)`,
 		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
 		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
@@ -76,6 +77,11 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 	entity.CredentialSource = model.CredentialSource(record.CredentialSource)
 	entity.ClientRegistration = model.ClientRegistration(record.ClientRegistration)
 	entity.CredentialSourceTransitioned = false
+	entity.ClientIdentityRevision = 0
+	entity.ClientIdentity = nil
+	if record.ClientID != nil {
+		entity.ClientIdentity = new(id.ClientID(*record.ClientID))
+	}
 	return nil
 }
 
@@ -184,18 +190,18 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(ctx context
 	return canonicalIDs, nil
 }
 
-func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	if err := r.requireDB("UpdateThirdpartyOAuth2Provider"); err != nil {
-		return err
+		return false, err
 	}
 	if entity == nil || entity.ID.IsZero() {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "provider and provider ID are required")
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "provider and provider ID are required")
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 	tx, err := r.adapter.db.BeginTx(execCtx, nil)
 	if err != nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to begin transaction")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to begin transaction")
 	}
 	defer func() { _ = tx.Rollback() }()
 	var previousIssuerURI string
@@ -205,17 +211,19 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	var previousVersion int64
 	var previousSource string
 	var previousCanonicalID *string
-	err = tx.QueryRowContext(execCtx, `SELECT issuer_uri, resource_url, authorization_params, resource_explicit, version, credential_source, canonical_id
+	var previousClientID, previousIdentity *string
+	var previousRevision int64
+	err = tx.QueryRowContext(execCtx, `SELECT issuer_uri, resource_url, authorization_params, resource_explicit, version, credential_source, canonical_id, client_id, client_identity, client_identity_revision
 		FROM thirdparty_oauth2_services WHERE id=$1 FOR UPDATE`, entity.ID).
-		Scan(&previousIssuerURI, &previousResourceURL, &previousAuthorizationParams, &previousResourceExplicit, &previousVersion, &previousSource, &previousCanonicalID)
+		Scan(&previousIssuerURI, &previousResourceURL, &previousAuthorizationParams, &previousResourceExplicit, &previousVersion, &previousSource, &previousCanonicalID, &previousClientID, &previousIdentity, &previousRevision)
 	if errors.Is(err, sql.ErrNoRows) {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
 	if err != nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to lock provider")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to lock provider")
 	}
 	if expectedVersion != nil && previousVersion != *expectedVersion {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
 	}
 
 	paramsOmitted := entity.AuthorizationParams == nil
@@ -250,7 +258,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	}
 	record, err := entityToRecord(&proposed)
 	if err != nil {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to convert entity to record")
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to convert entity to record")
 	}
 	issuerChanged := previousIssuerURI != record.IssuerURI && (previousResourceURL.Valid || record.ResourceURL != nil)
 	resourceChanged := (previousResourceURL.Valid || record.ResourceURL != nil) &&
@@ -258,14 +266,31 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if issuerChanged || resourceChanged {
 		var sessionCount int
 		if err := tx.QueryRowContext(execCtx, `SELECT COUNT(*) FROM user_sessions WHERE service_id=$1`, record.ID).Scan(&sessionCount); err != nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to count provider sessions")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to count provider sessions")
 		}
 		if sessionCount != 0 {
 			if issuerChanged {
-				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
+				return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
 			}
-			return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "resource change requires no user sessions")
+			return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "resource change requires no user sessions")
 		}
+	}
+	identityChanged := false
+	record.ClientIdentity = previousIdentity
+	record.ClientIdentityRevision = previousRevision
+	if record.CredentialSource == string(model.CredentialSourceStored) {
+		previous := previousIdentity
+		if previous == nil && previousSource == string(model.CredentialSourceStored) {
+			previous = previousClientID
+		}
+		identityChanged = previous != nil && *previous != *record.ClientID
+		if identityChanged {
+			if previousRevision == math.MaxInt64 {
+				return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "client identity revision exhausted")
+			}
+			record.ClientIdentityRevision++
+		}
+		record.ClientIdentity = record.ClientID
 	}
 	canonicalIDOmitted := !entity.ClearCanonicalID && record.CanonicalID == nil
 	query := `UPDATE thirdparty_oauth2_services SET display_name=$2, client_id=$3, client_secret_encrypted=$4,
@@ -275,16 +300,16 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		token_endpoint=$16, authorize_endpoint=$17, scopes=$18, authorization_params=CASE WHEN $19 THEN authorization_params ELSE $20 END,
 		canonical_id=CASE WHEN $21 THEN NULL WHEN $22 THEN canonical_id ELSE $23 END,
 		credential_source_transitioned=credential_source_transitioned OR credential_source IS DISTINCT FROM $25,
-		credential_source=$25, client_registration=$26,
+		credential_source=$25, client_registration=$26, client_identity=$27, client_identity_revision=$28,
 		updated_at=$24, version=version+1 WHERE id=$1
 		AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at < $13)`
 	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
 		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
 		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		retainParams, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt, record.CredentialSource, record.ClientRegistration}
+		retainParams, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt, record.CredentialSource, record.ClientRegistration, record.ClientIdentity, record.ClientIdentityRevision}
 	if expectedVersion != nil {
-		query += ` AND version=$27`
+		query += ` AND version=$29`
 		args = append(args, *expectedVersion)
 	}
 	query += ` RETURNING created_at, authorization_params, version, canonical_id, resource_explicit, credential_source, credential_source_transitioned`
@@ -300,35 +325,35 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		if expectedVersion != nil || record.ResourceURL != nil {
 			var exists bool
 			if existsErr := tx.QueryRowContext(execCtx, `SELECT EXISTS(SELECT 1 FROM thirdparty_oauth2_services WHERE id=$1)`, record.ID).Scan(&exists); existsErr != nil {
-				return providerStorageError("UpdateThirdpartyOAuth2Provider", existsErr, "failed to check provider")
+				return false, providerStorageError("UpdateThirdpartyOAuth2Provider", existsErr, "failed to check provider")
 			}
 			if exists {
-				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
+				return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
 			}
 		}
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
 	if err != nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to update provider")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to update provider")
 	}
 	if expectedVersion != nil {
 		currentResources, err := protectedResources(execCtx, tx, entity.ID)
 		if err != nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to list protected resources")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to list protected resources")
 		}
 		slices.Sort(currentResources)
 		slices.Sort(record.ProtectedResources)
 		if !slices.Equal(currentResources, record.ProtectedResources) {
 			if _, err = tx.ExecContext(execCtx, `DELETE FROM service_protected_resources WHERE service_id=$1`, record.ID); err != nil {
-				return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to replace protected resources")
+				return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to replace protected resources")
 			}
 			if err = insertProtectedResources(execCtx, tx, entity.ID, record.ProtectedResources); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to commit transaction")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to commit transaction")
 	}
 	entity.CreatedAt, entity.UpdatedAt, entity.Version = createdAt, record.UpdatedAt, version
 	entity.CanonicalID = canonicalID
@@ -337,7 +362,12 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	entity.CredentialSource = model.CredentialSource(source)
 	entity.ClientRegistration = model.ClientRegistration(record.ClientRegistration)
 	entity.CredentialSourceTransitioned = transitioned
-	return nil
+	entity.ClientIdentityRevision = record.ClientIdentityRevision
+	entity.ClientIdentity = nil
+	if record.ClientIdentity != nil {
+		entity.ClientIdentity = new(id.ClientID(*record.ClientIdentity))
+	}
+	return identityChanged, nil
 }
 
 const activeProviderGrantReferenceQuery = `
@@ -594,6 +624,7 @@ func scanProvider(scanner providerRowScanner) (*ThirdpartyOAuth2ProviderRecord, 
 		&record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams,
 		&record.CreatedAt, &record.UpdatedAt, &record.Version,
 		&record.CredentialSource, &record.CredentialSourceTransitioned, &record.ClientRegistration,
+		&record.ClientIdentity, &record.ClientIdentityRevision,
 	)
 	return &record, err
 }

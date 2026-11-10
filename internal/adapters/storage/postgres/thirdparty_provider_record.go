@@ -28,6 +28,8 @@ type ThirdpartyOAuth2ProviderRecord struct {
 	CanonicalID                  *string                     `db:"canonical_id"`
 	DisplayName                  string                      `db:"display_name"`
 	ClientID                     *string                     `db:"client_id"`
+	ClientIdentity               *string                     `db:"client_identity"`
+	ClientIdentityRevision       int64                       `db:"client_identity_revision"`
 	SecretCiphertext             []byte                      `db:"client_secret_encrypted"`
 	TokenEndpointAuthMethod      *string                     `db:"token_endpoint_auth_method"`
 	ClientRegistration           string                      `db:"client_registration"`
@@ -176,6 +178,7 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		CanonicalID:                  entity.CanonicalID,
 		DisplayName:                  entity.DisplayName,
 		ClientID:                     clientID,
+		ClientIdentityRevision:       entity.ClientIdentityRevision,
 		SecretCiphertext:             ciphertext,
 		TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
 		ClientRegistration:           string(entity.ClientRegistration),
@@ -193,6 +196,9 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		UpdatedAt:                    entity.UpdatedAt,
 	}
 
+	if entity.ClientIdentity != nil {
+		record.ClientIdentity = new(entity.ClientIdentity.String())
+	}
 	if entity.Discovery.MetadataURL != nil {
 		s := *entity.Discovery.MetadataURL
 		record.MetadataURL = &s
@@ -267,6 +273,7 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		ClientRegistration:           model.ClientRegistration(record.ClientRegistration),
 		CredentialSource:             model.CredentialSource(record.CredentialSource),
 		CredentialSourceTransitioned: record.CredentialSourceTransitioned,
+		ClientIdentityRevision:       record.ClientIdentityRevision,
 		Flavor:                       model.OAuth2Flavor(record.Flavor),
 		IssuerURI:                    record.IssuerURI,
 		Discovery: model.DiscoveryConfig{
@@ -284,6 +291,9 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 	}
 	if record.ClientID != nil {
 		entity.ClientID = id.ClientID(*record.ClientID)
+	}
+	if record.ClientIdentity != nil {
+		entity.ClientIdentity = new(id.ClientID(*record.ClientIdentity))
 	}
 
 	if record.MetadataURL != nil {

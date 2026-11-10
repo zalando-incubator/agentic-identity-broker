@@ -27,6 +27,7 @@ func TestNewAdapter_Memory(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, adapter)
 	assert.NotNil(t, adapter.Users())
+	require.NotNil(t, adapter.ClientIdentities())
 }
 
 func TestNewAdapter_MemoryClientAssertionReplayRepository(t *testing.T) {
@@ -278,7 +279,7 @@ func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 	changed.IssuerURI = "https://new-issuer.example.test"
 	nextAt := completedAt.Add(time.Minute)
 	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &nextAt, LastSuccessAt: &nextAt}
-	require.NoError(t, adapter.Services().Update(ctx, changed, &provider.Version))
+	require.NoError(t, providerUpdateError(adapter.Services().Update(ctx, changed, &provider.Version)))
 
 	session := &domainstorage.UserSession{
 		ID: id.NewSessionID(), Principal: id.Principal("issuer-race@example.test"), ServiceID: serviceID,
@@ -299,7 +300,7 @@ func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 	third.IssuerURI = "https://third-issuer.example.test"
 	laterAt := nextAt.Add(time.Minute)
 	third.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &laterAt, LastSuccessAt: &laterAt}
-	err = adapter.Services().Update(ctx, third, &changed.Version)
+	err = providerUpdateError(adapter.Services().Update(ctx, third, &changed.Version))
 	require.ErrorAs(t, err, &storageErr, "the final issuer update must recheck sessions")
 	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
 	stored, err := adapter.Services().Get(ctx, serviceID)
@@ -339,7 +340,10 @@ func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing
 		insertResult := make(chan error, 1)
 		changeResult := make(chan error, 1)
 		go func() { <-start; insertResult <- adapter.UserSessions().Create(ctx, session) }()
-		go func() { <-start; changeResult <- adapter.Services().Update(ctx, changed, &provider.Version) }()
+		go func() {
+			<-start
+			changeResult <- providerUpdateError(adapter.Services().Update(ctx, changed, &provider.Version))
+		}()
 		close(start)
 		insertErr, changeErr := <-insertResult, <-changeResult
 		count, err := adapter.UserSessions().CountByService(ctx, serviceID)
@@ -391,7 +395,7 @@ func TestMemoryAdapter_StaleAudienceCannotInsertOrReplaceSession(t *testing.T) {
 	changed.AuthorizationParams["resource"] = audienceB
 	committedAt := initialAt.Add(time.Minute)
 	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
-	require.NoError(t, adapter.Services().Update(ctx, changed, &provider.Version))
+	require.NoError(t, providerUpdateError(adapter.Services().Update(ctx, changed, &provider.Version)))
 
 	err = adapter.UserSessions().Create(ctx, stale)
 	var storageErr *domainstorage.StorageError

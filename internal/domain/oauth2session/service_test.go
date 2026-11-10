@@ -177,7 +177,7 @@ func TestManualAndDirectMetadataConnectionsKeepSharedTokenClient(t *testing.T) {
 				require.NoError(t, err)
 				metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server"
 				stored.Discovery = model.DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
-				require.NoError(t, repo.Update(ctx, stored, nil))
+				require.NoError(t, providerUpdateError(repo.Update(ctx, stored, nil)))
 			}
 			principal := id.Principal("user@example.com")
 			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
@@ -766,7 +766,7 @@ func TestLegacyAuthorizationParamsCannotOverrideBrokerFields(t *testing.T) {
 		"refresh_token":       "attacker-refresh-token",
 		"business_partner_id": "12345",
 	}
-	require.NoError(t, repo.Update(ctx, persisted, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, persisted, nil)))
 
 	flow, err := service.InitiateOAuth2Flow(ctx, id.Principal("user@example.com"), serviceID, "https://example.com/sessions")
 	require.NoError(t, err)

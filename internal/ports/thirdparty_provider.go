@@ -33,7 +33,9 @@ type ThirdpartyOAuth2ProviderRepository interface {
 	Get(ctx context.Context, id id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error)
 	// GetByIDs retrieves existing providers once per ID, in requested order; missing IDs are omitted.
 	GetByIDs(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error)
-	Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error
+	// Update returns true only for its own committed identity increment, derived under the mutation lock.
+	// It populates entity with that commit's evidence, preserving intervening filesystem observations.
+	Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (identityChanged bool, err error)
 	Delete(ctx context.Context, id id.ServiceID) error
 	List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error)
 	FindByProtectedResource(ctx context.Context, resourceURI string) (*model.ThirdpartyOAuth2ProviderEntity, error)

@@ -53,7 +53,7 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, errors.New("session cannot be nil")
 	}
 	if err := session.Validate(); err != nil {
-		return nil, err
+		return nil, storage.NewStorageError("CreateUserSession", storage.ErrorKindValidation, err, "invalid session")
 	}
 	if r.issuerSessionGate != nil {
 		r.issuerSessionGate.RLock()
@@ -177,6 +177,7 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, err
 	}
 	if session.CallbackID == current.CallbackID {
+		session.UpstreamClientRevision = current.UpstreamClientRevision
 		session.UpstreamClientID = upstreamClientID
 		if upstreamClientID != nil {
 			*upstreamClientID = *current.UpstreamClientID
@@ -184,7 +185,7 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 	}
 	if updated {
 		if err := session.Validate(); err != nil {
-			return nil, err
+			return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindValidation, err, "invalid session")
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err

@@ -79,9 +79,9 @@ func (m *MockProviderRepository) GetCanonicalIDs(ctx context.Context, ids []id.S
 	return args.Get(0).(map[id.ServiceID]string), args.Error(1)
 }
 
-func (m *MockProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *MockProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	args := m.Called(ctx, entity, expectedVersion)
-	return args.Error(0)
+	return false, args.Error(0)
 }
 
 func (m *MockProviderRepository) RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, version int64, completedAt time.Time, code string) error {

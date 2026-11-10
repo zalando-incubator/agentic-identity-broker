@@ -306,7 +306,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				// Route only the fixture's authorization endpoint; keep Google enrichment and its credential document intact.
 				service.Endpoints.AuthorizeEndpoint = journey.Upstream.URL() + "/oauth/authorize"
 				version := service.Version
-				Expect(journey.Storage.Services().Update(context.Background(), service, &version)).To(Succeed())
+				Expect(providerUpdateError(journey.Storage.Services().Update(context.Background(), service, &version))).To(Succeed())
 				before = storedService(serviceID)
 				journey.Upstream.WithAccessToken("google-access-initial").WithRefreshToken("google-refresh-initial")
 			})

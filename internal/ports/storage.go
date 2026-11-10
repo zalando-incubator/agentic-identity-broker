@@ -27,6 +27,25 @@ func IsNotFoundErr(err error) bool {
 	return errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindNotFound
 }
 
+type ClientIdentityState struct {
+	Identity *id.ClientID
+	Revision int64
+}
+
+type ClientIdentityObservation struct {
+	ServiceVersion int64
+	CanonicalID    string
+	Revision       int64
+}
+
+// ThirdpartyOAuth2ClientIdentityRepository fences file observations against administrative changes.
+type ThirdpartyOAuth2ClientIdentityRepository interface {
+	// Every observation requires matching filesystem source, version, canonical ID, and revision.
+	// Lost preconditions return applied=false without writes; only a differing recorded ID increments.
+	// Initialization and same-ID observations return changed=false and preserve administrative metadata.
+	RecordObservedClientIdentity(ctx context.Context, serviceID id.ServiceID, observed id.ClientID, expected ClientIdentityObservation) (state ClientIdentityState, applied bool, changed bool, err error)
+}
+
 // HealthChecker verifies storage backend health.
 type HealthChecker interface {
 	// HealthCheck verifies storage backend is operational.

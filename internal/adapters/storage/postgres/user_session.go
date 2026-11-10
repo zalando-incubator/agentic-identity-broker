@@ -12,7 +12,7 @@ import (
 	"github.com/lib/pq"
 )
 
-const userSessionColumns = `id, principal, service_id, callback_id, upstream_client_id,
+const userSessionColumns = `id, principal, service_id, callback_id, upstream_client_id, upstream_client_revision,
 encrypted_access_token, encrypted_refresh_token, token_type, access_token_expires_at,
 refresh_token_expires_at, scope, encryption_context, initiated_at, created_at, updated_at`
 
@@ -55,50 +55,54 @@ const usableSessionPredicate = `(refresh_token_expires_at IS NULL
 // correctly handle PostgreSQL TEXT[] scanning via pgx/v5/stdlib — the driver
 // returns TEXT[] as a string literal ("{val1,val2}") which []string cannot absorb.
 type userSessionRecord struct {
-	ID                    id.SessionID              `db:"id"`
-	Principal             id.Principal              `db:"principal"`
-	ServiceID             id.ServiceID              `db:"service_id"`
-	CallbackID            string                    `db:"callback_id"`
-	UpstreamClientID      *string                   `db:"upstream_client_id"`
-	EncryptedAccessToken  []byte                    `db:"encrypted_access_token"`
-	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
-	TokenType             string                    `db:"token_type"`
-	AccessTokenExpiresAt  *time.Time                `db:"access_token_expires_at"`
-	RefreshRejectedAt     *time.Time                `db:"refresh_token_expires_at"`
-	Scope                 pq.StringArray            `db:"scope"`
-	EncryptionContext     storage.EncryptionContext `db:"encryption_context"`
-	InitiatedAt           time.Time                 `db:"initiated_at"`
-	CreatedAt             time.Time                 `db:"created_at"`
-	UpdatedAt             time.Time                 `db:"updated_at"`
+	ID                     id.SessionID              `db:"id"`
+	Principal              id.Principal              `db:"principal"`
+	ServiceID              id.ServiceID              `db:"service_id"`
+	CallbackID             string                    `db:"callback_id"`
+	UpstreamClientID       *string                   `db:"upstream_client_id"`
+	UpstreamClientRevision int64                     `db:"upstream_client_revision"`
+	EncryptedAccessToken   []byte                    `db:"encrypted_access_token"`
+	EncryptedRefreshToken  []byte                    `db:"encrypted_refresh_token"`
+	TokenType              string                    `db:"token_type"`
+	AccessTokenExpiresAt   *time.Time                `db:"access_token_expires_at"`
+	RefreshRejectedAt      *time.Time                `db:"refresh_token_expires_at"`
+	Scope                  pq.StringArray            `db:"scope"`
+	EncryptionContext      storage.EncryptionContext `db:"encryption_context"`
+	InitiatedAt            time.Time                 `db:"initiated_at"`
+	CreatedAt              time.Time                 `db:"created_at"`
+	UpdatedAt              time.Time                 `db:"updated_at"`
 }
 
 type userSessionSummaryRecord struct {
-	ID                   id.SessionID   `db:"id"`
-	ServiceID            id.ServiceID   `db:"service_id"`
-	TokenType            string         `db:"token_type"`
-	Scope                pq.StringArray `db:"scope"`
-	InitiatedAt          time.Time      `db:"initiated_at"`
-	AccessTokenExpiresAt *time.Time     `db:"access_token_expires_at"`
-	RefreshRejectedAt    *time.Time     `db:"refresh_token_expires_at"`
-	HasRefreshToken      bool           `db:"has_refresh_token"`
+	UpstreamClientID       *string        `db:"upstream_client_id"`
+	UpstreamClientRevision int64          `db:"upstream_client_revision"`
+	ID                     id.SessionID   `db:"id"`
+	ServiceID              id.ServiceID   `db:"service_id"`
+	TokenType              string         `db:"token_type"`
+	Scope                  pq.StringArray `db:"scope"`
+	InitiatedAt            time.Time      `db:"initiated_at"`
+	AccessTokenExpiresAt   *time.Time     `db:"access_token_expires_at"`
+	RefreshRejectedAt      *time.Time     `db:"refresh_token_expires_at"`
+	HasRefreshToken        bool           `db:"has_refresh_token"`
 }
 
 func recordToSession(r *userSessionRecord) *storage.UserSession {
 	s := &storage.UserSession{
-		ID:                    r.ID,
-		Principal:             r.Principal,
-		ServiceID:             r.ServiceID,
-		CallbackID:            r.CallbackID,
-		EncryptedAccessToken:  r.EncryptedAccessToken,
-		EncryptedRefreshToken: r.EncryptedRefreshToken,
-		TokenType:             r.TokenType,
-		AccessTokenExpiresAt:  r.AccessTokenExpiresAt,
-		RefreshRejectedAt:     r.RefreshRejectedAt,
-		Scope:                 []string(r.Scope),
-		EncryptionContext:     r.EncryptionContext,
-		InitiatedAt:           r.InitiatedAt,
-		CreatedAt:             r.CreatedAt,
-		UpdatedAt:             r.UpdatedAt,
+		ID:                     r.ID,
+		Principal:              r.Principal,
+		ServiceID:              r.ServiceID,
+		CallbackID:             r.CallbackID,
+		UpstreamClientRevision: r.UpstreamClientRevision,
+		EncryptedAccessToken:   r.EncryptedAccessToken,
+		EncryptedRefreshToken:  r.EncryptedRefreshToken,
+		TokenType:              r.TokenType,
+		AccessTokenExpiresAt:   r.AccessTokenExpiresAt,
+		RefreshRejectedAt:      r.RefreshRejectedAt,
+		Scope:                  []string(r.Scope),
+		EncryptionContext:      r.EncryptionContext,
+		InitiatedAt:            r.InitiatedAt,
+		CreatedAt:              r.CreatedAt,
+		UpdatedAt:              r.UpdatedAt,
 	}
 	if r.UpstreamClientID != nil {
 		clientID := id.ClientID(*r.UpstreamClientID)
@@ -138,7 +142,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, errors.New("session cannot be nil")
 	}
 	if err := session.Validate(); err != nil {
-		return nil, err
+		return nil, storage.NewStorageError("CreateUserSession", storage.ErrorKindValidation, err, "invalid session")
 	}
 
 	if session.ID.IsZero() {
@@ -156,9 +160,9 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
-			encryption_context, initiated_at, created_at, updated_at, callback_id, upstream_client_id
+			encryption_context, initiated_at, created_at, updated_at, callback_id, upstream_client_id, upstream_client_revision
 		)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18
 		FROM thirdparty_oauth2_services AS service
 		WHERE service.id = $3
 			AND ((service.resource_url IS NULL AND $16::text = '' AND $17::text = '')
@@ -171,6 +175,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 	if replace {
 		query = insertQuery + `DO UPDATE SET
 			upstream_client_id = EXCLUDED.upstream_client_id,
+			upstream_client_revision = EXCLUDED.upstream_client_revision,
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
 			token_type = EXCLUDED.token_type,
@@ -191,7 +196,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshRejectedAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource,
+		session.CallbackID, upstreamClientID, session.ExpectedIssuerURI, session.ExpectedResource, session.UpstreamClientRevision,
 	)
 	if err != nil {
 		return nil, r.wrapError(err, "Create")
@@ -333,6 +338,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, err
 	}
 	if session.CallbackID == rec.CallbackID {
+		session.UpstreamClientRevision = rec.UpstreamClientRevision
 		session.UpstreamClientID = upstreamClientID
 		if upstreamClientID != nil {
 			*upstreamClientID = id.ClientID(*rec.UpstreamClientID)
@@ -340,15 +346,15 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	}
 	if updated {
 		if err := session.Validate(); err != nil {
-			return nil, err
+			return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindValidation, err, "invalid session")
 		}
 		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
 			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
-			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10 WHERE id = $11`,
+			encryption_context = $7, updated_at = $8, callback_id = $9, upstream_client_id = $10, upstream_client_revision = $12 WHERE id = $11`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
 			session.RefreshRejectedAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
-			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID)
+			session.UpdatedAt, session.CallbackID, session.UpstreamClientID, session.ID, session.UpstreamClientRevision)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")
@@ -390,7 +396,7 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var records []userSessionSummaryRecord
-	err := r.adapter.db.SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at,
+	err := r.adapter.db.SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at, upstream_client_id, upstream_client_revision,
 		access_token_expires_at, refresh_token_expires_at,
 		COALESCE(octet_length(encrypted_refresh_token), 0) > 0 AS has_refresh_token
 		FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`, principal)
@@ -406,6 +412,10 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 		}
 		if session.Scope == nil {
 			session.Scope = []string{}
+		}
+		session.UpstreamClientRevision = record.UpstreamClientRevision
+		if record.UpstreamClientID != nil {
+			session.UpstreamClientID = new(id.ClientID(*record.UpstreamClientID))
 		}
 		summary := storage.NewUserSessionSummary(&session, "", 0)
 		summary.HasRefreshToken = record.HasRefreshToken

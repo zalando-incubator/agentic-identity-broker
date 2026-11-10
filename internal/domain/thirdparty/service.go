@@ -854,7 +854,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		entity.ProtectedResources = persisted.ProtectedResources
 		expectedVersion = &persisted.Version
 	}
-	if err := s.repo.Update(ctx, entity, expectedVersion); err != nil {
+	if _, err := s.repo.Update(ctx, entity, expectedVersion); err != nil {
 		if !discovered && entity.IsCIMDClient() {
 			s.auditCIMD(ctx, entity, "update", "rejected")
 		}

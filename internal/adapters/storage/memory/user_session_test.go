@@ -25,6 +25,47 @@ func refreshTestSession(principal id.Principal, serviceID id.ServiceID) *storage
 	}
 }
 
+func TestUserSessionRepository_ClientRevisionEstablishment(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconnect=%t", reconnect), func(t *testing.T) {
+			ctx := context.Background()
+			repo := NewInMemoryUserSessionRepository()
+			session := refreshTestSession("alice@example.com", id.NewServiceID())
+			session.CallbackID = "first"
+			session.UpstreamClientID = new(id.ClientID("reports"))
+			session.UpstreamClientRevision = 7
+			stored, err := repo.CreateIfAbsent(ctx, session)
+			require.NoError(t, err)
+			require.Equal(t, int64(7), stored.UpstreamClientRevision)
+			updated, err := repo.WithLockedSession(ctx, session.Principal, session.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+				current.UpstreamClientRevision = 8
+				if reconnect {
+					current.CallbackID = "second"
+				}
+				return true, nil
+			})
+			require.NoError(t, err)
+			expected := int64(7)
+			if reconnect {
+				expected = 8
+			}
+			assert.Equal(t, expected, updated.UpstreamClientRevision)
+			found, err := repo.Get(ctx, session.ID)
+			require.NoError(t, err)
+			assert.Equal(t, expected, found.UpstreamClientRevision)
+			summaries, err := repo.ListSummariesByPrincipal(ctx, session.Principal)
+			require.NoError(t, err)
+			require.Len(t, summaries, 1)
+			assert.Equal(t, expected, summaries[0].UpstreamClientRevision)
+			require.Equal(t, session.UpstreamClientID, summaries[0].UpstreamClientID)
+			*summaries[0].UpstreamClientID = "mutated"
+			found, err = repo.Get(ctx, session.ID)
+			require.NoError(t, err)
+			assert.Equal(t, id.ClientID("reports"), *found.UpstreamClientID)
+		})
+	}
+}
+
 func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()

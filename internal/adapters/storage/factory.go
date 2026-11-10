@@ -45,6 +45,7 @@ type Adapter struct {
 	users                  ports.UserRepository
 	agents                 ports.AgentRepository
 	providers              ports.ThirdpartyOAuth2ProviderRepository
+	clientIdentities       ports.ThirdpartyOAuth2ClientIdentityRepository
 	discoveryStatusWriter  ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter
 	userGrants             ports.UserGrantRepository
 	userSessions           ports.UserSessionRepository
@@ -105,6 +106,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		users:                  memAdapter,
 		agents:                 agentRepo,
 		providers:              providerRepo,
+		clientIdentities:       providerRepo,
 		discoveryStatusWriter:  providerRepo,
 		userGrants:             userGrants,
 		userSessions:           sessions,
@@ -146,6 +148,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		users:                  pgAdapter,
 		agents:                 postgres.NewAgentRepository(pgAdapter),
 		providers:              providerRepo,
+		clientIdentities:       providerRepo,
 		discoveryStatusWriter:  providerRepo,
 		userGrants:             postgres.NewUserGrantRepository(pgAdapter),
 		userSessions:           sessions,
@@ -217,6 +220,10 @@ func (a *Adapter) Users() ports.UserRepository {
 // Used for agent entity CRUD operations.
 func (a *Adapter) Agents() ports.AgentRepository {
 	return a.agents
+}
+
+func (a *Adapter) ClientIdentities() ports.ThirdpartyOAuth2ClientIdentityRepository {
+	return a.clientIdentities
 }
 
 // Services returns the ThirdpartyOAuth2ProviderRepository interface implementation.
