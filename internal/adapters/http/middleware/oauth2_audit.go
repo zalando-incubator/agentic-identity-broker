@@ -49,7 +49,7 @@ func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler 
 				RequestID:  requestID,
 				Principal:  principalValue,
 				Method:     SanitizeLogValue(method),
-				Path:       SanitizeLogValue(target),
+				Path:       SanitizeLogPath(target),
 				StatusCode: wrapped.statusCode,
 				Duration:   duration,
 				RemoteAddr: auditRemoteAddr(ctx, r.RemoteAddr),

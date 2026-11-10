@@ -53,9 +53,9 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 			if r.URL.Path == "/oauth2/token" {
 				method = telemetryhttp.MethodName(method)
 			}
-			logger.InfoContext(r.Context(), "HTTP request",
+			logger.InfoContext(r.Context(), "http request",
 				"method", httpmiddleware.SanitizeLogValue(method),
-				"path", httpmiddleware.SanitizeLogValue(target),
+				"path", httpmiddleware.SanitizeLogPath(target),
 				"status", wrapped.statusCode,
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", clientIP,
@@ -79,10 +79,11 @@ func RecoveryMiddleware(logger *slog.Logger, traceResponseEnabled bool) func(nex
 						logger.ErrorContext(r.Context(), "Panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
 					} else {
 						clientIP := httpmiddleware.SanitizeLogValue(clientIPFromContext(r.Context(), r.RemoteAddr))
-						logger.ErrorContext(r.Context(), "Panic recovered",
+						method, target := httpmiddleware.LoggedRequestLine(r)
+						logger.ErrorContext(r.Context(), "panic recovered",
 							"error", httpmiddleware.SanitizeLogValue(fmt.Sprint(err)),
-							"method", httpmiddleware.SanitizeLogValue(r.Method),
-							"path", httpmiddleware.SanitizeLogValue(r.URL.Path),
+							"method", httpmiddleware.SanitizeLogValue(method),
+							"path", httpmiddleware.SanitizeLogPath(target),
 							"remote_addr", clientIP,
 							"client_ip", clientIP,
 							"stack", string(debug.Stack()),
