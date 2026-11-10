@@ -186,7 +186,7 @@ export const Sizes: Story = {
             content, or data tables.
           </p>
           <div className="mt-4 p-4 bg-neutral-50 rounded-lg border border-neutral-200">
-            <h4 className="font-semibold text-neutral-900 mb-2">
+            <h4 className="font-medium text-neutral-900 mb-2">
               Additional Content
             </h4>
             <p className="text-neutral-600 text-sm">
@@ -294,7 +294,7 @@ export const CenteredLayout: Story = {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-neutral-900 mb-2">
+            <h3 className="text-lg font-medium text-neutral-900 mb-2">
               Action Successful
             </h3>
             <p className="text-neutral-600">
@@ -782,14 +782,14 @@ export const ConsentManagementExamples: Story = {
         >
           <div className="space-y-6">
             <div>
-              <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+              <h4 className="text-sm font-medium text-neutral-900 mb-2">
                 Application
               </h4>
               <p className="text-neutral-700">Analytics Dashboard v2.1</p>
             </div>
 
             <div>
-              <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+              <h4 className="text-sm font-medium text-neutral-900 mb-2">
                 Granted Permissions
               </h4>
               <ul className="list-disc list-inside text-neutral-700 space-y-1">
@@ -800,7 +800,7 @@ export const ConsentManagementExamples: Story = {
             </div>
 
             <div>
-              <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+              <h4 className="text-sm font-medium text-neutral-900 mb-2">
                 Consent Timeline
               </h4>
               <div className="space-y-3">

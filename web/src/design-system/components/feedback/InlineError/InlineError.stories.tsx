@@ -662,7 +662,7 @@ export const RealWorldExamples: Story = {
   render: () => (
     <div className="max-w-2xl space-y-8">
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+        <h3 className="text-lg font-medium text-neutral-900 mb-4">
           Consent Form Validation
         </h3>
 
@@ -788,7 +788,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Accessibility Features
         </h4>
         <ul className="text-sm text-neutral-700 space-y-1">

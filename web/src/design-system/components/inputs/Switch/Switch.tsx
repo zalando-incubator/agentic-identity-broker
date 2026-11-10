@@ -19,7 +19,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
 
 const switchContainerVariants = cva(
-  'relative inline-flex flex-shrink-0 items-center rounded-full transition-all duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2',
+  'relative inline-flex flex-shrink-0 items-center rounded-full transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2',
   {
     variants: {
       size: {
@@ -29,7 +29,7 @@ const switchContainerVariants = cva(
       },
       variant: {
         primary:
-          'focus:ring-trust-deep data-[checked=true]:bg-trust-deep data-[checked=false]:bg-neutral-300',
+          'focus:ring-accent data-[checked=true]:bg-accent data-[checked=false]:bg-neutral-300',
         success:
           'focus:ring-success-primary data-[checked=true]:bg-success-primary data-[checked=false]:bg-neutral-300',
       },

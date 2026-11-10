@@ -423,7 +423,7 @@ export const KeyboardFocus: Story = {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-8">
         <div className="text-center max-w-md mb-4">
-          <h3 className="text-lg font-semibold text-neutral-900 mb-2">
+          <h3 className="text-lg font-medium text-neutral-900 mb-2">
             Keyboard Navigation
           </h3>
           <p className="text-sm text-neutral-600">
@@ -588,7 +588,7 @@ export const ConsentExamples: Story = {
   render: () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px] gap-6">
-        <h3 className="text-lg font-semibold text-neutral-900">
+        <h3 className="text-lg font-medium text-neutral-900">
           Consent Management Use Cases
         </h3>
 

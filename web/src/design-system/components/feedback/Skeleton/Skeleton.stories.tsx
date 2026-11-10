@@ -61,7 +61,7 @@ export const Text: Story = {
   render: () => (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Article Loading
         </h3>
         <div className="space-y-3">
@@ -78,7 +78,7 @@ export const Text: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Comment Loading
         </h3>
         <div className="space-y-2">
@@ -101,7 +101,7 @@ export const Avatar: Story = {
   render: () => (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Avatar Sizes
         </h3>
         <div className="flex items-center gap-4">
@@ -114,7 +114,7 @@ export const Avatar: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           User Profile Loading
         </h3>
         <div className="flex items-center gap-3">
@@ -223,7 +223,7 @@ export const List: Story = {
   render: () => (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Simple List
         </h3>
         <div className="bg-white rounded-lg border border-neutral-200 divide-y divide-neutral-200">
@@ -236,7 +236,7 @@ export const List: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Detailed List
         </h3>
         <div className="bg-white rounded-lg border border-neutral-200 divide-y divide-neutral-200">
@@ -267,14 +267,14 @@ export const Shapes: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Line (default)
         </h3>
         <Skeleton variant="line" />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">Circle</h3>
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">Circle</h3>
         <div className="flex gap-4">
           <Skeleton variant="circle" width="60px" height="60px" />
           <Skeleton variant="circle" width="80px" height="80px" />
@@ -283,21 +283,19 @@ export const Shapes: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
-          Rectangle
-        </h3>
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">Rectangle</h3>
         <Skeleton variant="rectangle" width="100%" height="120px" />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Rounded Rectangle
         </h3>
         <Skeleton variant="rounded" width="100%" height="120px" />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Custom Sizes
         </h3>
         <div className="space-y-3">
@@ -321,7 +319,7 @@ export const Animation: Story = {
   render: () => (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           With Pulse Animation (default)
         </h3>
         <div className="space-y-2">
@@ -332,7 +330,7 @@ export const Animation: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Without Animation
         </h3>
         <div className="space-y-2">
@@ -343,7 +341,7 @@ export const Animation: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-3">
+        <h3 className="text-sm font-medium text-neutral-900 mb-3">
           Mixed Animation States
         </h3>
         <div className="grid grid-cols-2 gap-6">
@@ -397,7 +395,7 @@ export const ConsentManagementExamples: Story = {
   render: () => (
     <div className="space-y-8 max-w-4xl">
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+        <h3 className="text-lg font-medium text-neutral-900 mb-4">
           Consent Request Loading
         </h3>
         <div className="bg-white rounded-lg border border-neutral-200 p-6">
@@ -433,7 +431,7 @@ export const ConsentManagementExamples: Story = {
       </div>
 
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+        <h3 className="text-lg font-medium text-neutral-900 mb-4">
           Consent History Loading
         </h3>
         <div className="bg-white rounded-lg border border-neutral-200">
@@ -459,7 +457,7 @@ export const ConsentManagementExamples: Story = {
       </div>
 
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+        <h3 className="text-lg font-medium text-neutral-900 mb-4">
           Dashboard Loading
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -548,7 +546,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Accessibility Features
         </h4>
         <ul className="text-sm text-neutral-700 space-y-1">

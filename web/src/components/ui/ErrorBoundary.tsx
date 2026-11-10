@@ -6,6 +6,8 @@
  */
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { TriangleAlert } from 'lucide-react';
+import { Button } from '@design-system/components/primitives/Button';
 
 interface Props {
   children: ReactNode;
@@ -72,22 +74,14 @@ export class ErrorBoundary extends Component<Props, State> {
       // Default fallback UI
       return (
         <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4">
-          <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6 border border-red-200">
+          <div className="max-w-md w-full bg-white rounded-xl border border-error-light p-6">
             <div className="flex items-center gap-3 mb-4">
-              <svg
-                className="w-8 h-8 text-red-500"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-              <h2 className="text-xl font-semibold text-neutral-900">
+              <TriangleAlert
+                className="w-8 h-8 text-error-primary"
+                aria-hidden="true"
+                strokeWidth={1.5}
+              />
+              <h2 className="text-xl font-medium text-neutral-900">
                 Something went wrong
               </h2>
             </div>
@@ -102,7 +96,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 <summary className="cursor-pointer text-sm font-medium text-neutral-700 mb-2">
                   Error Details
                 </summary>
-                <div className="text-xs font-mono text-red-600 whitespace-pre-wrap break-words">
+                <div className="text-xs font-mono text-error-primary whitespace-pre-wrap break-words">
                   {this.state.error.toString()}
                   {this.state.errorInfo && (
                     <div className="mt-2 text-neutral-600">
@@ -114,18 +108,16 @@ export class ErrorBoundary extends Component<Props, State> {
             )}
 
             <div className="flex gap-3">
-              <button
-                onClick={this.handleReset}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-              >
-                Try Again
-              </button>
-              <button
+              <Button
+                variant="outline"
+                className="flex-1"
                 onClick={() => window.location.reload()}
-                className="flex-1 bg-neutral-200 text-neutral-800 px-4 py-2 rounded-lg hover:bg-neutral-300 transition-colors font-medium"
               >
                 Reload Page
-              </button>
+              </Button>
+              <Button className="flex-1" onClick={this.handleReset}>
+                Try Again
+              </Button>
             </div>
           </div>
         </div>

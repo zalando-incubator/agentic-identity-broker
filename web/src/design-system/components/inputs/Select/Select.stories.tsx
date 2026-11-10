@@ -257,7 +257,9 @@ export const CustomRendering: Story = {
                 {String(option.value).toUpperCase()}
               </span>
             </div>
-            {isSelected && <span className="text-trust-deep font-bold">✓</span>}
+            {isSelected && (
+              <span className="text-trust-deep font-medium">✓</span>
+            )}
           </div>
         )}
         className="w-96"
@@ -401,7 +403,7 @@ export const RealWorldUseCases: Story = {
     return (
       <div className="space-y-8 w-96 p-4 bg-white border border-neutral-200 rounded-lg">
         <div>
-          <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">
             Grant Temporary Access
           </h3>
 
@@ -483,7 +485,7 @@ export const Accessibility: Story = {
 
     return (
       <fieldset className="border border-neutral-200 rounded-lg p-6 w-96">
-        <legend className="text-lg font-semibold text-neutral-900 mb-4">
+        <legend className="text-lg font-medium text-neutral-900 mb-4">
           User Role Assignment
         </legend>
 

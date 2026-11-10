@@ -17,36 +17,35 @@ The foundational design philosophy for the Refined Trust Architecture design sys
 
 **Sections**:
 
-- **Visual Design Direction** - "Refined Trust Architecture" aesthetic concept
+- **Visual Design Direction** - exact, sober, accountable (ADR 048)
 - **Visual Design Principles** - 5 core visual principles with specifications
-  - Visual Hierarchy Through Weight (typography)
-  - Color as Semantic Signal (color usage)
-  - Elevation Through Shadow, Not Borders (shadow strategy)
-  - Motion That Guides, Not Entertains (animation timing)
-  - Whitespace as a Luxury Signal (spacing)
+  - Hierarchy Through Size and Spacing, Not Weight (typography)
+  - Color as Semantic Signal (one jade accent)
+  - Containment Through Hairlines, Not Shadows (elevation)
+  - Motion That Guides, Not Entertains (one easing curve)
+  - Whitespace as Structure (spacing)
 - **Distinctive Visual Details**
-  - Gradient backgrounds (warm neutral gradients)
-  - Micro-textures (2% opacity noise overlay)
-  - Shadow strategy (specific shadow values)
+  - The grant line (monospace facts separated by a middle dot)
+  - Flat ground (no gradients, textures or blur)
   - Border radius strategy (component-specific radius)
 - **Component Aesthetic Archetypes**
-  - Primary Button (navy, 44px, shadow specifications)
-  - Card Component (white, double shadow, 12px radius)
+  - Primary Button (accent, 44px, no shadow)
+  - Card Component (surface, hairline, 12px radius)
   - Form Input (44px height, clear focus states)
-  - Modal (navy overlay, slide animation)
+  - Toggle and Modal (accent on state, ink overlay)
 - **Core Principles** - Implementation guidelines
 - **Design Values** - Trust, Efficiency, User Control
 
 **Key Specifications**:
 
-- ✅ Navy brand colors: #0A2540 (deep), #1E4D6B (medium), #E8F1F5 (light)
-- ✅ Success: #059669 (emerald)
-- ✅ Warning: #D97706 (amber)
-- ✅ Error: #DC2626 (red)
-- ✅ Typography: Crimson Pro (headings), Manrope (body), JetBrains Mono (code)
-- ✅ Animation timings: 150ms, 200ms, 300ms, 500ms
+- ✅ Ink text: #111827 (primary), #4b5565 (secondary), #6b7487 (tertiary)
+- ✅ Accent: #0a7a66 (jade) for actions, links and the granted state
+- ✅ Warning: #b54708 (amber)
+- ✅ Error: #b42318 (red)
+- ✅ Typography: Geist (headings and body, weights 400 and 500), Geist Mono (code)
+- ✅ Animation timings: 150ms, 200ms, 300ms, 480ms entrance, one easing curve
 - ✅ Component-specific border radius values
-- ✅ Shadow specifications with exact pixel values
+- ✅ Hairlines for containment, one `shadow-float` for overlays
 
 ---
 
@@ -60,11 +59,10 @@ Comprehensive color system documentation with hex values and accessibility compl
 **Sections**:
 
 - **Core Color Palette**
-  - Navy (Trust & Authority): Navy-50 through Navy-900 with semantic tokens
-  - Emerald (Success & Approval): All shades with usage guidance
-  - Amber (Warnings & CTAs): All shades with practical examples
-  - Red (Errors & Destructive): All shades for error states
-  - Neutral (Backgrounds & Text): Complete neutral spectrum
+  - Accent (Jade): the one color for actions, links and the granted state
+  - Trust (Ink): headings and primary text, with the legacy `trust-*` mapping
+  - Amber (Warnings) and Red (Errors): sober attention signals
+  - Cool Neutrals (Backgrounds, Hairlines & Text): complete ink spectrum
 - **Color Accessibility** - WCAG 2.1 AA compliance with contrast ratios
 - **Using Colors in Components** - Tailwind classes, CSS variables, component guidelines
 - **Semantic Color Tokens** - Type-safe token references
@@ -74,11 +72,11 @@ Comprehensive color system documentation with hex values and accessibility compl
 
 **Key Hex Values** (Complete Palette):
 
-- Navy: #0A2540, #1E4D6B, #E8F1F5, etc. (full scale)
-- Emerald: #059669 (primary success)
-- Amber: #D97706 (primary CTA)
-- Red: #DC2626 (primary error)
-- Neutrals: #faf9f7 (cream), #f5f1ed (sand), #e8e3de (taupe)
+- Accent: #0a7a66 (jade), hover #086a59
+- Ink: #111827, #4b5565, #6b7487
+- Amber: #b54708 (warning)
+- Red: #b42318 (error)
+- Neutrals: #fbfcfd (page), #f0f2f6 (raised), #e3e6ec (hairline)
 
 ---
 
@@ -93,14 +91,13 @@ Design tokens system documentation for colors, typography, spacing, shadows, and
 
 - **Color Tokens** (@theme CSS directives with semantic names)
 - **Typography System**
-  - ✅ **Font Families** (CORRECTED - now specifies exact fonts):
-    - **Crimson Pro** (display/headings): weight 700/600, letter-spacing -0.02em
-    - **Manrope** (body/UI): weight 400/500, letter-spacing -0.01em, base 1rem
-    - **JetBrains Mono** (monospace): weight 500 for technical values
+  - ✅ **Font Families**:
+    - **Geist** (display and body): weight 500 for headings and labels, 400 for body, letter-spacing -0.015em on headings
+    - **Geist Mono** (monospace): weight 400 for technical values
   - Font Sizes & Line Heights (12px to 48px scale)
-  - Font Weights (400 to 700)
+  - Font Weights (400 and 500)
 - **Spacing System** (4px base unit, 0 to 96px scale)
-- **Shadow System** (subtle to premium elevation)
+- **Shadow System** (hairlines, plus one floating shadow for overlays)
 - **Border Radius** (0px to 9999px circular scale)
 - **Transitions & Animations** (150ms-500ms with easing functions)
 - **Z-Index Scale** (0 to 50 for layering strategy)
@@ -108,12 +105,11 @@ Design tokens system documentation for colors, typography, spacing, shadows, and
 - **Token Customization** (application-specific theming)
 - **Accessibility with Design Tokens** (contrast verification, responsive design)
 
-**Typography Corrections**:
+**Typography**:
 
-- ✅ Crimson Pro specified for display/headings
-- ✅ Manrope specified for body/UI
-- ✅ JetBrains Mono specified for monospace code
-- ✅ Letter-spacing values included (-0.02em for headings, -0.01em for body)
+- ✅ Geist specified for display and body
+- ✅ Geist Mono specified for monospace code
+- ✅ Letter-spacing values included (-0.015em for headings, -0.025em for h1)
 
 ---
 
@@ -127,11 +123,10 @@ Detailed visual specifications for the four foundational components that define 
 **Covered Components**:
 
 1. **Primary Button**
-   - Background: #0d1829 with gradient overlay
-   - Height: 44px, Padding: 12px 16px
-   - Shadow: 0 2px 8px (default), 0 8px 20px (hover)
-   - Transform: translateY(-1px) on hover
-   - Transition: 200ms cubic-bezier(0.34, 1.56, 0.64, 1)
+   - Background: #0a7a66 (accent), flat
+   - Height: 44px, Padding: 12px 16px, radius 8px
+   - No shadow, no transform
+   - Transition: colors 150ms cubic-bezier(0.22, 1, 0.36, 1)
    - States: Default, Hover, Focus, Active, Disabled, Loading
    - Variants: Primary, Secondary, Outline, Ghost, Danger
 
@@ -149,7 +144,7 @@ Detailed visual specifications for the four foundational components that define 
    - Border: 1.5px solid #ddd8d1 (default), #1e4d6b (focus), #dc2626 (error)
    - Border Radius: 6px (md)
    - Focus Ring: 2px solid #1e4d6b at 2px offset
-   - Label: Manrope Medium (500), 14px
+   - Label: Geist Medium (500), 14px
    - Error message: 12px, red-600, with icon
 
 4. **Modal**
@@ -360,23 +355,24 @@ All documentation is located in:
 
 ### Color Palette (Semantic Tokens)
 
-- **Primary (Trust)**: trust-deep (#0A2540), trust (#1E4D6B), trust-light (#E8F1F5)
-- **Success**: success-primary (#059669), success-hover (#047857), success-light (#d1fae5)
-- **Warning/CTA**: warning-primary / cta (#D97706) - unified
-- **Error**: error-primary (#DC2626), error-hover (#b91c1c), error-light (#fee2e2)
-- **Warm Neutrals**: neutral-50 (#faf9f7), neutral-100 (#f5f1ed), neutral-200 (#e8e3de), neutral-300 (#ddd8d1), neutral-600 (#6b6561), neutral-700 (#4a4137)
+- **Accent (Jade)**: accent (#0a7a66), accent-hover (#086a59), accent-soft (8% tint)
+- **Primary (Trust)**: trust-deep (#111827, ink), trust (#0a7a66, accent), trust-light (#e7f3f0)
+- **Success**: success-primary (#0a7a66), success-hover (#086a59), success-light (#e7f3f0), success-dark (#075e4f)
+- **Warning**: warning-primary (#b54708); **CTA**: same as the accent
+- **Error**: error-primary (#b42318), error-hover (#912018), error-light (#fef3f2)
+- **Cool Neutrals**: neutral-50 (#fbfcfd), neutral-100 (#f0f2f6), neutral-200 (#e3e6ec), neutral-300 (#d2d6de), neutral-600 (#4b5565), neutral-700 (#364152)
 
 ### Using Colors
 
 - **Semantic tokens**: Use `bg-trust`, `text-success-primary`, `border-neutral-300`
 - **NO extended palettes**: `navy-700`, `emerald-600`, `gray-*` are removed
-- **Warm neutrals**: Replace all `gray-*` with `neutral-*`
+- **Cool neutrals**: Replace all `gray-*` with `neutral-*`
 
 ### Typography
 
-- **Headings**: Crimson Pro, weight 700/600, -0.02em letter-spacing
-- **Body**: Manrope, weight 400/500, -0.01em letter-spacing, 1rem base
-- **Code**: JetBrains Mono, weight 500
+- **Headings**: Geist, weight 500, -0.015em letter-spacing (h1: -0.025em)
+- **Body**: Geist, weight 400 (500 for labels), 1rem base, line height 1.6
+- **Code**: Geist Mono, weight 400
 
 ### Spacing
 

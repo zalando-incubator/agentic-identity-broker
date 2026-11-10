@@ -19,10 +19,11 @@ import React from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { Check, ChevronDown } from 'lucide-react';
 
 const dropdownVariants = cva(
   // Base styles - applied to all dropdowns
-  'absolute z-50 mt-2 rounded-md bg-white shadow-lg-premium ring-1 ring-black ring-opacity-5 focus:outline-none overflow-hidden',
+  'absolute z-50 mt-2 rounded-xl bg-white border border-line-strong shadow-float focus:outline-none overflow-hidden',
   {
     variants: {
       size: {
@@ -57,7 +58,7 @@ const itemVariants = cva(
         false: '',
       },
       destructive: {
-        true: 'text-red-600 hover:bg-red-50 hover:text-red-700',
+        true: 'text-error-primary hover:bg-error-light hover:text-error-dark',
         false: 'text-neutral-900 hover:bg-trust-light hover:text-trust-deep',
       },
     },
@@ -70,37 +71,11 @@ const itemVariants = cva(
 );
 
 const CheckIcon = () => (
-  <svg
-    className="w-4 h-4"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M5 13l4 4L19 7"
-    />
-  </svg>
+  <Check className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const ChevronDownIcon = () => (
-  <svg
-    className="w-4 h-4 ml-1"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M19 9l-7 7-7-7"
-    />
-  </svg>
+  <ChevronDown className="w-4 h-4 ml-1" aria-hidden="true" strokeWidth={1.5} />
 );
 
 export interface DropdownItem {
@@ -257,7 +232,7 @@ export const Dropdown = React.forwardRef<HTMLDivElement, DropdownProps>(
                     <React.Fragment key={groupIndex}>
                       {/* Section header */}
                       {group.section && (
-                        <div className="px-4 py-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider">
+                        <div className="px-4 py-2 text-xs font-medium text-neutral-500">
                           {group.section}
                         </div>
                       )}
@@ -302,7 +277,7 @@ export const Dropdown = React.forwardRef<HTMLDivElement, DropdownProps>(
                                   <div
                                     className={cn(
                                       'mt-0.5 text-xs text-neutral-500 truncate',
-                                      item.destructive && 'text-red-500',
+                                      item.destructive && 'text-error-primary',
                                     )}
                                   >
                                     {item.description}

@@ -8,7 +8,7 @@
  * - Navigation functionality
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { BrowserRouter, MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AgentGrantDetailPage } from './AgentGrantDetailPage';
@@ -122,6 +122,10 @@ describe('AgentGrantDetailPage', () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('displays loading state with skeletons', () => {
     vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
       agent: null,
@@ -222,6 +226,35 @@ describe('AgentGrantDetailPage', () => {
       'src',
       'https://example.com/agent-logo.png',
     );
+  });
+
+  it.each([
+    { validUntil: '2025-01-14T12:00:00Z', status: 'expired' },
+    { validUntil: '2025-01-16T12:00:00Z', status: 'active' },
+    { validUntil: null, status: 'active' },
+  ])('shows grant $status when valid_until is $validUntil', ({ validUntil, status }) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+      agent: mockAgent,
+      services: mockServices,
+      cimdMeta: null,
+      grants: { ...mockGrant, valid_until: validUntil },
+      loading: false,
+      error: null,
+      sessionExpired: false,
+      refetch: vi.fn(),
+    });
+
+    render(
+      <RouterWrapper>
+        <AgentGrantDetailPage />
+      </RouterWrapper>,
+    );
+
+    expect(screen.getByText(`grant ${status}`)).toBeInTheDocument();
+    expect(screen.queryByText(`grant ${status === 'active' ? 'expired' : 'active'}`))
+      .not.toBeInTheDocument();
   });
 
   it('renders agent links when provided', () => {

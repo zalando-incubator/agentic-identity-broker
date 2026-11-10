@@ -261,7 +261,7 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
   return (
     <div>
       {/* Section header + description — outside the card */}
-      <h2 className="text-xl font-semibold text-trust-deep">
+      <h2 className="text-xl font-medium text-trust-deep">
         Agent Permissions
       </h2>
       <p className="mt-1 mb-4 text-sm text-neutral-600">

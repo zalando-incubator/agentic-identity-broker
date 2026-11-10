@@ -50,8 +50,8 @@ const progressBarVariants = cva('h-full transition-all duration-500 ease-out', {
     variant: {
       default: 'bg-trust-hover',
       success: 'bg-success-primary',
-      warning: 'bg-amber-500',
-      error: 'bg-red-600',
+      warning: 'bg-warning-primary',
+      error: 'bg-error-primary',
     },
     striped: {
       true: 'bg-gradient-to-r bg-[length:1rem_1rem] animate-[progress-stripes_1s_linear_infinite]',
@@ -77,12 +77,12 @@ const progressBarVariants = cva('h-full transition-all duration-500 ease-out', {
     {
       variant: 'warning',
       striped: true,
-      class: 'from-amber-500 via-amber-600 to-amber-500',
+      class: 'from-warning-primary via-warning-hover to-warning-primary',
     },
     {
       variant: 'error',
       striped: true,
-      class: 'from-red-600 via-red-700 to-red-600',
+      class: 'from-error-primary via-error-hover to-error-primary',
     },
   ],
   defaultVariants: {
@@ -101,8 +101,8 @@ const circularSizeMap = {
 const circularVariantColorMap = {
   default: 'stroke-trust-hover',
   success: 'stroke-success-primary',
-  warning: 'stroke-amber-500',
-  error: 'stroke-red-600',
+  warning: 'stroke-warning-primary',
+  error: 'stroke-error-primary',
 };
 
 export interface ProgressProps extends Omit<
@@ -330,7 +330,7 @@ export const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
             <div className="absolute inset-0 flex items-center justify-center">
               <span
                 className={cn(
-                  'font-semibold text-neutral-900',
+                  'font-medium text-neutral-900',
                   size === 'sm' && 'text-xs',
                   size === 'md' && 'text-sm',
                   size === 'lg' && 'text-base',

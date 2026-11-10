@@ -22,6 +22,7 @@ import React, { useState, useEffect } from 'react';
 import { Disclosure, Transition } from '@headlessui/react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { ChevronDown } from 'lucide-react';
 
 const accordionVariants = cva(
   // Base accordion container styles
@@ -82,20 +83,11 @@ const accordionContentVariants = cva(
 );
 
 const ChevronDownIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
+  <ChevronDown
     className={cn('w-5 h-5 transition-transform duration-200', className)}
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
     aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M19 9l-7 7-7-7"
-    />
-  </svg>
+    strokeWidth={1.5}
+  />
 );
 
 export interface AccordionItem {
@@ -299,7 +291,7 @@ export const Accordion = React.forwardRef<HTMLDivElement, AccordionProps>(
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-neutral-900">
+                          <div className="font-medium text-neutral-900">
                             {item.title}
                           </div>
                           {item.description && (

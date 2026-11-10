@@ -17,6 +17,7 @@
 import React from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const paginationVariants = cva(
   // Base styles - applied to all variants
@@ -36,7 +37,7 @@ const paginationVariants = cva(
 );
 
 const pageButtonVariants = cva(
-  'inline-flex items-center justify-center font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-trust disabled:cursor-not-allowed disabled:opacity-40',
+  'inline-flex items-center justify-center font-medium rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-trust disabled:cursor-not-allowed disabled:opacity-40',
   {
     variants: {
       size: {
@@ -47,7 +48,7 @@ const pageButtonVariants = cva(
       variant: {
         default:
           'bg-white text-trust-deep border border-neutral-300 hover:bg-neutral-50 hover:border-neutral-400',
-        active: 'bg-trust-deep text-white border-transparent shadow-md',
+        active: 'bg-trust-deep text-white border-transparent',
         ghost: 'bg-transparent text-trust-deep hover:bg-neutral-100',
       },
     },
@@ -231,25 +232,16 @@ export const Pagination = React.forwardRef<HTMLElement, PaginationProps>(
               variant: 'default',
             })}
           >
-            <svg
+            <ChevronLeft
               className={cn(
                 'shrink-0',
                 resolvedSize === 'sm' && 'w-4 h-4',
                 resolvedSize === 'md' && 'w-5 h-5',
                 resolvedSize === 'lg' && 'w-6 h-6',
               )}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
               aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
+              strokeWidth={1.5}
+            />
           </button>
 
           {/* Page numbers (full mode only) */}
@@ -304,25 +296,16 @@ export const Pagination = React.forwardRef<HTMLElement, PaginationProps>(
               variant: 'default',
             })}
           >
-            <svg
+            <ChevronRight
               className={cn(
                 'shrink-0',
                 resolvedSize === 'sm' && 'w-4 h-4',
                 resolvedSize === 'md' && 'w-5 h-5',
                 resolvedSize === 'lg' && 'w-6 h-6',
               )}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
               aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
+              strokeWidth={1.5}
+            />
           </button>
         </div>
 

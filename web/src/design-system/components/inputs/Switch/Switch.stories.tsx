@@ -133,7 +133,7 @@ export const RealWorldUseCases: Story = {
 
     return (
       <div className="space-y-6 p-6 bg-white border border-neutral-200 rounded-lg w-96">
-        <h3 className="text-sm font-semibold text-neutral-900">Settings</h3>
+        <h3 className="text-sm font-medium text-neutral-900">Settings</h3>
 
         <Switch
           checked={notifications}
@@ -178,7 +178,7 @@ export const Interactive: Story = {
         />
         <div className="text-sm text-neutral-600">
           Current state:{' '}
-          <span className="font-semibold">{checked ? 'ON' : 'OFF'}</span>
+          <span className="font-medium">{checked ? 'ON' : 'OFF'}</span>
         </div>
       </div>
     );
@@ -193,7 +193,7 @@ export const Accessibility: Story = {
 
     return (
       <fieldset className="space-y-4 p-4 bg-white border border-neutral-200 rounded-lg w-96">
-        <legend className="text-sm font-semibold text-neutral-900 mb-2">
+        <legend className="text-sm font-medium text-neutral-900 mb-2">
           Grant Permissions
         </legend>
 

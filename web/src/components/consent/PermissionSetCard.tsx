@@ -124,7 +124,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
         <div className="flex-1 min-w-0">
           {/* Name + requirement badge */}
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <h3 className="text-base font-semibold text-trust-deep">
+            <h3 className="text-base font-medium text-trust-deep">
               {permissionSet.name}
             </h3>
             <Badge variant={badgeVariant} size="sm" shape="rounded">
@@ -140,7 +140,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
           {/* Covered services — FR-008: only SR-intersecting services displayed */}
           {displayedServices.length > 0 && (
             <div className="space-y-1">
-              <span className="block text-xs font-semibold uppercase tracking-wider text-neutral-500">
+              <span className="block text-xs font-medium text-neutral-500">
                 Services
               </span>
               <div className="flex flex-col gap-1.5">
@@ -182,7 +182,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
                         'inline-flex items-center gap-2 rounded px-2 py-1 text-xs font-medium w-fit',
                         'border transition-colors duration-150',
                         isActive && isServiceIncluded
-                          ? 'bg-trust-light/30 border-trust-deep/30 text-trust-deep'
+                          ? 'bg-accent-soft border-accent/30 text-trust-deep'
                           : 'bg-neutral-100 border-neutral-200 text-neutral-500',
                       ].join(' ')}
                     >
@@ -205,8 +205,8 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
                           className={[
                             'relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full',
                             'transition-colors duration-200 ease-in-out ml-1',
-                            'focus:outline-none focus:ring-2 focus:ring-trust-deep focus:ring-offset-1',
-                            isServiceIncluded ? 'bg-trust-deep' : 'bg-neutral-300',
+                            'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1',
+                            isServiceIncluded ? 'bg-accent' : 'bg-neutral-300',
                           ].join(' ')}
                         >
                           <span
@@ -240,15 +240,15 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
             className={[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full',
               'transition-colors duration-200 ease-in-out',
-              'focus:outline-none focus:ring-2 focus:ring-trust-deep focus:ring-offset-2',
-              isSelected ? 'bg-trust-deep' : 'bg-neutral-300',
+              'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2',
+              isSelected ? 'bg-accent' : 'bg-neutral-300',
             ].join(' ')}
           >
             <span
               aria-hidden="true"
               className={[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full',
-                'bg-white shadow-md transition-transform duration-200 ease-in-out',
+                'bg-white shadow-sm transition-transform duration-200 ease-in-out',
                 'mt-0.5',
                 isSelected ? 'translate-x-5' : 'translate-x-0.5',
               ].join(' ')}

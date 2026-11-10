@@ -78,7 +78,7 @@ const DemoCard = ({
 }) => {
   return (
     <div className="bg-white rounded-lg shadow-card p-6 border-2 border-trust-light hover:shadow-card-hover transition-shadow">
-      <h3 className="text-lg font-display font-semibold text-trust-deep mb-2">
+      <h3 className="text-lg font-display font-medium text-trust-deep mb-2">
         {title}
       </h3>
       <p className="text-sm text-secondary-600">{description}</p>
@@ -121,7 +121,7 @@ export const Columns: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           1 Column - Full Width
         </div>
         <Grid columns={1}>
@@ -132,7 +132,7 @@ export const Columns: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           2 Columns - Split Layout
         </div>
         <Grid columns={2}>
@@ -144,7 +144,7 @@ export const Columns: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           3 Columns - Balanced (Default)
         </div>
         <Grid columns={3}>
@@ -158,7 +158,7 @@ export const Columns: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           4 Columns - Dense Grid
         </div>
         <Grid columns={4}>
@@ -174,7 +174,7 @@ export const Columns: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           6 Columns - Maximum Density
         </div>
         <Grid columns={6}>
@@ -207,7 +207,7 @@ export const Gaps: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           Small Gap (sm - 12px)
         </div>
         <Grid columns={3} gap="sm">
@@ -221,7 +221,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           Medium Gap (md - 16px) - Default
         </div>
         <Grid columns={3} gap="md">
@@ -235,7 +235,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-3 text-sm font-semibold text-secondary-600">
+        <div className="mb-3 text-sm font-medium text-secondary-600">
           Large Gap (lg - 24px)
         </div>
         <Grid columns={3} gap="lg">
@@ -260,7 +260,7 @@ export const Responsive: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h2 className="text-xl font-display font-semibold text-trust-deep mb-4">
+        <h2 className="text-xl font-display font-medium text-trust-deep mb-4">
           Responsive Grid Behavior
         </h2>
         <p className="text-secondary-600 mb-4">
@@ -285,7 +285,7 @@ export const Responsive: Story = {
       </div>
 
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-3">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-3">
           Mobile-First Card Grid
         </h3>
         <p className="text-secondary-600 mb-4">
@@ -320,7 +320,7 @@ export const AutoFit: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h2 className="text-xl font-display font-semibold text-trust-deep mb-4">
+        <h2 className="text-xl font-display font-medium text-trust-deep mb-4">
           Auto-Fit Grid
         </h2>
         <p className="text-secondary-600 mb-4">
@@ -345,7 +345,7 @@ export const AutoFit: Story = {
       </div>
 
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-3">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-3">
           Auto-Fill Grid (Larger Minimum)
         </h3>
         <p className="text-secondary-600 mb-4">
@@ -375,7 +375,7 @@ export const CardGrid: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <h2 className="text-2xl font-display font-bold text-trust-deep mb-2">
+        <h2 className="text-2xl font-display font-medium text-trust-deep mb-2">
           Features Overview
         </h2>
         <p className="text-secondary-600 mb-6">
@@ -411,7 +411,7 @@ export const CardGrid: Story = {
       </div>
 
       <div>
-        <h2 className="text-2xl font-display font-bold text-trust-deep mb-2">
+        <h2 className="text-2xl font-display font-medium text-trust-deep mb-2">
           Dense Layout (4 Columns)
         </h2>
         <p className="text-secondary-600 mb-6">
@@ -502,7 +502,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="bg-cream p-8">
       <div className="bg-white rounded-lg shadow-md-premium p-6">
-        <h2 className="text-xl font-display font-semibold text-trust-deep mb-3">
+        <h2 className="text-xl font-display font-medium text-trust-deep mb-3">
           Accessibility Features
         </h2>
         <p className="text-secondary-600 mb-6">
@@ -511,11 +511,11 @@ export const Accessibility: Story = {
 
         <Grid columns={1} gap="md" className="sm:grid-cols-2">
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">Semantic HTML</h3>
+              <h3 className="font-medium text-trust-deep">Semantic HTML</h3>
               <p className="text-sm text-secondary-600">
                 Uses standard div elements with CSS Grid, no ARIA required
               </p>
@@ -523,11 +523,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Logical Reading Order
               </h3>
               <p className="text-sm text-secondary-600">
@@ -538,11 +538,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Touch-Friendly Spacing
               </h3>
               <p className="text-sm text-secondary-600">
@@ -553,13 +553,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
-                Fully Responsive
-              </h3>
+              <h3 className="font-medium text-trust-deep">Fully Responsive</h3>
               <p className="text-sm text-secondary-600">
                 Adapts gracefully across all viewport sizes and zoom levels
               </p>
@@ -567,11 +565,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Keyboard Navigation
               </h3>
               <p className="text-sm text-secondary-600">
@@ -581,11 +579,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 No Motion Dependencies
               </h3>
               <p className="text-sm text-secondary-600">

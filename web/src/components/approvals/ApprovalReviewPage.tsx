@@ -118,7 +118,7 @@ export function ApprovalReviewPage({
   return (
     <div className="max-w-2xl mx-auto px-6 pt-4 pb-28 space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-neutral-900">
+        <h1 className="text-2xl font-medium text-neutral-900">
           Tool Approval Request
         </h1>
         <p className="text-sm text-neutral-500 mt-1">
@@ -155,43 +155,43 @@ export function ApprovalReviewPage({
 
       {/* Action buttons — pinned to the viewport so the decision stays reachable
           without scrolling past the review content. */}
-      <div className="fixed inset-x-0 bottom-0 z-20 mb-0 border-t border-neutral-200 bg-white/95 px-4 py-2 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-2xl gap-3">
+      <div className="fixed inset-x-0 bottom-0 z-20 mb-0 border-t border-line bg-white/95 px-4 py-2 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-2xl items-center gap-3">
           <Button
-            onClick={handleApprove}
-            disabled={submitting || scopeBlocked}
-            size="sm"
-            className="flex-1"
-          >
-            {submitting ? 'Processing…' : 'Approve'}
-          </Button>
-          <Button
-            onClick={handleDeny}
+            onClick={handleDenyPermanently}
             disabled={submitting}
-            variant="secondary"
+            variant="danger"
             size="sm"
-            className="flex-1"
+            aria-describedby="deny-permanently-hint"
           >
-            Deny
+            Deny permanently
           </Button>
+          <div className="ml-auto flex flex-1 gap-3 sm:flex-none">
+            <Button
+              onClick={handleDeny}
+              disabled={submitting}
+              variant="outline"
+              size="sm"
+              className="flex-1 sm:w-32 sm:flex-none"
+            >
+              Deny
+            </Button>
+            <Button
+              onClick={handleApprove}
+              disabled={submitting || scopeBlocked}
+              size="sm"
+              className="flex-1 sm:w-32 sm:flex-none"
+            >
+              {submitting ? 'Processing…' : 'Approve'}
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Deny permanently option */}
-      <div className="border-t border-neutral-200 pt-3">
-        <button
-          type="button"
-          onClick={handleDenyPermanently}
-          disabled={submitting}
-          className="text-sm text-error-primary hover:text-error-primary/80 underline disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Deny permanently — block this tool for this agent
-        </button>
-        <p className="text-xs text-neutral-500 mt-1">
-          This permanently blocks the agent from requesting this tool. You can
-          revoke this later from your approval settings.
-        </p>
-      </div>
+      <p id="deny-permanently-hint" className="text-xs text-neutral-500">
+        Deny permanently blocks the agent from requesting this tool again. You
+        can revoke it later from Tool Authorizations.
+      </p>
     </div>
   );
 }

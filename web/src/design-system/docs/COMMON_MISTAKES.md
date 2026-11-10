@@ -65,7 +65,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 </div>
 ```
 
-**Rule**: Always use `neutral-*` scale instead of `gray-*`. Our warm neutrals (#faf9f7, #f5f1ed) convey sophistication and trust.
+**Rule**: Always use `neutral-*` scale instead of `gray-*`. Our warm neutrals (#fbfcfd, #f0f2f6) convey sophistication and trust.
 
 ---
 
@@ -398,7 +398,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h1 className="font-sans">Title</h1>
 ```
 
-**Why it's wrong**: The design system specifies **Crimson Pro** for headings to create the "Refined Trust Architecture" aesthetic. System fonts lose brand identity.
+**Why it's wrong**: `font-display` and `font-sans` both resolve to Geist today, but headings go through `font-display` so a later change to the display face lands in one token.
 
 **Correct solution**:
 
@@ -409,9 +409,9 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 
 **Rule**:
 
-- Headings → `font-display` (Crimson Pro)
-- Body → `font-sans` (Manrope)
-- Code → `font-mono` (JetBrains Mono)
+- Headings → `font-display` (Geist)
+- Body → `font-sans` (Geist)
+- Code → `font-mono` (Geist Mono)
 
 ---
 
@@ -419,20 +419,20 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 
 ```tsx
 // DON'T
-<h2 className="font-medium">Section</h2>
+<h2 className="font-bold">Section</h2>
 ```
 
-**Why it's wrong**: Headings should use bold (700) or semibold (600). Medium (500) is too light for hierarchy.
+**Why it's wrong**: The direction uses weights 400 and 500 only. Hierarchy comes from size, color and spacing. Bold Geist shouts.
 
 **Correct solution**:
 
 ```tsx
 // DO
-<h2 className="font-bold">Section</h2>      // For h1, h2
-<h3 className="font-semibold">Subsection</h3>  // For h3-h6
+<h2 className="text-xl font-medium text-trust-deep">Section</h2>
+<p className="text-sm text-neutral-600">Supporting text</p>
 ```
 
-**Rule**: Bold for major headings, semibold for minor headings, medium for emphasized body text.
+**Rule**: Medium (500) for headings, labels and names; regular (400) for everything else. Never `font-semibold` or `font-bold`.
 
 ---
 
@@ -443,7 +443,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h1 className="text-4xl font-display">Cramped Display Heading</h1>
 ```
 
-**Why it's wrong**: Crimson Pro needs tighter letter-spacing (-0.02em) for optimal readability at large sizes.
+**Why it's wrong**: Geist headings tighten as they grow (-0.015em, -0.025em on h1). The base `h1`-`h6` rule applies this; a heading rendered with a `p` or `span` needs it explicitly.
 
 **Correct solution**:
 
@@ -454,7 +454,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 </h1>
 ```
 
-**Rule**: Use `tracking-tight` on display headings (Crimson Pro). Body text (Manrope) has default spacing.
+**Rule**: Use `tracking-tight` on display-sized text. Body text has default spacing.
 
 ---
 
@@ -517,7 +517,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <p className="text-neutral-400 bg-white">Low contrast text</p>
 ```
 
-**Why it's wrong**: `neutral-400` (#c4bdb3) on white doesn't meet WCAG AA (4.5:1 minimum for text).
+**Why it's wrong**: `neutral-400` (#a9afbd) on white doesn't meet WCAG AA (4.5:1 minimum for text).
 
 **Correct solution**:
 
@@ -526,7 +526,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <p className="text-neutral-700 bg-white">High contrast text</p>
 ```
 
-**Rule**: Use `neutral-700` (#4a4137) or darker for body text. `neutral-600` (#6b6561) for secondary text. `neutral-400` only for placeholders/disabled states.
+**Rule**: Use `neutral-700` (#364152) or darker for body text. `neutral-600` (#4b5565) for secondary text. `neutral-400` only for placeholders/disabled states.
 
 ---
 
@@ -536,7 +536,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 
 ```tsx
 // DON'T
-<div style={{ backgroundColor: '#0A2540', color: '#ffffff' }}>
+<div style={{ backgroundColor: '#111827', color: '#ffffff' }}>
   Inline styled
 </div>
 ```
@@ -591,7 +591,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 | Multiple primary buttons          | One primary per section                    |
 | No spacing between elements       | Use `space-y-4` for stacking               |
 | Animating width/height            | Animate `transform` instead                |
-| Wrong font (not Crimson Pro)      | Use `font-display` for headings            |
+| Wrong font utility on headings    | Use `font-display` for headings            |
 | Missing focus rings               | Add `focus:ring-2` to interactive elements |
 | Low contrast text                 | Use `text-neutral-700` minimum             |
 | Color-only status                 | Add icons to colors                        |

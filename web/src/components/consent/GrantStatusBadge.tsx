@@ -12,6 +12,7 @@
 import React from 'react';
 import { format, isPast } from 'date-fns';
 import { Badge } from '@design-system/components/primitives/Badge';
+import { CircleCheck, CircleX, Clock } from 'lucide-react';
 
 type GrantStatus = 'active' | 'expired' | 'pending';
 
@@ -42,19 +43,11 @@ export function GrantStatusBadge({ status, expiresAt }: GrantStatusBadgeProps) {
           variant: 'success' as const,
           label: 'Active',
           icon: (
-            <svg
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            <CircleCheck
               className="w-full h-full"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+              aria-hidden="true"
+              strokeWidth={1.5}
+            />
           ),
         };
       case 'expired':
@@ -62,19 +55,11 @@ export function GrantStatusBadge({ status, expiresAt }: GrantStatusBadgeProps) {
           variant: 'neutral' as const,
           label: 'Expired',
           icon: (
-            <svg
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            <CircleX
               className="w-full h-full"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+              aria-hidden="true"
+              strokeWidth={1.5}
+            />
           ),
         };
       case 'pending':
@@ -82,19 +67,11 @@ export function GrantStatusBadge({ status, expiresAt }: GrantStatusBadgeProps) {
           variant: 'warning' as const,
           label: 'Pending',
           icon: (
-            <svg
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            <Clock
               className="w-full h-full"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+              aria-hidden="true"
+              strokeWidth={1.5}
+            />
           ),
         };
       default:

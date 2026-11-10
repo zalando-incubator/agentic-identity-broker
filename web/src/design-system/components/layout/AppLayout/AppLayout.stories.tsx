@@ -75,7 +75,7 @@ const SampleHeader = () => (
   <div className="flex items-center justify-between px-6 py-4">
     <div className="flex items-center gap-3">
       <div className="w-8 h-8 bg-trust-deep rounded-md" />
-      <h1 className="text-xl font-bold text-trust-deep">
+      <h1 className="text-xl font-medium text-trust-deep">
         Agentic Identity Broker
       </h1>
     </div>
@@ -134,7 +134,7 @@ const SampleContent = () => (
   <Container padding="lg" size="xl">
     <Stack gap="lg">
       <div>
-        <h2 className="text-3xl font-bold text-trust-deep mb-2">Dashboard</h2>
+        <h2 className="text-3xl font-medium text-trust-deep mb-2">Dashboard</h2>
         <p className="text-neutral-600">
           Welcome to your identity management dashboard.
         </p>
@@ -142,27 +142,27 @@ const SampleContent = () => (
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-trust-deep mb-2">
+          <h3 className="text-lg font-medium text-trust-deep mb-2">
             Active Sessions
           </h3>
-          <p className="text-3xl font-bold text-trust">127</p>
+          <p className="text-3xl font-medium text-trust">127</p>
         </div>
         <div className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-trust-deep mb-2">
+          <h3 className="text-lg font-medium text-trust-deep mb-2">
             Applications
           </h3>
-          <p className="text-3xl font-bold text-trust">12</p>
+          <p className="text-3xl font-medium text-trust">12</p>
         </div>
         <div className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm">
-          <h3 className="text-lg font-semibold text-trust-deep mb-2">
+          <h3 className="text-lg font-medium text-trust-deep mb-2">
             Active Users
           </h3>
-          <p className="text-3xl font-bold text-trust">89</p>
+          <p className="text-3xl font-medium text-trust">89</p>
         </div>
       </div>
 
       <div className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm">
-        <h3 className="text-lg font-semibold text-trust-deep mb-4">
+        <h3 className="text-lg font-medium text-trust-deep mb-4">
           Recent Activity
         </h3>
         <Stack gap="md">
@@ -245,7 +245,7 @@ export const SidebarRight: Story = {
     sidebar: (
       <div className="p-4">
         <Stack gap="md">
-          <h3 className="text-sm font-semibold text-trust-deep">Filters</h3>
+          <h3 className="text-sm font-medium text-trust-deep">Filters</h3>
           <div className="space-y-2">
             <label className="flex items-center gap-2">
               <input type="checkbox" className="rounded" />
@@ -355,7 +355,7 @@ export const SidebarLarge: Story = {
       <nav className="p-6">
         <Stack gap="lg">
           <div>
-            <h2 className="text-lg font-bold text-trust-deep mb-4">
+            <h2 className="text-lg font-medium text-trust-deep mb-4">
               Navigation
             </h2>
             <Stack gap="sm">
@@ -419,17 +419,17 @@ export const SidebarLarge: Story = {
             </Stack>
           </div>
           <div className="pt-4 border-t border-neutral-200">
-            <h3 className="text-xs font-semibold text-neutral-500 uppercase mb-2">
+            <h3 className="text-xs font-medium text-neutral-500 uppercase mb-2">
               Quick Stats
             </h3>
             <div className="space-y-2">
               <div className="text-sm">
                 <span className="text-neutral-600">Sessions:</span>{' '}
-                <span className="font-semibold">127</span>
+                <span className="font-medium">127</span>
               </div>
               <div className="text-sm">
                 <span className="text-neutral-600">Apps:</span>{' '}
-                <span className="font-semibold">12</span>
+                <span className="font-medium">12</span>
               </div>
             </div>
           </div>
@@ -461,7 +461,7 @@ export const StickyHeader: Story = {
       <Container padding="lg" size="xl">
         <Stack gap="lg">
           <div>
-            <h2 className="text-3xl font-bold text-trust-deep mb-2">
+            <h2 className="text-3xl font-medium text-trust-deep mb-2">
               Long Content Page
             </h2>
             <p className="text-neutral-600">
@@ -473,7 +473,7 @@ export const StickyHeader: Story = {
               key={i}
               className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm"
             >
-              <h3 className="text-lg font-semibold text-trust-deep mb-2">
+              <h3 className="text-lg font-medium text-trust-deep mb-2">
                 Section {i + 1}
               </h3>
               <p className="text-neutral-600">
@@ -500,7 +500,7 @@ export const StickyFooter: Story = {
       <Container padding="lg" size="xl">
         <Stack gap="lg">
           <div>
-            <h2 className="text-3xl font-bold text-trust-deep mb-2">
+            <h2 className="text-3xl font-medium text-trust-deep mb-2">
               Short Content
             </h2>
             <p className="text-neutral-600">
@@ -509,7 +509,7 @@ export const StickyFooter: Story = {
             </p>
           </div>
           <div className="p-6 bg-white border border-neutral-200 rounded-lg shadow-sm">
-            <h3 className="text-lg font-semibold text-trust-deep mb-2">
+            <h3 className="text-lg font-medium text-trust-deep mb-2">
               Content Section
             </h3>
             <p className="text-neutral-600">
@@ -559,7 +559,7 @@ export const ConsentPage: Story = {
       <div className="px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-trust-deep rounded-md" />
-          <span className="text-lg font-bold text-trust-deep">
+          <span className="text-lg font-medium text-trust-deep">
             Identity Broker
           </span>
         </div>
@@ -572,7 +572,7 @@ export const ConsentPage: Story = {
       <div className="p-6">
         <Stack gap="lg">
           <div>
-            <h3 className="text-sm font-semibold text-trust-deep mb-2">
+            <h3 className="text-sm font-medium text-trust-deep mb-2">
               Application Details
             </h3>
             <div className="space-y-2 text-sm">
@@ -593,7 +593,7 @@ export const ConsentPage: Story = {
             </div>
           </div>
           <div className="pt-4 border-t border-neutral-200">
-            <h3 className="text-sm font-semibold text-trust-deep mb-2">
+            <h3 className="text-sm font-medium text-trust-deep mb-2">
               Privacy Policy
             </h3>
             <p className="text-sm text-neutral-600">
@@ -641,7 +641,7 @@ export const ConsentPage: Story = {
                 />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-trust-deep mb-2">
+            <h1 className="text-2xl font-medium text-trust-deep mb-2">
               Grant Access
             </h1>
             <p className="text-neutral-600">
@@ -650,7 +650,7 @@ export const ConsentPage: Story = {
           </div>
 
           <div className="p-6 bg-neutral-50 border border-neutral-200 rounded-lg">
-            <h2 className="text-lg font-semibold text-trust-deep mb-4">
+            <h2 className="text-lg font-medium text-trust-deep mb-4">
               This application will be able to:
             </h2>
             <Stack gap="sm">

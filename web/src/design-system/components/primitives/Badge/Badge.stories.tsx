@@ -261,7 +261,7 @@ export const UseCases: Story = {
     <div className="flex flex-col gap-6">
       {/* Status badges */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Status Indicators
         </h3>
         <div className="flex flex-wrap gap-2">
@@ -282,7 +282,7 @@ export const UseCases: Story = {
 
       {/* Counts and labels */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Counts & Labels
         </h3>
         <div className="flex flex-wrap gap-2">
@@ -303,7 +303,7 @@ export const UseCases: Story = {
 
       {/* Permission badges */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">Permissions</h3>
+        <h3 className="text-sm font-medium text-neutral-700">Permissions</h3>
         <div className="flex flex-wrap gap-2">
           <Badge variant="success" size="sm">
             Read
@@ -343,7 +343,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="flex flex-col gap-4">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Badges with semantic meaning
         </h3>
         <div className="flex flex-wrap gap-2">
@@ -360,7 +360,7 @@ export const Accessibility: Story = {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Notification counts with aria-label
         </h3>
         <div className="flex flex-wrap gap-2">

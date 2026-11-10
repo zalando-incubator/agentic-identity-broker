@@ -24,7 +24,7 @@ import { Divider } from '@design-system/components/primitives/Divider';
 
 const cardVariants = cva(
   // Base styles - applied to all variants
-  'rounded-xl transition-all duration-300',
+  'rounded-xl transition-colors duration-150',
   {
     variants: {
       padding: {
@@ -41,18 +41,18 @@ const cardVariants = cva(
         spacious: 'p-8',
       },
       border: {
-        // Subtle: Ring-based border for softer appearance
-        subtle: 'ring-1 ring-neutral-200',
+        // Subtle: Hairline border, the default containment
+        subtle: 'border border-neutral-200',
 
-        // Bordered: Solid border for stronger definition
+        // Bordered: Stronger hairline for emphasis
         bordered: 'border border-neutral-300',
       },
       hover: {
         // None: Static card
         none: '',
 
-        // Lift: Subtle shadow increase on hover
-        lift: 'hover:shadow-lg hover:-translate-y-0.5',
+        // Lift: The hairline takes the accent on hover. No shadow, no movement.
+        lift: 'hover:border-accent',
       },
       backgroundColor: {
         // White: Pure white background (default)
@@ -62,7 +62,7 @@ const cardVariants = cva(
         'neutral-50': 'bg-neutral-50',
 
         // Blue-50: Light blue background for highlights
-        'blue-50': 'bg-blue-50',
+        'blue-50': 'bg-info-light',
       },
     },
     defaultVariants: {
@@ -71,12 +71,6 @@ const cardVariants = cva(
       hover: 'none',
       backgroundColor: 'white',
     },
-    compoundVariants: [
-      {
-        hover: 'lift',
-        className: 'shadow-sm',
-      },
-    ],
   },
 );
 

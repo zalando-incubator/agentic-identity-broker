@@ -17,6 +17,7 @@ import { Card } from '@design-system/components/data-display/Card';
 import { Stack } from '@design-system/components/layout/Stack';
 import { Avatar } from '@design-system/components/primitives/Avatar';
 import { Button } from '@design-system/components/primitives/Button';
+import { ChevronRight, Clock } from 'lucide-react';
 
 interface DelegationCardProps {
   /** Agent delegation data */
@@ -56,7 +57,7 @@ function DelegationCardComponent({
       hover="none"
       clickable
       onClick={onClick}
-      className="w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      className="w-full focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
     >
       <Stack gap="md">
         {/* Agent logo, name, and arrow */}
@@ -73,7 +74,7 @@ function DelegationCardComponent({
 
           {/* Agent info */}
           <Stack gap="xs" className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-neutral-900 truncate">
+            <h3 className="text-lg font-medium text-neutral-900 truncate">
               {displayName}
             </h3>
             <p className="text-sm text-neutral-600">
@@ -85,20 +86,7 @@ function DelegationCardComponent({
 
           {/* Arrow icon */}
           <div className="flex-shrink-0 text-neutral-400">
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
+            <ChevronRight className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
           </div>
         </Stack>
 
@@ -110,20 +98,7 @@ function DelegationCardComponent({
           <Stack direction="row" gap="sm" align="center">
             {expirationText && (
               <Stack direction="row" gap="xs" align="center">
-                <svg
-                  className="w-4 h-4 text-neutral-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
+                <Clock className="w-4 h-4 text-neutral-500" aria-hidden="true" strokeWidth={1.5} />
                 <span className="text-xs text-neutral-500" data-screenshot-dynamic>
                   {expirationText}
                 </span>

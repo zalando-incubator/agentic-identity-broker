@@ -75,7 +75,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
       />
       {/* Modal content card */}
       <div
-        className="relative z-10 bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6"
+        className="relative z-10 bg-white rounded-xl border border-line-strong shadow-float max-w-md w-full mx-4 p-6"
         role="dialog"
         aria-modal="true"
         aria-labelledby="termination-dialog-title"
@@ -86,7 +86,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
           <div>
             <h2
               id="termination-dialog-title"
-              className="text-xl font-semibold text-neutral-900"
+              className="text-xl font-medium text-neutral-900"
             >
               Terminate Session?
             </h2>
@@ -114,7 +114,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
 
                 {/* List of dependent agents */}
                 <div className="mt-2">
-                  <p className="text-xs font-semibold text-neutral-700 mb-2">
+                  <p className="text-xs font-medium text-neutral-700 mb-2">
                     Affected agents:
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -156,7 +156,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
           {/* Dialog actions */}
           <Stack direction="row" gap="md" justify="end">
             <Button
-              variant="outline"
+              variant="ghost"
               size="md"
               onClick={onClose}
               disabled={loading}

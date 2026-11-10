@@ -77,7 +77,7 @@ const ContainerDemo = ({
 
 const SampleContent = () => (
   <div className="bg-white rounded-lg shadow-md-premium p-6 border border-slate">
-    <h2 className="text-2xl font-display font-semibold text-trust-deep mb-4">
+    <h2 className="text-2xl font-display font-medium text-trust-deep mb-4">
       Sample Content
     </h2>
     <p className="text-base text-secondary-600 leading-relaxed mb-4">
@@ -231,7 +231,7 @@ export const Nested: Story = {
     <ContainerDemo label="Outer Container (xl) with Inner Container (md)">
       <Container size="xl" padding="lg" className="bg-sand rounded-xl">
         <div className="mb-6">
-          <h1 className="text-3xl font-display font-bold text-trust-deep mb-2">
+          <h1 className="text-3xl font-display font-medium text-trust-deep mb-2">
             Page with Nested Container
           </h1>
           <p className="text-secondary-600">
@@ -244,7 +244,7 @@ export const Nested: Story = {
           padding="md"
           className="bg-white rounded-lg shadow-md-premium border border-slate"
         >
-          <h2 className="text-xl font-display font-semibold text-trust-deep mb-3">
+          <h2 className="text-xl font-display font-medium text-trust-deep mb-3">
             Nested Inner Container
           </h2>
           <p className="text-secondary-600 mb-3">
@@ -272,7 +272,7 @@ export const Responsive: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-4">
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h2 className="text-xl font-display font-semibold text-trust-deep mb-4">
+        <h2 className="text-xl font-display font-medium text-trust-deep mb-4">
           Responsive Behavior
         </h2>
         <p className="text-secondary-600 mb-4">
@@ -288,7 +288,7 @@ export const Responsive: Story = {
 
       <Container size="lg" padding="md" className="bg-trust-light rounded-lg">
         <div className="bg-white rounded-lg p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-trust-deep mb-2">
+          <h3 className="text-lg font-medium text-trust-deep mb-2">
             Large Container with Padding
           </h3>
           <p className="text-secondary-600">
@@ -299,7 +299,7 @@ export const Responsive: Story = {
 
       <Container size="md" padding="sm" className="bg-success-light rounded-lg">
         <div className="bg-white rounded-lg p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-trust-deep mb-2">
+          <h3 className="text-lg font-medium text-trust-deep mb-2">
             Medium Container with Small Padding
           </h3>
           <p className="text-secondary-600">
@@ -322,7 +322,9 @@ export const RealWorldExamples: Story = {
       <div className="bg-trust-deep text-white py-4">
         <Container size="xl" padding="md">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl font-display font-bold">Application Name</h1>
+            <h1 className="text-xl font-display font-medium">
+              Application Name
+            </h1>
             <nav className="flex gap-4 text-sm">
               <a href="#" className="hover:text-neutral-200">
                 Home
@@ -342,7 +344,7 @@ export const RealWorldExamples: Story = {
       <div className="bg-gradient-to-br from-trust-light to-success-light py-16">
         <Container size="lg">
           <div className="text-center">
-            <h2 className="text-4xl font-display font-bold text-trust-deep mb-4">
+            <h2 className="text-4xl font-display font-medium text-trust-deep mb-4">
               Welcome to Our Service
             </h2>
             <p className="text-lg text-secondary-600 max-w-2xl mx-auto">
@@ -357,7 +359,7 @@ export const RealWorldExamples: Story = {
       <div className="py-12 bg-white">
         <Container size="md" padding="md">
           <article className="prose prose-lg max-w-none">
-            <h2 className="text-2xl font-display font-semibold text-trust-deep mb-4">
+            <h2 className="text-2xl font-display font-medium text-trust-deep mb-4">
               Article Content
             </h2>
             <p className="text-secondary-600 leading-relaxed mb-4">
@@ -430,7 +432,7 @@ export const Accessibility: Story = {
       >
         <div className="space-y-6">
           <div>
-            <h2 className="text-xl font-display font-semibold text-trust-deep mb-3">
+            <h2 className="text-xl font-display font-medium text-trust-deep mb-3">
               Accessibility Features
             </h2>
             <p className="text-secondary-600">
@@ -440,11 +442,11 @@ export const Accessibility: Story = {
 
           <div className="space-y-4">
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
                 ✓
               </div>
               <div>
-                <h3 className="font-semibold text-trust-deep">Semantic HTML</h3>
+                <h3 className="font-medium text-trust-deep">Semantic HTML</h3>
                 <p className="text-sm text-secondary-600">
                   Uses standard div elements with no ARIA required
                 </p>
@@ -452,11 +454,11 @@ export const Accessibility: Story = {
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
                 ✓
               </div>
               <div>
-                <h3 className="font-semibold text-trust-deep">
+                <h3 className="font-medium text-trust-deep">
                   Responsive Design
                 </h3>
                 <p className="text-sm text-secondary-600">
@@ -466,13 +468,11 @@ export const Accessibility: Story = {
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
                 ✓
               </div>
               <div>
-                <h3 className="font-semibold text-trust-deep">
-                  Touch-Friendly
-                </h3>
+                <h3 className="font-medium text-trust-deep">Touch-Friendly</h3>
                 <p className="text-sm text-secondary-600">
                   Padding options ensure content doesn't touch viewport edges
                 </p>
@@ -480,11 +480,11 @@ export const Accessibility: Story = {
             </div>
 
             <div className="flex items-start gap-3">
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
                 ✓
               </div>
               <div>
-                <h3 className="font-semibold text-trust-deep">
+                <h3 className="font-medium text-trust-deep">
                   No Motion Dependencies
                 </h3>
                 <p className="text-sm text-secondary-600">

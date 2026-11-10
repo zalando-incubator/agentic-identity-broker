@@ -76,7 +76,7 @@ export const ServiceRequirementCard: React.FC<ServiceRequirementCardProps> = ({
       {/* Header with service name and requirement badge */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h3 className="text-base font-semibold text-trust-deep">
+          <h3 className="text-base font-medium text-trust-deep">
             {serviceName}
           </h3>
           <Badge variant={badgeVariant} size="sm" shape="rounded">
@@ -93,7 +93,7 @@ export const ServiceRequirementCard: React.FC<ServiceRequirementCardProps> = ({
           </Badge>
         ) : (
           <Button
-            variant="secondary"
+            variant="primary"
             size="sm"
             onClick={() => onLogin(serviceId)}
           >
@@ -130,7 +130,7 @@ export const ServiceRequirementCard: React.FC<ServiceRequirementCardProps> = ({
       {isConnected && (
         <div className="mt-4 pt-4 border-t border-neutral-200">
           <Button
-            variant="outline"
+            variant="danger"
             size="sm"
             onClick={() => onDisconnect(serviceId)}
           >

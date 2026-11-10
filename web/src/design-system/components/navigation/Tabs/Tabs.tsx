@@ -57,7 +57,7 @@ const tabListVariants = cva('flex gap-1', {
 });
 
 const tabButtonVariants = cva(
-  'relative inline-flex items-center justify-center gap-2 font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-trust-hover disabled:opacity-50 disabled:cursor-not-allowed',
+  'relative inline-flex items-center justify-center gap-2 font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-trust-hover disabled:opacity-50 disabled:cursor-not-allowed',
   {
     variants: {
       variant: {
@@ -86,7 +86,7 @@ const tabButtonVariants = cva(
       {
         variant: 'underline',
         selected: true,
-        className: 'text-trust-deep border-trust-hover font-semibold',
+        className: 'text-trust-deep border-trust-hover font-medium',
       },
       {
         variant: 'underline',
@@ -97,7 +97,7 @@ const tabButtonVariants = cva(
       {
         variant: 'pill',
         selected: true,
-        className: 'bg-white text-trust-deep shadow-sm font-semibold',
+        className: 'bg-white text-trust-deep shadow-sm font-medium',
       },
       {
         variant: 'pill',
@@ -109,7 +109,7 @@ const tabButtonVariants = cva(
         variant: 'button',
         selected: true,
         className:
-          'bg-trust-hover text-white border-trust-hover shadow-sm font-semibold hover:bg-trust',
+          'bg-trust-hover text-white border-trust-hover font-medium hover:bg-trust',
       },
       {
         variant: 'button',

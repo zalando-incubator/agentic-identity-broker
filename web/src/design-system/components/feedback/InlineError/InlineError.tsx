@@ -16,10 +16,11 @@
 import React from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { CircleX } from 'lucide-react';
 
 const inlineErrorVariants = cva(
   // Base styles - compact for field-level display
-  'flex gap-2 mt-1 text-sm text-error-dark transition-all duration-200',
+  'flex gap-2 mt-1 text-sm text-error-dark transition-opacity duration-150',
   {
     variants: {
       size: {
@@ -69,20 +70,11 @@ export interface InlineErrorProps extends Omit<
 
 // Default error icon (X in circle)
 const ErrorIcon = ({ className }: { className?: string }) => (
-  <svg
+  <CircleX
     className={cn('w-4 h-4', className)}
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
     aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
+    strokeWidth={1.5}
+  />
 );
 
 /**

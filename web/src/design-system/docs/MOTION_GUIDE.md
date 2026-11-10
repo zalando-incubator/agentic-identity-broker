@@ -38,7 +38,7 @@ button {
 }
 
 button:hover {
-  background-color: #1e4d6b;
+  background-color: #0a7a66;
 }
 ```
 
@@ -133,7 +133,7 @@ button:hover {
 cubic-bezier(0.34, 1.56, 0.64, 1)
 ```
 
-This is the "Refined Trust" easing function. It provides a subtle spring feeling—starting smoothly but with a slight bounce at the end. This creates a friendly, responsive feel without being playful.
+This spring curve remains available as `easing.spring` in `animation.ts` for legacy components. New work uses `--ease-out-quint`, `cubic-bezier(0.22, 1, 0.36, 1)`, which settles without a bounce (ADR 048).
 
 **Visual characteristics**:
 
@@ -164,7 +164,7 @@ A smooth, balanced easing that's neutral and professional.
 
 ```css
 button {
-  background-color: #0d1829;
+  background-color: #111827;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   transform: translateY(0);
   transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -257,7 +257,7 @@ button:active {
 
 ```css
 .skeleton {
-  background: linear-gradient(90deg, #f5f1ed 25%, #e8e3de 50%, #f5f1ed 75%);
+  background: linear-gradient(90deg, #f0f2f6 25%, #e3e6ec 50%, #f0f2f6 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }

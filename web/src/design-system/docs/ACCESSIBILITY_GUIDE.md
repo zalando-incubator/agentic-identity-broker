@@ -398,7 +398,7 @@ button { outline: none; }
 
 // ✓ After
 button:focus {
-  outline: 2px solid navy-700;
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 ```

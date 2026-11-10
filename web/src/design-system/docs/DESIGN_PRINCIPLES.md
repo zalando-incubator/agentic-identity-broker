@@ -4,183 +4,158 @@ The Refined Trust Architecture design system is built on a set of core principle
 
 ---
 
-## Visual Design Direction: "Refined Trust Architecture"
+## Visual Design Direction
+
+[ADR 048](../../../../adrs/048-consent-ui-design-language.md) sets this direction. It replaces the earlier serif, navy and warm-neutral look. The public docs site shares the same language, so a consent screen in the product and the consent screen drawn on the docs homepage look like the same thing.
 
 ### Design Concept
 
-**Core Aesthetic**: Sophisticated legal-financial hybrid—the visual gravity of a bank vault combined with the approachability of modern SaaS. This is where users make critical decisions about AI agent permissions, so every pixel must communicate trustworthiness, clarity, and control.
+**Character**: Exact, sober, accountable. The consent UI is where a person decides what an agent may do in their name. The interface states facts and asks one question. It does not sell.
 
-**Tone**: Authoritative yet approachable. Think: premium law firm website meets modern fintech app. NOT corporate-bland, NOT startup-playful.
+**World**: The grant register. Principals, agents, permission sets and `valid_until` drive the visuals. Identifiers, scopes and dates set in monospace are the signature detail.
 
-**The Unforgettable Element**: **Serif authority with warm humanity** - Using Crimson Pro (a refined, slightly warm serif) for all headings creates immediate trust and seriousness, while Manrope's humanist sans-serif for body text softens the experience. The contrast between these two typefaces defines the entire aesthetic.
+**The one accent**: A single jade marks only three things: the action the screen is for, links, and the granted state. Everything else is ink on a cool neutral ground. Nothing glows.
 
 ### Visual Design Principles
 
-#### 1. Visual Hierarchy Through Weight
+#### 1. Hierarchy Through Size and Spacing, Not Weight
 
-Headlines use **Crimson Pro Bold (700)** at generous sizes (2.5rem+) to establish authority. Body text uses **Manrope** at comfortable reading sizes (1rem base, 1.5 line-height). The typographic contrast creates natural scanning patterns without needing bold colors.
+Headlines use **Geist 500** at generous sizes. Body text uses **Geist 400** at 1rem with a 1.6 line height. Weights above 500 do not appear. Hierarchy comes from size, color and whitespace.
 
 **Implementation:**
 
-- Headings: Crimson Pro, weight 700 (bold) or 600 (semibold), letter-spacing -0.02em
-- Body text: Manrope, weight 400 (regular) or 500 (medium), letter-spacing -0.01em
-- Monospace: JetBrains Mono for technical values (OAuth scopes, agent IDs), weight 500
+- Headings: Geist, weight 500, letter-spacing -0.015em (h1: -0.025em)
+- Body text: Geist, weight 400 (regular) or 500 (labels, names, emphasis), default letter-spacing
+- Monospace: Geist Mono for technical values (OAuth scopes, agent IDs, dates), weight 400
 
 #### 2. Color as Semantic Signal
 
-| Color                   | Hex Values                                        | Usage                                                           |
-| ----------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
-| **Navy (Trust)**        | #0A2540 (deep), #1E4D6B (medium), #E8F1F5 (light) | Primary actions, headings, critical UI chrome—conveys stability |
-| **Emerald (Success)**   | #059669                                           | Success states, granted permissions—nature's "go ahead" signal  |
-| **Amber (CTA/Warning)** | #D97706                                           | CTAs and warnings—attention without alarm                       |
-| **Warm Neutrals**       | #faf9f7 (cream), #f5f1ed (sand), #e8e3de (taupe)  | Backgrounds create gentle, non-clinical environment             |
-| **Pure White**          | #ffffff                                           | Elevated cards that "float" above warm background               |
+| Role                   | Hex Values                                              | Usage                                                         |
+| ---------------------- | ------------------------------------------------------- | ------------------------------------------------------------- |
+| **Ink (text)**         | #111827 (primary), #4b5565 (secondary), #6b7487 (tertiary) | Headings, body, metadata                                   |
+| **Ground (surfaces)**  | #fbfcfd (page), #ffffff (surface), #f0f2f6 (raised)     | Page background, cards and dialogs, chips and code            |
+| **Hairlines**          | rgba(17, 24, 39, 0.08) and 0.14                         | Card borders, rules, input and outline-button borders         |
+| **Accent (jade)**      | #0a7a66, hover #086a59, tint rgba(10, 122, 102, 0.08)   | Primary action, links, focus ring, the granted state          |
+| **Error**              | #b42318                                                 | Errors, revocation and other destructive actions              |
+| **Warning**            | #b54708                                                 | Attention without alarm                                       |
 
-#### 3. Elevation Through Shadow, Not Borders
+The granted state and the primary action share the accent on purpose: approving a grant and seeing it active are the same fact at two moments.
 
-- Cards use subtle multi-layer shadows: `0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)`
-- Card hover states increase elevation: `0 8px 20px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)`
-- Modal shadows: `0 20px 40px rgba(0,0,0,0.12)`
-- Focus states use 2px navy ring at 2px offset (clear, not aggressive)
-- Borders are used sparingly, only for visual containment (muted taupe/slate)
+#### 3. Containment Through Hairlines, Not Shadows
+
+- Cards and panels sit on the page behind a 1px hairline. They do not float and do not lift on hover; an interactive card darkens its hairline to the accent.
+- One floating shadow, `shadow-float`, lifts overlays only: modals, dropdowns, popovers and toasts.
+- Focus states use a 2px accent ring at 2px offset.
+- Nothing uses a gradient, a glow, a blur or a texture.
 
 #### 4. Motion That Guides, Not Entertains
 
 | Timing             | Use Case                                                     | Easing                            |
 | ------------------ | ------------------------------------------------------------ | --------------------------------- |
-| **Fast (150ms)**   | Hover color transitions, focus ring appearance               | cubic-bezier(0.4, 0, 0.2, 1)      |
-| **Base (200ms)**   | Button state changes, dropdown open/close                    | cubic-bezier(0.34, 1.56, 0.64, 1) |
-| **Slow (300ms)**   | Card elevation changes, modal overlays, component animations | cubic-bezier(0.34, 1.56, 0.64, 1) |
-| **Slower (500ms)** | Page transitions, full-screen loading states                 | cubic-bezier(0.34, 1.56, 0.64, 1) |
+| **Fast (150ms)**   | Hover color transitions, focus ring appearance               | cubic-bezier(0.22, 1, 0.36, 1)    |
+| **Base (200ms)**   | Toggle switches, dropdown open/close                         | cubic-bezier(0.22, 1, 0.36, 1)    |
+| **Slow (300ms)**   | Modal overlays                                               | cubic-bezier(0.22, 1, 0.36, 1)    |
+| **Entrance (480ms)** | Page content rising 8px on load                            | cubic-bezier(0.22, 1, 0.36, 1)    |
 
-All animations respect `prefers-reduced-motion` preference—fallback to instant state changes for users who prefer reduced motion.
+One easing curve, `--ease-out-quint`, serves every transition. Nothing bounces. All animations respect `prefers-reduced-motion` and fall back to instant state changes.
 
-#### 5. Whitespace as a Luxury Signal
+#### 5. Whitespace as Structure
 
-- Generous padding in cards: 24px standard, 32px for important sections
-- Vertical spacing between major sections: 64px
+- Padding in cards: 24px standard, 16px for dense rows, 32px for important sections
+- Vertical spacing between major sections: 48px to 64px
 - Content max-width: 1280px (never full-bleed text)
-- Components breathe—never cramped or overcrowded
+- Hairline rules, not boxes, separate rows inside a card
 
 ### Distinctive Visual Details
 
-#### Gradient Backgrounds
+#### The Grant Line
 
-Not typical purple-to-pink. Our gradients are **warm neutrals with subtle shifts**:
+Facts about a grant appear in Geist Mono at 12px to 13px, in tertiary ink, separated by a middle dot: `one grant · per user · per agent`. The same treatment carries scopes, agent IDs and `valid_until` dates.
 
-```css
-background: linear-gradient(
-  135deg,
-  #faf9f7 0%,
-  #f5f1ed 50%,
-  rgba(232, 227, 222, 0.3) 100%
-);
-```
+The agent detail grant line derives status from `valid_until`: past dates show `grant expired` with neutral text and a neutral dot. Future dates and grants without an end date show `grant active` with the jade accent.
 
-This gradient creates a sophisticated, calm backdrop that doesn't compete with content.
+#### Flat Ground
 
-#### Micro-Textures
-
-Subtle grain overlay on cards (2% opacity noise) adds tactile quality without being distracting. This gives the interface a premium, printed feel while maintaining digital clarity.
-
-#### Shadow Strategy
-
-**Cards (default state)**
-
-```css
-box-shadow:
-  0 2px 8px rgba(0, 0, 0, 0.04),
-  inset 0 1px 0 rgba(255, 255, 255, 1);
-```
-
-Combines subtle external drop shadow with internal highlight to create depth.
-
-**Cards (hover state)**
-
-```css
-box-shadow:
-  0 8px 20px rgba(0, 0, 0, 0.1),
-  inset 0 1px 0 rgba(255, 255, 255, 1);
-```
-
-Elevation increases on hover for interactive feedback.
-
-**Modals**
-
-```css
-box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
-```
-
-Strong separation from page—creates modal prominence.
+The page background is a flat `#fbfcfd`. There are no gradients, no micro-textures and no backdrop blur anywhere in the interface.
 
 #### Border Radius Strategy
 
-| Component | Radius     | Pixel Value                      |
-| --------- | ---------- | -------------------------------- |
-| Buttons   | 6px (md)   | Subtle rounding, not pill-shaped |
-| Cards     | 12px (xl)  | Generous but not extreme         |
-| Modals    | 16px (2xl) | Premium feel                     |
-| Inputs    | 6px (md)   | Consistency with buttons         |
-| Badges    | 4px (base) | Compact, not rounded pills       |
+- Chips, inputs and small controls: 6px
+- Buttons: 8px
+- Cards and dropdowns: 12px
+- Modals and the consent window: 16px
+- Toggles, avatars and status dots: full
 
 ### Component Aesthetic Archetypes
 
 #### Primary Button
 
-The most important visual element in the interface.
+- Background: accent (#0a7a66), text white, weight 500
+- Height: 44px, padding 12px 16px, radius 8px
+- Hover: accent hover (#086a59). No shadow, no lift.
+- Focus: 2px accent ring at 2px offset
+- Transition: colors 150ms
 
-**Visual Specifications:**
+#### Outline Button (the quiet alternative, such as Decline or Cancel)
 
-- Background: Deep navy (#0d1829) with subtle gradient overlay
-- Text: Pure white (#ffffff) in Manrope Medium (500)
-- Height: 44px (touch-friendly)
-- Padding: 12px 16px
-- Shadow: `0 2px 8px rgba(0,0,0,0.08)` (default), `0 8px 20px rgba(0,0,0,0.1)` (hover)
-- Transform: `translateY(-1px)` on hover (subtle lift)
-- Loading state: Spinning ring in white, button slightly desaturated
-- Transition: All properties 200ms cubic-bezier(0.34, 1.56, 0.64, 1)
+- Surface background, 1px strong hairline, ink text, weight 500
+- Hover: raised background, darker hairline
 
-#### Card Component
+#### Danger Button (Revoke, Delete)
 
-The workhorse of the UI—used for content grouping and elevation.
+- Surface background, 1px error-red hairline at 40%, error-red text, weight 500
+- Hover: error tint background, full-strength hairline
+- Red fills nothing until the action is confirmed in a dialog
 
-**Visual Specifications:**
+#### Action Roles
 
-- Background: Pure white with 10px blur backdrop-filter (if supported)
-- Border: 1px solid rgba(240, 237, 232, 0.8) (barely visible, just containment)
-- Padding: 24px standard, 32px for headers
-- Hover: Elevation increase + translateY(-2px) shift
-- Shadow: `0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)` (default)
-- Hover shadow: `0 8px 20px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)`
-- Transitions: All properties 300ms cubic-bezier(0.34, 1.56, 0.64, 1)
+Every action is a `Button`. Its variant follows from what the action does, never from where it sits:
+
+| Role | Variant | Examples |
+|---|---|---|
+| Moves the task forward, one per view or card | `primary` | Approve, Save, Approve & Delegate, Login, Try Again on a crash screen |
+| Neutral alternative or utility | `outline` | Deny, Deny this request, Go Back, View Details, Refresh, Retry |
+| Removes access or blocks for good | `danger` | Revoke, Revoke All Access, Terminate, Disconnect, Deny permanently, Block permanently |
+| Backs out of a step or dialog | `ghost` | Cancel |
+| Toggle or chip inside content | `ghost` | Show more, date suggestions |
+
+- Actions are never underlined text links, and never a `ghost` button with red text. Links are for navigation only.
+- No colour overrides through `className` on a `Button`. If a role is missing, add a variant.
+- `secondary` duplicates `primary` and is not used in the app.
+- Buttons inside cards and rows use `size="sm"`. Page-level and dialog actions use the default size.
+
+#### Action Order
+
+Every button group follows one order, in dialogs, cards and pinned bars alike:
+
+- The primary action is the last button and sits on the right: Approve, Save, Revoke All Access.
+- The quiet alternative sits directly to its left: Deny, Cancel, Go Back.
+- An extra destructive choice that is not the answer to the question, such as Deny permanently or Block permanently, sits on the far left, apart from the pair.
+- On narrow screens a group may stack. It stacks with the primary action on top (`flex-col-reverse sm:flex-row`), so the DOM order and the tab order stay the same.
+
+#### Card
+
+- Surface background, 1px hairline, radius 12px, padding 24px
+- Hover (interactive cards only): hairline takes the accent
+- No shadow
 
 #### Form Input
 
-Trust through clarity—users need to feel confident entering sensitive data.
+- Height 44px, padding 12px 16px, radius 6px
+- Border: 1px strong hairline; accent on focus; error red on error
+- Label: Geist 500, 14px, above the input
 
-**Visual Specifications:**
+#### Toggle
 
-- Border: 1.5px solid neutral-300 (default), navy-700 (focus), red-700 (error)
-- Height: 44px (touch-friendly)
-- Padding: 12px 16px
-- Label: Manrope Medium (500), 14px, positioned above input (not floating)
-- Helper text: 12px, muted secondary color
-- Error message: 12px, error color (#DC2626), with small alert icon
-- Focus ring: 2px solid navy-700 at 2px offset
-- Disabled state: gray-400 background, gray-300 border
+- Off: raised background with a strong hairline, surface knob
+- On: accent background, white knob
+- Locked (mandatory permission set): on, at 55% opacity
 
 #### Modal
 
-Command attention without aggression—critical for permission dialogs.
-
-**Visual Specifications:**
-
-- Overlay: rgba(13, 24, 41, 0.5) with 8px backdrop-blur (dark navy, semi-transparent)
-- Modal body: Pure white, 16px border-radius, `0 20px 40px rgba(0,0,0,0.12)` shadow
-- Animation: Overlay fades in 200ms, modal slides up and scales in 300ms with delay
-- Close button: Ghost style in top-right, 44×44px minimum for accessibility
-- Padding: 24px (standard), 32px (spacious sections)
-- Header: Separate background (if multi-section), font-size 24px, Crimson Pro Bold
+- Overlay: ink at 50%
+- Body: surface, radius 16px, 1px strong hairline, `shadow-float`
+- Header: Geist 500, 20px to 24px
 
 ---
 

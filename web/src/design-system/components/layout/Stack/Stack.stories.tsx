@@ -150,7 +150,7 @@ export const Gaps: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Extra Small Gap (xs - 4px)
         </div>
         <Stack gap="xs">
@@ -161,7 +161,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Small Gap (sm - 8px)
         </div>
         <Stack gap="sm">
@@ -172,7 +172,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Medium Gap (md - 16px) - Default
         </div>
         <Stack gap="md">
@@ -183,7 +183,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Large Gap (lg - 24px)
         </div>
         <Stack gap="lg">
@@ -194,7 +194,7 @@ export const Gaps: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Extra Large Gap (xl - 32px)
         </div>
         <Stack gap="xl">
@@ -219,7 +219,7 @@ export const Alignment: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Align Start
         </div>
         <Stack
@@ -235,7 +235,7 @@ export const Alignment: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Align Center
         </div>
         <Stack
@@ -251,7 +251,7 @@ export const Alignment: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Align End
         </div>
         <Stack
@@ -267,7 +267,7 @@ export const Alignment: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Align Stretch (Default)
         </div>
         <Stack
@@ -298,7 +298,7 @@ export const Justify: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Justify Start (Default)
         </div>
         <Stack
@@ -314,7 +314,7 @@ export const Justify: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Justify Center
         </div>
         <Stack
@@ -330,7 +330,7 @@ export const Justify: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Justify End
         </div>
         <Stack
@@ -346,7 +346,7 @@ export const Justify: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Justify Space Between
         </div>
         <Stack
@@ -362,7 +362,7 @@ export const Justify: Story = {
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-semibold text-secondary-600">
+        <div className="mb-2 text-sm font-medium text-secondary-600">
           Justify Space Around
         </div>
         <Stack
@@ -389,7 +389,7 @@ export const Responsive: Story = {
   render: () => (
     <div className="space-y-8 bg-cream p-6 rounded-xl">
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h2 className="text-xl font-display font-semibold text-trust-deep mb-4">
+        <h2 className="text-xl font-display font-medium text-trust-deep mb-4">
           Responsive Stack Behavior
         </h2>
         <p className="text-secondary-600 mb-4">
@@ -409,7 +409,7 @@ export const Responsive: Story = {
       </div>
 
       <div className="bg-white rounded-lg p-6 shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-3">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-3">
           Mobile-First Approach
         </h3>
         <p className="text-secondary-600 mb-4">
@@ -440,7 +440,7 @@ export const Nested: Story = {
         align="center"
         className="bg-white p-4 rounded-lg shadow-sm"
       >
-        <div className="text-lg font-display font-bold text-trust-deep">
+        <div className="text-lg font-display font-medium text-trust-deep">
           Application Header
         </div>
         <Stack direction="row" gap="sm">
@@ -451,7 +451,7 @@ export const Nested: Story = {
 
       {/* Main content area */}
       <Stack gap="md" className="bg-white p-6 rounded-lg shadow-sm">
-        <h2 className="text-xl font-display font-semibold text-trust-deep">
+        <h2 className="text-xl font-display font-medium text-trust-deep">
           Main Content Section
         </h2>
 
@@ -464,7 +464,7 @@ export const Nested: Story = {
 
         {/* Nested vertical stack for list */}
         <Stack gap="sm">
-          <div className="text-sm font-semibold text-secondary-600">
+          <div className="text-sm font-medium text-secondary-600">
             List Items:
           </div>
           <StackItem variant="accent">List item A</StackItem>
@@ -530,7 +530,7 @@ export const RealWorldExamples: Story = {
     <Stack gap="xl" className="bg-cream p-6 rounded-xl">
       {/* Button Group Pattern */}
       <div className="bg-white p-6 rounded-lg shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-4">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-4">
           Button Group Pattern
         </h3>
         <Stack direction="row" gap="sm" justify="end">
@@ -545,7 +545,7 @@ export const RealWorldExamples: Story = {
 
       {/* Form Layout Pattern */}
       <div className="bg-white p-6 rounded-lg shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-4">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-4">
           Form Layout Pattern
         </h3>
         <Stack gap="md">
@@ -583,7 +583,7 @@ export const RealWorldExamples: Story = {
       {/* Navigation Pattern */}
       <div className="bg-white p-4 rounded-lg shadow-md-premium">
         <Stack direction="row" justify="space-between" align="center">
-          <div className="text-xl font-display font-bold text-trust-deep">
+          <div className="text-xl font-display font-medium text-trust-deep">
             Logo
           </div>
           <Stack direction="row" gap="md" align="center">
@@ -605,24 +605,24 @@ export const RealWorldExamples: Story = {
 
       {/* Card Grid with Wrapping */}
       <div className="bg-white p-6 rounded-lg shadow-md-premium">
-        <h3 className="text-lg font-display font-semibold text-trust-deep mb-4">
+        <h3 className="text-lg font-display font-medium text-trust-deep mb-4">
           Card Grid with Wrapping
         </h3>
         <Stack direction="row" gap="md" wrap={true}>
           <div className="bg-trust-light p-4 rounded-lg border-2 border-neutral-200 min-w-[150px]">
-            <div className="font-semibold text-trust-deep mb-2">Feature 1</div>
+            <div className="font-medium text-trust-deep mb-2">Feature 1</div>
             <div className="text-sm text-secondary-600">Description</div>
           </div>
           <div className="bg-trust-light p-4 rounded-lg border-2 border-neutral-200 min-w-[150px]">
-            <div className="font-semibold text-trust-deep mb-2">Feature 2</div>
+            <div className="font-medium text-trust-deep mb-2">Feature 2</div>
             <div className="text-sm text-secondary-600">Description</div>
           </div>
           <div className="bg-trust-light p-4 rounded-lg border-2 border-neutral-200 min-w-[150px]">
-            <div className="font-semibold text-trust-deep mb-2">Feature 3</div>
+            <div className="font-medium text-trust-deep mb-2">Feature 3</div>
             <div className="text-sm text-secondary-600">Description</div>
           </div>
           <div className="bg-trust-light p-4 rounded-lg border-2 border-neutral-200 min-w-[150px]">
-            <div className="font-semibold text-trust-deep mb-2">Feature 4</div>
+            <div className="font-medium text-trust-deep mb-2">Feature 4</div>
             <div className="text-sm text-secondary-600">Description</div>
           </div>
         </Stack>
@@ -644,7 +644,7 @@ export const Accessibility: Story = {
     <div className="bg-cream p-8">
       <Stack gap="md" className="bg-white rounded-lg shadow-md-premium p-6">
         <div>
-          <h2 className="text-xl font-display font-semibold text-trust-deep mb-3">
+          <h2 className="text-xl font-display font-medium text-trust-deep mb-3">
             Accessibility Features
           </h2>
           <p className="text-secondary-600">
@@ -654,11 +654,11 @@ export const Accessibility: Story = {
 
         <Stack gap="md">
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">Semantic HTML</h3>
+              <h3 className="font-medium text-trust-deep">Semantic HTML</h3>
               <p className="text-sm text-secondary-600">
                 Uses standard div elements with flexbox, no ARIA required
               </p>
@@ -666,11 +666,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Logical Source Order
               </h3>
               <p className="text-sm text-secondary-600">
@@ -680,11 +680,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Touch-Friendly Spacing
               </h3>
               <p className="text-sm text-secondary-600">
@@ -695,11 +695,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 Responsive & Flexible
               </h3>
               <p className="text-sm text-secondary-600">
@@ -709,11 +709,11 @@ export const Accessibility: Story = {
           </div>
 
           <div className="flex items-start gap-3">
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-semibold">
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-success-light text-success-hover flex items-center justify-center text-sm font-medium">
               ✓
             </div>
             <div>
-              <h3 className="font-semibold text-trust-deep">
+              <h3 className="font-medium text-trust-deep">
                 No Motion Dependencies
               </h3>
               <p className="text-sm text-secondary-600">

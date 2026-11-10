@@ -148,18 +148,18 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
             {errorText && (
               <InlineError error={errorText} onRetry={() => void handleApprove()} retryLabel="Try approving again" />
             )}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={submitting}>
+                Cancel
+              </Button>
               <Button
-                variant="secondary"
+                variant="primary"
                 size="sm"
                 onClick={handleApprove}
                 isLoading={submitting}
                 disabled={submitting || scopeBlocked}
               >
                 Confirm Approve
-              </Button>
-              <Button variant="ghost" size="sm" onClick={cancel} disabled={submitting}>
-                Cancel
               </Button>
             </div>
           </div>
@@ -172,24 +172,25 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
               <Button
                 variant="danger"
                 size="sm"
-                onClick={() => handleDeny(false)}
-                isLoading={submitting}
-                disabled={submitting}
-              >
-                Deny this request
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
                 onClick={() => handleDeny(true)}
                 disabled={submitting}
-                className="text-red-700 border-red-300 hover:bg-red-50"
               >
                 Block permanently
               </Button>
-              <Button variant="ghost" size="sm" onClick={cancel} disabled={submitting}>
-                Cancel
-              </Button>
+              <div className="ml-auto flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={cancel} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDeny(false)}
+                  isLoading={submitting}
+                  disabled={submitting}
+                >
+                  Deny this request
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -198,10 +199,10 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
           <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
             <p className="text-xs text-neutral-400" data-screenshot-dynamic>Requested {relativeTime(approval.created_at)}</p>
             <div className="flex items-center gap-2">
-              <Button variant="danger" size="sm" onClick={() => setAction('deny')}>
+              <Button variant="outline" size="sm" onClick={() => setAction('deny')}>
                 Deny
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setAction('approve')}>
+              <Button variant="primary" size="sm" onClick={() => setAction('approve')}>
                 Approve
               </Button>
             </div>
@@ -232,9 +233,9 @@ function PermanentAuthCard({ approval, onRevoke, revoking }: PermanentCardProps)
         <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
           <div className="flex items-center gap-1.5 text-xs">
             {isAllowed ? (
-              <span className="font-medium text-green-700">Permanently allowed</span>
+              <span className="font-medium text-success-dark">Permanently allowed</span>
             ) : (
-              <span className="font-medium text-red-700">Permanently denied</span>
+              <span className="font-medium text-error-dark">Permanently denied</span>
             )}
             {decidedAt && (
               <span className="text-neutral-400" data-screenshot-dynamic>
@@ -247,11 +248,10 @@ function PermanentAuthCard({ approval, onRevoke, revoking }: PermanentCardProps)
             )}
           </div>
           <Button
-            variant="ghost"
+            variant="danger"
             size="sm"
             onClick={() => onRevoke(approval.id)}
             disabled={revoking}
-            className="text-red-600 hover:text-red-700"
           >
             {revoking ? 'Revoking…' : 'Revoke'}
           </Button>
@@ -325,7 +325,7 @@ export function ToolAuthorizationsPage() {
         <div className="space-y-8">
           {/* Page header */}
           <div>
-            <h2 className="text-2xl font-semibold text-neutral-900">Tool Authorizations</h2>
+            <h2 className="text-2xl font-medium text-neutral-900">Tool Authorizations</h2>
             <p className="mt-2 text-neutral-600">
               Review pending requests and manage permanent tool permissions.
             </p>
@@ -357,8 +357,8 @@ export function ToolAuthorizationsPage() {
           {!loading && !error && hasPending && (
             <section className="space-y-4">
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-neutral-900">Pending Approvals</h3>
-                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
+                <h3 className="text-lg font-medium text-neutral-900">Pending Approvals</h3>
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-warning-light text-warning-dark text-xs font-medium">
                   {pending.length}
                 </span>
               </div>
@@ -373,7 +373,7 @@ export function ToolAuthorizationsPage() {
           {/* ── Permanent Authorizations ──────────────────────────────── */}
           {!loading && !error && hasPermanent && (
             <section className="space-y-4">
-              <h3 className="text-lg font-semibold text-neutral-900">Permanent Authorizations</h3>
+              <h3 className="text-lg font-medium text-neutral-900">Permanent Authorizations</h3>
               <div className="space-y-3">
                 {permanent.map((a) => (
                   <PermanentAuthCard

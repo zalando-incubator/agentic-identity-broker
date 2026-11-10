@@ -51,7 +51,7 @@ describe('ServiceRequirementCard', () => {
       expect(requiredBadge).toBeInTheDocument();
 
       // Badge should use primary variant (trust-deep color)
-      expect(requiredBadge.closest('span')).toHaveClass('bg-trust');
+      expect(requiredBadge.closest('span')).toHaveClass('bg-trust-deep');
     });
   });
 
@@ -77,7 +77,7 @@ describe('ServiceRequirementCard', () => {
       expect(optionalBadge).toBeInTheDocument();
 
       // Badge should use neutral variant
-      expect(optionalBadge.closest('span')).toHaveClass('bg-neutral-300');
+      expect(optionalBadge.closest('span')).toHaveClass('bg-neutral-100');
     });
   });
 
@@ -134,7 +134,7 @@ describe('ServiceRequirementCard', () => {
       expect(activeBadge).toBeInTheDocument();
 
       // Should use success variant
-      expect(activeBadge.closest('span')).toHaveClass('bg-success-primary');
+      expect(activeBadge.closest('span')).toHaveClass('bg-success-light');
     });
   });
 

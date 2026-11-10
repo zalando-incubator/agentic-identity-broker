@@ -60,7 +60,7 @@ const BuggyApp = ({ shouldThrow }: { shouldThrow: boolean }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
       <div className="bg-white rounded-xl shadow-lg p-8 max-w-lg w-full">
-        <h2 className="text-2xl font-bold text-neutral-900 mb-4">
+        <h2 className="text-2xl font-medium text-neutral-900 mb-4">
           Application Running Normally
         </h2>
         <p className="text-neutral-700 mb-6">
@@ -205,7 +205,7 @@ export const WithErrorReporting: Story = {
         {errorLogs.length > 0 && !shouldThrow && (
           <div className="fixed top-4 right-4 z-50 bg-neutral-900 text-green-400 rounded-lg p-4 max-w-md font-mono text-xs shadow-2xl">
             <div className="flex justify-between items-center mb-2">
-              <span className="font-semibold">Error Reporting Log:</span>
+              <span className="font-medium">Error Reporting Log:</span>
               <button
                 onClick={() => setErrorLogs([])}
                 className="text-neutral-400 hover:text-white underline"
@@ -309,7 +309,7 @@ export const GracefulDegradation: Story = {
                 />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-amber-900">
+            <h2 className="text-2xl font-medium text-amber-900">
               Limited Functionality Mode
             </h2>
           </div>
@@ -378,7 +378,7 @@ export const ErrorCategories: Story = {
         {errorType === 'none' && (
           <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
             <div className="bg-white rounded-xl shadow-2xl p-6 border-2 border-neutral-200">
-              <h3 className="text-lg font-semibold text-neutral-900 mb-4 text-center">
+              <h3 className="text-lg font-medium text-neutral-900 mb-4 text-center">
                 Simulate Different Error Types
               </h3>
               <div className="flex flex-col gap-2">
@@ -436,7 +436,7 @@ export const DevelopmentMode: Story = {
     return (
       <div className="relative">
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
-          <div className="bg-blue-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-semibold">
+          <div className="bg-blue-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium">
             Development Mode - Full Error Details Shown
           </div>
         </div>
@@ -462,7 +462,7 @@ export const ProductionMode: Story = {
     return (
       <div className="relative">
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
-          <div className="bg-green-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-semibold">
+          <div className="bg-green-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium">
             Production Mode - User-Friendly Display
           </div>
         </div>
@@ -498,7 +498,7 @@ export const CompleteExample: Story = {
     const LimitedApp = () => (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center p-6">
         <div className="bg-white rounded-xl shadow-lg p-8 max-w-lg w-full">
-          <h2 className="text-2xl font-bold text-amber-900 mb-4">
+          <h2 className="text-2xl font-medium text-amber-900 mb-4">
             Limited Mode Active
           </h2>
           <p className="text-amber-800 mb-6">
@@ -516,7 +516,7 @@ export const CompleteExample: Story = {
       <div className="relative">
         {errorLogs.length > 0 && !shouldThrow && (
           <div className="fixed top-4 right-4 z-50 bg-neutral-900 text-green-400 rounded-lg p-4 max-w-sm font-mono text-xs shadow-2xl">
-            <div className="font-semibold mb-2">Error Logs:</div>
+            <div className="font-medium mb-2">Error Logs:</div>
             {errorLogs.slice(-3).map((log, index) => (
               <div key={index} className="truncate">
                 {log}
@@ -567,7 +567,7 @@ export const Playground: Story = {
         {!shouldThrow && (
           <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
             <div className="bg-white rounded-xl shadow-2xl p-6 border-2 border-neutral-200">
-              <h3 className="text-lg font-semibold text-neutral-900 mb-4 text-center">
+              <h3 className="text-lg font-medium text-neutral-900 mb-4 text-center">
                 Playground Controls
               </h3>
               <p className="text-sm text-neutral-600 mb-4 text-center">
@@ -620,7 +620,7 @@ export const RealWorldScenarios: Story = {
         {scenario === 'none' && (
           <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
             <div className="bg-white rounded-xl shadow-2xl p-6 border-2 border-neutral-200 max-w-md">
-              <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+              <h3 className="text-lg font-medium text-neutral-900 mb-4">
                 Real-World Error Scenarios
               </h3>
               <p className="text-sm text-neutral-600 mb-4">
@@ -684,7 +684,7 @@ export const Accessibility: Story = {
     <div className="relative">
       <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
         <div className="bg-white rounded-xl shadow-2xl p-6 border-2 border-blue-200 max-w-lg">
-          <h3 className="text-lg font-semibold text-blue-900 mb-3">
+          <h3 className="text-lg font-medium text-blue-900 mb-3">
             Accessibility Features
           </h3>
           <ul className="text-sm text-blue-800 space-y-2 list-disc list-inside">

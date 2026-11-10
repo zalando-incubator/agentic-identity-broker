@@ -371,9 +371,9 @@ func waitForScreenshotRenderStability(page screenshotPage, name string) error {
 	result, err := page.Evaluate(`async () => {
 		await document.fonts.ready
 		for (const [family, specification, sample] of [
-			['Crimson Pro', '700 24px "Crimson Pro"', 'Consent Management'],
-			['Manrope', '400 16px "Manrope"', 'Approve & Delegate'],
-			['JetBrains Mono', '400 14px "JetBrains Mono"', 'tool_name'],
+			['Geist', '500 24px "Geist"', 'Consent Management'],
+			['Geist', '400 16px "Geist"', 'Approve & Delegate'],
+			['Geist Mono', '400 14px "Geist Mono"', 'tool_name'],
 		]) {
 			try {
 				const faces = await document.fonts.load(specification, sample)

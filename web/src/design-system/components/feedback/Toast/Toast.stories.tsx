@@ -303,7 +303,7 @@ export const WithTimer: Story = {
     return (
       <div className="space-y-4 max-w-2xl">
         <div className="p-6 border border-dashed border-neutral-300 rounded-lg">
-          <h4 className="text-sm font-semibold text-neutral-900 mb-3">
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">
             Auto-Dismiss Demo
           </h4>
           <p className="text-sm text-neutral-600 mb-4">
@@ -418,7 +418,7 @@ export const Stacked: Story = {
     return (
       <div className="space-y-4">
         <div className="p-6 border border-dashed border-neutral-300 rounded-lg max-w-2xl">
-          <h4 className="text-sm font-semibold text-neutral-900 mb-3">
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">
             Toast Stack Manager
           </h4>
           <p className="text-sm text-neutral-600 mb-4">
@@ -497,7 +497,7 @@ export const Positions: Story = {
       <div className="h-96 relative border border-dashed border-neutral-300 rounded-lg">
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center">
-            <h4 className="text-sm font-semibold text-neutral-900 mb-3">
+            <h4 className="text-sm font-medium text-neutral-900 mb-3">
               Choose a Position
             </h4>
             <p className="text-sm text-neutral-600 mb-4 max-w-md">
@@ -571,7 +571,7 @@ export const CustomDuration: Story = {
     return (
       <div className="space-y-4 max-w-2xl">
         <div className="p-6 border border-dashed border-neutral-300 rounded-lg">
-          <h4 className="text-sm font-semibold text-neutral-900 mb-3">
+          <h4 className="text-sm font-medium text-neutral-900 mb-3">
             Duration Options
           </h4>
           <p className="text-sm text-neutral-600 mb-4">
@@ -818,7 +818,7 @@ export const RealWorldExamples: Story = {
     return (
       <div className="space-y-6 max-w-3xl">
         <div>
-          <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">
             Consent Management Scenarios
           </h3>
 

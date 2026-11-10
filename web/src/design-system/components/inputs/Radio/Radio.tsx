@@ -18,7 +18,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
 
 const radioVariants = cva(
-  'rounded-full border-1.5 transition-all cursor-pointer flex-shrink-0',
+  'rounded-full border-1.5 transition-colors duration-150 cursor-pointer flex-shrink-0',
   {
     variants: {
       size: {

@@ -1,19 +1,14 @@
 /**
  * Design System Shadow Tokens
- * Premium elevation system for the "Refined Trust Architecture"
+ *
+ * Cards and panels sit on the page behind a hairline, not a shadow. One
+ * floating shadow (`float`, exposed as `shadow-float` in colors.css) lifts
+ * overlays: modals, dropdowns, popovers and toasts.
  */
 
 export const shadows = {
-  // Premium subtle shadows (multi-layer with inset highlight)
-  'sm-premium': '0 1px 2px 0 rgb(0 0 0 / 0.03)',
-  'md-premium': '0 4px 12px 0 rgb(0 0 0 / 0.08)',
-  'lg-premium': '0 10px 25px -5px rgb(0 0 0 / 0.1)',
-  'xl-premium': '0 20px 40px -10px rgb(0 0 0 / 0.12)',
-
-  // Elevated card styling
-  card: '0 2px 8px 0 rgb(0 0 0 / 0.04), inset 0 1px 0 0 rgb(255 255 255 / 1)',
-  'card-hover':
-    '0 8px 20px -4px rgb(0 0 0 / 0.1), inset 0 1px 0 0 rgb(255 255 255 / 1)',
+  // The one floating shadow for overlays
+  float: '0 1px 2px rgba(17, 24, 39, 0.04), 0 12px 32px rgba(17, 24, 39, 0.08)',
 
   // Standard elevation scale
   none: 'none',
@@ -25,8 +20,8 @@ export const shadows = {
   '2xl': '0 25px 50px -12px rgb(0 0 0 / 0.25)',
 
   // Focus rings
-  'focus-ring': '0 0 0 3px rgb(30 77 107 / 0.5)',
-  'focus-ring-error': '0 0 0 3px rgb(220 38 38 / 0.5)',
+  'focus-ring': '0 0 0 2px rgb(10 122 102)',
+  'focus-ring-error': '0 0 0 2px rgb(180 35 24)',
 } as const;
 
 /**
@@ -34,10 +29,10 @@ export const shadows = {
  */
 export const elevationLevels = {
   flat: shadows.none,
-  raised: shadows['sm-premium'],
-  floating: shadows['md-premium'],
-  overlay: shadows['lg-premium'],
-  modal: shadows['xl-premium'],
+  raised: shadows.none,
+  floating: shadows.float,
+  overlay: shadows.float,
+  modal: shadows.float,
 } as const;
 
 export type Shadows = typeof shadows;

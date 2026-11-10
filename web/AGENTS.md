@@ -70,7 +70,7 @@ web/src/
     utils/             cn() (clsx + tailwind-merge), a11y helpers, focus utilities
     docs/              Detailed design guides:
       INDEX.md                Complete documentation index
-      DESIGN_PRINCIPLES.md    Visual philosophy — "Refined Trust Architecture"
+      DESIGN_PRINCIPLES.md    Visual direction (ADR 048): ink ramp, one jade accent, Geist
       COLOR_GUIDE.md          Full color palette with hex values + WCAG ratios
       TOKEN_GUIDE.md          All design tokens with usage examples
       COMPONENT_ARCHETYPES.md Foundational component specifications
@@ -108,7 +108,7 @@ web/src/
 
   styles/
     index.css          Global styles + Tailwind directives
-    fonts.css          Self-hosted Crimson Pro, Manrope, and JetBrains Mono declarations
+    fonts.css          Self-hosted Geist and Geist Mono declarations
 
   types/
     consent.ts         Consent API types: user, agent, service, grant, scope, and permission set
@@ -164,14 +164,15 @@ For conflicting examples, apply the constitution and report the source conflict.
 
 ### Current Visual Direction
 
-`web/src/design-system/docs/DESIGN_PRINCIPLES.md` defines Refined Trust Architecture. A change to that direction requires an ADR.
+`web/src/design-system/docs/DESIGN_PRINCIPLES.md` defines the direction that `adrs/048-consent-ui-design-language.md` sets. A change to that direction requires an ADR.
 The constitution does not prescribe that aesthetic.
 
 | Detail | Current design guide |
 | ------ | -------------------- |
-| Typography | `font-display` for headings, `font-sans` for body text, `font-mono` for code |
-| Elevation | Card shadows, with borders for containment |
-| Motion | 150ms hover, 200ms state changes, 300ms modals, 500ms pages, with reduced-motion support |
+| Typography | Geist at weights 400 and 500 for headings and body (`font-display`, `font-sans`), Geist Mono for identifiers (`font-mono`). No weight above 500 |
+| Color | Cool ink neutrals. One jade accent (`accent`, also `trust`, `cta`, `success-primary`) for the primary action, links, focus and the granted state |
+| Elevation | Hairline borders for containment. `shadow-float` for overlays only. No gradients, glows or lifts |
+| Motion | 150ms hover, 200ms state changes, 300ms modals, 480ms page entrance, one easing curve, with reduced-motion support |
 
 Read `web/src/design-system/docs/TOKEN_GUIDE.md` and `web/src/design-system/docs/MOTION_GUIDE.md` before changing these details.
 
@@ -182,12 +183,14 @@ Use semantic roles instead of copying hex values or raw palette scales into comp
 
 | Token Family | Hex (primary)                            | Use                                 |
 | ------------ | ---------------------------------------- | ----------------------------------- |
-| `trust-*`    | #0A2540 (deep), #1E4D6B, #E8F1F5 (light) | Primary brand, headings, actions    |
-| `cta-*`      | #D97706                                  | Call-to-action buttons and links    |
-| `success-*`  | #059669                                  | Granted permissions, success states |
-| `error-*`    | #DC2626                                  | Error states, destructive actions   |
-| `warning-*`  | #D97706                                  | Warnings, attention signals         |
-| `neutral-*`  | #faf9f7 → #1a1511 (50–900 scale)         | Palette behind semantic background, text, and border roles |
+| `accent-*`   | #0a7a66, hover #086a59, `accent-soft` tint | Primary action, links, focus ring, granted state |
+| `line`, `line-strong`, `surface`, `raised`, `page` | ink at 8% and 14%, #ffffff, #f0f2f6, #fbfcfd | Hairlines and surfaces |
+| `trust-*`    | #111827 (deep, ink), #0a7a66 (accent), #e7f3f0 (light) | Headings and primary text (`trust-deep`), actions and links (`trust`) |
+| `cta-*`      | #0a7a66                                  | Same as the accent                  |
+| `success-*`  | #0a7a66                                  | Granted permissions, success states (same as the accent) |
+| `error-*`    | #b42318                                  | Error states, destructive actions   |
+| `warning-*`  | #b54708                                  | Warnings, attention signals         |
+| `neutral-*`  | #fbfcfd → #111827 (50–900 scale)         | Cool ink palette behind background, text, and border roles |
 
 ## API Client Pattern
 

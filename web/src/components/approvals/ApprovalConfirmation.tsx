@@ -5,6 +5,8 @@
  * Displays the outcome and allows the user to close the page.
  */
 
+import { Check, X } from 'lucide-react';
+
 interface ApprovalConfirmationProps {
   type: 'approved' | 'denied';
   persistence?: 'once' | 'session' | 'permanent' | null;
@@ -29,8 +31,14 @@ export function ApprovalConfirmation({
   if (isApproved && historical) {
     return (
       <div className="max-w-2xl mx-auto p-6">
-        <div className="rounded-xl border border-success-primary/30 bg-success-light p-8 text-center space-y-4">
-          <p className="text-xl font-semibold text-success-dark">
+        <div className="rounded-xl border border-line bg-white p-8 text-center space-y-4">
+          <div
+            className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-success-primary/20 bg-success-light text-success-primary"
+            aria-hidden="true"
+          >
+            <Check className="h-5 w-5" strokeWidth={1.5} />
+          </div>
+          <p className="text-xl font-medium text-trust-deep">
             Decision recorded.
           </p>
           <p className="text-sm text-neutral-700">
@@ -46,22 +54,27 @@ export function ApprovalConfirmation({
 
   return (
     <div className="max-w-2xl mx-auto p-6">
-      <div
-        className={`rounded-xl border p-8 text-center space-y-4 ${
-          isApproved
-            ? 'border-success-primary/30 bg-success-light'
-            : 'border-error-primary/30 bg-error-light'
-        }`}
-      >
-        <div className="text-5xl" aria-hidden="true">
-          {isApproved ? '✓' : '✕'}
+      <div className="rounded-xl border border-line bg-white p-8 text-center space-y-4">
+        <div
+          className={`mx-auto flex h-10 w-10 items-center justify-center rounded-lg border ${
+            isApproved
+              ? 'border-success-primary/20 bg-success-light text-success-primary'
+              : 'border-error-primary/20 bg-error-light text-error-primary'
+          }`}
+          aria-hidden="true"
+        >
+          {isApproved ? (
+            <Check className="h-5 w-5" strokeWidth={1.5} />
+          ) : (
+            <X className="h-5 w-5" strokeWidth={1.5} />
+          )}
         </div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
+        <p className="text-xs font-medium text-neutral-600">
           Decision recorded
         </p>
         <h2
-          className={`text-xl font-semibold ${
-            isApproved ? 'text-success-dark' : 'text-error-primary'
+          className={`text-xl font-medium ${
+            isApproved ? 'text-trust-deep' : 'text-error-dark'
           }`}
         >
           {outcome}

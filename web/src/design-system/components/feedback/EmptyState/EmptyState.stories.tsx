@@ -356,7 +356,7 @@ export const ConsentScenarios: Story = {
     <div className="space-y-12 max-w-4xl mx-auto">
       {/* No active consents */}
       <div className="border border-neutral-200 rounded-lg p-8">
-        <h4 className="text-sm font-semibold text-neutral-700 mb-6">
+        <h4 className="text-sm font-medium text-neutral-700 mb-6">
           Active Consents Tab
         </h4>
         <EmptyState
@@ -372,7 +372,7 @@ export const ConsentScenarios: Story = {
 
       {/* No pending requests */}
       <div className="border border-neutral-200 rounded-lg p-8">
-        <h4 className="text-sm font-semibold text-neutral-700 mb-6">
+        <h4 className="text-sm font-medium text-neutral-700 mb-6">
           Pending Requests Tab
         </h4>
         <EmptyState
@@ -384,7 +384,7 @@ export const ConsentScenarios: Story = {
 
       {/* No revoked consents */}
       <div className="border border-neutral-200 rounded-lg p-8">
-        <h4 className="text-sm font-semibold text-neutral-700 mb-6">
+        <h4 className="text-sm font-medium text-neutral-700 mb-6">
           Revoked History Tab
         </h4>
         <EmptyState
@@ -401,7 +401,7 @@ export const ConsentScenarios: Story = {
       {/* Search with no results */}
       <div className="border border-neutral-200 rounded-lg p-8">
         <div className="mb-6">
-          <h4 className="text-sm font-semibold text-neutral-700 mb-2">
+          <h4 className="text-sm font-medium text-neutral-700 mb-2">
             Search Results
           </h4>
           <input
@@ -438,7 +438,7 @@ export const SizeComparison: Story = {
   render: () => (
     <div className="space-y-8">
       <div className="border border-neutral-200 rounded-lg p-4">
-        <h4 className="text-xs font-semibold text-neutral-500 uppercase mb-4">
+        <h4 className="text-xs font-medium text-neutral-500 uppercase mb-4">
           Compact Size
         </h4>
         <EmptyState
@@ -454,7 +454,7 @@ export const SizeComparison: Story = {
       </div>
 
       <div className="border border-neutral-200 rounded-lg p-6">
-        <h4 className="text-xs font-semibold text-neutral-500 uppercase mb-6">
+        <h4 className="text-xs font-medium text-neutral-500 uppercase mb-6">
           Default Size
         </h4>
         <EmptyState
@@ -474,7 +474,7 @@ export const SizeComparison: Story = {
       </div>
 
       <div className="border border-neutral-200 rounded-lg p-8">
-        <h4 className="text-xs font-semibold text-neutral-500 uppercase mb-8">
+        <h4 className="text-xs font-medium text-neutral-500 uppercase mb-8">
           Expanded Size
         </h4>
         <EmptyState
@@ -507,7 +507,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Accessibility Features
         </h4>
         <ul className="text-sm text-neutral-700 space-y-1">

@@ -182,7 +182,7 @@ export function ApprovalScopeEditor({
 
       {keys.length > 0 && (
         <div className="space-y-0">
-          <p className="pb-2 text-xs font-semibold uppercase tracking-wide text-trust">Request details</p>
+          <p className="pb-2 text-xs font-medium text-neutral-500">Request details</p>
           {keys.map((key) => {
             const mode = modeOf(key);
             const label = humanizeParameterKey(key);
@@ -202,7 +202,7 @@ export function ApprovalScopeEditor({
                 <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(12rem,0.8fr)] sm:items-center">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <span className="text-sm font-semibold text-trust">{label}</span>
+                      <span className="text-sm font-medium text-trust-deep">{label}</span>
                       {label !== key && (
                         <code className="font-mono text-xs text-neutral-500 break-all">{key}</code>
                       )}
@@ -278,7 +278,7 @@ export function ApprovalScopeEditor({
       </Button>
 
       <div className="space-y-2 border-t border-neutral-200 pt-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Applies to</p>
+        <p className="text-xs font-medium text-neutral-500">Applies to</p>
         <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-700 break-words">
           <li>{`Only the tool ${approval.tool_name}`}</li>
           {keys.map((key) => {
@@ -296,7 +296,7 @@ export function ApprovalScopeEditor({
       </div>
 
       <div className="space-y-2 border-t border-neutral-200 pt-5" aria-label="Approval pattern preview">
-        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Technical rule</p>
+        <p className="text-xs font-medium text-neutral-500">Technical rule</p>
         <code className="font-mono text-xs text-neutral-500 break-words">
           {serverPreview}
         </code>

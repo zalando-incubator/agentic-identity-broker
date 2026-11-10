@@ -34,6 +34,8 @@ import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
 import { loadConsentState, saveConsentSelections } from '@services/storage/session';
 import { validateGrantRequest, isSafeRedirectUrl } from '../utils/validation';
 import { scrollToError } from '../utils/scrollToError';
+import { format, isPast } from 'date-fns';
+import { BookOpen, ExternalLink, FileText } from 'lucide-react';
 
 /**
  * AgentGrantDetailPage displays detailed agent information and service grants.
@@ -112,6 +114,10 @@ export function AgentGrantDetailPage() {
   } = useToggleGrant(resolvedAgentId);
 
   const hasExistingGrant = grants !== null;
+  const isGrantExpired = grants?.valid_until
+    ? isPast(new Date(grants.valid_until))
+    : false;
+  const grantedSetCount = Object.keys(grants?.granted_permission_sets ?? {}).length;
 
   // Validity hook (initialized from grant if it exists)
   const {
@@ -532,8 +538,8 @@ export function AgentGrantDetailPage() {
                     referrerPolicy="no-referrer"
                   />
                 ) : (
-                  <div className="w-20 h-20 bg-gradient-to-br from-trust to-trust-hover rounded-lg flex items-center justify-center">
-                    <span className="text-white text-2xl font-semibold">
+                  <div className="w-20 h-20 bg-neutral-100 border border-line rounded-lg flex items-center justify-center">
+                    <span className="text-neutral-600 text-2xl font-medium">
                       {agent.displayName.charAt(0).toUpperCase()}
                     </span>
                   </div>
@@ -545,7 +551,7 @@ export function AgentGrantDetailPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <h1
-                      className="text-2xl font-display font-bold text-trust-deep"
+                      className="text-2xl font-display font-medium text-trust-deep"
                       data-testid="agent-name-heading"
                     >
                       {agent.displayName}
@@ -563,19 +569,7 @@ export function AgentGrantDetailPage() {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 text-sm font-medium text-trust-hover hover:text-trust focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2 rounded"
                     >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
+                      <FileText className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
                       Governance
                     </a>
                   )}
@@ -586,19 +580,7 @@ export function AgentGrantDetailPage() {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 text-sm font-medium text-trust-hover hover:text-trust focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2 rounded"
                     >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-                        />
-                      </svg>
+                      <BookOpen className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
                       Documentation
                     </a>
                   )}
@@ -609,23 +591,36 @@ export function AgentGrantDetailPage() {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 text-sm font-medium text-trust-hover hover:text-trust focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2 rounded"
                     >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                        />
-                      </svg>
+                      <ExternalLink className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
                       Agent Interface
                     </a>
                   )}
                 </div>
+
+                {/* The grant the broker holds for this agent, as the register records it */}
+                {grants && (
+                  <p
+                    className="mt-4 flex flex-wrap items-center gap-x-2 font-mono text-xs text-neutral-500 tabular-nums"
+                    data-testid="grant-line"
+                  >
+                    <span className={`inline-flex items-center gap-2 ${isGrantExpired ? 'text-tertiary' : 'text-accent'}`}>
+                      <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                      {isGrantExpired ? 'grant expired' : 'grant active'}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>since {format(new Date(grants.created_at), 'yyyy-MM-dd')}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      {grants.valid_until
+                        ? `valid until ${format(new Date(grants.valid_until), 'yyyy-MM-dd')}`
+                        : 'no end date'}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      {grantedSetCount} permission {grantedSetCount === 1 ? 'set' : 'sets'}
+                    </span>
+                  </p>
+                )}
               </div>
             </div>
           </Card>
@@ -664,7 +659,7 @@ export function AgentGrantDetailPage() {
 
           {/* End date section */}
           <div>
-            <h2 className="text-xl font-semibold text-trust-deep mb-4">
+            <h2 className="text-xl font-medium text-trust-deep mb-4">
               End Date
             </h2>
             <GrantValidityControl
@@ -698,7 +693,7 @@ export function AgentGrantDetailPage() {
           {servicesWithoutActiveSessions.length > 0 && (
             <div className="space-y-4">
               <div>
-                <h2 className="text-xl font-semibold text-trust-deep">
+                <h2 className="text-xl font-medium text-trust-deep">
                   Connect Your Accounts
                   <span className="ml-2 text-sm font-normal text-neutral-500">
                     ({servicesWithoutActiveSessions.length})
@@ -755,6 +750,7 @@ export function AgentGrantDetailPage() {
 
             <Button
               variant="primary"
+              className="ml-auto"
               onClick={handleSubmit}
               isLoading={isSubmitting}
               disabled={isApproveDisabled}

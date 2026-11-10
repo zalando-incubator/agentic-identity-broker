@@ -1,15 +1,16 @@
 /**
  * Design System Typography Tokens
  *
- * Typography scale optimized for the "Refined Trust Architecture" aesthetic.
- * Crimson Pro (serif) for headings creates authority, Manrope (sans) for body maintains approachability.
+ * Typography scale for the broker's design language: exact, sober, accountable.
+ * Geist carries text and headings at weights 400 and 500. Geist Mono carries
+ * identifiers, scopes and dates.
  */
 
 export const typography = {
   fontFamily: {
-    display: "'Crimson Pro', serif",
-    sans: "'Manrope', sans-serif",
-    mono: "'JetBrains Mono', monospace",
+    display: "'Geist', ui-sans-serif, system-ui, sans-serif",
+    sans: "'Geist', ui-sans-serif, system-ui, sans-serif",
+    mono: "'Geist Mono', ui-monospace, monospace",
   },
   fontSize: {
     xs: '0.75rem', // 12px
@@ -38,8 +39,8 @@ export const typography = {
     loose: 2,
   },
   letterSpacing: {
-    tighter: '-0.05em',
-    tight: '-0.02em',
+    tighter: '-0.025em',
+    tight: '-0.015em',
     normal: '0',
     wide: '0.025em',
     wider: '0.05em',
@@ -51,12 +52,12 @@ export const typography = {
  * Apply these as className strings in components
  */
 export const textStyles = {
-  h1: 'font-display text-4xl font-bold leading-tight tracking-tight',
-  h2: 'font-display text-3xl font-bold leading-tight tracking-tight',
-  h3: 'font-display text-2xl font-semibold leading-snug tracking-tight',
-  h4: 'font-display text-xl font-semibold leading-snug',
-  h5: 'font-display text-lg font-semibold leading-snug',
-  h6: 'font-display text-base font-semibold leading-normal',
+  h1: 'font-display text-4xl font-medium leading-tight tracking-tight',
+  h2: 'font-display text-3xl font-medium leading-tight tracking-tight',
+  h3: 'font-display text-2xl font-medium leading-snug tracking-tight',
+  h4: 'font-display text-xl font-medium leading-snug',
+  h5: 'font-display text-lg font-medium leading-snug',
+  h6: 'font-display text-base font-medium leading-normal',
   body: 'font-sans text-base font-normal leading-normal',
   bodyLarge: 'font-sans text-lg font-normal leading-relaxed',
   bodySmall: 'font-sans text-sm font-normal leading-normal',

@@ -108,15 +108,19 @@ export function DatePicker({
           disabled:bg-neutral-100 disabled:text-neutral-500 disabled:cursor-not-allowed
           ${
             hasError
-              ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-              : 'border-neutral-300 focus:border-blue-500 focus:ring-blue-500'
+              ? 'border-error-primary/30 focus:border-error-primary focus:ring-error-primary'
+              : 'border-neutral-300 focus:border-accent focus:ring-accent'
           }
         `}
         aria-invalid={hasError}
         aria-describedby={hasError ? 'date-error' : undefined}
       />
       {hasError && (
-        <p id="date-error" className="mt-2 text-sm text-red-600" role="alert">
+        <p
+          id="date-error"
+          className="mt-2 text-sm text-error-primary"
+          role="alert"
+        >
           {error}
         </p>
       )}

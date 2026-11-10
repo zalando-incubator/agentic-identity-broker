@@ -21,6 +21,7 @@ import { Badge } from '@design-system/components/primitives/Badge';
 import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
 import { Stack } from '@design-system/components/layout/Stack';
 import type { SessionSummary } from '@services/api/sessions';
+import { Clock, Lock, Users } from 'lucide-react';
 
 interface SessionCardProps {
   /** Session data to display */
@@ -90,11 +91,21 @@ export const SessionCard: React.FC<SessionCardProps> = ({
       {/* Header: Service name and Terminate button */}
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="flex-1">
-          <h3 className="m-0 text-lg font-semibold text-neutral-900">
+          <h3 className="m-0 text-lg font-medium text-neutral-900">
             {session.service_display_name}
           </h3>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => onTerminate(session.service_id)}
+            isLoading={loading}
+            disabled={loading || refreshing}
+            className="mr-2 flex-shrink-0"
+          >
+            Terminate
+          </Button>
           {onViewDetails && (
             <Button
               variant="outline"
@@ -108,7 +119,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           )}
           {onRefresh && session.has_refresh_token && !needsLogin && (
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
               onClick={() => onRefresh(session.service_id)}
               isLoading={refreshing}
@@ -120,7 +131,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           )}
           {onLogin && needsLogin && (
             <Button
-              variant="secondary"
+              variant="primary"
               size="sm"
               onClick={() => onLogin(session.service_id)}
               disabled={loading}
@@ -129,16 +140,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               Login
             </Button>
           )}
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => onTerminate(session.service_id)}
-            isLoading={loading}
-            disabled={loading || refreshing}
-            className="flex-shrink-0"
-          >
-            Terminate
-          </Button>
         </div>
       </div>
 
@@ -159,18 +160,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         {/* Encryption indicator */}
         <StatusIndicator
           icon={
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z"
-                clipRule="evenodd"
-              />
-            </svg>
+            <Lock className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
           }
           label={session.is_encrypted ? 'Encrypted' : 'Not Encrypted'}
           variant={session.is_encrypted ? 'success' : 'default'}
@@ -179,14 +169,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         {/* Dependent agents count */}
         <StatusIndicator
           icon={
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path d="M10 9a3 3 0 100-6 3 3 0 000 6zM6 8a2 2 0 11-4 0 2 2 0 014 0zM1.49 15.326a.78.78 0 01-.358-.442 3 3 0 014.308-3.516 6.484 6.484 0 00-1.905 3.959c-.023.222-.014.442.025.654a4.97 4.97 0 01-2.07-.655zM16.44 15.98a4.97 4.97 0 002.07-.654.78.78 0 00.357-.442 3 3 0 00-4.308-3.517 6.484 6.484 0 011.907 3.96 2.32 2.32 0 01-.026.654zM18 8a2 2 0 11-4 0 2 2 0 014 0zM5.304 16.19a.844.844 0 01-.277-.71 5 5 0 019.947 0 .843.843 0 01-.277.71A6.975 6.975 0 0110 18a6.974 6.974 0 01-4.696-1.81z" />
-            </svg>
+            <Users className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
           }
           label={`${session.dependent_agent_count} agent${session.dependent_agent_count !== 1 ? 's' : ''}`}
         />
@@ -194,18 +177,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         {/* Initiation time */}
         <StatusIndicator
           icon={
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z"
-                clipRule="evenodd"
-              />
-            </svg>
+            <Clock className="w-4 h-4" aria-hidden="true" strokeWidth={1.5} />
           }
           label={`Established: ${initiatedDate}`}
         />

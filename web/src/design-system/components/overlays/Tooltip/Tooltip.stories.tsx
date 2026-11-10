@@ -203,7 +203,7 @@ export const LongContent: Story = {
       <Tooltip
         content={
           <div className="max-w-xs">
-            <p className="mb-2 font-semibold">Enhanced Privacy Controls</p>
+            <p className="mb-2 font-medium">Enhanced Privacy Controls</p>
             <p className="text-sm leading-relaxed">
               This feature allows you to manage consent preferences with
               granular control over data sharing and third-party access.
@@ -220,7 +220,7 @@ export const LongContent: Story = {
       <Tooltip
         content={
           <div className="space-y-1 text-xs">
-            <div className="font-semibold mb-1">Keyboard Shortcuts:</div>
+            <div className="font-medium mb-1">Keyboard Shortcuts:</div>
             <div>Ctrl + S - Save</div>
             <div>Ctrl + Z - Undo</div>
             <div>Ctrl + Y - Redo</div>
@@ -313,7 +313,7 @@ export const IconTrigger: Story = {
           <Tooltip
             content={
               <div className="text-xs">
-                <div className="font-semibold mb-1">Authorized Services:</div>
+                <div className="font-medium mb-1">Authorized Services:</div>
                 <div>• Analytics Dashboard</div>
                 <div>• Marketing Platform</div>
                 <div>• CRM Integration</div>
@@ -355,7 +355,7 @@ export const KeyboardFocus: Story = {
   render: () => (
     <div className="p-12 space-y-6 max-w-2xl">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Keyboard Accessibility
         </h4>
         <p className="text-sm text-neutral-700 mb-3">
@@ -469,7 +469,7 @@ export const RealWorldExamples: Story = {
     return (
       <div className="space-y-8 max-w-3xl p-8">
         <div>
-          <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">
             Consent Management UI Examples
           </h3>
 
@@ -478,7 +478,7 @@ export const RealWorldExamples: Story = {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">
-                  <h4 className="text-base font-semibold text-neutral-900">
+                  <h4 className="text-base font-medium text-neutral-900">
                     Analytics Dashboard
                   </h4>
                   <Tooltip
@@ -507,7 +507,7 @@ export const RealWorldExamples: Story = {
               <Tooltip
                 content={
                   <div className="text-xs space-y-1">
-                    <div className="font-semibold">Permissions:</div>
+                    <div className="font-medium">Permissions:</div>
                     <div>• View usage data</div>
                     <div>• Read profile info</div>
                     <div>• Anonymous analytics</div>
@@ -662,7 +662,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl p-8">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Accessibility Features
         </h4>
         <ul className="text-sm text-neutral-700 space-y-1">

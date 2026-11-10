@@ -14,34 +14,34 @@ This design system provides a comprehensive component library optimized for capt
 
 ### Refined Trust Architecture
 
-The aesthetic blends the visual gravity of a **bank vault** with the approachability of **modern SaaS**. This is where users make critical decisions about AI agent permissions, so every pixel must communicate authority and trust.
+The aesthetic is **exact, sober and accountable**. This is where users decide what an agent may do in their name, so the interface states facts, asks one question, and does not sell. The public docs site shares the same language (ADR 048).
 
 **Core Principles:**
 
-- **Serif Authority with Warm Humanity**: Crimson Pro (serif) for headings creates trust, Manrope (sans) for body text adds approachability
-- **Color as Semantic Signal**: Navy for authority, Emerald for success, Amber for attention
-- **Elevation Through Shadow**: Multi-layer shadows create depth without borders
-- **Motion That Guides**: Purposeful animations (150-500ms) that guide without entertaining
-- **Whitespace as Luxury**: Generous padding and spacing create a premium feel
+- **Hierarchy Through Size, Not Weight**: Geist at weights 400 and 500 only; nothing is bold
+- **One Accent**: Jade marks the primary action, links and the granted state. Everything else is ink on a cool neutral ground
+- **Containment Through Hairlines**: Cards sit behind a 1px hairline. One floating shadow serves overlays only
+- **Motion That Guides**: One easing curve, 150 to 300ms, that never bounces
+- **Whitespace as Structure**: Generous padding and hairline rules instead of boxes
 
 ## Typography
 
 ```css
-Headings: Crimson Pro (serif) - 600/700 weight
-Body: Manrope (sans-serif) - 400/500 weight
-Monospace: JetBrains Mono - 500 weight
+Headings: Geist - 500 weight, letter-spacing -0.015em
+Body: Geist - 400 weight, 500 for labels
+Monospace: Geist Mono - 400 weight
 ```
 
 ## Color System
 
 ### Semantic Tokens
 
-- **trust-deep** (#0A2540): Primary actions, critical UI
-- **trust** (#1E4D6B): Medium authority elements
-- **trust-light** (#E8F1F5): Light backgrounds
-- **cta** (#D97706): Call-to-action buttons, warnings
-- **success-primary** (#059669): Success states, granted permissions
-- **error-primary** (#DC2626): Error states
+- **accent** (#0a7a66): The primary action, links, focus and the granted state
+- **trust-deep** (#111827): Headings and primary text (ink)
+- **trust** (#0a7a66): Same as the accent
+- **trust-light** (#e7f3f0): Active navigation and tints
+- **success-primary** (#0a7a66): Granted permissions, same as the accent
+- **error-primary** (#b42318): Error states
 
 ## Component Categories
 

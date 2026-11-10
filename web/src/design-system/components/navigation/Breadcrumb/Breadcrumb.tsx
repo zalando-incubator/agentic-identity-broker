@@ -19,6 +19,7 @@
 import React from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { ChevronRight, EllipsisVertical } from 'lucide-react';
 
 const breadcrumbVariants = cva(
   // Base styles for the nav container
@@ -117,34 +118,18 @@ export interface BreadcrumbProps extends React.ComponentPropsWithoutRef<'nav'> {
  * Default chevron separator icon
  */
 const ChevronSeparator: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M9 5l7 7-7 7"
-    />
-  </svg>
+  <ChevronRight className={className} aria-hidden="true" strokeWidth={1.5} />
 );
 
 /**
  * Ellipsis icon for collapsed items
  */
 const EllipsisIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
+  <EllipsisVertical
     className={className}
-    fill="currentColor"
-    viewBox="0 0 24 24"
     aria-hidden="true"
-  >
-    <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
-  </svg>
+    strokeWidth={1.5}
+  />
 );
 
 /**

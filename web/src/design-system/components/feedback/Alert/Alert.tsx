@@ -17,10 +17,11 @@
 import React, { useState } from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { CircleCheck, CircleX, Info, TriangleAlert, X } from 'lucide-react';
 
 const alertVariants = cva(
   // Base styles - applied to all variants
-  'relative flex gap-3 rounded-lg border p-4 transition-all duration-300',
+  'relative flex gap-3 rounded-lg border p-4 transition-opacity duration-200',
   {
     variants: {
       variant: {
@@ -89,88 +90,23 @@ export interface AlertProps extends Omit<
 
 // Default icons for each variant (SVG)
 const InfoIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
+  <Info className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const SuccessIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
+  <CircleCheck className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const WarningIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-    />
-  </svg>
+  <TriangleAlert className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const ErrorIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
+  <CircleX className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const CloseIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M6 18L18 6M6 6l12 12"
-    />
-  </svg>
+  <X className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 /**
@@ -271,9 +207,7 @@ export const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
         {/* Content */}
         <div className="flex-1 min-w-0">
           {title && (
-            <h4 className="text-sm font-semibold mb-1 leading-tight">
-              {title}
-            </h4>
+            <h4 className="text-sm font-medium mb-1 leading-tight">{title}</h4>
           )}
           <div className="text-sm leading-relaxed">{children}</div>
         </div>

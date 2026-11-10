@@ -246,7 +246,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
             {/* Page header */}
             <div>
-              <h2 className="text-2xl font-semibold text-neutral-900">
+              <h2 className="text-2xl font-medium text-neutral-900">
                 Third-Party Sessions
               </h2>
               <p className="mt-2 text-neutral-600">
@@ -295,7 +295,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
             {/* Page header */}
             <div>
-              <h2 className="text-2xl font-semibold text-neutral-900">
+              <h2 className="text-2xl font-medium text-neutral-900">
                 Third-Party Sessions
               </h2>
               <p className="mt-2 text-neutral-600">
@@ -336,7 +336,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
             {/* Page header */}
             <div>
-              <h2 className="text-2xl font-semibold text-neutral-900">
+              <h2 className="text-2xl font-medium text-neutral-900">
                 Third-Party Sessions
               </h2>
               <p className="mt-2 text-neutral-600">
@@ -353,7 +353,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
                 title="No Sessions Found"
                 description="You haven't authenticated with any third-party services yet. Sessions will appear here once you grant permissions to agents."
               >
-                <Button variant="primary" onClick={refetch}>
+                <Button variant="outline" onClick={refetch}>
                   Refresh
                 </Button>
               </EmptyState>
@@ -383,7 +383,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
           {/* Page header */}
           <div>
-            <h2 className="text-2xl font-semibold text-neutral-900">
+            <h2 className="text-2xl font-medium text-neutral-900">
               Third-Party Sessions
             </h2>
             <p className="mt-2 text-neutral-600">

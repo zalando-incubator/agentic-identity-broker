@@ -16,6 +16,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { cn } from '@design-system/utils';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 
 export interface ErrorBoundaryProps {
   /** Child components to protect with error boundary */
@@ -40,37 +41,11 @@ interface ErrorBoundaryState {
 }
 
 const ErrorIcon = () => (
-  <svg
-    className="w-6 h-6"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-    />
-  </svg>
+  <TriangleAlert className="w-6 h-6" aria-hidden="true" strokeWidth={1.5} />
 );
 
 const RefreshIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-    />
-  </svg>
+  <RefreshCw className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 /**
@@ -190,7 +165,7 @@ export class ErrorBoundary extends Component<
             <ErrorIcon />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-error-dark mb-1">
+            <h3 className="text-lg font-medium text-error-dark mb-1">
               Something went wrong
             </h3>
             <p className="text-sm text-error-dark/80">
@@ -205,7 +180,7 @@ export class ErrorBoundary extends Component<
         {showDetails && (
           <div className="mb-4 space-y-3">
             <div className="bg-error-dark/5 border border-error-primary/20 rounded-md p-4">
-              <h4 className="text-xs font-semibold text-error-dark uppercase tracking-wide mb-2">
+              <h4 className="text-xs font-medium text-error-dark mb-2">
                 Error Message
               </h4>
               <p className="text-sm font-mono text-error-dark break-words">
@@ -215,7 +190,7 @@ export class ErrorBoundary extends Component<
 
             {errorInfo?.componentStack && (
               <details className="bg-error-dark/5 border border-error-primary/20 rounded-md">
-                <summary className="cursor-pointer p-4 text-xs font-semibold text-error-dark uppercase tracking-wide hover:bg-error-dark/5">
+                <summary className="cursor-pointer p-4 text-xs font-medium text-error-dark hover:bg-error-dark/5">
                   Component Stack (Click to expand)
                 </summary>
                 <pre className="p-4 pt-2 text-xs font-mono text-error-dark overflow-x-auto">
@@ -226,7 +201,7 @@ export class ErrorBoundary extends Component<
 
             {error.stack && (
               <details className="bg-error-dark/5 border border-error-primary/20 rounded-md">
-                <summary className="cursor-pointer p-4 text-xs font-semibold text-error-dark uppercase tracking-wide hover:bg-error-dark/5">
+                <summary className="cursor-pointer p-4 text-xs font-medium text-error-dark hover:bg-error-dark/5">
                   Error Stack (Click to expand)
                 </summary>
                 <pre className="p-4 pt-2 text-xs font-mono text-error-dark overflow-x-auto">
@@ -256,21 +231,6 @@ export class ErrorBoundary extends Component<
 
         {/* Action buttons */}
         <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={this.resetErrorBoundary}
-            className={cn(
-              'inline-flex items-center gap-2 px-4 py-2 rounded-md',
-              'bg-error-primary text-white font-medium text-sm',
-              'hover:bg-error-dark transition-colors duration-200',
-              'focus:outline-none focus:ring-2 focus:ring-error-primary focus:ring-offset-2',
-              'shadow-sm hover:shadow-md',
-            )}
-          >
-            <RefreshIcon />
-            Try Again
-          </button>
-
           {showDetails && (
             <button
               type="button"
@@ -286,6 +246,21 @@ export class ErrorBoundary extends Component<
               Reload Page
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={this.resetErrorBoundary}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-md',
+              'bg-error-primary text-white font-medium text-sm',
+              'hover:bg-error-dark transition-colors duration-200',
+              'focus:outline-none focus:ring-2 focus:ring-error-primary focus:ring-offset-2',
+              'shadow-sm hover:shadow-md',
+            )}
+          >
+            <RefreshIcon />
+            Try Again
+          </button>
         </div>
 
         {/* Additional context for developers */}

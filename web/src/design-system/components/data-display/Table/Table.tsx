@@ -23,6 +23,7 @@ import React from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
 import { Skeleton } from '@design-system/components/feedback/Skeleton';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 const tableVariants = cva('w-full border-collapse', {
   variants: {
@@ -50,7 +51,7 @@ const cellVariants = cva(
         right: 'text-right',
       },
       type: {
-        header: 'font-semibold text-neutral-900 bg-neutral-50',
+        header: 'font-medium text-neutral-900 bg-neutral-50',
         body: 'text-neutral-700',
       },
     },
@@ -140,26 +141,22 @@ const SortIcon: React.FC<{
 
   return (
     <span className="ml-2 inline-flex flex-col" aria-hidden="true">
-      <svg
+      <ChevronUp
         className={cn(
           'w-3 h-3 -mb-1',
           isAsc ? 'text-trust-deep' : 'text-neutral-400',
         )}
-        fill="currentColor"
-        viewBox="0 0 20 20"
-      >
-        <path d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" />
-      </svg>
-      <svg
+        aria-hidden="true"
+        strokeWidth={1.5}
+      />
+      <ChevronDown
         className={cn(
           'w-3 h-3',
           isDesc ? 'text-trust-deep' : 'text-neutral-400',
         )}
-        fill="currentColor"
-        viewBox="0 0 20 20"
-      >
-        <path d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" />
-      </svg>
+        aria-hidden="true"
+        strokeWidth={1.5}
+      />
     </span>
   );
 };
@@ -344,7 +341,7 @@ export const Table = <T extends Record<string, unknown>>({
     >
       <table className={cn(tableVariants({ density }))}>
         {caption && (
-          <caption className="px-4 py-3 text-left text-sm font-semibold text-neutral-900 bg-neutral-50 border-b border-neutral-200">
+          <caption className="px-4 py-3 text-left text-sm font-medium text-neutral-900 bg-neutral-50 border-b border-neutral-200">
             {caption}
           </caption>
         )}

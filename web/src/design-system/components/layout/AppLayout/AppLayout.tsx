@@ -18,6 +18,7 @@
 import React, { useState, useEffect } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { ChevronLeft, ChevronRight, Menu, X } from 'lucide-react';
 
 const appLayoutVariants = cva(
   // Base styles - full viewport height, overflow management
@@ -403,31 +404,29 @@ export const AppLayout = React.forwardRef<HTMLDivElement, AppLayoutProps>(
         {sidebar && sidebarCollapsible && (
           <button
             onClick={handleToggle}
-            className="hidden md:block fixed bottom-4 left-4 z-30 p-2 bg-trust-deep text-white rounded-full shadow-lg hover:bg-trust-hover transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2"
+            className="hidden md:block fixed bottom-4 left-4 z-30 p-2 bg-trust-deep text-white rounded-full shadow-float hover:bg-neutral-800 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2"
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-expanded={!isCollapsed}
           >
-            <svg
-              className="w-5 h-5 transition-transform duration-300"
-              style={{
-                transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)',
-              }}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d={
-                  sidebarPosition === 'left'
-                    ? 'M15 19l-7-7 7-7'
-                    : 'M9 5l7 7-7 7'
-                }
+            {sidebarPosition === 'left' ? (
+              <ChevronLeft
+                className="w-5 h-5 transition-transform duration-300"
+                style={{
+                  transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+                }}
+                strokeWidth={1.5}
+                aria-hidden="true"
               />
-            </svg>
+            ) : (
+              <ChevronRight
+                className="w-5 h-5 transition-transform duration-300"
+                style={{
+                  transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+                }}
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
+            )}
           </button>
         )}
 
@@ -435,33 +434,15 @@ export const AppLayout = React.forwardRef<HTMLDivElement, AppLayoutProps>(
         {sidebar && mobileDrawer && (
           <button
             onClick={handleMobileToggle}
-            className="md:hidden fixed bottom-4 right-4 z-30 p-3 bg-trust-deep text-white rounded-full shadow-lg hover:bg-trust-hover transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2"
+            className="md:hidden fixed bottom-4 right-4 z-30 p-3 bg-trust-deep text-white rounded-full shadow-float hover:bg-neutral-800 transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-trust focus:ring-offset-2"
             aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={mobileOpen}
           >
-            <svg
-              className="w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              {mobileOpen ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              ) : (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              )}
-            </svg>
+            {mobileOpen ? (
+              <X className="w-6 h-6" strokeWidth={1.5} aria-hidden="true" />
+            ) : (
+              <Menu className="w-6 h-6" strokeWidth={1.5} aria-hidden="true" />
+            )}
           </button>
         )}
       </div>

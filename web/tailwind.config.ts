@@ -74,28 +74,16 @@ export default {
         'border-secondary': 'var(--color-border-secondary)',
         'border-focus': 'var(--color-border-focus)',
 
-        // LEGACY COMPATIBILITY - Individual warm neutral aliases
-        // (deprecated - use neutral-* scale instead)
-        cream: '#faf9f7',  // → neutral-50
-        sand: '#f5f1ed',   // → neutral-100
-        taupe: '#e8e3de',  // → neutral-200
 
       },
       fontFamily: {
-        display: ['Crimson Pro', 'serif'],
-        sans: ['Manrope', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        display: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
-        // Premium subtle shadows for depth
-        'sm-premium': '0 1px 2px 0 rgb(0 0 0 / 0.03)',
-        'md-premium': '0 4px 12px 0 rgb(0 0 0 / 0.08)',
-        'lg-premium': '0 10px 25px -5px rgb(0 0 0 / 0.1)',
-        'xl-premium': '0 20px 40px -10px rgb(0 0 0 / 0.12)',
-
-        // Elevated card styling
-        'card': '0 2px 8px 0 rgb(0 0 0 / 0.04), inset 0 1px 0 0 rgb(255 255 255 / 1)',
-        'card-hover': '0 8px 20px -4px rgb(0 0 0 / 0.1), inset 0 1px 0 0 rgb(255 255 255 / 1)',
+        // One floating shadow for overlays; cards use hairlines
+        float: '0 1px 2px rgba(17, 24, 39, 0.04), 0 12px 32px rgba(17, 24, 39, 0.08)',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',
@@ -130,7 +118,7 @@ export default {
       typography: {
         DEFAULT: {
           css: {
-            fontFamily: 'Manrope, sans-serif',
+            fontFamily: 'Geist, ui-sans-serif, system-ui, sans-serif',
           },
         },
       },

@@ -18,6 +18,7 @@ import React, { useState, useMemo } from 'react';
 import { Listbox, Transition } from '@headlessui/react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { Check, ChevronDown } from 'lucide-react';
 
 export interface SelectOption {
   value: string | number;
@@ -31,7 +32,7 @@ export interface SelectOptionGroup {
 }
 
 const selectButtonVariants = cva(
-  'relative w-full text-left bg-white border-1.5 rounded-md transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-trust-deep disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between px-4 py-3',
+  'relative w-full text-left bg-white border-1.5 rounded-md transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-trust-deep disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between px-4 py-3',
   {
     variants: {
       size: {
@@ -58,7 +59,7 @@ const selectButtonVariants = cva(
 );
 
 const selectOptionsVariants = cva(
-  'absolute top-full left-0 right-0 z-50 w-full bg-white border-1.5 border-t-0 border-neutral-300 rounded-b-lg shadow-lg focus:outline-none max-h-60 overflow-y-auto',
+  'absolute top-full left-0 right-0 z-50 w-full bg-white border-1.5 border-t-0 border-neutral-300 rounded-b-lg shadow-float focus:outline-none max-h-60 overflow-y-auto',
   {
     variants: {
       size: {
@@ -285,23 +286,10 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
               onFocus={() => searchable && setIsOpen(true)}
             >
               <span className="block truncate">{displayValue}</span>
-              <svg
-                className={cn(
+              <ChevronDown className={cn(
                   'w-5 h-5 transition-transform flex-shrink-0',
                   isOpen && 'rotate-180',
-                )}
-                fill="none"
-                viewBox="0 0 20 20"
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M7 8l3 3 3-3m-3 3V4"
-                />
-              </svg>
+                )} aria-hidden="true" strokeWidth={1.5} />
             </Listbox.Button>
 
             {/* Options dropdown */}
@@ -357,18 +345,7 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
                             <>
                               <span>{option.label}</span>
                               {isSelected && (
-                                <svg
-                                  className="w-5 h-5 flex-shrink-0"
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                  aria-hidden="true"
-                                >
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                                    clipRule="evenodd"
-                                  />
-                                </svg>
+                                <Check className="w-5 h-5 flex-shrink-0" aria-hidden="true" strokeWidth={1.5} />
                               )}
                             </>
                           )}

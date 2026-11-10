@@ -67,17 +67,17 @@ export const Variants: Story = {
   render: () => (
     <div className="w-full max-w-md space-y-8">
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">Default</h4>
+        <h4 className="text-sm font-medium text-neutral-700">Default</h4>
         <Divider variant="default" />
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">Subtle</h4>
+        <h4 className="text-sm font-medium text-neutral-700">Subtle</h4>
         <Divider variant="subtle" />
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">Muted</h4>
+        <h4 className="text-sm font-medium text-neutral-700">Muted</h4>
         <Divider variant="muted" />
       </div>
     </div>
@@ -91,12 +91,12 @@ export const Styles: Story = {
   render: () => (
     <div className="w-full max-w-md space-y-8">
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">Solid</h4>
+        <h4 className="text-sm font-medium text-neutral-700">Solid</h4>
         <Divider style="solid" />
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">Dashed</h4>
+        <h4 className="text-sm font-medium text-neutral-700">Dashed</h4>
         <Divider style="dashed" />
       </div>
     </div>
@@ -124,23 +124,17 @@ export const LabelSpacing: Story = {
   render: () => (
     <div className="w-full max-w-md space-y-8">
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">
-          Small Spacing
-        </h4>
+        <h4 className="text-sm font-medium text-neutral-700">Small Spacing</h4>
         <Divider label="Or" labelSpacing="sm" />
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">
-          Medium Spacing
-        </h4>
+        <h4 className="text-sm font-medium text-neutral-700">Medium Spacing</h4>
         <Divider label="Or" labelSpacing="md" />
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-neutral-700">
-          Large Spacing
-        </h4>
+        <h4 className="text-sm font-medium text-neutral-700">Large Spacing</h4>
         <Divider label="Or" labelSpacing="lg" />
       </div>
     </div>
@@ -210,9 +204,7 @@ export const ContentSeparation: Story = {
     <div className="w-full max-w-lg p-6 space-y-6">
       {/* Section 1 */}
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-2">
-          Overview
-        </h3>
+        <h3 className="text-lg font-medium text-neutral-900 mb-2">Overview</h3>
         <p className="text-sm text-neutral-600">
           This is the overview section with important information about your
           account.
@@ -223,9 +215,7 @@ export const ContentSeparation: Story = {
 
       {/* Section 2 */}
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-2">
-          Settings
-        </h3>
+        <h3 className="text-lg font-medium text-neutral-900 mb-2">Settings</h3>
         <p className="text-sm text-neutral-600">
           Configure your preferences and notification settings here.
         </p>
@@ -235,9 +225,7 @@ export const ContentSeparation: Story = {
 
       {/* Section 3 */}
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-2">
-          Security
-        </h3>
+        <h3 className="text-lg font-medium text-neutral-900 mb-2">Security</h3>
         <p className="text-sm text-neutral-600">
           Manage your password and connected devices.
         </p>
@@ -247,7 +235,7 @@ export const ContentSeparation: Story = {
 
       {/* Section 4 */}
       <div>
-        <h3 className="text-lg font-semibold text-neutral-900 mb-2">Privacy</h3>
+        <h3 className="text-lg font-medium text-neutral-900 mb-2">Privacy</h3>
         <p className="text-sm text-neutral-600">
           Control how your data is shared and used.
         </p>
@@ -263,7 +251,7 @@ export const Timeline: Story = {
   render: () => (
     <div className="w-full max-w-md p-6 space-y-4">
       <div className="flex gap-3">
-        <div className="w-8 h-8 rounded-full bg-success-primary text-white flex items-center justify-center text-sm font-bold">
+        <div className="w-8 h-8 rounded-full bg-success-primary text-white flex items-center justify-center text-sm font-medium">
           ✓
         </div>
         <div>
@@ -279,7 +267,7 @@ export const Timeline: Story = {
       </div>
 
       <div className="flex gap-3">
-        <div className="w-8 h-8 rounded-full bg-info-primary text-white flex items-center justify-center text-sm font-bold">
+        <div className="w-8 h-8 rounded-full bg-info-primary text-white flex items-center justify-center text-sm font-medium">
           2
         </div>
         <div>
@@ -295,7 +283,7 @@ export const Timeline: Story = {
       </div>
 
       <div className="flex gap-3">
-        <div className="w-8 h-8 rounded-full bg-neutral-300 text-neutral-600 flex items-center justify-center text-sm font-bold">
+        <div className="w-8 h-8 rounded-full bg-neutral-300 text-neutral-600 flex items-center justify-center text-sm font-medium">
           3
         </div>
         <div>
@@ -329,7 +317,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="w-full max-w-md space-y-6">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Dividers with semantic meaning
         </h3>
         <div className="space-y-4">
@@ -345,7 +333,7 @@ export const Accessibility: Story = {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Labeled dividers
         </h3>
         <div className="space-y-4">

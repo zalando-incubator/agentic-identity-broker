@@ -373,7 +373,7 @@ export const RealWorldExamples: Story = {
   render: () => (
     <div className="space-y-8">
       <div>
-        <h3 className="text-base font-semibold text-neutral-900 mb-3">
+        <h3 className="text-base font-medium text-neutral-900 mb-3">
           E-commerce Product Page
         </h3>
         <Breadcrumb
@@ -388,7 +388,7 @@ export const RealWorldExamples: Story = {
       </div>
 
       <div>
-        <h3 className="text-base font-semibold text-neutral-900 mb-3">
+        <h3 className="text-base font-medium text-neutral-900 mb-3">
           Admin Dashboard Settings
         </h3>
         <Breadcrumb
@@ -406,7 +406,7 @@ export const RealWorldExamples: Story = {
       </div>
 
       <div>
-        <h3 className="text-base font-semibold text-neutral-900 mb-3">
+        <h3 className="text-base font-medium text-neutral-900 mb-3">
           Documentation Navigation
         </h3>
         <Breadcrumb
@@ -421,7 +421,7 @@ export const RealWorldExamples: Story = {
       </div>
 
       <div>
-        <h3 className="text-base font-semibold text-neutral-900 mb-3">
+        <h3 className="text-base font-medium text-neutral-900 mb-3">
           File Manager
         </h3>
         <Breadcrumb

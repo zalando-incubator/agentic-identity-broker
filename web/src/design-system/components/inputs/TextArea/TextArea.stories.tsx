@@ -108,7 +108,7 @@ export const RealWorldUseCases: Story = {
   render: () => (
     <div className="w-96 space-y-6 p-6 bg-white rounded-lg border border-neutral-200">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900 mb-4">
+        <h3 className="text-sm font-medium text-neutral-900 mb-4">
           Feedback Form
         </h3>
       </div>

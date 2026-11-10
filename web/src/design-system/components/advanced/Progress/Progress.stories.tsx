@@ -136,7 +136,7 @@ export const StatusVariants: Story = {
   render: () => (
     <div className="space-y-6 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Default</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Default</h3>
         <Progress
           value={60}
           variant="default"
@@ -146,7 +146,7 @@ export const StatusVariants: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Success</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Success</h3>
         <Progress
           value={100}
           variant="success"
@@ -156,7 +156,7 @@ export const StatusVariants: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Warning</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Warning</h3>
         <Progress
           value={45}
           variant="warning"
@@ -166,7 +166,7 @@ export const StatusVariants: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Error</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Error</h3>
         <Progress value={25} variant="error" label="Upload failed" showValue />
       </div>
     </div>
@@ -180,19 +180,19 @@ export const SizeVariants: Story = {
   render: () => (
     <div className="space-y-6 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Small</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Small</h3>
         <Progress value={60} size="sm" label="Small progress" showValue />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Medium (Default)
         </h3>
         <Progress value={60} size="md" label="Medium progress" showValue />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">Large</h3>
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">Large</h3>
         <Progress value={60} size="lg" label="Large progress" showValue />
       </div>
     </div>
@@ -233,7 +233,7 @@ export const StripedEffect: Story = {
   render: () => (
     <div className="space-y-6 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Default Striped
         </h3>
         <Progress
@@ -246,7 +246,7 @@ export const StripedEffect: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Success Striped
         </h3>
         <Progress
@@ -259,7 +259,7 @@ export const StripedEffect: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Warning Striped
         </h3>
         <Progress
@@ -272,7 +272,7 @@ export const StripedEffect: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Error Striped
         </h3>
         <Progress
@@ -294,28 +294,28 @@ export const CustomHeight: Story = {
   render: () => (
     <div className="space-y-6 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Height: 8px
         </h3>
         <Progress value={60} height={8} label="Thin progress" showValue />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Height: 16px
         </h3>
         <Progress value={60} height={16} label="Default progress" showValue />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Height: 24px
         </h3>
         <Progress value={60} height={24} label="Thick progress" showValue />
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Height: 32px
         </h3>
         <Progress
@@ -336,7 +336,7 @@ export const CustomValue: Story = {
   render: () => (
     <div className="space-y-6 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Items Processed
         </h3>
         <Progress
@@ -348,7 +348,7 @@ export const CustomValue: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Files Uploaded
         </h3>
         <Progress
@@ -361,7 +361,7 @@ export const CustomValue: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+        <h3 className="text-sm font-medium text-neutral-700 mb-3">
           Time Remaining
         </h3>
         <Progress
@@ -405,7 +405,7 @@ export const MultiStep: Story = {
           {steps.map((step, index) => (
             <div key={index} className="text-center">
               <div
-                className={`w-8 h-8 mx-auto rounded-full flex items-center justify-center text-sm font-semibold ${
+                className={`w-8 h-8 mx-auto rounded-full flex items-center justify-center text-sm font-medium ${
                   step.completed
                     ? 'bg-success-primary text-white'
                     : 'bg-neutral-200 text-neutral-500'
@@ -457,7 +457,7 @@ export const UploadProgress: Story = {
     return (
       <div className="max-w-lg space-y-4">
         <div className="border border-neutral-200 rounded-lg p-6 bg-white">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4">
+          <h3 className="text-sm font-medium text-neutral-900 mb-4">
             Upload Document
           </h3>
 
@@ -557,7 +557,7 @@ export const LoadingStates: Story = {
     return (
       <div className="space-y-8 max-w-lg">
         <div>
-          <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+          <h3 className="text-sm font-medium text-neutral-700 mb-3">
             Linear Animation
           </h3>
           <Progress
@@ -569,7 +569,7 @@ export const LoadingStates: Story = {
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+          <h3 className="text-sm font-medium text-neutral-700 mb-3">
             Striped Animation
           </h3>
           <Progress
@@ -583,7 +583,7 @@ export const LoadingStates: Story = {
 
         <div className="flex items-center gap-6">
           <div>
-            <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+            <h3 className="text-sm font-medium text-neutral-700 mb-3">
               Circular Animation
             </h3>
             <Progress
@@ -629,7 +629,7 @@ export const TaskCompletion: Story = {
     return (
       <div className="max-w-lg space-y-4">
         <div className="border border-neutral-200 rounded-lg p-6 bg-white">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4">
+          <h3 className="text-sm font-medium text-neutral-900 mb-4">
             Project Setup Checklist
           </h3>
 
@@ -679,7 +679,7 @@ export const Variants100Percent: Story = {
   render: () => (
     <div className="space-y-8 max-w-lg">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-4">
+        <h3 className="text-sm font-medium text-neutral-700 mb-4">
           Linear - All Variants at 100%
         </h3>
         <div className="space-y-4">
@@ -691,7 +691,7 @@ export const Variants100Percent: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-4">
+        <h3 className="text-sm font-medium text-neutral-700 mb-4">
           Circular - All Variants at 100%
         </h3>
         <div className="flex items-end gap-6">
@@ -727,7 +727,7 @@ export const Variants100Percent: Story = {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-neutral-700 mb-4">
+        <h3 className="text-sm font-medium text-neutral-700 mb-4">
           Circular Sizes at 100%
         </h3>
         <div className="flex items-end gap-6">

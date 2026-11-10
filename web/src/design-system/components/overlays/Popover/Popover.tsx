@@ -24,7 +24,7 @@ import { cn } from '@design-system/utils';
 
 const popoverPanelVariants = cva(
   // Base styles - applied to all popovers
-  'bg-white rounded-lg shadow-xl border border-neutral-200 focus:outline-none',
+  'bg-white rounded-xl shadow-float border border-line-strong focus:outline-none',
   {
     variants: {
       width: {
@@ -187,7 +187,7 @@ export const Popover = React.forwardRef<HTMLDivElement, PopoverProps>(
               {header && (
                 <div className="px-5 py-4 border-b border-neutral-200">
                   {typeof header === 'string' ? (
-                    <h3 className="text-base font-semibold text-neutral-900">
+                    <h3 className="text-base font-medium text-neutral-900">
                       {header}
                     </h3>
                   ) : (

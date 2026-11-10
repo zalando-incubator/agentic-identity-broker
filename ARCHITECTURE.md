@@ -1346,6 +1346,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
+| [048-consent-ui-design-language.md](adrs/048-consent-ui-design-language.md) | Proposed | Consent UI adopts the docs-site design language: ink ramp, one jade accent, Geist, hairlines |
 
 ## 11. Project Identification
 

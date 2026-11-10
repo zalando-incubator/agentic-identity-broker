@@ -18,8 +18,8 @@ interface AppLayoutProps {
 }
 
 /**
- * Header component with branding, navigation, and user info.
- * Premium design with gradient backdrop and refined typography.
+ * Header component with the wordmark, navigation, and user info.
+ * A quiet bar on the page background with a hairline underneath.
  */
 function Header() {
   const { userInfo } = useConsent();
@@ -33,35 +33,23 @@ function Header() {
 
 
   return (
-    <div className="bg-white border-b border-neutral-200">
+    <div className="bg-neutral-50 border-b border-line">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20 gap-8">
-          {/* Logo and branding */}
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="w-9 h-9 bg-gradient-to-br from-trust-hover to-trust rounded-lg flex items-center justify-center shadow-md">
-              <svg
-                className="w-5 h-5 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-trust-deep leading-tight">
-                Consent Management
-              </h1>
-              <p className="text-xs text-slate-600 font-medium">
-                Agentic Identity Broker
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center justify-between h-16 gap-8">
+          {/* Wordmark */}
+          <Link
+            to="/delegations"
+            className="flex items-center flex-shrink-0 rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2"
+          >
+            <h1 className="sr-only">Agentic Identity Broker</h1>
+            <img
+              src="/img/aib-wordmark.svg"
+              alt="Agentic Identity Broker"
+              className="h-5 w-auto"
+              width={500}
+              height={60}
+            />
+          </Link>
 
           {/* Navigation */}
           <nav className="flex items-center gap-6 ml-auto">
@@ -74,10 +62,10 @@ function Header() {
                   <Link
                     key={link.href}
                     to={link.href}
-                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${
+                    className={`px-3 py-2 rounded-md text-sm font-medium transition-colors duration-150 ${
                       isActive
-                        ? 'bg-trust-light text-trust-deep'
-                        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                        ? 'bg-neutral-100 text-trust-deep'
+                        : 'text-neutral-600 hover:bg-neutral-100 hover:text-trust-deep'
                     }`}
                     aria-current={isActive ? 'page' : undefined}
                   >
@@ -89,7 +77,7 @@ function Header() {
 
             {/* User info with avatar */}
             {userInfo && (
-              <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
+              <div className="flex items-center gap-3 pl-6 border-l border-line">
                 <Avatar
                   src={userInfo.pictureUrl}
                   alt={userInfo.displayName}
@@ -101,7 +89,7 @@ function Header() {
                   <p className="text-sm font-medium text-trust-deep truncate">
                     {userInfo.displayName}
                   </p>
-                  <p className="text-xs text-slate-600 truncate">
+                  <p className="text-xs text-neutral-500 truncate">
                     {userInfo.email || userInfo.principal}
                   </p>
                 </div>
@@ -116,13 +104,13 @@ function Header() {
 
 /**
  * Main layout wrapper that extends the design system AppLayout with custom styling.
- * Provides consistent structure with premium gradient background and spacing.
+ * Provides consistent structure on the flat page background.
  */
 export function AppLayout({ children, header }: AppLayoutProps) {
   const HeaderComponent = header || Header;
 
   return (
-    <div className="bg-gradient-to-br from-cream via-sand to-taupe/20">
+    <div className="bg-neutral-50">
       <DesignSystemAppLayout
         header={<HeaderComponent />}
         stickyHeader={true}

@@ -23,23 +23,23 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        // Success: Green - positive status (solid background per COLOR_GUIDE.md)
-        success: 'bg-success-primary text-white border-success-primary',
+        // Success: the granted state on its tint, accent text
+        success: 'bg-success-light text-success-dark border-success-primary/30',
 
-        // Error: Red - negative/destructive status (solid background per COLOR_GUIDE.md)
-        error: 'bg-error-primary text-white border-error-primary',
+        // Error: negative or destructive status on its tint
+        error: 'bg-error-light text-error-dark border-error-primary/30',
 
-        // Warning: Amber - caution status (solid background per COLOR_GUIDE.md)
-        warning: 'bg-warning-primary text-trust-deep border-warning-primary',
+        // Warning: caution status on its tint
+        warning: 'bg-warning-light text-warning-dark border-warning-primary/30',
 
-        // Info: Blue - informational status (solid background per COLOR_GUIDE.md)
-        info: 'bg-info-primary text-white border-info-primary',
+        // Info: informational status on its tint
+        info: 'bg-info-light text-info-dark border-info-primary/30',
 
-        // Neutral: Warm neutral - default/neutral status
-        neutral: 'bg-neutral-300 text-neutral-600 border-neutral-300',
+        // Neutral: raised surface with a hairline, for optional or inactive
+        neutral: 'bg-neutral-100 text-neutral-600 border-neutral-200',
 
-        // Primary: Trust colors - brand-related badges (solid background per COLOR_GUIDE.md)
-        primary: 'bg-trust text-white border-trust',
+        // Primary: ink, for a fact that always holds, such as a required set
+        primary: 'bg-trust-deep text-white border-trust-deep',
       },
       size: {
         sm: 'px-2 py-0.5 text-xs gap-1',
@@ -54,7 +54,7 @@ const badgeVariants = cva(
     defaultVariants: {
       variant: 'neutral',
       size: 'md',
-      shape: 'pill',
+      shape: 'rounded',
     },
   },
 );

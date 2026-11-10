@@ -1,246 +1,184 @@
 # Color System Guide
 
-The Refined Trust Architecture uses a carefully curated color palette that balances sophistication with approachability. Every color is chosen to meet accessibility standards (WCAG 2.1 AA) while maintaining the visual identity of the system.
+The color system is a cool ink neutral ramp with one jade accent. Ink carries text, hairlines and surfaces. The accent marks only the primary action, links, the focus ring and the granted state. Every text token meets WCAG 2.1 AA on its intended ground. [ADR 048](../../../../adrs/048-consent-ui-design-language.md) sets this direction.
 
 ## Core Color Palette
 
-### Trust (Navy): Authority & Primary Brand
+### Accent (Jade): Actions, Links and the Granted State
 
-The primary color system representing stability, trust, and authority. Use semantic tokens for meaning-driven color application.
+One accent, used for three things only. If a surface is jade, it is either the action the screen is for or a grant that is active.
 
 ```
 Semantic Tokens (Recommended):
---color-trust-deep:  #0A2540     trust-deep   (Darkest - headings, primary brand)
---color-trust:       #1E4D6B     trust        (Medium - primary actions, links)
---color-trust-hover: #2b68a5     trust-hover  (Lighter - hover states)
---color-trust-light: #E8F1F5     trust-light  (Lightest - backgrounds, tints)
+--color-accent:       #0a7a66                   accent        (Primary action, links, focus ring; 5.4:1 on white)
+--color-accent-hover: #086a59                   accent-hover  (Hover state)
+--color-accent-ink:   #ffffff                   accent-ink    (Text on an accent surface)
+--color-accent-soft:  rgba(10, 122, 102, 0.08)  accent-soft   (Tint behind an active row or chip)
 ```
 
 **Usage:**
 
-- Primary buttons and links: `bg-trust` or `bg-trust-deep`
-- Headings and brand text: `text-trust-deep`
-- Focus rings and active states: `ring-trust`
-- Hover states: `hover:bg-trust-hover`
-- Light backgrounds for sections: `bg-trust-light`
+- Primary buttons: `bg-accent text-accent-ink hover:bg-accent-hover`
+- Links and focus rings: `text-accent`, `focus:ring-accent`
+- Toggles that are on: `bg-accent`
+- An active row or selected chip: `bg-accent-soft border-accent/30`
+
+### Trust (Ink): Headings and Primary Text
+
+The `trust-*` family keeps its names so components keep working. `trust-deep` is ink and `trust` is the accent.
+
+```
+Semantic Tokens:
+--color-trust-deep:  #111827   trust-deep   (Headings, primary text, ink surfaces)
+--color-trust:       #0a7a66   trust        (Links and actions; same as accent)
+--color-trust-hover: #086a59   trust-hover  (Same as accent-hover)
+--color-trust-light: #e7f3f0   trust-light  (Active navigation, tints; opaque accent-soft)
+```
 
 **Examples:**
 
 ```tsx
-<button className="bg-trust-deep text-white hover:bg-trust-hover">
-  Primary Action
-</button>
-<h1 className="text-trust-deep font-display">Heading</h1>
+<h1 className="text-trust-deep">Heading</h1>
+<a className="text-trust hover:text-trust-hover">Documentation</a>
 ```
 
-### Success (Emerald): Approval & Positive States
+### Success: The Granted State
 
-Signals granted access, approved states, and positive actions.
-
-```
-Semantic Tokens (Recommended):
---color-success-primary: #059669   success-primary  (Success state, granted permissions)
---color-success-hover:   #047857   success-hover    (Success hover state)
---color-success-light:   #d1fae5   success-light    (Success light background)
---color-success-dark:    #065f46   success-dark     (Success dark text)
-```
-
-**Usage:**
-
-- Success badges: `bg-success-primary text-white`
-- Approved permission states: `bg-success-light text-success-dark`
-- Checkmarks and confirmation icons: `text-success-primary`
-- Success alerts: `bg-success-light border-success-primary`
-
-**Examples:**
-
-```tsx
-<span className="bg-success-primary text-white px-3 py-1 rounded">
-  Granted
-</span>
-<div className="bg-success-light p-4 border border-success-primary">
-  Permission approved successfully
-</div>
-```
-
-### Warning/CTA (Amber): Attention & Important Actions
-
-Unified color for both warnings and call-to-actions. Captures attention without alarm.
+The granted state shares the accent on purpose: approving a grant and seeing it active are the same fact at two moments.
 
 ```
-Semantic Tokens (Recommended):
---color-warning-primary: #D97706   warning-primary  (Warning/CTA - unified)
---color-warning-hover:   #B45309   warning-hover    (Warning/CTA hover)
---color-warning-light:   #fef3c7   warning-light    (Warning light background)
---color-warning-dark:    #92400e   warning-dark     (Warning dark text)
-
-Aliases (same values):
---color-cta:       #D97706   cta         (Call-to-action)
---color-cta-hover: #B45309   cta-hover   (CTA hover)
---color-cta-light: #fef3c7   cta-light   (CTA light background)
+Semantic Tokens:
+--color-success-primary: #0a7a66   success-primary  (Granted permissions, success state)
+--color-success-hover:   #086a59   success-hover
+--color-success-light:   #e7f3f0   success-light    (Success tint)
+--color-success-dark:    #075e4f   success-dark     (Success text on a tint; 6.5:1 on white)
 ```
 
 **Usage:**
 
-- Warning states: `bg-warning-light border-warning-primary`
-- Important CTAs: `bg-cta text-white hover:bg-cta-hover`
-- Pending permission states: `bg-warning-light text-warning-dark`
-- Attention badges: `bg-warning-primary text-trust-deep`
+- Granted badges: `bg-success-light text-success-dark` with a 30% accent hairline
+- Granted rows: `bg-success-light text-success-dark`
+- Checkmarks: `text-success-primary`
 
-**Examples:**
-
-```tsx
-<button className="bg-cta text-white hover:bg-cta-hover">
-  Important Action
-</button>
-<div className="bg-warning-light p-4 border border-warning-primary">
-  Pending approval
-</div>
-```
-
-### Error (Red): Errors & Destructive Actions
-
-Indicates errors, denied access, and destructive actions.
+### Warning (Amber): Attention Without Alarm
 
 ```
-Semantic Tokens (Recommended):
---color-error-primary: #DC2626   error-primary  (Error state, destructive actions)
---color-error-hover:   #b91c1c   error-hover    (Error hover state)
---color-error-light:   #fee2e2   error-light    (Error light background)
---color-error-dark:    #991b1b   error-dark     (Error dark text)
+Semantic Tokens:
+--color-warning-primary: #b54708   warning-primary  (5.2:1 on white)
+--color-warning-hover:   #93370d   warning-hover
+--color-warning-light:   #fffaeb   warning-light
+--color-warning-dark:    #7a2e0e   warning-dark
+
+CTA aliases point at the accent, not at amber:
+--color-cta:       #0a7a66   cta
+--color-cta-hover: #086a59   cta-hover
+--color-cta-light: #e7f3f0   cta-light
 ```
 
 **Usage:**
 
-- Error states: `border-error-primary text-error-primary`
-- Revoked permissions: `bg-error-light text-error-dark`
-- Delete/destructive buttons: `bg-error-primary text-white hover:bg-error-hover`
-- Error alerts: `bg-error-light border-error-primary`
+- Pending states: `bg-warning-light text-warning-dark`
+- Attention badges: `bg-warning-primary text-white`
+- Warning alerts: `bg-warning-light border-warning-primary`
+
+### Error (Red): Errors and Destructive Actions
+
+```
+Semantic Tokens:
+--color-error-primary: #b42318   error-primary  (6.3:1 on white)
+--color-error-hover:   #912018   error-hover
+--color-error-light:   #fef3f2   error-light
+--color-error-dark:    #7a271a   error-dark
+```
+
+**Usage:**
+
 - Validation messages: `text-error-primary`
+- Revoke and delete buttons: `bg-error-primary text-white hover:bg-error-hover`
+- Error alerts: `bg-error-light border-error-primary text-error-dark`
 
-**Examples:**
-
-```tsx
-<button className="bg-error-primary text-white hover:bg-error-hover">
-  Delete Account
-</button>
-<span className="text-error-primary text-sm">
-  This field is required
-</span>
-```
-
-### Warm Neutrals: Sophisticated Backgrounds & Text
-
-**Replaces standard Tailwind grays** with warm cream, sand, and taupe tones that convey trust and premium quality.
+### Info (Slate Blue): Informational Content
 
 ```
-Warm Neutral Scale (Complete):
---color-neutral-50:  #faf9f7   neutral-50   (Cream - page backgrounds)
---color-neutral-100: #f5f1ed   neutral-100  (Sand - section backgrounds)
---color-neutral-200: #e8e3de   neutral-200  (Taupe - card borders)
---color-neutral-300: #ddd8d1   neutral-300  (Light taupe - input borders)
---color-neutral-400: #c4bdb3   neutral-400  (Medium taupe - placeholders)
---color-neutral-500: #9a9591   neutral-500  (Medium-dark - secondary icons)
---color-neutral-600: #6b6561   neutral-600  (Dark taupe - secondary text)
---color-neutral-700: #4a4137   neutral-700  (Darker taupe - body text)
---color-neutral-800: #2a251f   neutral-800  (Very dark - emphasized text)
---color-neutral-900: #1a1511   neutral-900  (Darkest - headings or use trust-deep)
+--color-info-primary: #3056d3   info-primary  (5.6:1 on white)
+--color-info-hover:   #2447b3   info-hover
+--color-info-light:   #eef2fc   info-light
+--color-info-dark:    #1e3a8a   info-dark
+```
+
+### Cool Neutrals: Ground, Hairlines and Text
+
+Replaces standard Tailwind grays with a cool ink ramp. Surfaces and hairlines also have direct names.
+
+```
+Surfaces and hairlines:
+--color-page:        #fbfcfd                  page         (Page background)
+--color-surface:     #ffffff                  surface      (Cards, dialogs, inputs)
+--color-raised:      #f0f2f6                  raised       (Chips, code, table heads, inactive toggles)
+--color-line:        rgba(17, 24, 39, 0.08)   line         (Card borders, rules)
+--color-line-strong: rgba(17, 24, 39, 0.14)   line-strong  (Input and outline-button borders)
+
+Neutral scale:
+--color-neutral-50:  #fbfcfd   neutral-50   (Page background)
+--color-neutral-100: #f0f2f6   neutral-100  (Raised surfaces)
+--color-neutral-200: #e3e6ec   neutral-200  (Card borders, opaque hairline)
+--color-neutral-300: #d2d6de   neutral-300  (Input borders, inactive toggles)
+--color-neutral-400: #a9afbd   neutral-400  (Placeholders, disabled text)
+--color-neutral-500: #6b7487   neutral-500  (Tertiary text, icons; 4.9:1 on white)
+--color-neutral-600: #4b5565   neutral-600  (Secondary text; 7.2:1 on white)
+--color-neutral-700: #364152   neutral-700  (Body text)
+--color-neutral-800: #1f2937   neutral-800  (Emphasized text)
+--color-neutral-900: #111827   neutral-900  (Headings; same as trust-deep)
 
 Semantic Aliases:
---color-text-primary:   #0A2540   text-primary    (Primary text - trust-deep)
---color-text-secondary: #6b6561   text-secondary  (Secondary text - neutral-600)
---color-text-tertiary:  #9a9591   text-tertiary   (Tertiary text - neutral-500)
---color-text-disabled:  #c4bdb3   text-disabled   (Disabled text - neutral-400)
+--color-text-primary:   #111827   text-primary
+--color-text-secondary: #4b5565   text-secondary
+--color-text-tertiary:  #6b7487   text-tertiary
+--color-text-disabled:  #a9afbd   text-disabled
 
---color-bg-primary:   #faf9f7   bg-primary    (Primary background - neutral-50)
---color-bg-secondary: #f5f1ed   bg-secondary  (Secondary background - neutral-100)
---color-bg-elevated:  #ffffff   bg-elevated   (Elevated cards - pure white)
+--color-bg-primary:   #fbfcfd   bg-primary
+--color-bg-secondary: #f0f2f6   bg-secondary
+--color-bg-elevated:  #ffffff   bg-elevated
 
---color-border-primary:   #ddd8d1   border-primary    (Primary borders - neutral-300)
---color-border-secondary: #e8e3de   border-secondary  (Secondary borders - neutral-200)
+--color-border-primary:   #d2d6de   border-primary
+--color-border-secondary: #e3e6ec   border-secondary
+--color-border-focus:     #0a7a66   border-focus
 ```
 
 **Migration from Gray:**
 
-| Old (Gray) | New (Warm Neutral) | Use Case                                           |
-| ---------- | ------------------ | -------------------------------------------------- |
-| `gray-50`  | `neutral-50`       | Page backgrounds                                   |
-| `gray-100` | `neutral-100`      | Section backgrounds                                |
-| `gray-200` | `neutral-200`      | Card borders                                       |
-| `gray-300` | `neutral-300`      | Input borders                                      |
-| `gray-400` | `neutral-400`      | Placeholders                                       |
-| `gray-500` | `neutral-500`      | Secondary icons                                    |
-| `gray-600` | `neutral-600`      | Secondary text                                     |
-| `gray-700` | `neutral-700`      | Body text                                          |
-| `gray-900` | `trust-deep`       | Primary headings (use trust for brand consistency) |
+| Old (Gray) | New (Cool Neutral) | Use Case            |
+| ---------- | ------------------ | ------------------- |
+| `gray-50`  | `neutral-50`       | Page backgrounds    |
+| `gray-100` | `neutral-100`      | Raised surfaces     |
+| `gray-200` | `neutral-200`      | Card borders        |
+| `gray-300` | `neutral-300`      | Input borders       |
+| `gray-400` | `neutral-400`      | Placeholders        |
+| `gray-500` | `neutral-500`      | Tertiary text, icons |
+| `gray-600` | `neutral-600`      | Secondary text      |
+| `gray-700` | `neutral-700`      | Body text           |
+| `gray-900` | `trust-deep`       | Headings            |
 
-**Usage:**
+### Headings: `text-trust-deep`, not `text-primary`
 
-```tsx
-// Page structure
-<body className="bg-primary text-primary">              {/* neutral-50 bg, trust-deep text */}
-<section className="bg-secondary">                     {/* neutral-100 */}
-<div className="bg-elevated border border-primary">    {/* white bg, neutral-300 border */}
-
-// Typography
-<h1 className="text-primary">                          {/* trust-deep */}
-<p className="text-secondary">                         {/* neutral-600 */}
-<span className="text-tertiary">                       {/* neutral-500 */}
-
-// Borders & dividers
-<input className="border-primary focus:border-focus">  {/* neutral-300, trust */}
-<hr className="border-secondary">                      {/* neutral-200 */}
-```
-
-**Note**: Primary headings should use `text-trust-deep` instead of `text-neutral-900` for brand consistency.
-
-### ⚠️ Important: `text-primary` vs `text-trust-deep` for Headings
-
-**TL;DR**: Always use `text-trust-deep` explicitly for headings, not `text-primary`.
-
-**Why the confusion exists:**
-
-- `text-primary` is an alias that points to `trust-deep` (#0A2540)
-- While technically correct, `text-primary` is semantically ambiguous
-- "Primary" could mean "primary text color" (for body text) OR "primary brand color"
-- This ambiguity makes code harder to read and maintain
-
-**The Rule:**
-
-```tsx
-// ❌ DON'T - Confusing intent
-<h1 className="text-primary">Dashboard</h1>
-
-// ✅ DO - Clear intent
-<h1 className="text-trust-deep">Dashboard</h1>
-```
-
-**When to use each:**
-
-- **Headings (h1-h2)**: Use `text-trust-deep` explicitly (major sections, authority)
-- **Headings (h3-h6)**: Use `text-trust` explicitly (minor sections, subsections)
-- **Body text**: Use `text-neutral-700` or `text-secondary` (neutral-600) for paragraphs
-- **Metadata/labels**: Use `text-tertiary` (neutral-500)
-- **NEVER use `text-primary` for headings** - too ambiguous
-
-See [COMMON_MISTAKES.md](./COMMON_MISTAKES.md) (Mistake #1) and [DECISION_TREES.md](./DECISION_TREES.md) (Text Color Hierarchy) for more guidance.
+`text-primary` and `text-trust-deep` resolve to the same ink, but "primary" reads as "primary brand color" as often as "primary text". Use `text-trust-deep` on headings so the intent is clear, `text-neutral-700` or `text-secondary` on paragraphs, and `text-tertiary` on metadata. Do not use `text-trust` on headings: it is the accent, and the accent is for actions, links and the granted state.
 
 ## Color Accessibility
 
 ### Contrast Ratios (WCAG 2.1 AA Compliant)
 
-All color combinations below meet WCAG 2.1 Level AA standards:
+| Text Color                  | Background       | Contrast Ratio | Status |
+| --------------------------- | ---------------- | -------------- | ------ |
+| Ink (#111827)               | White (#ffffff)  | 17.4:1         | AAA    |
+| Secondary ink (#4b5565)     | White (#ffffff)  | 7.2:1          | AAA    |
+| Tertiary ink (#6b7487)      | White (#ffffff)  | 4.9:1          | AA     |
+| Accent (#0a7a66)            | White (#ffffff)  | 5.4:1          | AA     |
+| White (#ffffff)             | Accent (#0a7a66) | 5.4:1          | AA     |
+| Error (#b42318)             | White (#ffffff)  | 6.3:1          | AA     |
+| Warning (#b54708)           | White (#ffffff)  | 5.2:1          | AA     |
+| Ink (#111827)               | Raised (#f0f2f6) | 15.6:1         | AAA    |
 
-| Text Color            | Background            | Contrast Ratio | Status                  |
-| --------------------- | --------------------- | -------------- | ----------------------- |
-| Navy-900 (#0d1829)    | White (#ffffff)       | 13.8:1         | AAA (Passes large text) |
-| Navy-700 (#1e4d6b)    | White (#ffffff)       | 8.2:1          | AAA                     |
-| Emerald-600 (#059669) | White (#ffffff)       | 5.3:1          | AA                      |
-| Amber-600 (#d97706)   | White (#ffffff)       | 5.1:1          | AA                      |
-| Red-600 (#dc2626)     | White (#ffffff)       | 5.5:1          | AA                      |
-| Navy-800 (#0d1829)    | Neutral-100 (#f5f1ed) | 11.2:1         | AAA                     |
-
-**Rule:** Always verify custom color combinations with [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/) or [ColorSnack](https://www.colorsnack.com/).
+**Rule:** Verify custom combinations with the [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/).
 
 ## Using Colors in Components
 
@@ -354,81 +292,52 @@ border-color: var(--color-neutral-200);
 
 ## Semantic Color Tokens
 
-For applications needing semantic token references:
+`web/src/design-system/tokens/colors.ts` mirrors the CSS tokens for programmatic access:
 
 ```typescript
-// Trust & Authority
-colors: {
-  'trust-deep': '#0A2540',      // Darkest trust color for headings
-  'trust': '#1E4D6B',            // Primary trust/navy color
-  'trust-light': '#E8F1F5',      // Light trust backgrounds
-}
-
-// Action & Status
-colors: {
-  'action-cta': '#D97706',       // Call-to-action (amber)
-  'success': '#059669',          // Success state (emerald)
-  'warning': '#F59E0B',          // Warning state (amber)
-  'error': '#DC2626',            // Error state (red)
-  'info': '#3B82F6',             // Info state (blue)
-}
-
-// Neutral & Text
-colors: {
-  'bg-primary': '#faf9f7',       // Cream background
-  'bg-secondary': '#f5f1ed',     // Sand background
-  'text-primary': '#0d1829',     // Primary text (darkest)
-  'text-secondary': '#4a5366',   // Secondary text (medium)
-  'text-tertiary': '#7a8899',    // Tertiary text (light)
-}
+semanticColors.accent.default   // var(--color-accent)
+semanticColors.surface.line     // var(--color-line)
+semanticColors.trust.deep       // var(--color-trust-deep)
+semanticColors.success.primary  // var(--color-success-primary)
+semanticColors.error.primary    // var(--color-error-primary)
 ```
 
 ## Color Combinations to Avoid
 
 ❌ **Don't use**:
 
-- Red on Amber backgrounds (poor readability)
-- Emerald on Navy backgrounds (insufficient contrast)
-- Neutral-600 on Neutral-200 (indistinguishable)
-- Single color to indicate state (use icon + color combination)
+- The accent on anything that is not an action, a link or a granted state
+- Red on amber backgrounds (poor readability)
+- Neutral-400 for text that must be read (it is for placeholders and disabled text)
+- A single color to indicate state (use icon + color combination)
+- Gradients, glows or textures anywhere
 
 ✅ **Do use**:
 
-- High-contrast text on colored backgrounds
+- Ink on the page or surface for everything that is read
 - Color + icon/symbol for status indication
 - Semantic tokens consistently across components
-- Hover state transitions for interactive elements
+- Hairlines for containment, `shadow-float` for overlays only
 
 ## Dark Mode Considerations
 
-For future dark mode support, invert the palette:
-
-```css
-@media (prefers-color-scheme: dark) {
-  --color-bg-primary: #0d1829; /* Was Navy-900 */
-  --color-bg-secondary: #1f2937; /* Was Neutral-700 */
-  --color-text-primary: #faf9f7; /* Was Neutral-50 */
-  --color-text-secondary: #c4bdb3; /* Was Neutral-400 */
-}
-```
+The docs site defines the dark counterpart of this ramp (page #0b0d14, surface #11141c, raised #1a1e28, ink #eef0f5, accent #4fd1b5). The consent UI does not ship a dark theme yet: components still hard-code `bg-white` in many places, so a dark theme is a separate structural change (see ADR 048).
 
 ## Resources
 
 - [WCAG 2.1 Color Contrast Guidelines](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html)
 - [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
-- [ColorSnack Contrast Tool](https://www.colorsnack.com/)
 - [Tailwind Color Palette](https://tailwindcss.com/docs/customizing-colors)
 
 ---
 
 ## Summary
 
-The Refined Trust Architecture color system is built on five core palettes:
+The color system has four parts:
 
-1. **Navy** - Trust and primary actions
-2. **Emerald** - Success and approval
-3. **Amber** - Warnings and CTAs
-4. **Red** - Errors and destructive actions
-5. **Neutral** - Structure and typography
+1. **Ink** - text, hairlines and surfaces, in a cool neutral ramp
+2. **Accent (jade)** - the primary action, links, focus and the granted state
+3. **Amber and red** - attention and error, in a sober register
+4. **Info** - slate blue for informational content
 
-Each color meets WCAG 2.1 AA accessibility standards and is chosen to communicate specific meanings to users while maintaining visual sophistication and approachability.
+Each color meets WCAG 2.1 AA and the accent is used sparingly enough that it means something when it appears.

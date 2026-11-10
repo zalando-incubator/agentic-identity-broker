@@ -9,6 +9,8 @@
  */
 
 import React, { useState } from 'react';
+import { CircleAlert, X } from 'lucide-react';
+import { Button } from '@design-system/components/primitives/Button';
 
 interface InlineErrorProps {
   /** Error message to display */
@@ -23,7 +25,11 @@ interface InlineErrorProps {
  * InlineError displays an error message with an option to retry the failed action.
  * Can be dismissed by the user.
  */
-export function InlineError({ error, onRetry, retryLabel = 'Try again' }: InlineErrorProps) {
+export function InlineError({
+  error,
+  onRetry,
+  retryLabel = 'Try again',
+}: InlineErrorProps) {
   const [isDismissed, setIsDismissed] = useState(false);
 
   if (isDismissed) {
@@ -32,41 +38,28 @@ export function InlineError({ error, onRetry, retryLabel = 'Try again' }: Inline
 
   return (
     <div
-      className="bg-red-50 border border-red-200 rounded-lg p-4"
+      className="bg-error-light border border-error-primary/30 rounded-lg p-4"
       role="alert"
       aria-live="assertive"
     >
       <div className="flex items-start gap-3">
         {/* Error icon */}
-        <svg
-          className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+        <CircleAlert
+          className="w-5 h-5 text-error-primary flex-shrink-0 mt-0.5"
           aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
+          strokeWidth={1.5}
+        />
 
         {/* Error content */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-medium text-red-800">Error</h3>
-          <p className="mt-1 text-sm text-red-700">{error}</p>
+          <h3 className="text-sm font-medium text-error-dark">Error</h3>
+          <p className="mt-1 text-sm text-error-dark">{error}</p>
 
           {/* Actions */}
           <div className="mt-3 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onRetry}
-              className="text-sm font-medium text-red-800 hover:text-red-900 underline focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 rounded"
-            >
+            <Button variant="outline" size="sm" onClick={onRetry}>
               {retryLabel}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -74,22 +67,10 @@ export function InlineError({ error, onRetry, retryLabel = 'Try again' }: Inline
         <button
           type="button"
           onClick={() => setIsDismissed(true)}
-          className="flex-shrink-0 text-red-400 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 rounded"
+          className="flex-shrink-0 text-error-primary hover:text-error-primary focus:outline-none focus:ring-2 focus:ring-error-primary focus:ring-offset-2 rounded"
           aria-label="Dismiss error"
         >
-          <svg
-            className="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
+          <X className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
         </button>
       </div>
     </div>

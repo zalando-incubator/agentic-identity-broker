@@ -3,79 +3,103 @@
  * TailwindCSS v4 @theme directive for semantic color tokens
  *
  * Source of Truth: DESIGN_PRINCIPLES.md
- * - All hex values aligned with Refined Trust Architecture aesthetic
- * - Warm neutrals replace standard Tailwind grays
+ * - A cool ink neutral ramp for surfaces, text and hairlines
+ * - One jade accent for actions, links and the granted state
  * - Semantic tokens enforce meaning-driven color usage
  *
  * Usage in components:
- * - bg-trust-deep, text-trust, border-trust-hover
- * - bg-cta, text-cta-hover
+ * - bg-accent, text-accent, border-line, bg-raised
+ * - bg-trust-deep, text-trust, border-trust-hover (legacy names, mapped below)
  * - bg-success-primary, text-success-dark
  * - bg-neutral-50, text-neutral-700, border-neutral-300
  */
 
 @theme {
-  /* PRIMARY - Trust & Authority (Navy) */
-  --color-trust-deep: #0a2540; /* Darkest navy - headings, primary brand */
-  --color-trust: #1e4d6b; /* Medium navy - primary actions, links */
-  --color-trust-hover: #2b68a5; /* Lighter navy - hover states */
-  --color-trust-light: #e8f1f5; /* Lightest navy - backgrounds, tints */
+  /* TYPE - Geist for text, Geist Mono for identifiers */
+  --font-display: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* ACTION - CTA (Unified with Warning - Amber) */
-  --color-cta: #d97706; /* Primary CTA and warnings */
-  --color-cta-hover: #b45309; /* CTA hover state */
-  --color-cta-light: #fef3c7; /* CTA light background */
+  /* INK RAMP - Cool neutrals for page, surfaces and hairlines */
+  --color-page: #fbfcfd; /* Page background */
+  --color-surface: #ffffff; /* Cards, dialogs, inputs */
+  --color-raised: #f0f2f6; /* Chips, code, table heads, inactive toggles */
+  --color-line: rgba(17, 24, 39, 0.08); /* Hairline rules and card borders */
+  --color-line-strong: rgba(17, 24, 39, 0.14); /* Input and outline-button borders */
 
-  /* SUCCESS - Emerald tones for positive actions */
-  --color-success-primary: #059669; /* Success state, granted permissions */
-  --color-success-hover: #047857; /* Success hover state */
-  --color-success-light: #d1fae5; /* Success light background */
-  --color-success-dark: #065f46; /* Success dark text */
+  /* ACCENT - Jade. Marks actions, links and the granted state. Nothing else. */
+  --color-accent: #0a7a66; /* 5.4:1 on white */
+  --color-accent-hover: #086a59;
+  --color-accent-ink: #ffffff; /* Text on an accent surface */
+  --color-accent-soft: rgba(10, 122, 102, 0.08); /* Tint behind an active row or chip */
 
-  /* ERROR - Red tones for destructive actions */
-  --color-error-primary: #dc2626; /* Error state, destructive actions */
-  --color-error-hover: #b91c1c; /* Error hover state */
-  --color-error-light: #fee2e2; /* Error light background */
-  --color-error-dark: #991b1b; /* Error dark text */
+  /* PRIMARY - Trust. Ink for headings and primary text, the accent for actions. */
+  --color-trust-deep: #111827; /* Headings, primary text, ink surfaces */
+  --color-trust: #0a7a66; /* Links, focus, primary actions (accent) */
+  --color-trust-hover: #086a59; /* Hover states (accent hover) */
+  --color-trust-light: #e7f3f0; /* Active nav, tints (accent soft, opaque) */
 
-  /* WARNING - Unified with CTA (Amber) */
-  --color-warning-primary: #d97706; /* Warning state (same as CTA) */
-  --color-warning-hover: #b45309; /* Warning hover state */
-  --color-warning-light: #fef3c7; /* Warning light background */
-  --color-warning-dark: #92400e; /* Warning dark text */
+  /* ACTION - CTA (same as the accent) */
+  --color-cta: #0a7a66;
+  --color-cta-hover: #086a59;
+  --color-cta-light: #e7f3f0;
 
-  /* INFO - Blue tones for informational content */
-  --color-info-primary: #3b82f6; /* Info state */
-  --color-info-hover: #2563eb; /* Info hover state */
-  --color-info-light: #dbeafe; /* Info light background */
-  --color-info-dark: #1e40af; /* Info dark text */
+  /* SUCCESS - The granted state shares the accent */
+  --color-success-primary: #0a7a66; /* Granted permissions, success state */
+  --color-success-hover: #086a59;
+  --color-success-light: #e7f3f0;
+  --color-success-dark: #075e4f; /* Success text on a light tint, 6.5:1 on white */
 
-  /* WARM NEUTRALS - Sophisticated cream/sand/taupe scale (replaces gray) */
-  --color-neutral-50: #faf9f7; /* Cream - page backgrounds */
-  --color-neutral-100: #f5f1ed; /* Sand - section backgrounds */
-  --color-neutral-200: #e8e3de; /* Taupe - card borders */
-  --color-neutral-300: #ddd8d1; /* Light taupe - input borders */
-  --color-neutral-400: #c4bdb3; /* Medium taupe - placeholders */
-  --color-neutral-500: #9a9591; /* Medium-dark - secondary icons */
-  --color-neutral-600: #6b6561; /* Dark taupe - secondary text */
-  --color-neutral-700: #4a4137; /* Darker taupe - body text */
-  --color-neutral-800: #2a251f; /* Very dark - emphasized text */
-  --color-neutral-900: #1a1511; /* Darkest - headings (or use trust-deep) */
+  /* ERROR - Sober red for destructive actions */
+  --color-error-primary: #b42318; /* 6.3:1 on white */
+  --color-error-hover: #912018;
+  --color-error-light: #fef3f2;
+  --color-error-dark: #7a271a;
+
+  /* WARNING - Muted amber for attention signals */
+  --color-warning-primary: #b54708; /* 5.2:1 on white */
+  --color-warning-hover: #93370d;
+  --color-warning-light: #fffaeb;
+  --color-warning-dark: #7a2e0e;
+
+  /* INFO - Slate blue for informational content */
+  --color-info-primary: #3056d3; /* 5.6:1 on white */
+  --color-info-hover: #2447b3;
+  --color-info-light: #eef2fc;
+  --color-info-dark: #1e3a8a;
+
+  /* COOL NEUTRALS - Ink scale (replaces gray) */
+  --color-neutral-50: #fbfcfd; /* Page background */
+  --color-neutral-100: #f0f2f6; /* Raised surfaces, section backgrounds */
+  --color-neutral-200: #e3e6ec; /* Card borders (opaque hairline) */
+  --color-neutral-300: #d2d6de; /* Input borders, inactive toggles */
+  --color-neutral-400: #a9afbd; /* Placeholders, disabled text */
+  --color-neutral-500: #6b7487; /* Tertiary text, icons, 4.9:1 on white */
+  --color-neutral-600: #4b5565; /* Secondary text, 7.2:1 on white */
+  --color-neutral-700: #364152; /* Body text */
+  --color-neutral-800: #1f2937; /* Emphasized text */
+  --color-neutral-900: #111827; /* Headings (same as trust-deep) */
 
   /* SEMANTIC ALIASES - Contextual color names */
-  --color-text-primary: #0a2540; /* Primary text (trust-deep) */
-  --color-text-secondary: #6b6561; /* Secondary text (neutral-600) */
-  --color-text-tertiary: #9a9591; /* Tertiary text (neutral-500) */
-  --color-text-disabled: #c4bdb3; /* Disabled text (neutral-400) */
+  --color-text-primary: #111827; /* Primary text (trust-deep) */
+  --color-text-secondary: #4b5565; /* Secondary text (neutral-600) */
+  --color-text-tertiary: #6b7487; /* Tertiary text (neutral-500) */
+  --color-text-disabled: #a9afbd; /* Disabled text (neutral-400) */
   --color-text-inverse: #ffffff; /* Inverse text (white) */
 
-  --color-bg-primary: #faf9f7; /* Primary background (neutral-50) */
-  --color-bg-secondary: #f5f1ed; /* Secondary background (neutral-100) */
-  --color-bg-tertiary: #e8e3de; /* Tertiary background (neutral-200) */
-  --color-bg-elevated: #ffffff; /* Elevated cards (pure white) */
-  --color-bg-overlay: rgba(13, 24, 41, 0.5); /* Modal overlay (navy @ 50%) */
+  --color-bg-primary: #fbfcfd; /* Primary background (neutral-50) */
+  --color-bg-secondary: #f0f2f6; /* Secondary background (neutral-100) */
+  --color-bg-tertiary: #e3e6ec; /* Tertiary background (neutral-200) */
+  --color-bg-elevated: #ffffff; /* Cards and dialogs (surface) */
+  --color-bg-overlay: rgba(17, 24, 39, 0.5); /* Modal overlay (ink @ 50%) */
 
-  --color-border-primary: #ddd8d1; /* Primary borders (neutral-300) */
-  --color-border-secondary: #e8e3de; /* Secondary borders (neutral-200) */
-  --color-border-focus: #1e4d6b; /* Focus ring (trust) */
+  --color-border-primary: #d2d6de; /* Primary borders (neutral-300) */
+  --color-border-secondary: #e3e6ec; /* Secondary borders (neutral-200) */
+  --color-border-focus: #0a7a66; /* Focus ring (accent) */
+
+  /* ELEVATION - One floating shadow for overlays. Cards use hairlines, not shadows. */
+  --shadow-float: 0 1px 2px rgba(17, 24, 39, 0.04), 0 12px 32px rgba(17, 24, 39, 0.08);
+
+  /* MOTION - One easing curve */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }

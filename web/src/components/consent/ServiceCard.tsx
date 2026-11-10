@@ -16,6 +16,7 @@ import { Badge } from '@design-system/components/primitives/Badge';
 import { Avatar } from '@design-system/components/primitives/Avatar';
 import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
 import { Tooltip } from '@design-system/components/overlays/Tooltip';
+import { CircleCheck } from 'lucide-react';
 
 interface ServiceCardProps {
   service: ThirdpartyService;
@@ -86,7 +87,7 @@ export function ServiceCard({
       {/* Service info */}
       <Stack gap="sm" className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="text-base font-semibold text-trust-deep">{serviceDisplayName}</h3>
+          <h3 className="text-base font-medium text-trust-deep">{serviceDisplayName}</h3>
           {requirementBadge}
         </div>
 
@@ -95,17 +96,14 @@ export function ServiceCard({
             label="Active Session"
             variant="success"
             icon={
-              <svg className="w-full h-full" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <CircleCheck className="w-full h-full" aria-hidden="true" strokeWidth={1.5} />
             }
           />
         )}
 
         {serviceScopes.length > 0 && (
           <Stack gap="xs">
-            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider">
+            <span className="text-xs font-medium text-neutral-500">
               Permissions
             </span>
             <div className="flex flex-wrap gap-2">
@@ -132,14 +130,13 @@ export function ServiceCard({
             onClick={() => onDelegate?.(service.serviceId)}
             disabled={isLoading}
             title="Connect to this service"
-            className="bg-success-primary hover:bg-success-hover text-white"
             data-testid="service-login-button"
           >
             Login
           </Button>
         ) : isDelegated ? (
           <Button
-            variant="ghost"
+            variant="danger"
             size="sm"
             onClick={() => onRevoke?.(service.serviceId)}
             disabled={isLoading}

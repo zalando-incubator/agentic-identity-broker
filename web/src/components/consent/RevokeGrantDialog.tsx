@@ -12,6 +12,7 @@
 
 import { Modal } from '@design-system/components/overlays/Modal';
 import { Button } from '@design-system/components/primitives/Button';
+import { TriangleAlert } from 'lucide-react';
 
 export interface RevokeGrantDialogProps {
   /** Display name of the agent whose access will be revoked */
@@ -56,24 +57,11 @@ export function RevokeGrantDialog({
         {/* Warning icon + body */}
         <div className="flex items-start gap-4">
           <div className="flex-shrink-0 w-12 h-12 bg-error-light rounded-full flex items-center justify-center">
-            <svg
-              className="w-6 h-6 text-error-primary"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-              />
-            </svg>
+            <TriangleAlert className="w-6 h-6 text-error-primary" aria-hidden="true" strokeWidth={1.5} />
           </div>
           <p className="text-neutral-700 mt-1">
             This will remove all permissions for{' '}
-            <strong className="font-semibold text-trust-deep">{agentName}</strong>.{' '}
+            <strong className="font-medium text-trust-deep">{agentName}</strong>.{' '}
             Any connected services (e.g., GitHub, Google) remain active — they
             are not affected by this action.
           </p>

@@ -26,6 +26,18 @@ import { Stack } from '../../layout/Stack';
 import { Checkbox } from '../../inputs/Checkbox';
 import { Badge } from '../../primitives/Badge';
 import { Skeleton } from '../../feedback/Skeleton';
+import {
+  Calendar,
+  ChevronDown,
+  FileText,
+  Folder,
+  Mail,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  User,
+  Users,
+} from 'lucide-react';
 
 const scopeListVariants = cva('w-full', {
   variants: {
@@ -130,134 +142,46 @@ const getCategoryIcon = (category: string): React.ReactNode => {
     case 'profile':
     case 'user':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-          />
-        </svg>
+        <User className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'email':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-          />
-        </svg>
+        <Mail className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'calendar':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-          />
-        </svg>
+        <Calendar className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'contacts':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
-          />
-        </svg>
+        <Users className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'documents':
     case 'files':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
+        <FileText className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'storage':
     case 'drive':
       return (
-        <svg
-          className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-          />
-        </svg>
+        <Folder className={iconClass} aria-hidden="true" strokeWidth={1.5} />
       );
     case 'api':
     case 'admin':
       return (
-        <svg
+        <SlidersHorizontal
           className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-          />
-        </svg>
+          aria-hidden="true"
+          strokeWidth={1.5}
+        />
       );
     default:
       return (
-        <svg
+        <ShieldCheck
           className={iconClass}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-          />
-        </svg>
+          aria-hidden="true"
+          strokeWidth={1.5}
+        />
       );
   }
 };
@@ -281,38 +205,22 @@ const getRiskBadgeVariant = (riskLevel?: 'low' | 'medium' | 'high') => {
  * ChevronDown icon for expandable sections
  */
 const ChevronDownIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
+  <ChevronDown
     className={cn('w-5 h-5 transition-transform', className)}
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M19 9l-7 7-7-7"
-    />
-  </svg>
+    aria-hidden="true"
+    strokeWidth={1.5}
+  />
 );
 
 /**
  * SearchIcon for search input
  */
 const SearchIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
+  <Search
     className={cn('w-5 h-5', className)}
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-    />
-  </svg>
+    aria-hidden="true"
+    strokeWidth={1.5}
+  />
 );
 
 /**
@@ -453,19 +361,11 @@ export const ScopeList = React.forwardRef<HTMLDivElement, ScopeListProps>(
         >
           {empty || (
             <>
-              <svg
+              <ShieldCheck
                 className="w-12 h-12 text-neutral-400 mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                />
-              </svg>
+                aria-hidden="true"
+                strokeWidth={1.5}
+              />
               <h3 className="text-lg font-medium text-neutral-900 mb-1">
                 No scopes available
               </h3>
@@ -540,7 +440,7 @@ export const ScopeList = React.forwardRef<HTMLDivElement, ScopeListProps>(
                           <span className="text-neutral-600">
                             {getCategoryIcon(category)}
                           </span>
-                          <span className="font-semibold text-neutral-900">
+                          <span className="font-medium text-neutral-900">
                             {category}
                           </span>
                           <Badge variant="neutral" size="sm">
@@ -565,7 +465,7 @@ export const ScopeList = React.forwardRef<HTMLDivElement, ScopeListProps>(
                           <span className="text-neutral-600">
                             {getCategoryIcon(category)}
                           </span>
-                          <span className="font-semibold text-neutral-900">
+                          <span className="font-medium text-neutral-900">
                             {category}
                           </span>
                           <Badge variant="neutral" size="sm">

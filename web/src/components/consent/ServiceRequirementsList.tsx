@@ -71,7 +71,7 @@ export const ServiceRequirementsList: React.FC<
       {/* Mandatory Services Section */}
       {mandatory.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+          <h3 className="text-sm font-medium text-neutral-700 mb-3">
             Required Services
           </h3>
           <div className="space-y-3">
@@ -94,7 +94,7 @@ export const ServiceRequirementsList: React.FC<
       {/* Optional Services Section */}
       {optional.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-neutral-700 mb-3">
+          <h3 className="text-sm font-medium text-neutral-700 mb-3">
             Optional Services
           </h3>
           <div className="space-y-3">

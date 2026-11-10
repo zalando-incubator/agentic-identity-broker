@@ -11,12 +11,12 @@ const preview: Preview = {
       },
     },
     backgrounds: {
-      default: 'cream',
+      default: 'page',
       values: [
-        { name: 'cream', value: '#faf9f7' },
-        { name: 'white', value: '#ffffff' },
-        { name: 'navy', value: '#0d1829' },
-        { name: 'sand', value: '#f5f1ed' },
+        { name: 'page', value: '#fbfcfd' },
+        { name: 'surface', value: '#ffffff' },
+        { name: 'raised', value: '#f0f2f6' },
+        { name: 'ink', value: '#0b0d14' },
       ],
     },
     viewport: {

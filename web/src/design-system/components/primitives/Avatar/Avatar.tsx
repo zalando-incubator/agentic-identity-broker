@@ -17,6 +17,7 @@
 import React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { User } from 'lucide-react';
 
 const avatarVariants = cva(
   'inline-flex items-center justify-center overflow-hidden bg-neutral-100 text-neutral-700 font-medium relative',
@@ -162,18 +163,11 @@ export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
 
         {/* Default fallback icon (person) */}
         {!showImage && !showInitials && !showFallbackIcon && (
-          <svg
+          <User
             className="w-1/2 h-1/2 text-neutral-400"
-            fill="currentColor"
-            viewBox="0 0 20 20"
             aria-hidden="true"
-          >
-            <path
-              fillRule="evenodd"
-              d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-              clipRule="evenodd"
-            />
-          </svg>
+            strokeWidth={1.5}
+          />
         )}
 
         {/* Status indicator */}

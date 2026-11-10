@@ -555,7 +555,7 @@ export const ConsentFlow: Story = {
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-neutral-900 mb-2">
+          <h2 className="text-2xl font-medium text-neutral-900 mb-2">
             Grant Permissions
           </h2>
           <p className="text-sm text-neutral-600">

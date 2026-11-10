@@ -36,65 +36,65 @@ Semantic tokens provide meaning-driven color naming that improves code readabili
 
 ```typescript
 // PRIMARY - Trust & Authority (Navy)
-trust-deep:  #0A2540     // Darkest - headings, primary brand
-trust:       #1E4D6B     // Medium - primary actions, links
-trust-hover: #2b68a5     // Lighter - hover states
-trust-light: #E8F1F5     // Lightest - backgrounds, tints
+trust-deep:  #111827     // Darkest - headings, primary brand
+trust:       #0a7a66     // Medium - primary actions, links
+trust-hover: #086a59     // Lighter - hover states
+trust-light: #e7f3f0     // Lightest - backgrounds, tints
 
 // ACTION - CTA (Unified with Warning)
-cta:       #D97706       // Call-to-action and warnings
-cta-hover: #B45309       // CTA hover state
-cta-light: #fef3c7       // CTA light background
+cta:       #b54708       // Call-to-action and warnings
+cta-hover: #93370d       // CTA hover state
+cta-light: #fffaeb       // CTA light background
 
 // SUCCESS - Emerald tones for positive actions
-success-primary: #059669 // Success state, granted permissions
-success-hover:   #047857 // Success hover state
-success-light:   #d1fae5 // Success light background
-success-dark:    #065f46 // Success dark text
+success-primary: #0a7a66 // Success state, granted permissions
+success-hover:   #086a59 // Success hover state
+success-light:   #e7f3f0 // Success light background
+success-dark:    #075e4f // Success dark text
 
 // ERROR - Red tones for destructive actions
-error-primary: #DC2626   // Error state, destructive actions
-error-hover:   #b91c1c   // Error hover state
-error-light:   #fee2e2   // Error light background
-error-dark:    #991b1b   // Error dark text
+error-primary: #b42318   // Error state, destructive actions
+error-hover:   #912018   // Error hover state
+error-light:   #fef3f2   // Error light background
+error-dark:    #7a271a   // Error dark text
 
 // WARNING - Unified with CTA (Amber)
-warning-primary: #D97706 // Warning state (same as CTA)
-warning-hover:   #B45309 // Warning hover state
-warning-light:   #fef3c7 // Warning light background
-warning-dark:    #92400e // Warning dark text
+warning-primary: #b54708 // Warning state (same as CTA)
+warning-hover:   #93370d // Warning hover state
+warning-light:   #fffaeb // Warning light background
+warning-dark:    #7a2e0e // Warning dark text
 
 // INFO - Blue tones for informational content
-info-primary: #3B82F6   // Info state
-info-hover:   #2563eb   // Info hover state
-info-light:   #dbeafe   // Info light background
-info-dark:    #1e40af   // Info dark text
+info-primary: #3056d3   // Info state
+info-hover:   #2447b3   // Info hover state
+info-light:   #eef2fc   // Info light background
+info-dark:    #1e3a8a   // Info dark text
 
 // WARM NEUTRALS - Sophisticated cream/sand/taupe (replaces gray)
-neutral-50:  #faf9f7    // Cream - page backgrounds
-neutral-100: #f5f1ed    // Sand - section backgrounds
-neutral-200: #e8e3de    // Taupe - card borders
-neutral-300: #ddd8d1    // Light taupe - input borders
-neutral-400: #c4bdb3    // Medium taupe - placeholders
-neutral-500: #9a9591    // Medium-dark - secondary icons
-neutral-600: #6b6561    // Dark taupe - secondary text
-neutral-700: #4a4137    // Darker taupe - body text
-neutral-800: #2a251f    // Very dark - emphasized text
-neutral-900: #1a1511    // Darkest - headings (or use trust-deep)
+neutral-50:  #fbfcfd    // Cream - page backgrounds
+neutral-100: #f0f2f6    // Sand - section backgrounds
+neutral-200: #e3e6ec    // Taupe - card borders
+neutral-300: #d2d6de    // Light taupe - input borders
+neutral-400: #a9afbd    // Medium taupe - placeholders
+neutral-500: #6b7487    // Medium-dark - secondary icons
+neutral-600: #4b5565    // Dark taupe - secondary text
+neutral-700: #364152    // Darker taupe - body text
+neutral-800: #1f2937    // Very dark - emphasized text
+neutral-900: #111827    // Darkest - headings (or use trust-deep)
 
 // SEMANTIC ALIASES - Contextual color names
-text-primary:   #0A2540  // Primary text (trust-deep)
-text-secondary: #6b6561  // Secondary text (neutral-600)
-text-tertiary:  #9a9591  // Tertiary text (neutral-500)
-text-disabled:  #c4bdb3  // Disabled text (neutral-400)
+text-primary:   #111827  // Primary text (trust-deep)
+text-secondary: #4b5565  // Secondary text (neutral-600)
+text-tertiary:  #6b7487  // Tertiary text (neutral-500)
+text-disabled:  #a9afbd  // Disabled text (neutral-400)
 
-bg-primary:   #faf9f7    // Primary background (neutral-50)
-bg-secondary: #f5f1ed    // Secondary background (neutral-100)
+bg-primary:   #fbfcfd    // Primary background (neutral-50)
+bg-secondary: #f0f2f6    // Secondary background (neutral-100)
 bg-elevated:  #ffffff    // Elevated cards (pure white)
 
-border-primary:   #ddd8d1 // Primary borders (neutral-300)
-border-secondary: #e8e3de // Secondary borders (neutral-200)
-border-focus:     #1E4D6B // Focus ring (trust)
+border-primary:   #d2d6de // Primary borders (neutral-300)
+border-secondary: #e3e6ec // Secondary borders (neutral-200)
+border-focus:     #0a7a66 // Focus ring (trust)
 ```
 
 ### Color Usage
@@ -129,7 +129,7 @@ border-focus:     #1E4D6B // Focus ring (trust)
 
 **Why `text-primary` is confusing for headings:**
 
-- `text-primary` points to `trust-deep` (#0A2540) technically, but semantically it's unclear
+- `text-primary` points to `trust-deep` (#111827) technically, but semantically it's unclear
 - "Primary" could mean "primary text" (body text) OR "primary brand color" (headings)
 - This creates ambiguity that makes code harder to maintain
 
@@ -230,34 +230,33 @@ Typography is managed through semantic HTML and Tailwind's text utilities.
 ### Font Families
 
 ```typescript
-// Display/Headings (Brand Primary)
-'font-display' → Crimson Pro, serif
-  - Weight 700 (bold) for main headings
-  - Weight 600 (semibold) for subheadings
-  - Letter-spacing: -0.02em for authority
+// Display/Headings
+'font-display' → Geist, ui-sans-serif, system-ui
+  - Weight 500 (medium) for every heading; nothing is bold
+  - Letter-spacing: -0.015em, -0.025em on h1
   - Usage: h1, h2, h3, page titles, modal headers
 
-// Body/UI (Humanist Sans-Serif)
-'font-sans' → Manrope, sans-serif
+// Body/UI
+'font-sans' → Geist, ui-sans-serif, system-ui
   - Weight 400 (regular) for body text
-  - Weight 500 (medium) for emphasized text
-  - Letter-spacing: -0.01em for readability
+  - Weight 500 (medium) for labels, names and emphasis
+  - Default letter-spacing
   - Usage: Body text, buttons, form labels, descriptions
   - Base size: 1rem (16px)
-  - Line height: 1.5 for comfortable reading
+  - Line height: 1.6 for comfortable reading
 
 // Monospace (Technical Values)
-'font-mono' → JetBrains Mono, monospace
-  - Weight 500 (medium) for technical content
-  - Usage: OAuth scopes, agent IDs, API tokens, code blocks
-  - Typically displayed with subtle background highlight
+'font-mono' → Geist Mono, ui-monospace
+  - Weight 400 for technical content
+  - Usage: OAuth scopes, agent IDs, dates, API tokens, code blocks
+  - Typically displayed on a raised background with a hairline
 ```
 
 **Rationale:**
 
-- **Crimson Pro** conveys trust, authority, and seriousness—essential for consent UI
-- **Manrope** provides excellent readability and humanist approachability
-- **JetBrains Mono** offers clarity for technical values while maintaining visual consistency
+- One family at two optical roles keeps the consent UI exact and sober, and matches the public docs site (ADR 048)
+- **Geist** reads cleanly at 400 and 500, so hierarchy comes from size and color rather than weight
+- **Geist Mono** sets identifiers, scopes and dates apart as facts
 
 ### Font Sizes & Line Heights
 
@@ -303,18 +302,16 @@ Typography is managed through semantic HTML and Tailwind's text utilities.
 
 Shadows provide depth and hierarchy in the interface.
 
+Cards, panels and buttons do not cast shadows. They sit on the page behind a hairline (`border border-neutral-200` or `border-line`). One floating shadow lifts overlays.
+
 ```typescript
-// Tailwind shadow scale
-'shadow-sm'        // Subtle (cards, small elements)
-'shadow'           // Default (most interactive elements)
-'shadow-md'        // Medium (modals, dropdowns)
-'shadow-lg'        // Large (overlays, prominent elements)
-'shadow-lg-premium' // Custom premium shadow (design system specific)
+'shadow-float'  // 0 1px 2px rgba(17,24,39,.04), 0 12px 32px rgba(17,24,39,.08)
+                // Modals, dropdowns, popovers, toasts. Nothing else.
 
 // Shadow usage
-<Card className="shadow" />           // Default card shadow
-<Modal className="shadow-lg" />       // Prominent modal
-<button className="hover:shadow-md" /> // Hover elevation
+<Card />                                  // Hairline, no shadow
+<Modal className="shadow-float" />        // The one floating shadow
+<Dropdown className="shadow-float" />
 ```
 
 ## Border Radius
@@ -428,35 +425,19 @@ Popover  → z-20
 
 ### For Application-Specific Theming
 
-1. **Color overrides** in `tailwind.config.ts`:
-
-```typescript
-export default {
-  theme: {
-    extend: {
-      colors: {
-        'brand-primary': '#0A2540', // Override trust-deep
-        'brand-accent': '#D97706', // Override cta
-      },
-    },
-  },
-};
-```
-
-2. **CSS variable overrides**:
+1. **Token overrides** in `web/src/design-system/tokens/colors.css` (the `@theme` block is the single source of truth; `tailwind.config.ts` is not loaded by Tailwind v4 here):
 
 ```css
-:root {
-  --color-trust-deep: #0a2540;
-  --color-cta: #d97706;
+@theme {
+  --color-accent: #0a7a66;
+  --color-trust-deep: #111827;
 }
+```
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg-primary: #0d1829; /* Dark navy */
-    --color-text-primary: #faf9f7; /* Cream text */
-  }
-}
+2. **Dark counterpart** (defined by the docs site, not yet shipped in the SPA; see ADR 048):
+
+```css
+/* page #0b0d14, surface #11141c, raised #1a1e28, ink #eef0f5, accent #4fd1b5 */
 ```
 
 ### Respecting User Preferences
@@ -479,7 +460,7 @@ export default {
 
 1. **Always verify color contrast** when using custom colors (WCAG AA: 4.5:1 for text, 3:1 for UI components)
 2. **Use semantic tokens** (trust, success, warning, error) which are pre-verified for WCAG 2.1 AA
-3. **Use warm neutrals** (neutral-\*) for text hierarchy - pre-verified contrast ratios
+3. **Use the cool neutrals** (neutral-\*) for text hierarchy - pre-verified contrast ratios
 4. **Avoid color-only encoding** - use icons, text, or patterns for status communication
 5. **Test with ColorSnack** or WebAIM Contrast Checker for custom combinations
 6. **Respect prefers-reduced-motion** in animations and transitions
@@ -488,7 +469,8 @@ export default {
 
 Design tokens are maintained in:
 
-- `tailwind.config.ts` - Tailwind configuration
+- `web/src/design-system/tokens/colors.css` - the `@theme` tokens (colors, fonts, shadow, easing)
+- `web/src/design-system/tokens/*.ts` - TypeScript mirrors for programmatic access
 - Component CVA files - Component-specific variants
 - Storybook docs - Visual reference
 - This guide - Documentation
@@ -499,7 +481,7 @@ When proposing new tokens:
 2. Check if existing token works
 3. Verify accessibility compliance
 4. Document in this guide
-5. Update Tailwind config
+5. Update `colors.css` and its TypeScript mirror
 6. Test across components
 
 ## Summary

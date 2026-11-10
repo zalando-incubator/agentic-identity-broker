@@ -12,16 +12,15 @@ The most important visual element in the interface. Every interaction begins wit
 
 | Property              | Value                        | Notes                                     |
 | --------------------- | ---------------------------- | ----------------------------------------- |
-| **Background**        | Trust Deep (#0A2540)         | With subtle gradient overlay for depth    |
-| **Text Color**        | Pure white (#ffffff)         | Maximum contrast and clarity              |
-| **Font**              | Manrope Medium (500)         | Humanist sans-serif, weight 500           |
+| **Background**        | Accent (#0a7a66)             | Flat. The one jade surface on the screen  |
+| **Text Color**        | Pure white (#ffffff)         | 5.4:1 on the accent                       |
+| **Font**              | Geist Medium (500)           | Weight 500                                |
 | **Height**            | 44px                         | Touch-friendly minimum for mobile         |
 | **Padding**           | 12px 16px                    | Horizontal 16px, vertical 12px            |
-| **Border Radius**     | 6px (md)                     | Subtle rounding, not pill-shaped          |
-| **Shadow (default)**  | `0 2px 8px rgba(0,0,0,0.08)` | Subtle elevation                          |
-| **Shadow (hover)**    | `0 8px 20px rgba(0,0,0,0.1)` | Increased elevation on hover              |
-| **Transform (hover)** | `translateY(-1px)`           | Subtle lift on interaction                |
-| **Transition**        | All properties 200ms         | Easing: cubic-bezier(0.34, 1.56, 0.64, 1) |
+| **Border Radius**     | 8px (lg)                     | Subtle rounding, not pill-shaped          |
+| **Shadow**            | None                         | Buttons never cast shadows                |
+| **Transform (hover)** | None                         | Hover darkens the accent, nothing moves   |
+| **Transition**        | Colors 150ms                 | Easing: cubic-bezier(0.22, 1, 0.36, 1)    |
 
 ### States
 
@@ -29,17 +28,16 @@ The most important visual element in the interface. Every interaction begins wit
 
 ```css
 button {
-  background: #0a2540; /* trust-deep */
+  background: #0a7a66; /* accent */
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   border-radius: 6px;
   padding: 12px 16px;
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
   font-weight: 500;
   font-size: 1rem;
   cursor: pointer;
   border: none;
-  transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 ```
 
@@ -47,8 +45,6 @@ button {
 
 ```css
 button:hover {
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
-  transform: translateY(-1px);
 }
 ```
 
@@ -56,7 +52,7 @@ button:hover {
 
 ```css
 button:focus {
-  outline: 2px solid #1e4d6b;
+  outline: 2px solid #0a7a66;
   outline-offset: 2px;
 }
 ```
@@ -65,8 +61,6 @@ button:focus {
 
 ```css
 button:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 ```
 
@@ -99,11 +93,11 @@ button.is-loading .spinner {
 
 | Variant       | Background              | Text    | Border            | Shadow           |
 | ------------- | ----------------------- | ------- | ----------------- | ---------------- |
-| **Primary**   | #0A2540 (trust-deep)    | white   | none              | md → lg on hover |
-| **Secondary** | #f5f1ed (neutral-100)   | #0A2540 | 1px solid #e8e3de | sm → md on hover |
-| **Outline**   | transparent             | #0A2540 | 2px solid #ddd8d1 | none             |
-| **Ghost**     | transparent             | #0A2540 | none              | none             |
-| **Danger**    | #DC2626 (error-primary) | white   | none              | md → lg on hover |
+| **Primary**   | #111827 (trust-deep)    | white   | none              | md → lg on hover |
+| **Secondary** | #f0f2f6 (neutral-100)   | #111827 | 1px solid #e3e6ec | sm → md on hover |
+| **Outline**   | transparent             | #111827 | 2px solid #d2d6de | none             |
+| **Ghost**     | transparent             | #111827 | none              | none             |
+| **Danger**    | #b42318 (error-primary) | white   | none              | md → lg on hover |
 
 ---
 
@@ -121,8 +115,8 @@ The workhorse of the UI. Cards organize content hierarchically and create visual
 | **Border Radius**    | 12px (xl)                                                       | Generous but not extreme                    |
 | **Shadow (default)** | `0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)` | Subtle external + internal highlight        |
 | **Shadow (hover)**   | `0 8px 20px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)` | Elevated on hover                           |
-| **Transition**       | All properties 300ms                                            | Easing: cubic-bezier(0.34, 1.56, 0.64, 1)   |
-| **Hover Transform**  | `translateY(-2px)`                                              | Subtle lift on hover                        |
+| **Transition**       | All properties 300ms                                            | Easing: cubic-bezier(0.22, 1, 0.36, 1)   |
+| **Hover Transform**  | None                                                            | The hairline takes the accent instead       |
 
 ### Base Styling
 
@@ -136,7 +130,7 @@ The workhorse of the UI. Cards organize content hierarchically and create visual
     0 2px 8px rgba(0, 0, 0, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 1);
   backdrop-filter: blur(10px);
-  transition: all 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 ```
 
@@ -149,7 +143,6 @@ The workhorse of the UI. Cards organize content hierarchically and create visual
   box-shadow:
     0 8px 20px rgba(0, 0, 0, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 1);
-  transform: translateY(-2px);
 }
 ```
 
@@ -157,7 +150,7 @@ The workhorse of the UI. Cards organize content hierarchically and create visual
 
 ```css
 .card:focus-within {
-  outline: 2px solid #1e4d6b;
+  outline: 2px solid #0a7a66;
   outline-offset: 2px;
 }
 ```
@@ -209,15 +202,15 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 
 | Property                | Value (Default)     | Value (Focus)                 | Value (Error)       | Notes                          |
 | ----------------------- | ------------------- | ----------------------------- | ------------------- | ------------------------------ |
-| **Border**              | 1.5px solid #ddd8d1 | 1.5px solid #1e4d6b           | 1.5px solid #dc2626 | Neutral-300 default            |
+| **Border**              | 1.5px solid #d2d6de | 1.5px solid #0a7a66           | 1.5px solid #b42318 | Neutral-300 default            |
 | **Height**              | 44px                | 44px                          | 44px                | Touch-friendly minimum         |
 | **Padding**             | 12px 16px           | 12px 16px                     | 12px 16px           | Horizontal 16px, vertical 12px |
 | **Background**          | #ffffff             | #ffffff                       | #ffffff             | Always white for clarity       |
 | **Border Radius**       | 6px (md)            | 6px (md)                      | 6px (md)            | Consistent with buttons        |
-| **Focus Ring**          | none                | 2px solid #1e4d6b, 2px offset | none                | Clear, 2px offset              |
-| **Disabled Background** | #f5f1ed             | —                             | —                   | Subtle background              |
-| **Disabled Border**     | 1px solid #ddd8d1   | —                             | —                   | Lighter border                 |
-| **Disabled Text**       | #9a9591             | —                             | —                   | Muted color                    |
+| **Focus Ring**          | none                | 2px solid #0a7a66, 2px offset | none                | Clear, 2px offset              |
+| **Disabled Background** | #f0f2f6             | —                             | —                   | Subtle background              |
+| **Disabled Border**     | 1px solid #d2d6de   | —                             | —                   | Lighter border                 |
+| **Disabled Text**       | #6b7487             | —                             | —                   | Muted color                    |
 | **Transition**          | —                   | All 150ms                     | —                   | Border and shadow              |
 
 ### Base Styling
@@ -226,19 +219,19 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 .input {
   height: 44px;
   padding: 12px 16px;
-  border: 1.5px solid #ddd8d1; /* neutral-300 */
+  border: 1.5px solid #d2d6de; /* neutral-300 */
   border-radius: 6px;
   background: #ffffff;
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
   font-size: 1rem;
-  color: #0a2540; /* trust-deep */
+  color: #111827; /* trust-deep */
   transition:
     border 150ms,
     box-shadow 150ms;
 }
 
 .input::placeholder {
-  color: #c4bdb3; /* neutral-400 */
+  color: #a9afbd; /* neutral-400 */
 }
 ```
 
@@ -249,8 +242,8 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 ```css
 .input:focus {
   outline: none;
-  border-color: #1e4d6b;
-  box-shadow: 0 0 0 2px #1e4d6b;
+  border-color: #0a7a66;
+  box-shadow: 0 0 0 2px #0a7a66;
   box-shadow-offset: 2px;
 }
 ```
@@ -259,13 +252,13 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 
 ```css
 .input.is-error {
-  border-color: #dc2626;
+  border-color: #b42318;
   box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.1);
 }
 
 .input.is-error:focus {
-  border-color: #dc2626;
-  box-shadow: 0 0 0 2px #dc2626;
+  border-color: #b42318;
+  box-shadow: 0 0 0 2px #b42318;
 }
 ```
 
@@ -273,9 +266,9 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 
 ```css
 .input:disabled {
-  background: #f5f1ed;
-  border-color: #ddd8d1;
-  color: #9a9591;
+  background: #f0f2f6;
+  border-color: #d2d6de;
+  color: #6b7487;
   cursor: not-allowed;
 }
 ```
@@ -332,7 +325,7 @@ Command attention without aggression. Modals are critical for permission dialogs
 | **Modal Padding**       | 24px standard, 32px spacious   | Generous whitespace                       |
 | **Header Padding**      | 32px                           | Emphasis and hierarchy                    |
 | **Overlay Animation**   | Fade in 200ms                  | Easing: ease-out                          |
-| **Modal Animation**     | Slide up + scale 300ms         | Easing: cubic-bezier(0.34, 1.56, 0.64, 1) |
+| **Modal Animation**     | Slide up + scale 300ms         | Easing: cubic-bezier(0.22, 1, 0.36, 1) |
 | **Animation Delay**     | 100ms                          | Stagger overlay and modal                 |
 
 ### Base Styling
@@ -357,7 +350,7 @@ Command attention without aggression. Modals are critical for permission dialogs
   max-width: 600px;
   max-height: 90vh;
   overflow-y: auto;
-  animation: slideUpScale 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: slideUpScale 300ms cubic-bezier(0.22, 1, 0.36, 1);
   animation-delay: 100ms;
 }
 ```
@@ -461,7 +454,7 @@ Command attention without aggression. Modals are critical for permission dialogs
 
 ### Consistency Rules
 
-- All primary buttons must use the trust-deep background (#0A2540) and shadow strategy
+- All primary buttons must use the trust-deep background (#111827) and shadow strategy
 - All cards must maintain the double shadow (external + internal highlight)
 - All form inputs must be exactly 44px height for touch accessibility
 - All modals must use the trust-deep overlay (rgba(13, 24, 41, 0.5)) with 8px blur
@@ -485,7 +478,7 @@ These four component archetypes define the visual identity of the Refined Trust 
 
 | Component          | Key Visual Feature                       | Emotional Signal                  |
 | ------------------ | ---------------------------------------- | --------------------------------- |
-| **Primary Button** | Trust-deep (#0A2540) + lifting animation | Authority with approachability    |
+| **Primary Button** | Trust-deep (#111827) + lifting animation | Authority with approachability    |
 | **Card**           | Double shadow + white on warm neutrals   | Elevated content, premium quality |
 | **Form Input**     | 44px + trust focus ring                  | Safety and touch-friendly         |
 | **Modal**          | Trust-deep overlay + slide animation     | Important moment, clear focus     |

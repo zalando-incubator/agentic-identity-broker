@@ -17,6 +17,7 @@ import React from 'react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
 import { Button } from '@design-system/components/primitives/Button';
+import { Folder } from 'lucide-react';
 
 const emptyStateVariants = cva(
   // Base styles - centered layout with consistent structure
@@ -56,7 +57,7 @@ const iconContainerVariants = cva(
   },
 );
 
-const titleVariants = cva('font-semibold text-neutral-900', {
+const titleVariants = cva('font-medium text-neutral-900', {
   variants: {
     size: {
       compact: 'text-base',
@@ -85,7 +86,7 @@ const descriptionVariants = cva('text-neutral-600 leading-relaxed', {
 const actionsContainerVariants = cva('flex gap-3', {
   variants: {
     size: {
-      compact: 'flex-col w-full mt-3',
+      compact: 'flex-col-reverse w-full mt-3',
       default: 'flex-row items-center justify-center mt-4',
       expanded: 'flex-row items-center justify-center mt-6',
     },
@@ -121,20 +122,11 @@ export interface EmptyStateProps extends Omit<
 
 // Default icon for empty states (folder icon)
 const DefaultIcon = () => (
-  <svg
+  <Folder
     className="w-full h-full text-neutral-400"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
     aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={1.5}
-      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-    />
-  </svg>
+    strokeWidth={1.5}
+  />
 );
 
 /**
@@ -214,17 +206,6 @@ export const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
         {/* Actions */}
         {(primaryAction || secondaryAction) && (
           <div className={actionsContainerVariants({ size })}>
-            {primaryAction && (
-              <Button
-                variant="primary"
-                size={size === 'compact' ? 'sm' : 'md'}
-                onClick={primaryAction.onClick}
-                fullWidth={size === 'compact'}
-              >
-                {primaryAction.label}
-              </Button>
-            )}
-
             {secondaryAction && (
               <Button
                 variant="outline"
@@ -233,6 +214,17 @@ export const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
                 fullWidth={size === 'compact'}
               >
                 {secondaryAction.label}
+              </Button>
+            )}
+
+            {primaryAction && (
+              <Button
+                variant="primary"
+                size={size === 'compact' ? 'sm' : 'md'}
+                onClick={primaryAction.onClick}
+                fullWidth={size === 'compact'}
+              >
+                {primaryAction.label}
               </Button>
             )}
           </div>

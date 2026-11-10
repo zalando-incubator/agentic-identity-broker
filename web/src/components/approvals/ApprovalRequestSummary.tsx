@@ -37,30 +37,30 @@ export function ApprovalRequestSummary({
             size="sm"
           />
           <div className="space-y-0.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+            <p className="text-xs font-medium text-neutral-400">
               Requested by
             </p>
-            <p className="text-sm font-semibold text-neutral-900">{agentName}</p>
+            <p className="text-sm font-medium text-neutral-900">{agentName}</p>
           </div>
         </div>
         <RiskBadge level={approval.risk_level} />
       </div>
 
       <div className="space-y-1.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+        <p className="text-xs font-medium text-neutral-400">
           Action
         </p>
-        <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm font-semibold leading-snug text-neutral-900">
+        <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm font-medium leading-snug text-neutral-900">
           {approval.description?.trim() || approval.tool_name}
         </div>
       </div>
 
       <div className="space-y-1.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+        <p className="text-xs font-medium text-neutral-400">
           Technical details
         </p>
         <div className="space-y-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2.5 font-mono text-sm">
-          <h3 className="font-semibold text-neutral-800">{approval.tool_name}</h3>
+          <h3 className="font-medium text-neutral-800">{approval.tool_name}</h3>
           {toolArguments.length === 0 ? (
             <p className="text-neutral-500">No parameters</p>
           ) : (
@@ -78,7 +78,7 @@ export function ApprovalRequestSummary({
 
       {showSessionContext && sessionEntries.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+          <p className="text-xs font-medium text-neutral-400">
             Session context
           </p>
           <div className="divide-y divide-neutral-100 rounded-md border border-neutral-200 bg-white">

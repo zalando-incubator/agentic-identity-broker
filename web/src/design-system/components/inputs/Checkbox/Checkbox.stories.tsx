@@ -81,9 +81,7 @@ export const ValidationStates: Story = {
 export const Group: Story = {
   render: () => (
     <div className="space-y-3 p-4 bg-white border border-neutral-200 rounded-lg w-96">
-      <h4 className="text-sm font-semibold text-neutral-900 mb-2">
-        Permissions
-      </h4>
+      <h4 className="text-sm font-medium text-neutral-900 mb-2">Permissions</h4>
       <Checkbox
         label="Read emails"
         description="View your email messages"

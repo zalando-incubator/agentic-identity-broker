@@ -245,9 +245,7 @@ export const AvatarGroup: Story = {
     <div className="flex flex-col gap-6">
       {/* Stacked avatars */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
-          Stacked Group
-        </h3>
+        <h3 className="text-sm font-medium text-neutral-700">Stacked Group</h3>
         <div className="flex -space-x-2">
           <Avatar
             src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop"
@@ -270,7 +268,7 @@ export const AvatarGroup: Story = {
 
       {/* Spaced avatars */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">Spaced Group</h3>
+        <h3 className="text-sm font-medium text-neutral-700">Spaced Group</h3>
         <div className="flex gap-2">
           <Avatar initials="JD" status="online" size="sm" />
           <Avatar initials="AS" status="away" size="sm" />
@@ -290,7 +288,7 @@ export const UseCases: Story = {
     <div className="flex flex-col gap-6 p-6">
       {/* User profile card */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">Profile Card</h3>
+        <h3 className="text-sm font-medium text-neutral-700">Profile Card</h3>
         <div className="flex items-center gap-3 p-4 bg-white border border-neutral-200 rounded-lg">
           <Avatar
             src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop"
@@ -307,7 +305,7 @@ export const UseCases: Story = {
 
       {/* Agent card */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">AI Agent</h3>
+        <h3 className="text-sm font-medium text-neutral-700">AI Agent</h3>
         <div className="flex items-center gap-3 p-4 bg-white border border-neutral-200 rounded-lg">
           <Avatar initials="AI" shape="rounded" status="online" size="lg" />
           <div>
@@ -323,9 +321,7 @@ export const UseCases: Story = {
 
       {/* Comment thread */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
-          Comment Thread
-        </h3>
+        <h3 className="text-sm font-medium text-neutral-700">Comment Thread</h3>
         <div className="space-y-3">
           <div className="flex gap-3">
             <Avatar initials="JD" size="sm" />
@@ -372,7 +368,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="flex flex-col gap-6">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Avatars with proper alt text
         </h3>
         <div className="flex gap-4">
@@ -390,7 +386,7 @@ export const Accessibility: Story = {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Status indicators with aria-label
         </h3>
         <div className="flex gap-4">

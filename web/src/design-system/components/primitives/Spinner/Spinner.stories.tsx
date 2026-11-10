@@ -187,7 +187,7 @@ export const InlineUseCases: Story = {
     <div className="flex flex-col gap-6 p-6">
       {/* In a button */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Button Loading State
         </h3>
         <button
@@ -201,7 +201,7 @@ export const InlineUseCases: Story = {
 
       {/* In a card header */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Card Loading State
         </h3>
         <div className="p-4 bg-white border border-neutral-200 rounded-lg">
@@ -221,7 +221,7 @@ export const InlineUseCases: Story = {
 
       {/* In a list item */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           List Item Loading
         </h3>
         <div className="space-y-2">
@@ -285,7 +285,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="flex flex-col gap-6">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Spinners with descriptive labels
         </h3>
         <div className="flex flex-wrap gap-4">
@@ -296,7 +296,7 @@ export const Accessibility: Story = {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-700">
+        <h3 className="text-sm font-medium text-neutral-700">
           Live region announcement (for dynamic loading)
         </h3>
         <div className="p-4 bg-neutral-50 rounded-lg">

@@ -7,7 +7,24 @@
  */
 
 export const semanticColors = {
-  // PRIMARY - Trust & Authority
+  // ACCENT - Jade. Actions, links and the granted state.
+  accent: {
+    default: 'var(--color-accent)',
+    hover: 'var(--color-accent-hover)',
+    ink: 'var(--color-accent-ink)',
+    soft: 'var(--color-accent-soft)',
+  },
+
+  // INK RAMP - Page, surfaces and hairlines
+  surface: {
+    page: 'var(--color-page)',
+    default: 'var(--color-surface)',
+    raised: 'var(--color-raised)',
+    line: 'var(--color-line)',
+    lineStrong: 'var(--color-line-strong)',
+  },
+
+  // PRIMARY - Trust. Ink for text, the accent for actions.
   trust: {
     deep: 'var(--color-trust-deep)',
     default: 'var(--color-trust)',
@@ -54,7 +71,7 @@ export const semanticColors = {
     dark: 'var(--color-info-dark)',
   },
 
-  // WARM NEUTRALS (replaces gray)
+  // COOL NEUTRALS (replaces gray)
   neutral: {
     50: 'var(--color-neutral-50)',
     100: 'var(--color-neutral-100)',

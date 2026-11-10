@@ -131,7 +131,7 @@ export const PermissionMetadata: Story = {
     <div className="space-y-6 max-w-2xl">
       <div className="bg-white border border-neutral-200 rounded-lg p-6">
         <div className="mb-4">
-          <h3 className="text-base font-semibold text-neutral-900 mb-2">
+          <h3 className="text-base font-medium text-neutral-900 mb-2">
             Analytics Dashboard
           </h3>
           <p className="text-sm text-neutral-600">

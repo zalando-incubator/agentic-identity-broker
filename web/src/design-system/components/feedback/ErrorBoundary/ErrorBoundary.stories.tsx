@@ -42,7 +42,7 @@ const BuggyComponent = ({ shouldThrow }: { shouldThrow: boolean }) => {
   }
   return (
     <div className="p-6 bg-green-50 border border-green-200 rounded-lg">
-      <h3 className="text-lg font-semibold text-green-900 mb-2">
+      <h3 className="text-lg font-medium text-green-900 mb-2">
         Component Working Correctly
       </h3>
       <p className="text-green-700">
@@ -210,7 +210,7 @@ export const Nested: Story = {
         {/* Outer boundary */}
         <ErrorBoundary boundaryName="Outer Container">
           <div className="border-2 border-blue-300 rounded-lg p-4 bg-blue-50">
-            <h3 className="text-sm font-semibold text-blue-900 mb-3">
+            <h3 className="text-sm font-medium text-blue-900 mb-3">
               Outer Error Boundary
             </h3>
 
@@ -220,7 +220,7 @@ export const Nested: Story = {
               {/* Inner boundary */}
               <ErrorBoundary boundaryName="Inner Widget">
                 <div className="border-2 border-purple-300 rounded-lg p-4 bg-purple-50">
-                  <h4 className="text-sm font-semibold text-purple-900 mb-2">
+                  <h4 className="text-sm font-medium text-purple-900 mb-2">
                     Inner Error Boundary
                   </h4>
                   <BuggyComponent shouldThrow={innerError} />
@@ -245,7 +245,7 @@ export const DevelopmentMode: Story = {
     return (
       <div className="space-y-4 max-w-3xl">
         <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <h4 className="text-sm font-semibold text-blue-900 mb-2">
+          <h4 className="text-sm font-medium text-blue-900 mb-2">
             Development Mode Features
           </h4>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
@@ -277,7 +277,7 @@ export const ProductionMode: Story = {
     return (
       <div className="space-y-4 max-w-3xl">
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <h4 className="text-sm font-semibold text-amber-900 mb-2">
+          <h4 className="text-sm font-medium text-amber-900 mb-2">
             Production Mode Features
           </h4>
           <ul className="text-sm text-amber-800 space-y-1 list-disc list-inside">
@@ -323,7 +323,7 @@ export const WithFallbackUI: Story = {
             />
           </svg>
         </div>
-        <h3 className="text-xl font-bold text-purple-900 mb-2">
+        <h3 className="text-xl font-medium text-purple-900 mb-2">
           Oops! Something broke
         </h3>
         <p className="text-purple-700 mb-1 text-sm">
@@ -427,14 +427,14 @@ export const RealWorldExamples: Story = {
     return (
       <div className="space-y-6 max-w-3xl">
         <div>
-          <h3 className="text-lg font-semibold text-neutral-900 mb-4">
+          <h3 className="text-lg font-medium text-neutral-900 mb-4">
             Consent Management Error Scenarios
           </h3>
 
           <div className="space-y-4">
             {/* Consent Form Error */}
             <div>
-              <h4 className="text-sm font-semibold text-neutral-800 mb-2">
+              <h4 className="text-sm font-medium text-neutral-800 mb-2">
                 1. Consent Form Validation Error
               </h4>
               <div className="mb-2">
@@ -461,7 +461,7 @@ export const RealWorldExamples: Story = {
 
             {/* API Integration Error */}
             <div>
-              <h4 className="text-sm font-semibold text-neutral-800 mb-2">
+              <h4 className="text-sm font-medium text-neutral-800 mb-2">
                 2. API Integration Error
               </h4>
               <div className="mb-2">
@@ -478,7 +478,7 @@ export const RealWorldExamples: Story = {
                 showDetails={false}
                 fallback={(error, retry) => (
                   <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-center">
-                    <h4 className="text-lg font-semibold text-red-900 mb-2">
+                    <h4 className="text-lg font-medium text-red-900 mb-2">
                       Unable to Load Dashboard
                     </h4>
                     <p className="text-sm text-red-700 mb-4">
@@ -499,7 +499,7 @@ export const RealWorldExamples: Story = {
 
             {/* Graceful Degradation */}
             <div>
-              <h4 className="text-sm font-semibold text-neutral-800 mb-2">
+              <h4 className="text-sm font-medium text-neutral-800 mb-2">
                 3. Feature Widget with Graceful Degradation
               </h4>
               <div className="grid grid-cols-2 gap-4">
@@ -514,7 +514,7 @@ export const RealWorldExamples: Story = {
                   }
                 >
                   <div className="p-4 bg-white border border-neutral-200 rounded-lg">
-                    <h5 className="font-semibold text-sm mb-2">Analytics</h5>
+                    <h5 className="font-medium text-sm mb-2">Analytics</h5>
                     <p className="text-sm text-neutral-600">
                       Widget working correctly
                     </p>
@@ -532,7 +532,7 @@ export const RealWorldExamples: Story = {
                   }
                 >
                   <div className="p-4 bg-white border border-neutral-200 rounded-lg">
-                    <h5 className="font-semibold text-sm mb-2">Reports</h5>
+                    <h5 className="font-medium text-sm mb-2">Reports</h5>
                     <p className="text-sm text-neutral-600">
                       Widget working correctly
                     </p>
@@ -581,7 +581,7 @@ export const WithErrorLogging: Story = {
     return (
       <div className="space-y-4 max-w-3xl">
         <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-          <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+          <h4 className="text-sm font-medium text-neutral-900 mb-2">
             Error Logging Integration
           </h4>
           <p className="text-sm text-neutral-700 mb-3">
@@ -600,7 +600,7 @@ export const WithErrorLogging: Story = {
         {logs.length > 0 && (
           <div className="p-4 bg-neutral-900 text-green-400 rounded-lg font-mono text-xs">
             <div className="flex justify-between items-center mb-2">
-              <span className="font-semibold">Error Log:</span>
+              <span className="font-medium">Error Log:</span>
               <button
                 onClick={() => setLogs([])}
                 className="text-neutral-400 hover:text-white text-xs underline"
@@ -636,7 +636,7 @@ export const ResetOnPropsChange: Story = {
     return (
       <div className="space-y-4 max-w-2xl">
         <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-          <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+          <h4 className="text-sm font-medium text-neutral-900 mb-2">
             Auto-Reset on Route/Prop Changes
           </h4>
           <p className="text-sm text-neutral-700 mb-3">
@@ -663,9 +663,7 @@ export const ResetOnPropsChange: Story = {
 
         <ErrorBoundary resetOnPropsChange showDetails={false}>
           <div className="p-4 bg-white border border-neutral-200 rounded-lg">
-            <h4 className="text-sm font-semibold mb-2">
-              User Profile: {userId}
-            </h4>
+            <h4 className="text-sm font-medium mb-2">User Profile: {userId}</h4>
             <BuggyComponent shouldThrow={shouldThrow} />
           </div>
         </ErrorBoundary>
@@ -684,7 +682,7 @@ export const Accessibility: Story = {
   render: () => (
     <div className="space-y-6 max-w-3xl">
       <div className="p-4 bg-neutral-50 border border-neutral-200 rounded-lg">
-        <h4 className="text-sm font-semibold text-neutral-900 mb-2">
+        <h4 className="text-sm font-medium text-neutral-900 mb-2">
           Accessibility Features
         </h4>
         <ul className="text-sm text-neutral-700 space-y-1 list-disc list-inside">

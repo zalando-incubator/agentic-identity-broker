@@ -24,6 +24,8 @@
  */
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { House, Info, RefreshCw, TriangleAlert } from 'lucide-react';
+import { Button } from '@design-system/components/primitives/Button';
 
 interface Props {
   children: ReactNode;
@@ -103,30 +105,21 @@ export class GlobalErrorBoundary extends Component<Props, State> {
 
       // Default comprehensive fallback UI
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-neutral-50 to-neutral-100 px-4 py-8">
+        <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4 py-8">
           <div className="max-w-2xl w-full bg-white rounded-2xl shadow-2xl overflow-hidden border border-neutral-200">
             {/* Header Section with Icon */}
-            <div className="bg-gradient-to-r from-red-500 to-red-600 px-8 py-10 text-center">
-              <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-full mb-4 shadow-lg">
-                <svg
-                  className="w-12 h-12 text-red-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+            <div className="bg-error-primary px-8 py-10 text-center">
+              <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-full mb-4">
+                <TriangleAlert
+                  className="w-12 h-12 text-error-primary"
                   aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
+                  strokeWidth={1.5}
+                />
               </div>
-              <h1 className="text-3xl font-bold text-white mb-2">
+              <h1 className="text-3xl font-medium text-white mb-2">
                 Oops! Something went wrong
               </h1>
-              <p className="text-red-100 text-lg">
+              <p className="text-error-light text-lg">
                 We encountered an unexpected error
               </p>
             </div>
@@ -142,35 +135,27 @@ export class GlobalErrorBoundary extends Component<Props, State> {
               {/* Error Details (Development Only) */}
               {isDevelopment && this.state.error && (
                 <details className="mb-6 p-4 bg-neutral-50 rounded-lg border border-neutral-200">
-                  <summary className="cursor-pointer text-sm font-semibold text-neutral-700 hover:text-neutral-900 mb-3 flex items-center gap-2">
-                    <svg
+                  <summary className="cursor-pointer text-sm font-medium text-neutral-700 hover:text-neutral-900 mb-3 flex items-center gap-2">
+                    <Info
                       className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
+                      aria-hidden="true"
+                      strokeWidth={1.5}
+                    />
                     Error Details (Development Mode)
                   </summary>
                   <div className="space-y-3">
                     <div>
-                      <p className="text-xs font-semibold text-neutral-600 mb-1">
+                      <p className="text-xs font-medium text-neutral-600 mb-1">
                         Error Message:
                       </p>
-                      <pre className="text-xs font-mono text-red-700 whitespace-pre-wrap break-words bg-red-50 p-3 rounded border border-red-200">
+                      <pre className="text-xs font-mono text-error-dark whitespace-pre-wrap break-words bg-error-light p-3 rounded border border-error-primary/30">
                         {this.state.error.toString()}
                       </pre>
                     </div>
                     {this.state.errorInfo &&
                       this.state.errorInfo.componentStack && (
                         <div>
-                          <p className="text-xs font-semibold text-neutral-600 mb-1">
+                          <p className="text-xs font-medium text-neutral-600 mb-1">
                             Component Stack:
                           </p>
                           <pre className="text-xs font-mono text-neutral-700 whitespace-pre-wrap break-words bg-neutral-100 p-3 rounded border border-neutral-300 max-h-64 overflow-y-auto">
@@ -184,26 +169,18 @@ export class GlobalErrorBoundary extends Component<Props, State> {
 
               {/* Production Error Hint */}
               {!isDevelopment && (
-                <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="mb-6 p-4 bg-info-light rounded-lg border border-info-primary/30">
                   <div className="flex gap-3">
-                    <svg
-                      className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
+                    <Info
+                      className="w-5 h-5 text-info-primary flex-shrink-0 mt-0.5"
+                      aria-hidden="true"
+                      strokeWidth={1.5}
+                    />
                     <div>
-                      <p className="text-sm font-medium text-blue-900 mb-1">
+                      <p className="text-sm font-medium text-info-dark mb-1">
                         What can you do?
                       </p>
-                      <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                      <ul className="text-sm text-info-dark space-y-1 list-disc list-inside">
                         <li>Try reloading the page</li>
                         <li>Return to the home page and try again</li>
                         <li>Clear your browser cache</li>
@@ -215,45 +192,24 @@ export class GlobalErrorBoundary extends Component<Props, State> {
               )}
 
               {/* Action Buttons */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={this.handleReload}
-                  className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors font-semibold shadow-md hover:shadow-lg"
-                >
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                  Reload Page
-                </button>
-                <button
+              <div className="flex flex-col-reverse sm:flex-row gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
                   onClick={this.handleGoHome}
-                  className="flex-1 flex items-center justify-center gap-2 bg-neutral-200 text-neutral-800 px-6 py-3 rounded-lg hover:bg-neutral-300 transition-colors font-semibold shadow-sm hover:shadow-md"
+                  iconBefore={<House className="h-4 w-4" strokeWidth={1.5} />}
                 >
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
-                    />
-                  </svg>
                   Go Home
-                </button>
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={this.handleReload}
+                  iconBefore={
+                    <RefreshCw className="h-4 w-4" strokeWidth={1.5} />
+                  }
+                >
+                  Reload Page
+                </Button>
               </div>
 
               {/* Additional Help Text */}

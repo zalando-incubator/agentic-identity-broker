@@ -352,7 +352,7 @@ export const Interactive: Story = {
     return (
       <div className="space-y-6">
         <div className="p-6 bg-neutral-50 rounded-lg">
-          <h3 className="text-lg font-semibold mb-2">
+          <h3 className="text-lg font-medium mb-2">
             Current Page: {currentPage}
           </h3>
           <p className="text-sm text-neutral-600">

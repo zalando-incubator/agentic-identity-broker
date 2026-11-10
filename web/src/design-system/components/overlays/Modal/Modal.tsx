@@ -19,10 +19,11 @@ import React from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
+import { X } from 'lucide-react';
 
 const modalVariants = cva(
   // Base styles - applied to all modals
-  'relative bg-white rounded-2xl shadow-xl-premium transform transition-all',
+  'relative bg-white rounded-2xl border border-line-strong shadow-float transition-[transform,opacity]',
   {
     variants: {
       size: {
@@ -43,20 +44,7 @@ const modalVariants = cva(
 );
 
 const CloseIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M6 18L18 6M6 6l12 12"
-    />
-  </svg>
+  <X className="w-5 h-5" aria-hidden="true" strokeWidth={1.5} />
 );
 
 export interface ModalProps {
@@ -194,7 +182,7 @@ export const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                           {title && (
                             <Dialog.Title
                               as="h3"
-                              className="text-lg font-semibold text-neutral-900 leading-6"
+                              className="text-lg font-medium text-neutral-900 leading-6"
                             >
                               {title}
                             </Dialog.Title>

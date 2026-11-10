@@ -18,29 +18,29 @@ import { cn } from '@design-system/utils';
 
 const buttonVariants = cva(
   // Base styles - applied to all variants
-  'inline-flex items-center justify-center font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
+  'inline-flex items-center justify-center font-medium rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
   {
     variants: {
       variant: {
-        // Primary: Deep navy (trust) - most important actions
+        // Primary: The accent - the one action the screen is for
         primary:
-          'bg-trust-deep text-white border-transparent hover:bg-trust-hover focus:ring-trust shadow-md hover:shadow-lg hover:-translate-y-px',
+          'bg-accent text-accent-ink border-transparent hover:bg-accent-hover focus:ring-accent',
 
-        // Secondary: Success green - secondary actions
+        // Secondary: Granting and connecting actions share the accent
         secondary:
-          'bg-success-primary text-white border-transparent hover:bg-success-hover focus:ring-success-primary shadow-md hover:shadow-lg hover:-translate-y-px',
+          'bg-success-primary text-accent-ink border-transparent hover:bg-success-hover focus:ring-success-primary',
 
-        // Outline: White bg with trust border - tertiary actions
+        // Outline: Surface with a hairline - the quiet alternative (Decline, Cancel)
         outline:
-          'bg-white text-trust-deep border border-neutral-300 hover:bg-neutral-50 hover:border-neutral-400 focus:ring-trust shadow-sm',
+          'bg-white text-trust-deep border border-line-strong hover:bg-neutral-50 hover:border-neutral-400 focus:ring-accent',
 
         // Ghost: Transparent bg - subtle actions
         ghost:
-          'bg-transparent text-trust-deep hover:bg-neutral-100 focus:ring-trust',
+          'bg-transparent text-trust-deep hover:bg-neutral-100 focus:ring-accent',
 
-        // Danger: Error red - destructive actions
+        // Danger: Outlined red - destructive actions stay legible without shouting
         danger:
-          'bg-error-primary text-white border-transparent hover:bg-error-hover focus:ring-error-primary shadow-md hover:shadow-lg hover:-translate-y-px',
+          'bg-white text-error-primary border border-error-primary/40 hover:bg-error-light hover:border-error-primary focus:ring-error-primary',
       },
       size: {
         sm: 'px-3 py-1.5 text-sm h-9',

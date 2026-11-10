@@ -657,7 +657,7 @@ export const UserAccountMenu: Story = {
           items={userAccountMenuItems}
           trigger={
             <button className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-neutral-100 transition-colors">
-              <div className="w-8 h-8 bg-trust-hover text-white rounded-full flex items-center justify-center text-sm font-semibold">
+              <div className="w-8 h-8 bg-trust-hover text-white rounded-full flex items-center justify-center text-sm font-medium">
                 JD
               </div>
               <svg

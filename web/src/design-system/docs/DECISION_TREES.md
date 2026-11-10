@@ -58,30 +58,30 @@ What type of text is this?
 Is it a HEADING (h1-h6)?
 ├─ YES ↓
 │   Is it the primary page heading (h1) or major section (h2)?
-│   ├─ YES → Use `text-trust-deep` (#0A2540)
-│   └─ NO (h3-h6) → Use `text-trust` (#1E4D6B)
+│   ├─ YES → Use `text-trust-deep` (#111827)
+│   └─ NO (h3-h6) → Use `text-trust` (#0a7a66)
 └─ NO ↓
 
 Is it BODY TEXT (paragraphs, descriptions)?
 ├─ YES ↓
 │   Is it primary content?
-│   ├─ YES → Use `text-neutral-700` (#4a4137)
-│   └─ NO (supporting/secondary) → Use `text-secondary` (neutral-600, #6b6561)
+│   ├─ YES → Use `text-neutral-700` (#364152)
+│   └─ NO (supporting/secondary) → Use `text-secondary` (neutral-600, #4b5565)
 └─ NO ↓
 
 Is it METADATA or LABELS?
-├─ YES → Use `text-tertiary` (neutral-500, #9a9591)
+├─ YES → Use `text-tertiary` (neutral-500, #6b7487)
 └─ NO ↓
 
 Is it DISABLED or PLACEHOLDER?
-├─ YES → Use `text-disabled` (neutral-400, #c4bdb3)
+├─ YES → Use `text-disabled` (neutral-400, #a9afbd)
 └─ NO ↓
 
 Is it a STATUS INDICATOR?
-├─ Granted/Success → Use `text-success-dark` (#065f46)
-├─ Pending/Warning → Use `text-warning-dark` (#92400e)
-├─ Error/Denied → Use `text-error-primary` (#DC2626)
-└─ Info → Use `text-info-dark` (#1e40af)
+├─ Granted/Success → Use `text-success-dark` (#075e4f)
+├─ Pending/Warning → Use `text-warning-dark` (#7a2e0e)
+├─ Error/Denied → Use `text-error-primary` (#b42318)
+└─ Info → Use `text-info-dark` (#1e3a8a)
 ```
 
 ### Typography Hierarchy Examples
@@ -272,20 +272,16 @@ Is it a CARD at rest?
 ├─ YES → Use `shadow-sm` (subtle hint of depth)
 └─ NO ↓
 
-Is it a CARD on hover?
-├─ YES → Use `shadow-lg` (significant elevation increase)
+Is it a CARD (rest or hover)?
+├─ YES → NO shadow. Hairline `border border-neutral-200`; interactive cards use `hover:border-accent`
 └─ NO ↓
 
-Is it a DROPDOWN or POPOVER?
-├─ YES → Use `shadow-md` (clear separation from page)
+Is it an OVERLAY (modal, dropdown, popover, toast)?
+├─ YES → Use `shadow-float` with `border border-line-strong`
 └─ NO ↓
 
-Is it a MODAL?
-├─ YES → Use `shadow-xl-premium` (maximum separation)
-└─ NO ↓
-
-Is it a BUTTON?
-├─ YES → NO shadow (use background color for depth)
+Is it a BUTTON or INPUT?
+├─ YES → NO shadow (background or hairline provides definition)
 └─ NO → Default to no shadow
 ```
 
@@ -293,12 +289,12 @@ Is it a BUTTON?
 
 | Element            | Shadow              | When          | Purpose                    |
 | ------------------ | ------------------- | ------------- | -------------------------- |
-| **Cards (rest)**   | `shadow-sm`         | Default state | Subtle hint of elevation   |
-| **Cards (hover)**  | `shadow-lg`         | Hover state   | Clear interactive feedback |
-| **Dropdowns**      | `shadow-md`         | Open state    | Separate from page content |
-| **Popovers**       | `shadow-md`         | Visible       | Floating element clarity   |
-| **Modals**         | `shadow-xl-premium` | Open state    | Maximum prominence         |
-| **Tooltips**       | `shadow-sm`         | Visible       | Subtle, non-intrusive      |
+| **Cards (rest)**   | None, hairline      | Default state | Containment, no float      |
+| **Cards (hover)**  | None, accent hairline | Hover state | Clear interactive feedback |
+| **Dropdowns**      | `shadow-float`      | Open state    | Separate from page content |
+| **Popovers**       | `shadow-float`      | Visible       | Floating element clarity   |
+| **Modals**         | `shadow-float`      | Open state    | The one floating shadow    |
+| **Tooltips**       | `shadow-float`      | Visible       | Floating element clarity   |
 | **Buttons**        | None                | All states    | Background provides depth  |
 | **Inputs**         | None                | Default       | Border provides definition |
 | **Inputs (focus)** | `ring-2`            | Focus state   | Use ring, not shadow       |
@@ -306,13 +302,8 @@ Is it a BUTTON?
 ### Custom Shadow Values
 
 ```tsx
-// Tailwind config defines these
-'shadow-sm':          '0 1px 2px 0 rgb(0 0 0 / 0.03)'
-'shadow-md-premium':  '0 4px 12px 0 rgb(0 0 0 / 0.08)'
-'shadow-lg':          '0 10px 15px -3px rgb(0 0 0 / 0.1)'
-'shadow-xl-premium':  '0 20px 40px -10px rgb(0 0 0 / 0.12)'
-'shadow-card':        '0 2px 8px 0 rgb(0 0 0 / 0.04), inset 0 1px 0 0 rgb(255 255 255 / 1)'
-'shadow-card-hover':  '0 8px 20px -4px rgb(0 0 0 / 0.1), inset 0 1px 0 0 rgb(255 255 255 / 1)'
+// colors.css defines the one floating shadow
+'shadow-float': '0 1px 2px rgba(17, 24, 39, 0.04), 0 12px 32px rgba(17, 24, 39, 0.08)'
 ```
 
 ---
@@ -351,7 +342,7 @@ Is it an AVATAR or PROFILE IMAGE?
 | -------------- | ------------- | ------ | ------------------------------------- |
 | **Buttons**    | `rounded-md`  | 6px    | Subtle rounding, professional         |
 | **Inputs**     | `rounded-md`  | 6px    | Match button consistency              |
-| **Cards**      | `rounded-xl`  | 12px   | Generous, premium feel                |
+| **Cards**      | `rounded-xl`  | 12px   | Cards and dropdowns                   |
 | **Modals**     | `rounded-2xl` | 16px   | Maximum refinement                    |
 | **Badges**     | `rounded`     | 4px    | Compact, not pill-shaped              |
 | **Dropdowns**  | `rounded-lg`  | 8px    | Balance between card and button       |
@@ -408,29 +399,29 @@ Does it need maximum space?
 What status are you indicating?
 
 POSITIVE states (approved, granted, active, success)?
-├─ Background → `bg-success-light` (#d1fae5)
-├─ Text → `text-success-dark` (#065f46)
-└─ Border → `border-success-primary` (#059669)
+├─ Background → `bg-success-light` (#e7f3f0)
+├─ Text → `text-success-dark` (#075e4f)
+└─ Border → `border-success-primary` (#0a7a66)
 
 NEGATIVE states (denied, revoked, error, failed)?
-├─ Background → `bg-error-light` (#fee2e2)
-├─ Text → `text-error-primary` (#DC2626)
-└─ Border → `border-error-primary` (#DC2626)
+├─ Background → `bg-error-light` (#fef3f2)
+├─ Text → `text-error-primary` (#b42318)
+└─ Border → `border-error-primary` (#b42318)
 
 PENDING states (awaiting approval, processing)?
-├─ Background → `bg-warning-light` (#fef3c7)
-├─ Text → `text-warning-dark` (#92400e)
-└─ Border → `border-warning-primary` (#D97706)
+├─ Background → `bg-warning-light` (#fffaeb)
+├─ Text → `text-warning-dark` (#7a2e0e)
+└─ Border → `border-warning-primary` (#b54708)
 
 NEUTRAL states (inactive, disabled)?
-├─ Background → `bg-neutral-100` (#f5f1ed)
-├─ Text → `text-neutral-600` (#6b6561)
-└─ Border → `border-neutral-300` (#ddd8d1)
+├─ Background → `bg-neutral-100` (#f0f2f6)
+├─ Text → `text-neutral-600` (#4b5565)
+└─ Border → `border-neutral-300` (#d2d6de)
 
 INFO states (notice, tip, reference)?
-├─ Background → `bg-info-light` (#dbeafe)
-├─ Text → `text-info-dark` (#1e40af)
-└─ Border → `border-info-primary` (#3B82F6)
+├─ Background → `bg-info-light` (#eef2fc)
+├─ Text → `text-info-dark` (#1e3a8a)
+└─ Border → `border-info-primary` (#3056d3)
 ```
 
 ### Badge Examples
@@ -438,19 +429,19 @@ INFO states (notice, tip, reference)?
 ```tsx
 // Success
 <Badge variant="success">Granted</Badge>
-// → bg-success-primary (#059669), text-white
+// → bg-success-primary (#0a7a66), text-white
 
 // Warning
 <Badge variant="warning">Pending</Badge>
-// → bg-warning-primary (#D97706), text-trust-deep
+// → bg-warning-primary (#b54708), text-trust-deep
 
 // Error
 <Badge variant="error">Revoked</Badge>
-// → bg-error-primary (#DC2626), text-white
+// → bg-error-primary (#b42318), text-white
 
 // Neutral
 <Badge variant="neutral">Inactive</Badge>
-// → bg-neutral-300 (#ddd8d1), text-neutral-600 (#6b6561)
+// → bg-neutral-300 (#d2d6de), text-neutral-600 (#4b5565)
 ```
 
 ### Alert Examples
