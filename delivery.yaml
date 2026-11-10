@@ -12,7 +12,7 @@ pipeline:
       - event: pull_request
       - branch:
           - main
-          - dev
+          - release/v0.1
         event: push
     vm_config:
       type: linux
@@ -58,7 +58,7 @@ pipeline:
       - event: pull_request
       - branch:
           - main
-          - dev
+          - release/v0.1
         event: push
     vm_config:
       type: linux
@@ -94,7 +94,7 @@ pipeline:
       - event: pull_request
       - branch:
           - main
-          - dev
+          - release/v0.1
         event: push
     vm_config:
       type: linux
@@ -131,7 +131,7 @@ pipeline:
       - event: pull_request
       - branch:
           - main
-          - dev
+          - release/v0.1
         event: push
     vm_config:
       type: linux
@@ -167,7 +167,7 @@ pipeline:
       - event: pull_request
       - branch:
           - main
-          - dev
+          - release/v0.1
         event: push
     vm_config:
       type: linux
@@ -204,9 +204,11 @@ pipeline:
     depends_on: [test-unit, test-integration, test-e2e-backend, test-e2e-extproc, test-e2e-frontend]
     type: script
     when:
+      # Releases come only from release/v0.1 until mid-December. Before
+      # main publishes again, bump VERSION to v0.2 so it doesn't reuse the
+      # branch's v0.1.x numbers.
       branch:
-        - main
-        - dev
+        - release/v0.1
       event: push
     vm_config:
       type: linux
