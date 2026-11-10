@@ -117,7 +117,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	var req GrantRequest
 	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
 		h.logger.WarnContext(r.Context(), "invalid request body",
-			"error", err,
+			"error_kind", "invalid_request_body",
 			"principal", principalValue,
 			"agent_id", agentID)
 		h.writeError(w, requestbody.Status(err), "invalid request", "request body must be valid JSON")

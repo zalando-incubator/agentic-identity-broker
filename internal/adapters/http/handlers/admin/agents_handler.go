@@ -239,7 +239,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var req AgentRequest
 	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
-		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error_kind", "invalid_request_body")
 		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
@@ -350,7 +350,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var req AgentRequest
 	if err := requestbody.Unmarshal(body, &req); err != nil {
-		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error_kind", "invalid_request_body")
 		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}

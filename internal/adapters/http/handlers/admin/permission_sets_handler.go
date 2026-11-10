@@ -87,7 +87,7 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req CreatePermissionSetRequest
 	if err := requestbody.Decode(w, r, 64<<10, &req); err != nil {
-		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error_kind", "invalid_request_body")
 		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
@@ -251,7 +251,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	var req CreatePermissionSetRequest
 	if err := requestbody.Unmarshal(body, &req); err != nil {
-		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
+		h.logger.WarnContext(ctx, "failed to decode request body", "error_kind", "invalid_request_body")
 		h.writeError(w, requestbody.Status(err), "invalid request body", err.Error())
 		return
 	}
