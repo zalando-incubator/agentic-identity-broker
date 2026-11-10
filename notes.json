@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 357
+    "investigation_after": 386
   },
   "issues": [
     {
@@ -112,6 +112,12 @@
       "state": "commented",
       "updated_at": "2026-11-09",
       "note": "Posted current lint/typed-principal-guard delta and staged enforcement plan. Existing sloglint context and forbidigo output rules already land; remaining import/span/metric checks need fixtures. Coordinate #415/#438/#450/#448; #356 still gates span principal API."
+    },
+    {
+      "number": 382,
+      "state": "commented",
+      "updated_at": "2026-11-10",
+      "note": "Verified legacy 3/5 consumers persist; posted existing minimatch exception expiry 2027-01-31 and keep-modern-override guidance. Fresh OSV assessment blocked by TLS. No dependency or suppression edit."
     }
   ],
   "fixes": [
@@ -154,44 +160,22 @@
       "status": "open",
       "updated_at": "2026-11-09",
       "note": "Verified live draft #448 and published branch. Both checks/statuses read: DCO and pipeline/unit/integration/all E2E passed; classification label missing. No duplicate fix or push needed; partial #353 only."
+    },
+    {
+      "issue": 386,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-386-bounded-log-paths-2026-11-10",
+      "status": "open",
+      "updated_at": "2026-11-10",
+      "note": "Prepared terminal draft submission: bounded path helper, standard and middleware regression tests. Check/build/full race package tests pass; verify blocked by OSV TLS. Resolve published PR by branch next run; do not duplicate."
     }
   ],
   "checks": [
-    {
-      "area": "docs",
-      "checked_at": "2026-11-06",
-      "result": "Verified #381 branch docs/spec exclude user activity API/UI and external producer ingestion. #188 remains broader; posted remaining acceptance slices. Confirmed #244 docs fix is live draft #433 with passing pipeline.",
-      "follow_up": "Keep #188 open after ledger merge; later API needs authenticated subject scope, safe reasons and bounded cursor pagination."
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-08",
-      "result": "just build and just extproc-build passed on committed approval metric branch.",
-      "follow_up": null
-    },
     {
       "area": "hygiene",
       "checked_at": "2026-11-08",
       "result": "Read unlabelled issue #446 and PR files #310/#312; added bug/breaking change, documentation and enhancement respectively. No redundant triage comments. Labelling cursor reset.",
       "follow_up": null
-    },
-    {
-      "area": "dependencies",
-      "checked_at": "2026-11-09",
-      "result": "#233 merged with TypeScript 6.0.3; current manifest and ESLint recommended configuration agree. No open Dependabot PRs in live inventory. #452 tracks side-by-side TS7 compilation; #453 waits for released native tooling support.",
-      "follow_up": "Do not repeat the resolved TS7 installation warning or bypass peers; preserve Storybook/compiler-API and lint compatibility for #452."
-    },
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-09",
-      "result": "just lint passed with 0 issues after initial cold dependency-load timeout. Inspected .golangci.yml and typed principal guard; #357 opening baseline is stale. No new rule enabled or full-gate run performed.",
-      "follow_up": "Stage remaining #357 checks with negative fixtures and active alignment PRs. Earlier OSV full-gate limitation was not rechecked."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-09",
-      "result": "Maintained just test package override passed telemetry and ExtProc server with race detection. Both repository-wide typed-principal guard and its negative-fixture test passed; cache isolation, singleflight, expiry and failure tests also pass.",
-      "follow_up": "No new tests or full verification/E2E run this session."
     },
     {
       "area": "performance",
@@ -200,27 +184,57 @@
       "follow_up": "Measure representative cache cardinality/eviction lock time before changing cache policy or required copies; no speculative optimization."
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-09",
-      "result": "Inspected central principal log handler, shared HTTP/gRPC buildTracerProvider batching seam, guard tests and lint configuration. #356 span policy remains absent; #354 has active #450. Posted #357 source-grounded delta instead of duplicating active work.",
-      "follow_up": "Keep ExtProc free of domain/ports imports and share principal policy before permitting new principal span attributes."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-09",
-      "result": "Six open Repo Assist PRs; #448 is now verified live draft and memory publication state repaired. #424 non-draft; others drafts. No new PR. #448 checks and statuses both read; pipeline/unit/integration/all E2E pass, classification label fails.",
-      "follow_up": "Human review and appropriate required classification label for #448; no misleading documentation label. Other PR CI not refreshed this run."
-    },
-    {
       "area": "ci",
       "checked_at": "2026-11-09",
       "result": "Read #448 checks AND commit statuses: DCO success, CodeRabbit skipped, pipeline and unit/integration/backend/ExtProc/frontend E2E success. Required classification label fails and approval pending. No source-induced failure or push needed.",
       "follow_up": "Maintainer classification label and review; no fresh CI claim for other PRs."
     },
     {
+      "area": "docs",
+      "checked_at": "2026-11-10",
+      "result": "Documented 2048-byte rendered path limit including marker and UTF-8 boundaries in LOGGING.md. Focused Markdown lint retains 92 existing violations versus 94 on baseline; changed lines add none.",
+      "follow_up": null
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-10",
+      "result": "Fixed #386 with shared bounded SanitizeLogPath for access, recovery and OAuth2 audit; bounded pre-escape work, unchanged routing inputs. Normalized two touched diagnostic messages; recovery uses captured request line.",
+      "follow_up": "Review draft with #415 touching nearby diagnostic messages; no event renames or API/dependency changes."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-10",
+      "result": "Regression compiled and failed semantically before implementation; all 30 middleware cases now pass. Ten uncached affected-package repeats and full race-enabled just test pass. just verify stopped at OSV TLS; later gates not run.",
+      "follow_up": "Complete remaining full-gate integration/E2E/frontend checks in working infrastructure; no full verification pass claimed."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-10",
+      "result": "just build passed for broker on committed #386 branch.",
+      "follow_up": null
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-10",
+      "result": "just fmt and just check passed, including vet and zero lint issues. Full verification security stage could not query OSV due to certificate hostname validation; no bypass or exception changes.",
+      "follow_up": null
+    },
+    {
+      "area": "dependencies",
+      "checked_at": "2026-11-10",
+      "result": "Verified #382 legacy minimatch 3.1.5/5.1.9 consumers remain. Current advisory exception expires 2027-01-31; modern consumers still need existing 10-to-11 override. Posted current-state guidance; no dependency/suppression change.",
+      "follow_up": "Upgrade compatible consumers with full lint/search/OpenAPI coverage; expiry is not evidence that removal criteria pass."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-10",
+      "result": "Six existing open Repo Assist PRs verified by live inventory, #424 non-draft. Prepared one #386 draft, below two-new-PR allowance/eight total. Existing CI not refreshed this run.",
+      "follow_up": "Resolve newly published #386 PR number by recorded branch; maintain drafts and pending human review."
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-09",
-      "result": "Latest release v0.1.145 includes merged TypeScript compatibility fix #233. Investigation-only run has no release artifact change warranting a release PR.",
+      "checked_at": "2026-11-10",
+      "result": "Latest release v0.1.145 includes current main. Unmerged focused logging fix does not warrant a separate release PR.",
       "follow_up": null
     }
   ],
@@ -242,8 +256,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #357",
-      "note": "#354 has active #450. #356 needs shared log/span policy and batch-export tests before #349. #357 guidance posted; coordinate active telemetry/logging PRs. Partial #353 lives in #448."
+      "item": "Resume oldest-first after #386",
+      "note": "#382 guidance posted; #386 fix prepared on recorded branch. #388 has active #412. Retain clarification holds, #356 principal policy gate, and active telemetry/logging coordination."
     }
   ]
 }
