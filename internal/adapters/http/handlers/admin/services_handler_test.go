@@ -2941,7 +2941,7 @@ func TestServicesHandler_DiscoveryErrorMapsSafeStatusesWithoutLeakingOtherIssuer
 		t.Run(tc.name, func(t *testing.T) {
 			handler := setupHandler(t, new(MockProviderRepository))
 			response := httptest.NewRecorder()
-			handler.writeDiscoveryError(response, &thirdparty.DiscoveryError{
+			handler.writeDiscoveryError(t.Context(), response, &thirdparty.DiscoveryError{
 				Code: tc.code, AuthorizationServers: []string{"https://login.example.test/?client_secret=remote-secret-not-for-admin"},
 			})
 
@@ -2971,7 +2971,7 @@ func TestServicesHandler_SelectionErrorRefusesUnvalidatedIssuerChoices(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			handler := setupHandler(t, new(MockProviderRepository))
 			response := httptest.NewRecorder()
-			handler.writeDiscoveryError(response, &thirdparty.DiscoveryError{Code: "issuer_selection_required", AuthorizationServers: tc.issuers})
+			handler.writeDiscoveryError(t.Context(), response, &thirdparty.DiscoveryError{Code: "issuer_selection_required", AuthorizationServers: tc.issuers})
 
 			require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
 			var payload map[string]any

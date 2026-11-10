@@ -41,16 +41,16 @@ func (h *ClientCredentialsHandler) resolveAgentID(ctx context.Context, value str
 }
 func (h *ClientCredentialsHandler) handleAgentResolutionError(ctx context.Context, w http.ResponseWriter, err error) {
 	if ports.IsNotFoundErr(err) {
-		h.writeError(w, http.StatusNotFound, "agent not found", "")
+		h.writeError(ctx, w, http.StatusNotFound, "agent not found", "")
 		return
 	}
 	var storageErr *storage.StorageError
 	if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindTimeout {
-		h.writeError(w, http.StatusGatewayTimeout, "operation timed out", "")
+		h.writeError(ctx, w, http.StatusGatewayTimeout, "operation timed out", "")
 		return
 	}
 	h.logger.ErrorContext(ctx, "failed to resolve agent", "error", err)
-	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+	h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 }
 
 // credentialGenerateResponse is the JSON response for POST (generate/rotate).
@@ -75,7 +75,7 @@ type credentialMetadataResponse struct {
 func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	agentIDStr := chi.URLParam(r, "agent-id")
 	if agentIDStr == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -87,11 +87,11 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 
 	result, err := h.credentials.Generate(r.Context(), agentID)
 	if errors.Is(err, ports.ErrCredentialAgentNotFound) {
-		h.writeError(w, http.StatusNotFound, "agent not found", "")
+		h.writeError(r.Context(), w, http.StatusNotFound, "agent not found", "")
 		return
 	}
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 	credential := result.Credential
@@ -126,7 +126,7 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 	if isRotation {
 		statusCode = http.StatusOK
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(r.Context(), w, statusCode, resp)
 }
 
 // Get retrieves credential metadata (without secret) for an agent.
@@ -134,7 +134,7 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	agentIDStr := chi.URLParam(r, "agent-id")
 	if agentIDStr == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -147,11 +147,11 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	cred, err := h.credentials.Get(r.Context(), agentID)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
-			h.writeError(w, http.StatusNotFound, "credentials not found", "")
+			h.writeError(r.Context(), w, http.StatusNotFound, "credentials not found", "")
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "failed to get credentials", "agent_id", agentID, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		resp.RotatedAt = &rotatedStr
 	}
 
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(r.Context(), w, http.StatusOK, resp)
 }
 
 // Revoke deletes broker client credentials for an agent.
@@ -177,7 +177,7 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	agentIDStr := chi.URLParam(r, "agent-id")
 	if agentIDStr == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -190,11 +190,11 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 	err = h.credentials.Revoke(r.Context(), agentID)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
-			h.writeError(w, http.StatusNotFound, "credentials not found", "")
+			h.writeError(r.Context(), w, http.StatusNotFound, "credentials not found", "")
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "failed to revoke credentials", "agent_id", agentID, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -205,18 +205,18 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *ClientCredentialsHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *ClientCredentialsHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
-func (h *ClientCredentialsHandler) writeError(w http.ResponseWriter, statusCode int, errMsg string, message string) {
+func (h *ClientCredentialsHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, errMsg string, message string) {
 	resp := ErrorResponse{
 		Error:   errMsg,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }

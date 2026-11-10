@@ -150,49 +150,49 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if message != "" {
 		h.logger.WarnContext(r.Context(), "external_id selector validation failed", "error", errors.New(message))
-		h.writeError(w, http.StatusBadRequest, "invalid external_id", message)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid external_id", message)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "failed to read request body", "error", errors.New("request body exceeds limit or cannot be read"))
-		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body exceeds limit or cannot be read")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", "request body exceeds limit or cannot be read")
 		return
 	}
 	var req AgentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		h.logger.WarnContext(r.Context(), "failed to decode request body", "error", errors.New("request body must be an AgentCreateRequest"))
-		h.writeError(w, http.StatusBadRequest, "invalid request body", "request body must be an AgentCreateRequest")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", "request body must be an AgentCreateRequest")
 		return
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
 		h.logger.WarnContext(r.Context(), "invalid request body", "error", errors.New("request body must be an object"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", "request body must be an object")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", "request body must be an object")
 		return
 	}
 	if raw, ok := fields["client_id"]; ok && (bytes.Equal(raw, []byte("null")) || req.ClientID == nil || strings.TrimSpace(*req.ClientID) == "") {
 		h.logger.WarnContext(r.Context(), "client_id validation failed", "error", errors.New("client_id must be a nonempty string when supplied"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", "client_id must be a nonempty string when supplied")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", "client_id must be a nonempty string when supplied")
 		return
 	}
 	ctx := r.Context()
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
 		h.logger.WarnContext(ctx, "permission set validation failed", "error", errors.New("invalid permission sets"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
 		h.logger.WarnContext(ctx, "invalid service requirements", "error", errors.New("invalid service requirements"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
 		h.logger.WarnContext(ctx, "client_uris validation failed", "error", errors.New("invalid client_uris"))
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 	_, canonicalPresent := fields["canonical_id"]
@@ -204,7 +204,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		var storageErr *storage.StorageError
 		if !errors.As(err, &storageErr) {
 			h.logger.WarnContext(ctx, "agent reconciliation validation failed", "error", errors.New("invalid agent definition"))
-			h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", err.Error())
 			return
 		}
 		if storageErr.Kind == storage.ErrorKindValidation {
@@ -216,7 +216,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.toResponseWithServiceMap(agent, h.batchLoadServices(ctx, []*storage.Agent{agent}))
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 	if requestsCanonicalReferences(r.Header.Get("Prefer")) {
@@ -231,7 +231,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 		w.Header().Set("Location", "/api/agents/"+agent.ID.String())
 	}
-	h.writeJSON(w, status, resp)
+	h.writeJSON(r.Context(), w, status, resp)
 }
 
 // CreateAgent handles POST /api/agents
@@ -241,7 +241,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	var req AgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
@@ -249,20 +249,20 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
 		h.logger.WarnContext(ctx, "permission set validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
 		h.logger.WarnContext(ctx, "invalid service requirements", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid service requirements", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service requirements", err.Error())
 		return
 	}
 
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
 		h.logger.WarnContext(ctx, "client_uris validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -281,10 +281,10 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
-	h.writeJSON(w, http.StatusCreated, resp)
+	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
 }
 
 // GetAgent handles GET /api/agents/:agent-id
@@ -294,7 +294,7 @@ func (h *AgentsHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "agent-id")
 
 	if agentID == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -314,7 +314,7 @@ func (h *AgentsHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 	if requestsCanonicalReferences(r.Header.Get("Prefer")) {
@@ -324,7 +324,7 @@ func (h *AgentsHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Preference-Applied", "reference-id=canonical")
 	}
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(r.Context(), w, http.StatusOK, resp)
 }
 
 // UpdateAgent handles PUT /api/agents/:agent-id
@@ -333,7 +333,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "agent-id")
 
 	if agentID == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -346,14 +346,14 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	var req AgentRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
@@ -367,7 +367,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
 		h.logger.WarnContext(ctx, "invalid service requirements", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid service requirements", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service requirements", err.Error())
 		return
 	}
 
@@ -375,7 +375,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
 		h.logger.WarnContext(ctx, "permission set validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -384,7 +384,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// explicit check is required for admin mutations.
 	if err := storage.ValidateClientURIsForWrite(req.ClientURIs); err != nil {
 		h.logger.WarnContext(ctx, "client_uris validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -401,10 +401,10 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.toResponseWithServiceMap(agent, serviceMap)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to convert agent to response", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(r.Context(), w, http.StatusOK, resp)
 }
 
 // DeleteAgent handles DELETE /api/agents/:agent-id
@@ -413,7 +413,7 @@ func (h *AgentsHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "agent-id")
 
 	if agentID == "" {
-		h.writeError(w, http.StatusBadRequest, "agent ID is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "agent ID is required", "")
 		return
 	}
 
@@ -439,7 +439,7 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 
 	externalID, filtered, validationMessage := externalIDFromQuery(r.URL.RawQuery)
 	if validationMessage != "" {
-		h.writeError(w, http.StatusBadRequest, "invalid external_id", validationMessage)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid external_id", validationMessage)
 		return
 	}
 
@@ -453,7 +453,7 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var validation *storage.StorageError
 		if filtered && errors.Is(err, agents.ErrInvalidExternalID) && errors.As(err, &validation) {
-			h.writeError(w, http.StatusBadRequest, "invalid external_id", validation.Message)
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid external_id", validation.Message)
 			return
 		}
 		h.handleDomainError(w, r, "ListAgents", err)
@@ -490,7 +490,7 @@ func (h *AgentsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Preference-Applied", "reference-id=canonical")
 	}
-	h.writeJSON(w, http.StatusOK, responses)
+	h.writeJSON(r.Context(), w, http.StatusOK, responses)
 }
 
 func externalIDFromQuery(rawQuery string) (id.ExternalID, bool, string) {
@@ -711,45 +711,45 @@ func (h *AgentsHandler) handleDomainError(w http.ResponseWriter, r *http.Request
 	if errors.As(err, &storageErr) {
 		switch storageErr.Kind {
 		case storage.ErrorKindNotFound:
-			h.writeError(w, http.StatusNotFound, "agent not found", storageErr.Message)
+			h.writeError(r.Context(), w, http.StatusNotFound, "agent not found", storageErr.Message)
 		case storage.ErrorKindConflict:
-			h.writeError(w, http.StatusConflict, "conflict", storageErr.Message)
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", storageErr.Message)
 		case storage.ErrorKindValidation:
 			code := "validation failed"
 			if errors.Is(err, agents.ErrInvalidExternalID) {
 				code = "invalid external_id"
 			}
-			h.writeError(w, http.StatusBadRequest, code, storageErr.Message)
+			h.writeError(r.Context(), w, http.StatusBadRequest, code, storageErr.Message)
 		case storage.ErrorKindTimeout:
-			h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
+			h.writeError(r.Context(), w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 		default:
 			h.logger.ErrorContext(r.Context(), "storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		}
 		return
 	}
 
 	// Domain validation errors (fmt.Errorf wrapping validation)
 	h.logger.ErrorContext(r.Context(), "operation failed", "operation", operation, "error", err)
-	h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
+	h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", err.Error())
 }
 
 // writeJSON writes a JSON response.
-func (h *AgentsHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *AgentsHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *AgentsHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *AgentsHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }
 
 // convertExternalID converts *string to *id.ExternalID.
