@@ -118,6 +118,12 @@
       "state": "commented",
       "updated_at": "2026-11-10",
       "note": "Verified legacy 3/5 consumers persist; posted existing minimatch exception expiry 2027-01-31 and keep-modern-override guidance. Fresh OSV assessment blocked by TLS. No dependency or suppression edit."
+    },
+    {
+      "number": 414,
+      "state": "commented",
+      "updated_at": "2026-11-10",
+      "note": "Prepared focused draft and issue comment for all three requested context paths. Preserve existing log contracts and HTTP behavior; nearby #415 normalization stays separate."
     }
   ],
   "fixes": [
@@ -163,11 +169,19 @@
     },
     {
       "issue": 386,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-386-bounded-log-paths-2026-11-10",
+      "pr": 456,
+      "branch": "repo-assist/fix-issue-386-bounded-log-paths-2026-11-10-841036099b11d1f8",
       "status": "open",
       "updated_at": "2026-11-10",
-      "note": "Prepared terminal draft submission: bounded path helper, standard and middleware regression tests. Check/build/full race package tests pass; verify blocked by OSV TLS. Resolve published PR by branch next run; do not duplicate."
+      "note": "Live draft #456. Backend E2E and pipeline statuses fail; other unit/integration/ExtProc/frontend statuses pass. Both checks and statuses read. Need actual failing logs/local reproduction before a correction."
+    },
+    {
+      "issue": 414,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-414-request-log-context-2026-11-10",
+      "status": "open",
+      "updated_at": "2026-11-10",
+      "note": "Committed 51a710f9 for terminal draft submission: context throughout three remaining request-log paths; state/CEL and all 12 writer regressions. Check/build/race unit/integration/20 context E2E pass; verify blocked by OSV TLS. Resolve published PR by branch; do not duplicate."
     }
   ],
   "checks": [
@@ -178,63 +192,63 @@
       "follow_up": null
     },
     {
-      "area": "performance",
-      "checked_at": "2026-11-09",
-      "result": "Inspected ExtProc exchanger map hit, singleflight, grant snapshot copying and periodic eviction. Existing tests protect caller isolation and outage bounds. No benchmark/profile establishes a worthwhile change; #420 already covers approval snapshot indexing.",
-      "follow_up": "Measure representative cache cardinality/eviction lock time before changing cache policy or required copies; no speculative optimization."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-09",
-      "result": "Read #448 checks AND commit statuses: DCO success, CodeRabbit skipped, pipeline and unit/integration/backend/ExtProc/frontend E2E success. Required classification label fails and approval pending. No source-induced failure or push needed.",
-      "follow_up": "Maintainer classification label and review; no fresh CI claim for other PRs."
-    },
-    {
       "area": "docs",
       "checked_at": "2026-11-10",
       "result": "Documented 2048-byte rendered path limit including marker and UTF-8 boundaries in LOGGING.md. Focused Markdown lint retains 92 existing violations versus 94 on baseline; changed lines add none.",
       "follow_up": null
     },
     {
+      "area": "performance",
+      "checked_at": "2026-11-10",
+      "result": "Inspected in-memory grant pair lookup and agent index: lookups already use maps and return defensive copies. No representative measurement supports an optimization; existing snapshot optimization remains #420.",
+      "follow_up": "Task 8 fell back to Task 9; added high-value context logging regressions with #414 instead of speculative optimization."
+    },
+    {
       "area": "code",
       "checked_at": "2026-11-10",
-      "result": "Fixed #386 with shared bounded SanitizeLogPath for access, recovery and OAuth2 audit; bounded pre-escape work, unchanged routing inputs. Normalized two touched diagnostic messages; recovery uses captured request line.",
-      "follow_up": "Review draft with #415 touching nearby diagnostic messages; no event renames or API/dependency changes."
+      "result": "Committed #414 context threading for state validation, CEL optional-claim logs and all 12 response writers, including nested discovery/error helpers. Log messages, events, attributes, levels and HTTP behavior are unchanged.",
+      "follow_up": "Coordinate nearby #415 event/message normalization; no combined refactor."
     },
     {
       "area": "tests",
       "checked_at": "2026-11-10",
-      "result": "Regression compiled and failed semantically before implementation; all 30 middleware cases now pass. Ten uncached affected-package repeats and full race-enabled just test pass. just verify stopped at OSV TLS; later gates not run.",
-      "follow_up": "Complete remaining full-gate integration/E2E/frontend checks in working infrastructure; no full verification pass claimed."
+      "result": "Signed-JWT correlation regression failed semantically first. just test passes with race detection; just test-integration and all 20 Request Security Context E2E specs pass. Backend/frontend E2E packages compile. New state rejection and 12-writer encoding/write regressions pass.",
+      "follow_up": "Full browser/container suites were not executed; just verify stopped at OSV TLS before later gates."
     },
     {
       "area": "build",
       "checked_at": "2026-11-10",
-      "result": "just build passed for broker on committed #386 branch.",
+      "result": "just build passed for broker on #414 branch.",
       "follow_up": null
     },
     {
       "area": "tooling",
       "checked_at": "2026-11-10",
-      "result": "just fmt and just check passed, including vet and zero lint issues. Full verification security stage could not query OSV due to certificate hostname validation; no bypass or exception changes.",
+      "result": "just fmt and just check passed (zero lint issues). Inspected CI path filtering, concurrency, pinned runtime selection and caching; no focused CI edit justified. Task 4 fell back to Task 5 context-plumbing improvement.",
       "follow_up": null
     },
     {
       "area": "dependencies",
       "checked_at": "2026-11-10",
-      "result": "Verified #382 legacy minimatch 3.1.5/5.1.9 consumers remain. Current advisory exception expires 2027-01-31; modern consumers still need existing 10-to-11 override. Posted current-state guidance; no dependency/suppression change.",
-      "follow_up": "Upgrade compatible consumers with full lint/search/OpenAPI coverage; expiry is not evidence that removal criteria pass."
+      "result": "Current web manifest uses TypeScript ^6.0.3. Read #452/#453 compiler/API-consumer migration boundaries; no peer-check bypass, aliases or dependency changes. Full verify security stage failed querying OSV due to TLS certificate validation.",
+      "follow_up": "Retain #382 consumer-migration work and existing exception expiry; do not treat failed OSV lookup as a clean scan."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-10",
+      "result": "Read #456 check runs AND commit statuses: DCO passes; backend E2E and pipeline fail; unit/integration/ExtProc/frontend pass. Failure cause not established; external pipeline logs unavailable through GitHub check data.",
+      "follow_up": "Diagnose #456 backend failure with actual pipeline logs or local reproduction; do not classify as infrastructure without evidence."
     },
     {
       "area": "repo_assist_prs",
       "checked_at": "2026-11-10",
-      "result": "Six existing open Repo Assist PRs verified by live inventory, #424 non-draft. Prepared one #386 draft, below two-new-PR allowance/eight total. Existing CI not refreshed this run.",
-      "follow_up": "Resolve newly published #386 PR number by recorded branch; maintain drafts and pending human review."
+      "result": "Resolved #386 submission to live draft #456 and actual published branch. Seven live Repo Assist PRs; #424 non-draft. Prepared one #414 terminal draft submission, within one-new-PR/eight-total cap.",
+      "follow_up": "Resolve #414 published PR number by recorded branch next run. Maintenance-only expected at eight open PRs."
     },
     {
       "area": "release",
       "checked_at": "2026-11-10",
-      "result": "Latest release v0.1.145 includes current main. Unmerged focused logging fix does not warrant a separate release PR.",
+      "result": "Latest release is v0.1.145; existing maintainer PR #460 handles v0.2 version bump. No duplicate release PR warranted.",
       "follow_up": null
     }
   ],
@@ -258,6 +272,11 @@
       "task": 2,
       "item": "Resume oldest-first after #386",
       "note": "#382 guidance posted; #386 fix prepared on recorded branch. #388 has active #412. Retain clarification holds, #356 principal policy gate, and active telemetry/logging coordination."
+    },
+    {
+      "task": 6,
+      "item": "Diagnose #456 backend E2E failure",
+      "note": "External pipeline status failed; failure cause unknown. Read actual logs or reproduce locally before changing code. Other validation statuses pass; no blind retry or infrastructure-only push."
     }
   ]
 }
