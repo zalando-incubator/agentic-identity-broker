@@ -5,6 +5,8 @@
 **Status**: Draft
 **Input**: Support wildcard hostnames in registered HTTPS redirect URIs for preview callbacks, without allowing a wildcard to replace the registrable domain or public suffix.
 
+Exact string matching remains the default redirect URI policy. RFC 9700 §2.1 requires it, except for localhost ports in native-app redirects. This feature adds only the bounded opaque-Agent exception in ADR 048 because preview hosts vary by deployment. The exception keeps the scheme, port, path, query, registrable domain, and public suffix literal.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Authorize preview callbacks (Priority: P1)
@@ -130,6 +132,7 @@ Host: broker.example.test
 - **FR-009**: Private-use scheme callbacks MUST remain exact-match only and retain their existing allowlisting requirements.
 - **FR-010**: CIMD document `redirect_uris` MUST retain exact-match behavior in this feature.
 - **FR-011**: The feature MUST preserve existing shared callbacks and agent-to-agent callbacks, production callback configuration, and other authentication controls.
+- **FR-013**: Exact string matching MUST remain the default. Only valid bounded HTTPS host patterns registered on opaque Agents can match non-identical callbacks under ADR 048. CIMD web callbacks and private-use callbacks MUST remain exact.
 
 ### Domain Model
 
@@ -175,3 +178,5 @@ Host: broker.example.test
 ## References
 
 - [Existing wildcard CIMD client URI specification](../028c-cimd-wildcard-client-uris/spec.md)
+- [RFC 9700 §2.1 — Protecting Redirect-Based Flows](https://www.rfc-editor.org/rfc/rfc9700#section-2.1)
+- [ADR 048 — Wildcard Web Redirect URIs](../../adrs/048-wildcard-web-redirect-uris.md)

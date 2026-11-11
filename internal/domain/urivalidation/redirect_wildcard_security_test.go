@@ -88,6 +88,51 @@ func TestValidateAgentRedirectURIRegistrationIDNASeparators(t *testing.T) {
 	}
 }
 
+func TestAgentRedirectURIWildcardPSLBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+		wantMatch  bool
+	}{
+		{
+			name:       "keeps multi-label public suffix literal",
+			registered: "https://preview*.example.co.uk/callback",
+			incoming:   "https://preview-pr.example.co.uk/callback",
+			wantMatch:  true,
+		},
+		{
+			name:       "keeps private suffix registrable domain literal",
+			registered: "https://preview*.team.github.io/callback",
+			incoming:   "https://preview-pr.team.github.io/callback",
+			wantMatch:  true,
+		},
+		{
+			name:       "rejects wildcard in multi-label registrable domain",
+			registered: "https://preview*.co.uk/callback",
+		},
+		{
+			name:       "rejects wildcard in private suffix registrable domain",
+			registered: "https://preview*.github.io/callback",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAgentRedirectURIRegistration(test.registered)
+			if test.wantMatch && err != nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = %v, want nil", test.registered, err)
+			}
+			if !test.wantMatch && err == nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = nil, want error", test.registered)
+			}
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.wantMatch {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.wantMatch)
+			}
+		})
+	}
+}
+
 func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
 	tests := []struct {
 		name       string

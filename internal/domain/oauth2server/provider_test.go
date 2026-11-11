@@ -269,6 +269,10 @@ func TestProvider_HandleAuthorize(t *testing.T) {
 		agent.RedirectURIs = []string{"https://preview*.app-*.example.com/api/oidc/callback"}
 		require.NoError(t, agentRepo.Update(context.Background(), agent))
 
+		fositeClient, err := provider.fositeStorage.GetClient(context.Background(), agent.ID.String())
+		require.NoError(t, err)
+		assert.NotContains(t, fositeClient.GetRedirectURIs(), agent.RedirectURIs[0])
+
 		code, err := provider.HandleAuthorize(
 			context.Background(), agent.ID.String(),
 			"https://preview-pr-123.app-test.example.com/api/oidc/callback",

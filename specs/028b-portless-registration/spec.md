@@ -79,7 +79,7 @@ The ephemeral port exception applies exclusively to loopback hosts (`localhost` 
 ### Functional Requirements
 
 - **FR-001**: For redirect URIs whose host is `localhost` or `127.0.0.1`, the system MUST ignore the port component during authorization request redirect URI validation, applying only scheme, host, and path comparison. (CIMD document fetch-time validation already satisfies this via its existing same-origin skip for loopback hosts — no code change required there.)
-- **FR-002**: For all other redirect URI hosts (non-loopback), the system MUST perform exact match validation across scheme, host, port, and path — unchanged from existing behavior.
+- **FR-002**: For non-loopback hosts, the system MUST match scheme, host, port, and path exactly. This rule applies to CIMD document callbacks. Opaque Agent callbacks can use only the bounded HTTPS host-pattern exception in ADR 048. All other URI components remain exact.
 - **FR-003**: A CIMD document that registers a loopback redirect URI without a port (e.g. `http://localhost/callback`) MUST be accepted; the absence of a port is not a validation error.
 - **FR-004**: A CIMD document that registers a loopback redirect URI with an explicit port (e.g. `http://localhost:3000/callback`) MUST be accepted; the explicit port is ignored during authorization-time validation.
 - **FR-005**: The same-origin enforcement from 028 FR-004a remains in force for the non-loopback case; only the loopback exception logic changes.
@@ -100,6 +100,8 @@ flowchart TD
     E -- Yes --> F["Validation passes"]
     E -- No --> G["Validation fails — redirect_uri not registered"]
 ```
+
+The diagram shows exact matching as the default. ADR 048 adds a bounded HTTPS host-pattern exception for opaque Agent callbacks. CIMD document callbacks remain exact.
 
 **Value Objects** (changed):
 
