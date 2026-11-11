@@ -25,13 +25,13 @@ Include private PSL suffixes. Do not interpret `icann == false` as proof that no
 
 ## Decision 2: Keep wildcard matching scoped to opaque Agent callbacks
 
-**Decision**: Add a matcher for HTTPS wildcard patterns in an Agent's `redirect_uris` and call it only for opaque Agent authorization. Keep the existing exact matcher for CIMD document callbacks and private-use callbacks. Continue to treat loopback HTTP registrations under their existing port-insensitive rule.
+**Decision**: Apply bounded HTTPS host-pattern matching only in the opaque branch of `IsRegisteredRedirectURI`. Keep exact matching for CIMD document callbacks and private-use callbacks. Continue to treat loopback HTTP registrations under their existing port-insensitive rule.
 
-**Rationale**: The authorization service currently selects either Agent registrations or CIMD document registrations, then uses a shared matcher. Making that shared matcher wildcard-aware would unintentionally broaden a separate trust source. A source-specific matcher preserves the feature scope and existing ADR 042 guarantees.
+**Rationale**: The authorization service selects Agent registrations or CIMD document registrations, then uses a shared entry point. `RedirectURIClientKind` selects the source-specific policy. This preserves the feature scope and existing ADR 042 guarantees.
 
 **Alternatives considered**:
 
-- Enable wildcard support in the shared `IsRegisteredRedirectURI` matcher: rejected because it would allow remote CIMD documents to declare wildcard callbacks.
+- Apply wildcard matching unconditionally in `IsRegisteredRedirectURI`: rejected because remote CIMD documents must not gain wildcard callbacks.
 - Change private-use matching: rejected because ADR 042 requires byte-for-byte matching and explicit Agent allowlisting.
 
 ## Decision 3: Keep registration and persistence contracts stable
@@ -47,7 +47,7 @@ Include private PSL suffixes. Do not interpret `icann == false` as proof that no
 
 ## Decision 4: Record the security policy as an ADR
 
-**Decision**: Add ADR 047 for the wildcard grammar, public-suffix boundary, source-specific matcher, and preserved exact-match cases. Update the `ARCHITECTURE.md` glossary for “Agent Redirect URI Host Pattern” and “Opaque Agent Client”.
+**Decision**: ADR 048 records the wildcard grammar, public-suffix boundary, source-specific matcher, and preserved exact-match cases. `IsRegisteredRedirectURI` selects the policy through `RedirectURIClientKind`: opaque clients use Agent registrations, and CIMD clients use document registrations. `ARCHITECTURE.md` defines “Agent Redirect URI Host Pattern”, “Opaque Agent Client”, and the client-kind distinction.
 
 **Rationale**: Host wildcards change an authorization redirect trust boundary. The decision must be explicit, auditable, and consistent with ADR 042's exact private-use behavior.
 
