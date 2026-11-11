@@ -95,9 +95,9 @@ func TestService_Resolve_SuccessLogsNoURLQuery(t *testing.T) {
 
 	out := logs.String()
 	assert.NotContains(t, out, "query-secret")
-	assert.Contains(t, out, "cimd_document_fetched")
-	assert.Contains(t, out, "cimd_document_cache_hit")
-	assert.Contains(t, out, "client_id URL contains query string")
+	assert.Contains(t, out, `"event":"cimd.document.fetched"`)
+	assert.Contains(t, out, `"event":"cimd.document.cache_hit"`)
+	assert.Contains(t, out, "cimd client_id url contains query string")
 	assert.NotContains(t, out, `"url"`)
 	assert.Contains(t, out, `"agent_id":"`+agent.ID.String()+`"`)
 }
