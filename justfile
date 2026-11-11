@@ -229,6 +229,10 @@ fmt:
     "$(go env GOROOT)/bin/gofmt" -s -w .
     @echo "Format complete"
 
+# Regenerate docs/reference/telemetry.md from the code (coding-standards/OPENTELEMETRY.md section 9)
+telemetry-doc:
+    @page="$(go run ./tools/telemetrydoc)" && printf '%s\n' "$page" > docs/reference/telemetry.md
+
 # Run go vet for static analysis
 vet:
     @echo "Running go vet..."

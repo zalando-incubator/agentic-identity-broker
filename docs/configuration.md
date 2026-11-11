@@ -1896,21 +1896,23 @@ ExtProc replaces both `::` and literal dots with underscores for environment loo
 
 ### What is Instrumented
 
-When tracing is enabled, the following operations emit child spans:
+The [telemetry reference](/docs/reference/telemetry) lists each span, metric and attribute
+that the broker and ExtProc emit. It is generated from the source code.
 
-| Span Name | Operation | Key Attributes |
-|---|---|---|
-| HTTP span (per route) | All inbound HTTP requests (via otelchi) | `http.method`, `http.route`, `http.status_code` |
-| `storage.get.agent` | PostgreSQL `AgentRepository.Get` | `db.system=postgresql`, `db.operation=GetAgent` |
-| `storage.list.user_grants_by_principal` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql`, `db.operation=ListByPrincipal` |
-| `storage.create.user_grant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql`, `db.operation=CreateUserGrant` |
-| `storage.*.tool_approval`, `storage.*.approval_sync` | PostgreSQL tool approval and approval sync repositories | `db.system=postgresql`, `db.operation` |
-| `storage.*.authorization_code`, `storage.*.pkce_session`, `storage.*.refresh_token_session` | PostgreSQL authorization code, PKCE session and refresh token session repositories | `db.system=postgresql`, `db.operation` |
-| `storage.*.client_assertion_replay`, `storage.*.client_credential` | PostgreSQL client assertion replay and client credential repositories | `db.system=postgresql`, `db.operation` |
-| `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
-| `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
-| `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
-| `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
+The spans are in these groups:
+
+| Spans | Operation |
+|---|---|
+| HTTP server span | Each inbound HTTP request, except `/health`. The `otelchi` middleware creates it and names it by method and route pattern. It sets `http.method`, `http.route`, and `http.status_code`. The reference does not list it. |
+| `storage.*` | PostgreSQL repository calls |
+| `encryption.*` | AWS KMS envelope encryption and decryption |
+| `jwks.fetch` | JWKS key set fetch or cache lookup |
+| `oauth2.token_proxy` | Upstream OAuth2 token proxy |
+| `http.request` | Outbound HTTP calls |
+| `tokenexchange.*` | RFC 8693 token exchange in the broker |
+| `approval.*` | Tool approval operations |
+| `oauth2session.*` | Third-party session refresh in the background |
+| `extproc.*` | ExtProc token exchange, OPA evaluation, and the approval gate |
 
 `storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
 
