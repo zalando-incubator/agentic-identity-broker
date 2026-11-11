@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 386
+    "investigation_after": 418
   },
   "issues": [
     {
@@ -124,6 +124,12 @@
       "state": "commented",
       "updated_at": "2026-11-10",
       "note": "Prepared focused draft and issue comment for all three requested context paths. Preserve existing log contracts and HTTP behavior; nearby #415 normalization stays separate."
+    },
+    {
+      "number": 418,
+      "state": "commented",
+      "updated_at": "2026-11-11",
+      "note": "Verified six audit helpers lack events; posted finite operation/outcome mapping and exact-allowlist/message-selector test seams, including bootstrap rejection/public CIMD/JWKS/refresh. Implement when capacity permits; coordinate #415."
     }
   ],
   "fixes": [
@@ -132,8 +138,8 @@
       "pr": 403,
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "open",
-      "updated_at": "2026-11-04",
-      "note": "Live draft #403: unit/integration/backend/ExtProc/frontend pipeline statuses passed. Remaining CI failure is required PR classification label; permitted safe-output labels cannot supply bugfix/minor."
+      "updated_at": "2026-11-11",
+      "note": "#403 has five merge conflicts; attempted merge aborted cleanly. Preserve human-only readiness and agent bypass; migrate two IsExpired calls/fixtures to ADR046 RequiresReauthentication. Align API/spec/ADR and imports. Commented; no partial merge published. Classification label also missing."
     },
     {
       "issue": 212,
@@ -172,25 +178,19 @@
       "pr": 456,
       "branch": "repo-assist/fix-issue-386-bounded-log-paths-2026-11-10-841036099b11d1f8",
       "status": "open",
-      "updated_at": "2026-11-10",
-      "note": "Live draft #456. Backend E2E and pipeline statuses fail; other unit/integration/ExtProc/frontend statuses pass. Both checks and statuses read. Need actual failing logs/local reproduction before a correction."
+      "updated_at": "2026-11-11",
+      "note": "Accepted append-only #456 correction be1cbff5: access-log E2E selector used old uppercase message. Red 10/20; green 20/20 and 960 functional backend specs after web build. Check/build/affected race tests pass. External CI after push not yet known."
     },
     {
       "issue": 414,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-414-request-log-context-2026-11-10",
+      "pr": 461,
+      "branch": "repo-assist/fix-issue-414-request-log-context-2026-11-10-5cdb1bee99b41705",
       "status": "open",
-      "updated_at": "2026-11-10",
-      "note": "Committed 51a710f9 for terminal draft submission: context throughout three remaining request-log paths; state/CEL and all 12 writer regressions. Check/build/race unit/integration/20 context E2E pass; verify blocked by OSV TLS. Resolve published PR by branch; do not duplicate."
+      "updated_at": "2026-11-11",
+      "note": "Resolved published draft #461; both checks and statuses read, DCO/pipeline/unit/integration/all E2E passed. No duplicate fix or push needed."
     }
   ],
   "checks": [
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-08",
-      "result": "Read unlabelled issue #446 and PR files #310/#312; added bug/breaking change, documentation and enhancement respectively. No redundant triage comments. Labelling cursor reset.",
-      "follow_up": null
-    },
     {
       "area": "docs",
       "checked_at": "2026-11-10",
@@ -210,45 +210,51 @@
       "follow_up": "Coordinate nearby #415 event/message normalization; no combined refactor."
     },
     {
-      "area": "tests",
-      "checked_at": "2026-11-10",
-      "result": "Signed-JWT correlation regression failed semantically first. just test passes with race detection; just test-integration and all 20 Request Security Context E2E specs pass. Backend/frontend E2E packages compile. New state rejection and 12-writer encoding/write regressions pass.",
-      "follow_up": "Full browser/container suites were not executed; just verify stopped at OSV TLS before later gates."
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-10",
-      "result": "just build passed for broker on #414 branch.",
-      "follow_up": null
-    },
-    {
-      "area": "tooling",
-      "checked_at": "2026-11-10",
-      "result": "just fmt and just check passed (zero lint issues). Inspected CI path filtering, concurrency, pinned runtime selection and caching; no focused CI edit justified. Task 4 fell back to Task 5 context-plumbing improvement.",
-      "follow_up": null
-    },
-    {
       "area": "dependencies",
       "checked_at": "2026-11-10",
       "result": "Current web manifest uses TypeScript ^6.0.3. Read #452/#453 compiler/API-consumer migration boundaries; no peer-check bypass, aliases or dependency changes. Full verify security stage failed querying OSV due to TLS certificate validation.",
       "follow_up": "Retain #382 consumer-migration work and existing exception expiry; do not treat failed OSV lookup as a clean scan."
     },
     {
-      "area": "ci",
-      "checked_at": "2026-11-10",
-      "result": "Read #456 check runs AND commit statuses: DCO passes; backend E2E and pipeline fail; unit/integration/ExtProc/frontend pass. Failure cause not established; external pipeline logs unavailable through GitHub check data.",
-      "follow_up": "Diagnose #456 backend failure with actual pipeline logs or local reproduction; do not classify as infrastructure without evidence."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-10",
-      "result": "Resolved #386 submission to live draft #456 and actual published branch. Seven live Repo Assist PRs; #424 non-draft. Prepared one #414 terminal draft submission, within one-new-PR/eight-total cap.",
-      "follow_up": "Resolve #414 published PR number by recorded branch next run. Maintenance-only expected at eight open PRs."
-    },
-    {
       "area": "release",
       "checked_at": "2026-11-10",
       "result": "Latest release is v0.1.145; existing maintainer PR #460 handles v0.2 version bump. No duplicate release PR warranted.",
+      "follow_up": null
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-11",
+      "result": "Read check runs AND commit statuses for all eight open Repo Assist PRs. Seven pipelines pass; #456 original backend/pipeline fail. #403/#420/#448 classification-label failures remain. #456 reproduced failure corrected via append-only update; new CI not queried.",
+      "follow_up": "#403 needs semantic merge plus current policy regression coverage; #456 fresh pipeline pending."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-11",
+      "result": "Maintenance-only at eight PRs; no new PR. Resolved #414 to draft #461. Updated #456 and commented on #456/#403. #403 merge aborted after inspecting five conflicts; no partial or rewritten history published.",
+      "follow_up": "Prioritize #403 semantic integration over creating new work."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-11",
+      "result": "Read all three unlabelled issues and existing labels. Added bug to #446, enhancement to #458/#459; breaking change/refactor labels do not exist, so not applied. Other open PRs already labelled. No redundant label comments.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-11",
+      "result": "#456 context E2E red 10/20 -> green 20/20 using structured access-log selector. Affected HTTP race tests and all 960 functional backend specs pass with race detection. Initial run without assets failed 13 SPA/consent checks; web build resolved all.",
+      "follow_up": "No Docker/browser/full verify run; external pipeline after update not yet known."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-11",
+      "result": "Broker just build and just web-build passed on #456 correction branch.",
+      "follow_up": null
+    },
+    {
+      "area": "tooling",
+      "checked_at": "2026-11-11",
+      "result": "just check passed formatting/vet/lint (zero issues) on #456 correction. Compound shell timed out after checks during initial build; separate build and subsequent validation succeeded.",
       "follow_up": null
     }
   ],
@@ -264,19 +270,24 @@
   ],
   "priorities": [
     {
-      "task": 3,
-      "item": "Implement #314 with authentication provenance",
-      "note": "Posted transport/local challenge plan. Coordinate #431/#381 and retain public/CIMD/RFC8693 behavior. No incomplete normalization patch."
-    },
-    {
-      "task": 2,
-      "item": "Resume oldest-first after #386",
-      "note": "#382 guidance posted; #386 fix prepared on recorded branch. #388 has active #412. Retain clarification holds, #356 principal policy gate, and active telemetry/logging coordination."
+      "task": 6,
+      "item": "Semantically merge main into #403",
+      "note": "Five conflicts inspected, merge aborted cleanly. Keep human-only readiness/zero human state for agents; migrate evaluator and fixtures to ADR046 RequiresReauthentication; align API/spec/ADR. Run agent/human/readiness regressions before append-only push."
     },
     {
       "task": 6,
-      "item": "Diagnose #456 backend E2E failure",
-      "note": "External pipeline status failed; failure cause unknown. Read actual logs or reproduce locally before changing code. Other validation statuses pass; no blind retry or infrastructure-only push."
+      "item": "Check #456 follow-up CI",
+      "note": "Accepted be1cbff5 update fixes reproduced stale access-log selector. 960 functional backend scenarios pass locally after frontend build; do not assume future pipeline green."
+    },
+    {
+      "task": 2,
+      "item": "Resume oldest-first after #418",
+      "note": "#388/#412 and existing fixes remain active; #418 implementable event-mapping candidate awaits capacity. Retain all clarification/approval holds and #356 policy gate."
+    },
+    {
+      "task": 3,
+      "item": "Implement #314 with authentication provenance",
+      "note": "Coordinate #431/#381; preserve public/CIMD/RFC8693 behavior and all-mode tests. No incomplete form-normalization patch."
     }
   ]
 }
