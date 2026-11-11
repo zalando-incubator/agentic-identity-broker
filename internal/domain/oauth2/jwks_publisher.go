@@ -8,6 +8,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -184,7 +185,7 @@ func (s *JWKSPublisherService) recordUpstreamFailure(ctx context.Context, err er
 	failures := s.consecutiveUpstreamFailure.Add(1)
 	if failures == 1 || failures%upstreamFailureRelogEvery == 0 {
 		s.logger.ErrorContext(ctx, "upstream JWKS fetch failed",
-			"error", err,
+			"error_kind", security.ClassifyOutboundError(err),
 			"consecutive_failures", failures,
 		)
 	}
