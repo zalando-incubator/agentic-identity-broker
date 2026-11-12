@@ -198,6 +198,7 @@ type OAuth2SessionService struct {
 	jweTokenService          *domjwe.TokenService
 	cimdAssertionSigner      ports.CIMDClientAssertionSigner
 	credentialFileReader     ports.CredentialFileReader
+	clientIdentityRepo       ports.ThirdpartyOAuth2ClientIdentityRepository
 	config                   Config
 	logger                   *slog.Logger
 }

@@ -558,6 +558,20 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 	return dec, nil
 }
 
+// GetForIdentityEvaluation returns configuration without decrypting credentials.
+func (s *ThirdpartyOAuth2ProviderService) GetForIdentityEvaluation(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entity, err := s.repo.Get(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if entity == nil || entity.ID != serviceID {
+		return nil, ErrProviderConfiguration
+	}
+	configuration := entity.Copy()
+	configuration.Secret = model.NewAbsentSecret()
+	return configuration, nil
+}
+
 // Token acquisition must retain decryption failures; administrative reads may retain ciphertext.
 func (s *ThirdpartyOAuth2ProviderService) GetForTokenAcquisition(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	entity, err := s.repo.Get(ctx, serviceID)

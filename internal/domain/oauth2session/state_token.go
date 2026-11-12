@@ -32,9 +32,9 @@ type OAuth2StateTokenClaims struct {
 	// Resource binds discovered state to the effective token audience.
 	Resource string `json:"resource,omitempty"`
 
-	// UpstreamClientID binds eligible callbacks to their initiating client identity.
-	// Nil denotes a legacy context, not permission to infer the current identity.
-	UpstreamClientID *id.ClientID `json:"upstream_client_id,omitempty"`
+	// Nil identity or revision denotes legacy state, not permission to infer establishment.
+	UpstreamClientID       *id.ClientID `json:"upstream_client_id,omitempty"`
+	UpstreamClientRevision *int64       `json:"upstream_client_revision,omitempty"`
 
 	// RedirectURI is where to redirect after flow completes.
 	// Must be same-origin with the authorize request.
@@ -69,6 +69,9 @@ func (c *OAuth2StateTokenClaims) Validate() error {
 		return errors.New("issuer_uri and resource must be provided together")
 	}
 	if c.UpstreamClientID != nil && c.UpstreamClientID.IsZero() {
+		return model.NewCredentialSourceError(model.CredentialSourceReasonIdentityMissing)
+	}
+	if c.UpstreamClientRevision != nil && *c.UpstreamClientRevision < 0 {
 		return model.NewCredentialSourceError(model.CredentialSourceReasonIdentityMissing)
 	}
 	if c.RedirectURI == "" {

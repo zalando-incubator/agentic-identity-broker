@@ -7,16 +7,17 @@ var ErrCredentialSourceUnavailable = errors.New("credential source unavailable")
 type CredentialSourceReason string
 
 const (
-	CredentialSourceReasonMissingBinding    CredentialSourceReason = "missing_binding"
-	CredentialSourceReasonIdentityMissing   CredentialSourceReason = "identity_missing"
-	CredentialSourceReasonIdentityMismatch  CredentialSourceReason = "identity_mismatch"
-	CredentialSourceReasonGenerationChanged CredentialSourceReason = "generation_changed"
-	CredentialSourceReasonNotFound          CredentialSourceReason = "not_found"
-	CredentialSourceReasonPermissionDenied  CredentialSourceReason = "permission_denied"
-	CredentialSourceReasonNotRegular        CredentialSourceReason = "not_regular"
-	CredentialSourceReasonTooLarge          CredentialSourceReason = "too_large"
-	CredentialSourceReasonEmpty             CredentialSourceReason = "empty"
-	CredentialSourceReasonReadFailed        CredentialSourceReason = "read_failed"
+	CredentialSourceReasonMissingBinding     CredentialSourceReason = "missing_binding"
+	CredentialSourceReasonIdentityMissing    CredentialSourceReason = "identity_missing"
+	CredentialSourceReasonIdentityMismatch   CredentialSourceReason = "identity_mismatch"
+	CredentialSourceReasonIdentitySuperseded CredentialSourceReason = "identity_superseded"
+	CredentialSourceReasonGenerationChanged  CredentialSourceReason = "generation_changed"
+	CredentialSourceReasonNotFound           CredentialSourceReason = "not_found"
+	CredentialSourceReasonPermissionDenied   CredentialSourceReason = "permission_denied"
+	CredentialSourceReasonNotRegular         CredentialSourceReason = "not_regular"
+	CredentialSourceReasonTooLarge           CredentialSourceReason = "too_large"
+	CredentialSourceReasonEmpty              CredentialSourceReason = "empty"
+	CredentialSourceReasonReadFailed         CredentialSourceReason = "read_failed"
 )
 
 type CredentialSourceError struct {
@@ -26,7 +27,7 @@ type CredentialSourceError struct {
 func NewCredentialSourceError(reason CredentialSourceReason) *CredentialSourceError {
 	switch reason {
 	case CredentialSourceReasonMissingBinding, CredentialSourceReasonIdentityMissing,
-		CredentialSourceReasonIdentityMismatch, CredentialSourceReasonGenerationChanged,
+		CredentialSourceReasonIdentityMismatch, CredentialSourceReasonIdentitySuperseded, CredentialSourceReasonGenerationChanged,
 		CredentialSourceReasonNotFound, CredentialSourceReasonPermissionDenied,
 		CredentialSourceReasonNotRegular, CredentialSourceReasonTooLarge,
 		CredentialSourceReasonEmpty, CredentialSourceReasonReadFailed:
